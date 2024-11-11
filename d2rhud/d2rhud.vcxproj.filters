@@ -1,0 +1,30 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <None Include="vcpkg.json" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="dllmain.cpp" />
+    <ClCompile Include="D3D12Hook.cpp" />
+    <ClCompile Include="plugin\PluginManager.cpp" />
+    <ClCompile Include="plugin\sample\Sample.cpp" />
+    <ClCompile Include="Pattern.cpp" />
+    <ClCompile Include="plugin\autosort\autosort.cpp" />
+    <ClCompile Include="plugin\transmute\transmute.cpp" />
+    <ClCompile Include="plugin\KeyMappings.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="D3D12Hook.h" />
+    <ClInclude Include="plugin\PluginManager.h" />
+    <ClInclude Include="plugin\Plugin.h" />
+    <ClInclude Include="plugin\sample\Sample.h" />
+    <ClInclude Include="Pattern.h" />
+    <ClInclude Include="d2\D2Ptrs.h" />
+    <ClInclude Include="Logging.h" />
+    <ClInclude Include="d2\D2Structs.h" />
+    <ClInclude Include="d2\D2Enums.h" />
+    <ClInclude Include="plugin\autosort\autosort.h" />
+    <ClInclude Include="plugin\transmute\transmute.h" />
+    <ClInclude Include="plugin\KeyMappings.h" />
+  </ItemGroup>
+</Project>

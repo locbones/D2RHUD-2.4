@@ -1,0 +1,12 @@
+{
+  "$comment": "detours or minhook can be used for hooking. if both dependencies exist then detours is used.",
+  "name": "d2rhud",
+  "version-string": "0.0.1",
+  "dependencies": [
+    "detours",
+    {
+      "name": "imgui",
+      "features": [ "win32-binding", "dx12-binding" ]
+    }
+  ]
+}

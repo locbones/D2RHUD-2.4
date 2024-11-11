@@ -1,0 +1,19 @@
+﻿  D3D12Hook.cpp
+  dllmain.cpp
+  Pattern.cpp
+  autosort.cpp
+  KeyMappings.cpp
+  PluginManager.cpp
+  Sample.cpp
+C:\Users\djsch\Github\D2RHUD-2.4\d2rhud\plugin\PluginManager.cpp(38,38): warning C4244: 'argument': conversion from 'WPARAM' to 'short', possible loss of data
+C:\Users\djsch\Github\D2RHUD-2.4\d2rhud\plugin\PluginManager.cpp(48,35): warning C4244: 'argument': conversion from 'WPARAM' to 'short', possible loss of data
+C:\Users\djsch\Github\D2RHUD-2.4\d2rhud\plugin\sample\Sample.cpp(404,51): warning C4477: 'sprintf_s' : format string '%s' requires an argument of type 'char *', but variadic argument 1 has type 'std::string'
+C:\Users\djsch\Github\D2RHUD-2.4\d2rhud\plugin\sample\Sample.cpp(404,51): warning C4477: 'sprintf_s' : format string '%s' requires an argument of type 'char *', but variadic argument 3 has type 'std::string'
+C:\Users\djsch\Github\D2RHUD-2.4\d2rhud\plugin\sample\Sample.cpp(426,14): warning C4101: 'messageBoxText': unreferenced local variable
+  transmute.cpp
+  Previous IPDB not found, fall back to full compilation.
+LINK : warning LNK4098: defaultlib 'LIBCMT' conflicts with use of other libs; use /NODEFAULTLIB:library
+  Generating code
+  All 2356 functions were compiled because no usable IPDB/IOBJ from previous compilation was found.
+  Finished generating code
+  d2rhud.vcxproj -> C:\Users\djsch\Github\D2RHUD-2.4\x64\Release\d2rhud.dll
