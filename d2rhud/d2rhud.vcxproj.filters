@@ -9,8 +9,6 @@
     <ClCompile Include="plugin\PluginManager.cpp" />
     <ClCompile Include="plugin\sample\Sample.cpp" />
     <ClCompile Include="Pattern.cpp" />
-    <ClCompile Include="plugin\autosort\autosort.cpp" />
-    <ClCompile Include="plugin\transmute\transmute.cpp" />
     <ClCompile Include="plugin\KeyMappings.cpp" />
   </ItemGroup>
   <ItemGroup>
@@ -23,8 +21,6 @@
     <ClInclude Include="Logging.h" />
     <ClInclude Include="d2\D2Structs.h" />
     <ClInclude Include="d2\D2Enums.h" />
-    <ClInclude Include="plugin\autosort\autosort.h" />
-    <ClInclude Include="plugin\transmute\transmute.h" />
     <ClInclude Include="plugin\KeyMappings.h" />
   </ItemGroup>
 </Project>

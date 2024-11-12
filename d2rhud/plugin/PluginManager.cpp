@@ -1,13 +1,9 @@
 #include "PluginManager.h"
 #include "sample/Sample.h"
-#include "autosort/autosort.h"
-#include "transmute/transmute.h"
 #include <imgui.h>
 
 PluginManager::PluginManager() {
     m_Plugins.push_back(new Sample());
-    m_Plugins.push_back(new AutoSort());
-    m_Plugins.push_back(new Transmute());
 }
 
 void PluginManager::Present() {

@@ -15,6 +15,10 @@
 #include <iomanip>
 #include <algorithm>
 #include <cstring>
+#include <thread>
+#include <atomic>
+#include <chrono>
+#include <cstdint>
 
 /*
 - Chat Detours/Structures by Killshot
@@ -27,8 +31,11 @@
 //Config file for handling chat coloring, stats display and memory edits
 //Startup memory edits found in the config file are performed by D2RLAN
 std::string configFilePath = "config.json"; 
+std::string filename = "../Launcher/D2RLAN_Config.txt";
 
-#pragma region Monster Stats Display Constants
+
+
+#pragma region Monster & Command Constants
 const char* ResistanceNames[6] = { "   ", "   ", "   ", "   ", "   ", "   " };
 constexpr  uint32_t ResistanceStats[6] = { 39, 41, 43, 45, 36, 37 };
 constexpr  uint32_t Alignment = { 172 };
@@ -41,6 +48,12 @@ constexpr  uint32_t ImmunityMagic = { 193 };
 constexpr  ImU32 ResistanceColors[6] = { IM_COL32(170,50,50,255) ,IM_COL32(170,170,50,255) ,IM_COL32(50,50,170,255) ,IM_COL32(50,170,50,255),IM_COL32(255,255,255,255), IM_COL32(255,175,0,255) };
 constexpr  const char* Seperator = "  ";
 constexpr uint32_t Experience = { 21 };
+std::string automaticCommand1;
+std::string  automaticCommand2;
+std::string  automaticCommand3;
+std::string  automaticCommand4;
+std::string  automaticCommand5;
+std::string  automaticCommand6;
 #pragma endregion
 
 #pragma region Chat/Debug Structures
@@ -102,6 +115,7 @@ const uint32_t cheatsArrayOffset = 0x18026F0;
 const uint8_t CCMD_DEBUGCHEAT = 0x15;
 const uint8_t SCMD_CHATSTART = 0x26;
 const uint64_t SaveAndExitButtonHash = 0x621D53C05FCA5A67;
+const uint32_t detectGameStatusOffset = 0x1DC76F8; //unknown, just convenient
 
 static D2Client* GetClientPtr()
 {
@@ -234,6 +248,222 @@ VOID CALLBACK DelayedActionsTimerProc(
 }
 #pragma endregion
 
+#pragma region Helper Functions
+std::string TrimWhitespace(const std::string& str) {
+    size_t first = str.find_first_not_of(" \n\r\t");
+    size_t last = str.find_last_not_of(" \n\r\t");
+    return str.substr(first, (last - first + 1));
+}
+
+std::string ReadCommandFromFile(const std::string& filename, const std::string& searchString) {
+    return TrimWhitespace(readTextFollowingString(filename, searchString));
+}
+
+void ReadCommandWithValuesFromFile(const std::string& filename, const std::string& searchString, std::string& commandKey, std::string& commandValue) {
+    std::string commandLine = ReadCommandFromFile(filename, searchString);
+
+    size_t commaPos = commandLine.find(',');
+    if (commaPos != std::string::npos) {
+        commandKey = TrimWhitespace(commandLine.substr(0, commaPos));
+        std::string valuePart = TrimWhitespace(commandLine.substr(commaPos + 1));
+        size_t startQuote = valuePart.find('\"');
+        size_t endQuote = valuePart.find('\"', startQuote + 1);
+
+        if (startQuote != std::string::npos && endQuote != std::string::npos) {
+            commandValue = TrimWhitespace(valuePart.substr(startQuote + 1, endQuote - startQuote - 1));
+        }
+        else {
+            commandValue.clear();
+        }
+    }
+    else {
+        commandKey.clear();
+        commandValue.clear();
+    }
+}
+
+std::string Trim(const std::string& str)
+{
+    size_t first = str.find_first_not_of(" \t\n\r");
+    size_t last = str.find_last_not_of(" \t\n\r");
+    return (first == std::string::npos || last == std::string::npos) ? "" : str.substr(first, last - first + 1);
+}
+
+std::vector<std::string> ReadAutomaticCommandsFromFile(const std::string& filename)
+{
+    std::vector<std::string> automaticCommands;
+    std::ifstream file(filename);
+
+    if (!file.is_open()) {
+        std::cerr << "Error: Failed to open file " << filename << std::endl;
+        return automaticCommands;
+    }
+
+    std::string line;
+
+    while (std::getline(file, line)) {
+        if (line.find("Startup Commands:") != std::string::npos) {
+            size_t pos = line.find("Startup Commands:") + std::string("Startup Commands:").length();
+            std::string commands = line.substr(pos);
+
+            while (std::getline(file, line) && !line.empty()) {
+                commands += line;
+            }
+
+            size_t commaPos = 0;
+            while ((commaPos = commands.find(",")) != std::string::npos) {
+                std::string command = Trim(commands.substr(0, commaPos));
+                if (!command.empty()) {
+                    automaticCommands.push_back(command);
+                }
+                commands.erase(0, commaPos + 1);
+            }
+
+            // Handle any remaining command after the last comma
+            std::string command = Trim(commands);
+            if (!command.empty()) {
+                automaticCommands.push_back(command);
+            }
+
+            break;
+        }
+    }
+
+    // Handle less than 6 commands by filling with empty strings or skipping
+    while (automaticCommands.size() < 6) {
+        automaticCommands.push_back("");  // Optionally add empty strings if less than 6
+    }
+
+    // Now assign the values to your automaticCommand variables if necessary
+    if (automaticCommands.size() >= 6) {
+        automaticCommand1 = automaticCommands[0];
+        automaticCommand2 = automaticCommands[1];
+        automaticCommand3 = automaticCommands[2];
+        automaticCommand4 = automaticCommands[3];
+        automaticCommand5 = automaticCommands[4];
+        automaticCommand6 = automaticCommands[5];
+    }
+    else {
+        std::cerr << "Error: Not enough automatic commands in the config file!" << std::endl;
+    }
+
+    return automaticCommands;
+}
+#pragma endregion
+
+#pragma region Startup Options Control
+static int GetClientStatus()
+{
+    uint64_t pClients = Pattern::Address(detectGameStatusOffset);
+
+    if (pClients != NULL)
+    {
+        uint8_t clientStatusByte = *(uint8_t*)(pClients);
+        return static_cast<int>(clientStatusByte);
+    }
+
+    return -1;
+}
+
+void ExecuteCommand(const std::string& command)
+{
+    if (command != "disabled")
+    {
+        if (command == "/nopickup" || command == "/fps")
+        {
+            static bool sameGame = false;
+            if (!sameGame)
+            {
+                if (command.find("/") != std::string::npos)
+                {
+                    CLIENT_playerCommand(command, command);
+                    sameGame = true;
+                }
+                else
+                    ExecuteDebugCheatFunc(command.c_str());
+            }
+        }
+        else
+        {
+            if (command.find("/") != std::string::npos)
+                CLIENT_playerCommand(command, command);
+            else
+                ExecuteDebugCheatFunc(command.c_str());
+        }    
+    }
+}
+
+void OnClientStatusChange()
+{
+    std::this_thread::sleep_for(std::chrono::seconds(10));
+
+    if (!automaticCommand1.empty() && automaticCommand1 != "disabled")
+        ExecuteCommand(automaticCommand1);
+    std::this_thread::sleep_for(std::chrono::seconds(1));
+
+    if (!automaticCommand2.empty() && automaticCommand2 != "disabled")
+        ExecuteCommand(automaticCommand2);
+    std::this_thread::sleep_for(std::chrono::seconds(1));
+
+    if (!automaticCommand3.empty() && automaticCommand3 != "disabled")
+        ExecuteCommand(automaticCommand3);
+    std::this_thread::sleep_for(std::chrono::seconds(1));
+
+    if (!automaticCommand4.empty() && automaticCommand4 != "disabled")
+        ExecuteCommand(automaticCommand4);
+    std::this_thread::sleep_for(std::chrono::seconds(1));
+
+    if (!automaticCommand5.empty() && automaticCommand5 != "disabled")
+        ExecuteCommand(automaticCommand5);
+    std::this_thread::sleep_for(std::chrono::seconds(1));
+
+    if (!automaticCommand6.empty() && automaticCommand6 != "disabled")
+        ExecuteCommand(automaticCommand6);
+}
+
+
+
+int CheckClientStatusChange()
+{
+    static int previousValue = -1;
+    int currentValue = GetClientStatus();
+
+    if (previousValue != 1 && currentValue == 1)
+    {
+        std::thread delayThread(OnClientStatusChange);
+        delayThread.detach();
+    }
+        
+    previousValue = currentValue;
+
+    return currentValue;
+}
+
+
+std::atomic<bool> keepPolling{ true };
+
+void PollClientStatus()
+{
+    while (keepPolling)
+    {
+        int status = CheckClientStatusChange();
+        std::cout << "Current Status: " << status << std::endl;
+        std::this_thread::sleep_for(std::chrono::seconds(1));
+    }
+}
+
+void StartPolling()
+{
+    std::thread pollThread(PollClientStatus);
+    pollThread.detach();
+}
+
+void StopPolling()
+{
+    keepPolling = false;
+}
+#pragma endregion
+
 #pragma region Monster Stats Structure
 
 int mapColorToInt(const std::string& colorCode) {
@@ -272,6 +502,10 @@ struct MonsterStatsDisplaySettings {
 
 
 MonsterStatsDisplaySettings getMonsterStatsDisplaySetting(const std::string& configFilePath) {
+    StartPolling();
+
+    std::vector<std::string> automaticCommands = ReadAutomaticCommandsFromFile(filename);
+
     static bool isCached = false;
     static MonsterStatsDisplaySettings cachedSettings;
 
@@ -317,8 +551,12 @@ MonsterStatsDisplaySettings getMonsterStatsDisplaySetting(const std::string& con
     cachedSettings.messageColor = settings["Message Color"];
 
     isCached = true;
+    
+
     return cachedSettings;
 }
+
+
 
 MonsterStatsDisplaySettings settings = getMonsterStatsDisplaySetting(configFilePath);
 #pragma endregion
@@ -340,6 +578,7 @@ typedef void(__fastcall* Send_SCMD_CHATSTART_Fptr)(uint64_t pPlayer, SCMD_CHATST
 static GetUnitNameFptr GetUnitName = reinterpret_cast<GetUnitNameFptr>(Pattern::Address(GetUnitNameOffset));
 static BroadcastChatMessageFptr BroadcastChatMessage = reinterpret_cast<BroadcastChatMessageFptr>(Pattern::Address(BroadcastChatMessageOffset));
 static Send_SCMD_CHATSTART_Fptr Send_SCMD_CHATSTART = reinterpret_cast<Send_SCMD_CHATSTART_Fptr>(Pattern::Address(Send_SCMD_CHATSTARTOffset));
+static std::vector<std::string> g_automaticCommands;
 
 void BroadcastChatMessageCustom(uint64_t pGame, const char* szSender, const char* szMsg)
 {
@@ -591,85 +830,61 @@ void Sample::OnDraw() {
 }
 #pragma endregion
 
-#pragma region Helper Functions
-std::string TrimWhitespace(const std::string& str) {
-    size_t first = str.find_first_not_of(" \n\r\t");
-    size_t last = str.find_last_not_of(" \n\r\t");
-    return str.substr(first, (last - first + 1));
-}
-
-std::string ReadCommandFromFile(const std::string& filename, const std::string& searchString) {
-    return TrimWhitespace(readTextFollowingString(filename, searchString));
-}
-
-void ReadCommandWithValuesFromFile(const std::string& filename, const std::string& searchString, std::string& commandKey, std::string& commandValue) {
-    std::string commandLine = ReadCommandFromFile(filename, searchString);
-
-    size_t commaPos = commandLine.find(',');
-    if (commaPos != std::string::npos) {
-        commandKey = TrimWhitespace(commandLine.substr(0, commaPos));
-        std::string valuePart = TrimWhitespace(commandLine.substr(commaPos + 1));
-        size_t startQuote = valuePart.find('\"');
-        size_t endQuote = valuePart.find('\"', startQuote + 1);
-
-        if (startQuote != std::string::npos && endQuote != std::string::npos) {
-            commandValue = TrimWhitespace(valuePart.substr(startQuote + 1, endQuote - startQuote - 1));
-        }
-        else {
-            commandValue.clear();
-        }
-    }
-    else {
-        commandKey.clear();
-        commandValue.clear();
-    }
-}
-#pragma endregion
-
 #pragma region Hotkey Handler
 bool Sample::OnKeyPressed(short key)
 {
-    const std::string filename = "../Launcher/D2RLAN_Config.txt";
+    std::unordered_map<std::string, const char*> commands = {
+        { "Transmute: ", "unused" },
+        { "Identify Items: ", "idall 1" },
+        { "Force Save: ", "save 1" },
+        { "Reset Stats: ", "resetstats 1" },
+        { "Reset Skills: ", "resetskills 1" },
+        { "Remove Ground Items: ", "itemgroundclear 1" },
+        { "Custom Command 1: ", nullptr },
+        { "Custom Command 2: ", nullptr },
+        { "Custom Command 3: ", nullptr },
+        { "Custom Command 4: ", nullptr },
+        { "Custom Command 5: ", nullptr },
+        { "Custom Command 6: ", nullptr },
+    };
 
-std::unordered_map<std::string, const char*> commands = {
-    { "Identify Items: ", "idall 1" },
-    { "Force Save: ", "save 1" },
-    { "Reset Stats: ", "resetstats 1" },
-    { "Reset Skills: ", "resetskills 1" },
-    { "Remove Ground Items: ", "itemgroundclear 1" },
-    { "Custom Command 1: ", nullptr },
-    { "Custom Command 2: ", nullptr },
-    { "Custom Command 3: ", nullptr },
-    { "Custom Command 4: ", nullptr },
-    { "Custom Command 5: ", nullptr },
-    { "Custom Command 6: ", nullptr },
-};
+    for (const auto& [searchString, debugCommand] : commands) {
+        if (debugCommand != nullptr) { // Standard Commands
+            std::string result = ReadCommandFromFile(filename, searchString);
+            if (!result.empty()) {
+                auto it = keyMap.find(result);
+                if (it != keyMap.end() && key == it->second) {
+                    if (GetClientStatus() == 1)
+                    {
+                        if (searchString == "Transmute: ")
+                            D2CLIENT_Transmute();
+                        else
+                            ExecuteDebugCheatFunc(debugCommand);
+                    }
+                        
+                    return true;
+                }
+            }
+        }
+        else { // Custom Commands
+            std::string commandKey, commandValue;
+            ReadCommandWithValuesFromFile(filename, searchString, commandKey, commandValue);
 
-
-for (const auto& [searchString, debugCommand] : commands) {
-    if (debugCommand != nullptr) { //Standard Commands
-        std::string result = ReadCommandFromFile(filename, searchString);
-        if (!result.empty()) {
-            auto it = keyMap.find(result);
-            if (it != keyMap.end() && key == it->second) {
-                ExecuteDebugCheatFunc(debugCommand);
-                return true;
+            if (!commandKey.empty() && !commandValue.empty()) {
+                auto it = keyMap.find(commandKey);
+                if (it != keyMap.end() && key == it->second) {
+                    if (GetClientStatus() == 1) {
+                        if (commandValue.find("/") != std::string::npos)
+                            CLIENT_playerCommand(commandValue, commandValue);
+                        else
+                            ExecuteDebugCheatFunc(commandValue.c_str());
+                    }
+                    return true;
+                }
             }
         }
     }
-    else { //Custom Commands
-        std::string commandKey, commandValue;
-        ReadCommandWithValuesFromFile(filename, searchString, commandKey, commandValue);
 
-        if (!commandKey.empty() && !commandValue.empty()) {
-            auto it = keyMap.find(commandKey);
-            if (it != keyMap.end() && key == it->second) {
-                ExecuteDebugCheatFunc(commandValue.c_str());
-                return true;
-            }
-        }
-    }
-}
-return false;
+    return false;
 }
 #pragma endregion

@@ -14,7 +14,7 @@ FUNC_DEF(void, __fastcall, ITEMS_Description, (D2UnitStrc* pItem, char* pBuffer,
 FUNC_DEF(__int64, __fastcall, INVENTORY_AutoSort, (uint32_t pUnitID, D2C_ItemInvPage page));
 FUNC_DEF(void, __fastcall, D2CLIENT_Transmute, ());
 FUNC_DEF(void, __fastcall, CLIENT_RevealAutoMapRoom, ());
-FUNC_DEF(void, __fastcall, CLIENT_SaveCharacter, (const char* name, int name2));
+FUNC_DEF(void, __fastcall, CLIENT_playerCommand, (std::string name, std::string name2));
 FUNC_DEF(void, __fastcall, CLIENT_DebugExit, (int name2));
 
 VAR_DEF(D2MouseHoverStruct, gMouseHover);
@@ -39,7 +39,7 @@ namespace D2Ptrs {
         //VAR_PATTERNREF(gCurrentSinglePlayerGame, NULL, "48 89 05 ? ? ? ? 48 85 C0 0F 84 ? ? ? ? 44 8B C7 ", 3);
         VAR_PATTERNREF(gCurrentSinglePlayerGame, NULL, "48 8B 15 ? ? ? ? 33 C9 48 8D 42 01 48 83 F8 01 48 0F 47 CA", 3);
 
-        VAR_PATTERNREF(CLIENT_SaveCharacter, NULL, "e8 d6 f4 fd ff", 1);
+        VAR_PATTERNREF(CLIENT_playerCommand, NULL, "E8 E6 A6 0A 00", 1);
 
         VAR_PATTERNREF(CLIENT_DebugExit, NULL, "E8 ?? ?? ?? ?? CC 45 33 DB", 1)
     }
