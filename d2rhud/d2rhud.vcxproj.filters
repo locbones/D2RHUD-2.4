@@ -7,7 +7,7 @@
     <ClCompile Include="dllmain.cpp" />
     <ClCompile Include="D3D12Hook.cpp" />
     <ClCompile Include="plugin\PluginManager.cpp" />
-    <ClCompile Include="plugin\sample\Sample.cpp" />
+    <ClCompile Include="plugin\D2RHUD\D2RHUD.cpp" />
     <ClCompile Include="Pattern.cpp" />
     <ClCompile Include="plugin\KeyMappings.cpp" />
   </ItemGroup>
@@ -15,7 +15,7 @@
     <ClInclude Include="D3D12Hook.h" />
     <ClInclude Include="plugin\PluginManager.h" />
     <ClInclude Include="plugin\Plugin.h" />
-    <ClInclude Include="plugin\sample\Sample.h" />
+    <ClInclude Include="plugin\D2RHUD\D2RHUD.h" />
     <ClInclude Include="Pattern.h" />
     <ClInclude Include="d2\D2Ptrs.h" />
     <ClInclude Include="Logging.h" />

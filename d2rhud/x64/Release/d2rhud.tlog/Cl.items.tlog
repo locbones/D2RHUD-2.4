@@ -3,4 +3,4 @@ C:\Users\djsch\Github\D2RHUD-2.4\d2rhud\dllmain.cpp;C:\Users\djsch\Github\D2RHUD
 C:\Users\djsch\Github\D2RHUD-2.4\d2rhud\Pattern.cpp;C:\Users\djsch\Github\D2RHUD-2.4\d2rhud\x64\Release\Pattern.obj
 C:\Users\djsch\Github\D2RHUD-2.4\d2rhud\plugin\KeyMappings.cpp;C:\Users\djsch\Github\D2RHUD-2.4\d2rhud\x64\Release\KeyMappings.obj
 C:\Users\djsch\Github\D2RHUD-2.4\d2rhud\plugin\PluginManager.cpp;C:\Users\djsch\Github\D2RHUD-2.4\d2rhud\x64\Release\PluginManager.obj
-C:\Users\djsch\Github\D2RHUD-2.4\d2rhud\plugin\sample\Sample.cpp;C:\Users\djsch\Github\D2RHUD-2.4\d2rhud\x64\Release\Sample.obj
+C:\Users\djsch\Github\D2RHUD-2.4\d2rhud\plugin\D2RHUD\D2RHUD.cpp;C:\Users\djsch\Github\D2RHUD-2.4\d2rhud\x64\Release\D2RHUD.obj

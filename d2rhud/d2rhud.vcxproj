@@ -74,7 +74,7 @@
     <ClCompile Include="Pattern.cpp" />
     <ClCompile Include="plugin\KeyMappings.cpp" />
     <ClCompile Include="plugin\PluginManager.cpp" />
-    <ClCompile Include="plugin\sample\Sample.cpp" />
+    <ClCompile Include="plugin\D2RHUD\D2RHUD.cpp" />
   </ItemGroup>
   <ItemGroup>
     <None Include="vcpkg.json" />
@@ -89,7 +89,7 @@
     <ClInclude Include="plugin\KeyMappings.h" />
     <ClInclude Include="plugin\Plugin.h" />
     <ClInclude Include="plugin\PluginManager.h" />
-    <ClInclude Include="plugin\sample\Sample.h" />
+    <ClInclude Include="plugin\D2RHUD\D2RHUD.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

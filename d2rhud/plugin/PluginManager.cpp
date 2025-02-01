@@ -1,9 +1,9 @@
 #include "PluginManager.h"
-#include "sample/Sample.h"
+#include "D2RHUD/D2RHUD.h"
 #include <imgui.h>
 
 PluginManager::PluginManager() {
-    m_Plugins.push_back(new Sample());
+    m_Plugins.push_back(new D2RHUD());
 }
 
 void PluginManager::Present() {
