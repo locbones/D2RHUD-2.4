@@ -68,8 +68,9 @@ namespace D3D12 {
 	typedef long(__fastcall* ResizeBuffers)(IDXGISwapChain3* pSwapChain, UINT BufferCount, UINT Width, UINT Height, DXGI_FORMAT NewFormat, UINT SwapChainFlags);
 	static ResizeBuffers OriginalResizeBuffers;
 
-	static WNDPROC OriginalWndProc;
-	static HWND Window = nullptr;
+	WNDPROC OriginalWndProc;
+	HWND Window = nullptr;
+	bool FontLoaded = false;
 
 	static uint64_t* g_MethodsTable = NULL;
 	static bool g_Initialized = false;
@@ -186,6 +187,7 @@ namespace D3D12 {
 				io.Fonts->AddFontFromFileTTF(fontPath.c_str(), 18.0f);
 				io.Fonts->AddFontFromFileTTF(fontPath.c_str(), 24.0f);
 				io.Fonts->AddFontFromFileTTF(fontPath.c_str(), 36.0f);
+				FontLoaded = true;
 			}
 			else {
 				std::cerr << "Font file does not exist: " << fontPath << std::endl;

@@ -23,5 +23,6 @@ namespace D3D12 {
 
 	extern DWORD PID;
 	extern HWND Window;
+	extern bool FontLoaded;
 
 }

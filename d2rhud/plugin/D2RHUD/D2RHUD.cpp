@@ -19,6 +19,8 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <filesystem>
+#include "../../D3D12Hook.h"
 
 /*
 - Chat Detours/Structures by Killshot
@@ -32,6 +34,17 @@
 std::string configFilePath = "config.json";
 std::string filename = "../Launcher/D2RLAN_Config.txt";
 std::string Version = "1.0.1";
+
+struct MonsterStatsDisplaySettings {
+    bool monsterStatsDisplay;
+    std::string channelColor;
+    std::string playerNameColor;
+    std::string messageColor;
+    bool socketDisplay;
+};
+static MonsterStatsDisplaySettings cachedSettings;
+
+static D2Client* GetClientPtr();
 
 #pragma region Monster & Command Constants
 const char* ResistanceNames[6] = { "   ", "   ", "   ", "   ", "   ", "   " };
@@ -55,15 +68,120 @@ std::string automaticCommand6;
 std::time_t lastLogTimestamp = 0;
 #pragma endregion
 
-#pragma region Chat/Debug Structures
-struct D2Client
-{
-    uint8_t unknown1[0x198];
-    uint64_t pPlayer;
-    uint8_t unknown2[0x90];
-    uint64_t pGame;
+#pragma region Item Name
+const int32_t getItemNameBufferSize = 0x400;
+const uint32_t getItemNameOffset = 0x149b60;
+
+typedef void(__fastcall* GetItemName_t)(D2UnitStrc* pUnit, char* pBuffer);
+static GetItemName_t oGetItemName = nullptr;
+
+void __fastcall HookedGetItemName(D2UnitStrc* pUnit, char* pBuffer) {
+    oGetItemName(pUnit, pBuffer);
+    auto pUnitToUse = pUnit;
+    D2GameStrc* pGame = nullptr;
+    D2Client* pGameClient = GetClientPtr();
+    if (pGameClient != nullptr) {
+        pGame = (D2GameStrc*)pGameClient->pGame;
+        if (pGame != nullptr) {
+            pUnitToUse = UNITS_GetServerUnitByTypeAndId(pGame, UNIT_ITEM, pUnit->dwUnitId);
+        }
+    }
+    if (cachedSettings.socketDisplay && pUnitToUse != nullptr) {
+        int32_t nSockets = STATLIST_GetUnitStatSigned(pUnitToUse, STAT_ITEM_NUMSOCKETS, 0);
+        if (nSockets > 0) {
+            snprintf(pBuffer, getItemNameBufferSize, "%s ÿcN(%d)\0", pBuffer, nSockets);
+        }
+    }
+}
+
+#pragma endregion
+
+#pragma region Bank Tabs
+struct Message {
+    uint64_t o1;
+    uint64_t o2;
+    uint64_t o3;
+    uint64_t o4;
+    uint64_t o5;
 };
 
+const uint32_t getSelectedBankPanelTab = 0x18f1a0;
+const uint32_t bankPanelDraw = 0x18eb90;
+const uint32_t bankPanelOnMessage = 0x18ee50;
+const uint32_t widgetFindChild = 0x576070;
+struct D2BankPanelWidget;
+
+typedef uint8_t(__fastcall* GetSelectedBankPanelTab_t)(D2BankPanelWidget* pBankPanel);
+static GetSelectedBankPanelTab_t oGetSelectedBankPanelTab = nullptr;
+
+typedef void(__fastcall* BankPanelDraw_t)(D2BankPanelWidget* pBankPanel);
+static BankPanelDraw_t oBankPanelDraw = nullptr;
+
+typedef void* (__fastcall* BankPanelOnMessage_t)(void* pWidget, Message &message);
+static BankPanelOnMessage_t BankPanelMessage = reinterpret_cast<BankPanelOnMessage_t>(Pattern::Address(bankPanelOnMessage));
+
+typedef void*(__fastcall* WidgetFindChild_t)(void* pWidget, const char* childName);
+static WidgetFindChild_t WidgetFindChild = reinterpret_cast<WidgetFindChild_t>(Pattern::Address(widgetFindChild));
+
+
+static uint8_t gSelectedPage = 0;
+static blz_string gTab0OriginalText = { nullptr };
+
+uint8_t __fastcall HookedGetSelectedBankPanelTab(D2BankPanelWidget* pBankPanel) {
+    auto result = oGetSelectedBankPanelTab(pBankPanel);
+    // TODO: page size?
+    result += (gSelectedPage * 8);
+    return result;
+}
+
+void __fastcall HookedBankPanelDraw(D2BankPanelWidget* pBankPanel) {
+    oBankPanelDraw(pBankPanel);
+    auto pBankPages = WidgetFindChild(pBankPanel, "BankPages");
+    if (pBankPages) {
+        auto nSelectedPage = *(int32_t*)((int64_t)pBankPages + 0x178C);
+        if (nSelectedPage != gSelectedPage) {
+            gSelectedPage = nSelectedPage;
+            
+            // Update tab text.
+            auto pBankTabs = WidgetFindChild(pBankPanel, "BankTabs");
+            auto pTab0 = WidgetFindChild(pBankTabs, "Text0");
+            auto pTab1 = WidgetFindChild(pBankTabs, "Text1");
+            std::cout << "BankPanel: " << std::hex << pBankPanel << " BankPages: " << std::hex << pBankPages << " BankTabs: " << std::hex << pBankTabs << std::endl;
+            if (gTab0OriginalText.str == nullptr) {
+                auto tab0OriginalText = (blz_string*)((int64_t)pTab0 + 0x88);
+                gTab0OriginalText = {
+                    (const char*)malloc(tab0OriginalText->length + 1),
+                    tab0OriginalText->length,
+                    tab0OriginalText->alloc
+                };
+                memcpy(&gTab0OriginalText.data, &tab0OriginalText->data, 16);
+                std::strncpy((char*)gTab0OriginalText.str, tab0OriginalText->str, tab0OriginalText->length + 1);
+            }
+            if (gSelectedPage > 0) {
+                // Set tab 0 text to tab 1 text.
+                auto tab0Text = (blz_string*)((int64_t)pTab0 + 0x88);
+                auto tab1Text = (blz_string*)((int64_t)pTab1 + 0x88);
+                memcpy(tab0Text, tab1Text, sizeof(blz_string));
+            } else {
+                // Revert tab text
+                auto tab0Text = (blz_string*)((int64_t)pTab0 + 0x88);
+                memcpy(tab0Text, &gTab0OriginalText, sizeof(blz_string));
+            }
+            int32_t nSelectedTab = 0;   //This doesnt really seem to matter...
+            Message m = {
+                "BankPanelMessage"_hash64,
+                "SelectTab"_hash64,
+                (uint64_t)&nSelectedTab
+            };
+            BankPanelMessage(pBankPanel, m);
+        }
+    }
+    
+}
+
+#pragma endregion
+
+#pragma region Chat/Debug Structures
 struct DebugCheatEntry
 { // cheats array at 1418026F0
     char name[32];
@@ -166,14 +284,6 @@ struct handle_data
     HWND window_handle;
 };
 
-struct blz_string
-{
-    const char* str;
-    size_t length;
-    size_t alloc;
-    char data[16];
-};
-
 struct ChatMsg
 {
     uint32_t type;
@@ -255,6 +365,9 @@ std::string TrimWhitespace(const std::string& str) {
 }
 
 std::string ReadCommandFromFile(const std::string& filename, const std::string& searchString) {
+    if (!std::filesystem::exists(filename)) {
+        return {};
+    }
     return TrimWhitespace(readTextFollowingString(filename, searchString));
 }
 
@@ -351,6 +464,9 @@ std::vector<std::string> ReadAutomaticCommandsFromFile(const std::string& filena
 
 void WriteToDebugLog(const std::string& message) {
     const std::string logDirectory = "../Launcher/";
+    if (!std::filesystem::exists(logDirectory)) {
+        std::filesystem::create_directories(logDirectory);
+    }
     const std::string logFilePath = logDirectory + "D2RHUD_Logs.txt";
 
     std::ofstream logFile(logFilePath, std::ios::app);
@@ -456,19 +572,11 @@ int mapColorToInt(const std::string& colorCode) {
     }
 }
 
-struct MonsterStatsDisplaySettings {
-    bool monsterStatsDisplay;
-    std::string channelColor;
-    std::string playerNameColor;
-    std::string messageColor;
-};
-
 
 MonsterStatsDisplaySettings getMonsterStatsDisplaySetting(const std::string& configFilePath) {
     StartPolling();
     std::vector<std::string> automaticCommands = ReadAutomaticCommandsFromFile(filename);
     static bool isCached = false;
-    static MonsterStatsDisplaySettings cachedSettings;
 
     if (isCached) {
         return cachedSettings;
@@ -476,7 +584,7 @@ MonsterStatsDisplaySettings getMonsterStatsDisplaySetting(const std::string& con
 
     std::ifstream configFile(configFilePath);
     if (!configFile.is_open()) {
-        std::cerr << "Error: Could not open the config file." << std::endl;
+        std::cout << "Error: Could not open the config file: " << configFilePath << std::endl;
         return cachedSettings;
     }
 
@@ -510,7 +618,7 @@ MonsterStatsDisplaySettings getMonsterStatsDisplaySetting(const std::string& con
     cachedSettings.channelColor = settings["Channel Color"];
     cachedSettings.playerNameColor = settings["Player Name Color"];
     cachedSettings.messageColor = settings["Message Color"];
-    isCached = true;
+    cachedSettings.socketDisplay = settings["SocketDisplay"] == "true";
 
     return cachedSettings;
 }
@@ -663,6 +771,30 @@ void D2RHUD::OnDraw() {
         menuClickHookInstalled = true;
     }
 
+    if (!oGetItemName) {
+        DetourTransactionBegin();
+        DetourUpdateThread(GetCurrentThread());
+        oGetItemName = reinterpret_cast<GetItemName_t>(Pattern::Address(getItemNameOffset));
+        DetourAttach(&(PVOID&)oGetItemName, HookedGetItemName);
+        DetourTransactionCommit();
+    }
+
+    if (!oGetSelectedBankPanelTab) {
+        DetourTransactionBegin();
+        DetourUpdateThread(GetCurrentThread());
+        oGetSelectedBankPanelTab = reinterpret_cast<GetSelectedBankPanelTab_t>(Pattern::Address(getSelectedBankPanelTab));
+        DetourAttach(&(PVOID&)oGetSelectedBankPanelTab, HookedGetSelectedBankPanelTab);
+        DetourTransactionCommit();
+    }
+
+    if (!oBankPanelDraw) {
+        DetourTransactionBegin();
+        DetourUpdateThread(GetCurrentThread());
+        oBankPanelDraw = reinterpret_cast<BankPanelDraw_t>(Pattern::Address(bankPanelDraw));
+        DetourAttach(&(PVOID&)oBankPanelDraw, HookedBankPanelDraw);
+        DetourTransactionCommit();
+    }
+
     if (!settings.monsterStatsDisplay || !gMouseHover->IsHovered || gMouseHover->HoveredUnitType > UNIT_MONSTER)
         return;
 
@@ -676,7 +808,9 @@ void D2RHUD::OnDraw() {
     float ypercent2 = io.DisplaySize.y * 0.043f;
     int fontIndex = (io.DisplaySize.y <= 720) ? 0 : (io.DisplaySize.y <= 900) ? 1 : (io.DisplaySize.y <= 1080) ? 2 : (io.DisplaySize.y <= 1440) ? 3 : 4;
 
-    ImGui::PushFont(io.Fonts->Fonts[fontIndex]);
+    if (D3D12::FontLoaded) {
+        ImGui::PushFont(io.Fonts->Fonts[fontIndex]);
+    }
     D2UnitStrc* pUnit, * pUnitServer;
 
     if (pGame != nullptr)
@@ -750,6 +884,9 @@ void D2RHUD::OnDraw() {
                     //drawList->AddText({ 20, 10 }, IM_COL32(170, 50, 50, 255), coldimmunity3.c_str());
                 }
             }
+        }
+        if (D3D12::FontLoaded) {
+            ImGui::PopFont();
         }
     }
 }

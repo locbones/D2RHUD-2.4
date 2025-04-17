@@ -4,8 +4,12 @@
 #include <fstream>
 #include <iostream>
 #include <format>
+#include <sstream>
+#include <stacktrace>
 #include "Logging.h"
 #include "d2/D2Ptrs.h"
+
+LONG WINAPI ExceptionHandler(PEXCEPTION_POINTERS pExceptionInfo);
 
 DWORD WINAPI CreateConsole(LPVOID lParam) {
 #ifndef NDEBUG
@@ -36,6 +40,7 @@ BOOL APIENTRY DllMain( HMODULE hModule,
     case DLL_PROCESS_ATTACH: {
         CreateConsole(hModule);
         DisableThreadLibraryCalls(hModule);
+        SetUnhandledExceptionFilter(ExceptionHandler);
         CreateThread(nullptr, 0, &AttachThread, static_cast<LPVOID>(hModule), 0, nullptr);
         break;
     }
@@ -46,5 +51,21 @@ BOOL APIENTRY DllMain( HMODULE hModule,
     }
     }
     return TRUE;
+}
+
+LONG WINAPI ExceptionHandler(PEXCEPTION_POINTERS pExceptionInfo) {
+    std::stringstream ss;
+    ss << std::endl;
+    auto trace = std::stacktrace::current();
+    for (const auto& frame : trace) {
+        ss << frame << std::endl;
+    }
+    const auto message = ss.str();
+    std::cout << message << std::endl;
+#ifndef NDEBUG
+    system("pause");
+#endif
+    exit(EXIT_FAILURE);
+    return EXCEPTION_EXECUTE_HANDLER;
 }
 
