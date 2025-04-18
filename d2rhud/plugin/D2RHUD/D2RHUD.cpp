@@ -33,7 +33,7 @@
 //Startup memory edits found in the config file are performed by D2RLAN 
 std::string configFilePath = "config.json";
 std::string filename = "../Launcher/D2RLAN_Config.txt";
-std::string Version = "1.0.1";
+std::string Version = "1.0.2";
 
 struct MonsterStatsDisplaySettings {
     bool monsterStatsDisplay;
