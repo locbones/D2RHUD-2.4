@@ -33,7 +33,7 @@
 //Startup memory edits found in the config file are performed by D2RLAN 
 std::string configFilePath = "config.json";
 std::string filename = "../Launcher/D2RLAN_Config.txt";
-std::string Version = "1.0.2";
+std::string Version = "1.0.3";
 
 struct MonsterStatsDisplaySettings {
     bool monsterStatsDisplay;
@@ -752,21 +752,22 @@ void D2RHUD::OnDraw() {
     if (pGameClient != nullptr)
         pGame = (D2GameStrc*)pGameClient->pGame;
 
-    // Install hooks if not already done
     if (!menuClickHookInstalled)
     {
+        mainMenuClickHandlerOrig = reinterpret_cast<GameMenuOnClickHandler>(Pattern::Address(mainMenuClickHandlerOffset));
         DetourTransactionBegin();
         DetourUpdateThread(GetCurrentThread());
-
-        mainMenuClickHandlerOrig = reinterpret_cast<GameMenuOnClickHandler>(Pattern::Address(mainMenuClickHandlerOffset));
         DetourAttach(&(PVOID&)mainMenuClickHandlerOrig, GameMenuOnClickHandlerHook);
-
+        DetourTransactionCommit();
         CCMD_DEBUGCHEAT_Handler_Orig = reinterpret_cast<CCMD_HANDLER_Fptr>(Pattern::Address(CCMD_DEBUGCHEAT_HandlerOffset));
+        DetourTransactionBegin();
+        DetourUpdateThread(GetCurrentThread());
         DetourAttach(&(PVOID&)CCMD_DEBUGCHEAT_Handler_Orig, CCMD_DEBUGCHEAT_Hook);
-
+        DetourTransactionCommit();
         Process_SCMD_CHATSTART_Orig = reinterpret_cast<Process_SCMD_CHATSTART_Fptr>(Pattern::Address(Process_SCMD_CHATSTARTOffset));
+        DetourTransactionBegin();
+        DetourUpdateThread(GetCurrentThread());
         DetourAttach(&(PVOID&)Process_SCMD_CHATSTART_Orig, Process_SCMD_CHATSTART_Hook);
-
         DetourTransactionCommit();
         menuClickHookInstalled = true;
     }
@@ -795,39 +796,60 @@ void D2RHUD::OnDraw() {
         DetourTransactionCommit();
     }
 
-    if (!settings.monsterStatsDisplay || !gMouseHover->IsHovered || gMouseHover->HoveredUnitType > UNIT_MONSTER)
+    if (!settings.monsterStatsDisplay)
         return;
 
     auto drawList = ImGui::GetBackgroundDrawList();
     auto min = drawList->GetClipRectMin();
     auto max = drawList->GetClipRectMax();
-    auto center = (max.x - min.x) / 2.f;
+    auto width = max.x - min.x;
+    auto center = width / 2.f;
 
     ImGuiIO& io = ImGui::GetIO();
-    float ypercent1 = io.DisplaySize.y * 0.0745f;
-    float ypercent2 = io.DisplaySize.y * 0.043f;
-    int fontIndex = (io.DisplaySize.y <= 720) ? 0 : (io.DisplaySize.y <= 900) ? 1 : (io.DisplaySize.y <= 1080) ? 2 : (io.DisplaySize.y <= 1440) ? 3 : 4;
+    ImVec2 display_size = io.DisplaySize;
+    float ypercent1 = display_size.y * 0.0745f;
+    float ypercent2 = display_size.y * 0.043f;
 
-    if (D3D12::FontLoaded) {
-        ImGui::PushFont(io.Fonts->Fonts[fontIndex]);
+    if (display_size.y <= 720)
+        ImGui::PushFont(io.Fonts->Fonts[0]);
+    if (display_size.y > 720 && display_size.y <= 900)
+        ImGui::PushFont(io.Fonts->Fonts[1]);
+    if (display_size.y > 900 && display_size.y <= 1080)
+        ImGui::PushFont(io.Fonts->Fonts[2]);
+    if (display_size.y > 1080 && display_size.y <= 1440)
+        ImGui::PushFont(io.Fonts->Fonts[3]);
+    if (display_size.y > 1440 && display_size.y <= 2160)
+        ImGui::PushFont(io.Fonts->Fonts[4]);
+
+    if (!gMouseHover->IsHovered) {
+        return;
     }
+
+    if (gMouseHover->HoveredUnitType > UNIT_MONSTER) {
+        return;
+    }
+
     D2UnitStrc* pUnit, * pUnitServer;
 
     if (pGame != nullptr)
-        pUnit = pUnitServer = UNITS_GetServerUnitByTypeAndId(pGame, gMouseHover->HoveredUnitType, gMouseHover->HoveredUnitId);
+    {
+        pUnit = UNITS_GetServerUnitByTypeAndId(pGame, gMouseHover->HoveredUnitType, gMouseHover->HoveredUnitId);
+        pUnitServer = UNITS_GetServerUnitByTypeAndId(pGame, gMouseHover->HoveredUnitType, gMouseHover->HoveredUnitId);
+    }
     else
-        pUnit = pUnitServer = GetClientUnitPtrFunc(Pattern::Address(unitDataOffset + 0x400 * gMouseHover->HoveredUnitType), gMouseHover->HoveredUnitId & 0x7F, gMouseHover->HoveredUnitId, gMouseHover->HoveredUnitType);
+    {
+        pUnit = GetClientUnitPtrFunc(Pattern::Address(unitDataOffset + 0x400 * gMouseHover->HoveredUnitType), gMouseHover->HoveredUnitId & 0x7F, gMouseHover->HoveredUnitId, gMouseHover->HoveredUnitType);
+        pUnitServer = GetClientUnitPtrFunc(Pattern::Address(unitDataOffset + 0x400 * gMouseHover->HoveredUnitType), gMouseHover->HoveredUnitId & 0x7F, gMouseHover->HoveredUnitId, gMouseHover->HoveredUnitType);
+    }
 
     if (!pUnit || !pUnitServer)
         return;
 
-    D2UnitStrc* pUnitPlayer = UNITS_GetServerUnitByTypeAndId(pGame, UNIT_PLAYER, 1);
     std::cout << "Monster Stats Display is enabled." << std::endl;
-
     // Check if HP is greater than 0 (avoid displaying NPC stats)
     if (STATLIST_GetUnitStatSigned(pUnitServer, STAT_HITPOINTS, 0) != 0)
     {
-        // Retrieve and display all resistance stats
+        // Retrieve all Resistance stats and display them equally spaced and centered based on resolution variables
         if (pUnit)
         {
             float totalWidth = 0.f;
@@ -879,14 +901,8 @@ void D2RHUD::OnDraw() {
                         STATLIST_GetUnitStatSigned(pUnitServer, STAT_MAXHP, 0) >> 8);
                     auto width = ImGui::CalcTextSize(hp.c_str()).x;
                     drawList->AddText({ center - (width / 2.0f) + 1, ypercent2 }, IM_COL32(255, 255, 255, 255), hp.c_str());
-
-                    //std::string coldimmunity3 = std::format("Undead Atk Rating: {}", STATLIST_GetUnitStatSigned(pUnitPlayer, STAT_ITEM_UNDEAD_TOHIT, 0));
-                    //drawList->AddText({ 20, 10 }, IM_COL32(170, 50, 50, 255), coldimmunity3.c_str());
                 }
             }
-        }
-        if (D3D12::FontLoaded) {
-            ImGui::PopFont();
         }
     }
 }
