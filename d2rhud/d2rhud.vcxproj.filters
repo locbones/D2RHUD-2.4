@@ -22,5 +22,6 @@
     <ClInclude Include="d2\D2Structs.h" />
     <ClInclude Include="d2\D2Enums.h" />
     <ClInclude Include="plugin\KeyMappings.h" />
+    <ClInclude Include="d2\Reclass.h" />
   </ItemGroup>
 </Project>

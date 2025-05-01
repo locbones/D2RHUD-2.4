@@ -33,7 +33,7 @@
 //Startup memory edits found in the config file are performed by D2RLAN 
 std::string configFilePath = "config.json";
 std::string filename = "../Launcher/D2RLAN_Config.txt";
-std::string Version = "1.0.3";
+std::string Version = "1.0.4";
 
 struct MonsterStatsDisplaySettings {
     bool monsterStatsDisplay;
@@ -92,91 +92,6 @@ void __fastcall HookedGetItemName(D2UnitStrc* pUnit, char* pBuffer) {
             snprintf(pBuffer, getItemNameBufferSize, "%s ÿcN(%d)\0", pBuffer, nSockets);
         }
     }
-}
-
-#pragma endregion
-
-#pragma region Bank Tabs
-struct Message {
-    uint64_t o1;
-    uint64_t o2;
-    uint64_t o3;
-    uint64_t o4;
-    uint64_t o5;
-};
-
-const uint32_t getSelectedBankPanelTab = 0x18f1a0;
-const uint32_t bankPanelDraw = 0x18eb90;
-const uint32_t bankPanelOnMessage = 0x18ee50;
-const uint32_t widgetFindChild = 0x576070;
-struct D2BankPanelWidget;
-
-typedef uint8_t(__fastcall* GetSelectedBankPanelTab_t)(D2BankPanelWidget* pBankPanel);
-static GetSelectedBankPanelTab_t oGetSelectedBankPanelTab = nullptr;
-
-typedef void(__fastcall* BankPanelDraw_t)(D2BankPanelWidget* pBankPanel);
-static BankPanelDraw_t oBankPanelDraw = nullptr;
-
-typedef void* (__fastcall* BankPanelOnMessage_t)(void* pWidget, Message &message);
-static BankPanelOnMessage_t BankPanelMessage = reinterpret_cast<BankPanelOnMessage_t>(Pattern::Address(bankPanelOnMessage));
-
-typedef void*(__fastcall* WidgetFindChild_t)(void* pWidget, const char* childName);
-static WidgetFindChild_t WidgetFindChild = reinterpret_cast<WidgetFindChild_t>(Pattern::Address(widgetFindChild));
-
-
-static uint8_t gSelectedPage = 0;
-static blz_string gTab0OriginalText = { nullptr };
-
-uint8_t __fastcall HookedGetSelectedBankPanelTab(D2BankPanelWidget* pBankPanel) {
-    auto result = oGetSelectedBankPanelTab(pBankPanel);
-    // TODO: page size?
-    result += (gSelectedPage * 8);
-    return result;
-}
-
-void __fastcall HookedBankPanelDraw(D2BankPanelWidget* pBankPanel) {
-    oBankPanelDraw(pBankPanel);
-    auto pBankPages = WidgetFindChild(pBankPanel, "BankPages");
-    if (pBankPages) {
-        auto nSelectedPage = *(int32_t*)((int64_t)pBankPages + 0x178C);
-        if (nSelectedPage != gSelectedPage) {
-            gSelectedPage = nSelectedPage;
-            
-            // Update tab text.
-            auto pBankTabs = WidgetFindChild(pBankPanel, "BankTabs");
-            auto pTab0 = WidgetFindChild(pBankTabs, "Text0");
-            auto pTab1 = WidgetFindChild(pBankTabs, "Text1");
-            std::cout << "BankPanel: " << std::hex << pBankPanel << " BankPages: " << std::hex << pBankPages << " BankTabs: " << std::hex << pBankTabs << std::endl;
-            if (gTab0OriginalText.str == nullptr) {
-                auto tab0OriginalText = (blz_string*)((int64_t)pTab0 + 0x88);
-                gTab0OriginalText = {
-                    (const char*)malloc(tab0OriginalText->length + 1),
-                    tab0OriginalText->length,
-                    tab0OriginalText->alloc
-                };
-                memcpy(&gTab0OriginalText.data, &tab0OriginalText->data, 16);
-                std::strncpy((char*)gTab0OriginalText.str, tab0OriginalText->str, tab0OriginalText->length + 1);
-            }
-            if (gSelectedPage > 0) {
-                // Set tab 0 text to tab 1 text.
-                auto tab0Text = (blz_string*)((int64_t)pTab0 + 0x88);
-                auto tab1Text = (blz_string*)((int64_t)pTab1 + 0x88);
-                memcpy(tab0Text, tab1Text, sizeof(blz_string));
-            } else {
-                // Revert tab text
-                auto tab0Text = (blz_string*)((int64_t)pTab0 + 0x88);
-                memcpy(tab0Text, &gTab0OriginalText, sizeof(blz_string));
-            }
-            int32_t nSelectedTab = 0;   //This doesnt really seem to matter...
-            Message m = {
-                "BankPanelMessage"_hash64,
-                "SelectTab"_hash64,
-                (uint64_t)&nSelectedTab
-            };
-            BankPanelMessage(pBankPanel, m);
-        }
-    }
-    
 }
 
 #pragma endregion
@@ -266,7 +181,7 @@ typedef bool(__fastcall* Process_SCMD_CHATSTART_Fptr)(SCMD_CHATSTART_PACKET* pPa
 typedef void(__fastcall* BroadcastChatMessageFptr)(uint64_t pGame, const char* szMsg, uint8_t color);
 typedef void(__fastcall* GameMenuOnClickHandler)(uint64_t a1, Widget* pWidget);
 typedef D2UnitStrc* (__fastcall* GetClientUnitByIdAndTypeNew)(uint64_t pTable, uint32_t id1, uint32_t id2, uint32_t dwType);
-typedef void(__fastcall* SendPacketToServer)(CMD_PACKET_BASE* pPacket);
+typedef void(__fastcall* SendPacketToServer)(void* pPacket);
 typedef void(__fastcall* ExecuteDebugCheat)(const char* szCheat);
 bool menuClickHookInstalled = false;
 static GameMenuOnClickHandler mainMenuClickHandlerOrig = nullptr;
@@ -302,6 +217,336 @@ typedef D2ChatManager* (__fastcall* ChatManager_PushChatEntryFptr)(D2ChatManager
 static GetChatManagerFptr GetChatManager = reinterpret_cast<GetChatManagerFptr>(Pattern::Address(GetChatManagerOffset));
 static ChatManager_PushChatEntryFptr ChatManager_PushChatEntry = reinterpret_cast<ChatManager_PushChatEntryFptr>(Pattern::Address(ChatManager_PushChatEntryOffset));
 #pragma endregion
+
+#pragma region Bank Tabs
+struct Message {
+    uint64_t o1;
+    uint64_t o2;
+    uint64_t o3;
+    uint64_t o4;
+    uint64_t o5;
+};
+
+struct D2SaveSystemContainer {
+    int64_t unk_0000;
+    uint8_t* pData;
+    uint64_t nSize;
+    uint64_t nAllocated;
+    small_string_opt<0x1F> tFileName;
+    uint32_t unk_0058;
+};
+static_assert(offsetof(D2SaveSystemContainer, unk_0058) == 0x58);
+
+#pragma pack(1)
+
+// Both of these seem to be unused. Can use for our own uses.
+struct CCMD_CUSTOM {
+    uint8_t opcode;
+    uint64_t magic;
+    uint8_t opcode2;
+};
+
+struct SCMD_CUSTOM  {
+    uint8_t opcode;
+    uint64_t magic;
+    uint8_t opcode2;
+};
+
+// We might not use all these. Just documenting the steps mentally...
+enum SharedStashPhase : uint8_t {
+    PageChanged = 0,
+    SaveStarted,
+    SaveCompleted,
+    OldSharedStashFreed,
+    NewSharedStashLoadedAndAttachMessagesSent,
+    NewSharedStashUnitsCreated
+};
+
+struct CCMD_STASH_PAGE_CHANGE : CCMD_CUSTOM {
+    SharedStashPhase nPhase;
+    uint32_t nPage;
+};
+
+struct SCMD_STASH_PAGE_CHANGE : SCMD_CUSTOM {
+    SharedStashPhase nPhase;
+    uint32_t nPage;
+};
+#pragma pack()
+
+constexpr uint32_t bankPanelDraw = 0x18eb90;
+constexpr uint32_t bankPanelMessage = 0x18ee50;
+constexpr uint32_t saveSystemLoadFile = 0x6cba50;
+constexpr uint32_t ccmdProcessClientSystemMessage = 0x2e1b60;
+constexpr uint32_t nNumberOfTabs = 7;
+
+// Easier to take over an unused opcode than to add to the end.
+constexpr uint32_t CCMD_CUSTOM_OP_CODE = 0x3;  //CCMD_TRANSMUTE. variable length and can be large. we bake magic into it to let us know it is us.
+constexpr uint32_t SCMD_CUSTOM_OP_CODE = 0x2B;  //SCMD_CORRECT_PATH. It's easier to hijack this packet as opposed to adding a new one.
+constexpr uint32_t CCMD_SHARED_STASH_OP2 = 0x0;
+constexpr uint32_t SCMD_SHARED_STASH_OP2 = 0x0;
+
+struct D2BankPanelWidget;
+
+typedef void(__fastcall* BankPanelDraw_t)(D2BankPanelWidget* pBankPanel);
+static BankPanelDraw_t oBankPanelDraw = nullptr;
+
+typedef D2SaveSystemContainer* (__fastcall* SaveSystemLoadFile_t)(int64_t* pContainer, const char* szFilename, char bFlag);
+static SaveSystemLoadFile_t oSaveSystemLoadFile = nullptr;
+
+typedef int64_t*(__fastcall* CCMD_ProcessClientGameMessage_t)(D2GameStrc* pGame, D2ClientStrc* pClient, uint8_t* pPacket, uint64_t nSize);
+static CCMD_ProcessClientGameMessage_t oCCMD_ProcessClientGameMessage = nullptr; // D2GAME_PACKET_Handler_6FC89320 in D2MOO
+
+typedef char(__fastcall* CCMD_ProcessClientSystemMessage_t)(uint8_t* pData, int64_t nSize);
+static CCMD_ProcessClientSystemMessage_t oCCMD_ProcessClientSystemMessage = nullptr;
+
+typedef void (__fastcall* SCMD_QueuePacket_t)(int64_t* pCMDManager, int32_t nClient, void** pPacketRange);
+static SCMD_QueuePacket_t SCMD_QueuePacket = reinterpret_cast<SCMD_QueuePacket_t>(Pattern::Address(0x422ac0));
+
+typedef void(__fastcall* CCMD_QueuePacket_t)(void* pPacket, int32_t nSize);
+static CCMD_QueuePacket_t CCMD_QueuePacket = reinterpret_cast<CCMD_QueuePacket_t>(Pattern::Address(0x10dce0));
+
+typedef void* (__fastcall* BankPanelOnMessage_t)(void* pWidget, Message& message);
+static BankPanelOnMessage_t BankPanelMessage = reinterpret_cast<BankPanelOnMessage_t>(Pattern::Address(0x18ee50));
+
+typedef void* (__fastcall* WidgetFindChild_t)(void* pWidget, const char* childName);
+static WidgetFindChild_t WidgetFindChild = reinterpret_cast<WidgetFindChild_t>(Pattern::Address(0x576070));
+
+typedef int64_t(__fastcall* D2GAME_PACKETCALLBACK_Rcv0x03_CCMD_RUNXY_t)(D2GameStrc* pGame, D2UnitStrc* pUnit, void* pPacket, int nPacketSize);
+static D2GAME_PACKETCALLBACK_Rcv0x03_CCMD_RUNXY_t D2GAME_PACKETCALLBACK_Rcv0x20_CCMD_TRANSMUTE =
+reinterpret_cast<D2GAME_PACKETCALLBACK_Rcv0x03_CCMD_RUNXY_t>(Pattern::Address(0x2ABE30));
+
+typedef void(__fastcall* D2CLIENT_PACKETCALLBACK_Rcv0x2B_SCMD_CORRECT_PATH_t)(uint8_t* pPacket);
+static D2CLIENT_PACKETCALLBACK_Rcv0x2B_SCMD_CORRECT_PATH_t D2CLIENT_PACKETCALLBACK_Rcv0x2B_SCMD_CORRECT_PATH =
+    reinterpret_cast<D2CLIENT_PACKETCALLBACK_Rcv0x2B_SCMD_CORRECT_PATH_t>(Pattern::Address(0xDA3B0));
+
+
+using SCMDHANDLER = int64_t(__fastcall*)(uint8_t* pPacket);
+using SCMDHANDLEREX = int64_t(__fastcall*)(D2UnitStrc* pUnit, uint8_t* pPacket);
+
+class D2SCMDStrc {
+public:
+    SCMDHANDLER* pfHandler;
+    int64_t nPacketSize;
+    SCMDHANDLEREX* pfHandlerEx;
+};
+
+using CCMDHANDLER = int64_t(__fastcall*)(D2GameStrc* pGame, D2UnitStrc* pUnit, uint8_t* pPacket, int nPacketSize);
+class D2CCMDStrc {
+public:
+    CCMDHANDLER* pfHandler;
+};
+
+static char* gpSharedStashString = reinterpret_cast<char*>(Pattern::Address(0x1577390));
+static char* gpSharedStashHCString = reinterpret_cast<char*>(Pattern::Address(0x1577428));
+
+static uint8_t* tcpipPatch = reinterpret_cast<uint8_t*>(Pattern::Address(0x749AC));
+
+static int64_t* gpSCMDManager = reinterpret_cast<int64_t*>(Pattern::Address(0x18682b0));
+static int64_t* gpCCMDManager = reinterpret_cast<int64_t*>(Pattern::Address(0x1888310));
+
+static D2CCMDStrc* gpCCMDHandlerTable = reinterpret_cast<D2CCMDStrc*>(Pattern::Address(0x14bfc50));
+static D2SCMDStrc* gpSCMDHandlerTable = reinterpret_cast<D2SCMDStrc*>(Pattern::Address(0x1841b40));
+static D2ClientStrc** gpClientList = reinterpret_cast<D2ClientStrc**>(Pattern::Address(0x1d637f0));
+static D2Widget** gpPanelManager = reinterpret_cast<D2Widget**>(Pattern::Address(0x1d7c4e8));
+
+static uint32_t gSelectedPage = 0;
+
+const uint64_t CMD_MAGIC = 0xDEADBEEFDEADBEEF;
+const std::string STASH_NAME = "Stash";
+void __fastcall UpdateStashFileName(uint32_t nSelectedPage) {
+    auto scString = std::format("{}_SC_Page{}\0", STASH_NAME, nSelectedPage + 1);
+    auto hcString = std::format("{}_HC_Page{}\0", STASH_NAME, nSelectedPage + 1);
+    DWORD oldProtect;
+    // janky but does the job
+    VirtualProtect(gpSharedStashString, 0x32, PAGE_READWRITE, &oldProtect);
+    strcpy(gpSharedStashString, scString.c_str());
+    VirtualProtect(gpSharedStashString, 0x32, oldProtect, &oldProtect);
+    VirtualProtect(gpSharedStashHCString, 0x32, PAGE_READWRITE, &oldProtect);
+    strcpy(gpSharedStashHCString, hcString.c_str());
+    VirtualProtect(gpSharedStashHCString, 0x32, oldProtect, &oldProtect);
+
+    VirtualProtect(tcpipPatch, 0x1, PAGE_READWRITE, &oldProtect);
+    *tcpipPatch = 0xEB;
+    VirtualProtect(tcpipPatch, 0x1, oldProtect, &oldProtect);
+    //reinterpret_cast<void(__fastcall*)(char*, int64_t)>(Pattern::Address(0x6bed10))(pPath, 2LL); // maybe useful someday... get mod save directory
+}
+
+const std::vector<uint8_t> emptyStashTab = std::vector<uint8_t>{ 0x55, 0xaa, 0x55, 0xaa, 0x01, 0x00, 0x00, 0x00, 0x62, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x44, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x4a, 0x4d, 0x00, 0x00 };
+void __fastcall CCMD_SendNewEmptyStashMessage() {
+    byte pBuffer[0x47] = { 0x6c, 0x44, 0x1  };
+    memcpy(pBuffer + 3, emptyStashTab.data(), emptyStashTab.size());
+    CCMD_QueuePacket(&pBuffer, sizeof(pBuffer));
+}
+
+void __fastcall CCMD_SendSharedStashMessage(SharedStashPhase phase, uint32_t page) {
+    // send 0x3. with our magic to let us know it's a custom packet
+    // there seems to be validation on op code to size. need to make sure our packet is the same size of a 0x3 packet.
+    CCMD_STASH_PAGE_CHANGE tStashPageChange = { CCMD_CUSTOM_OP_CODE, CMD_MAGIC, CCMD_SHARED_STASH_OP2, phase, page };
+    byte pBuffer[0xD2] = { };
+    memset(&pBuffer, 0, sizeof(pBuffer));
+    memcpy(&pBuffer, &tStashPageChange, sizeof(tStashPageChange));
+    CCMD_QueuePacket(&pBuffer, sizeof(pBuffer));
+}
+
+void __fastcall SCMD_SendSharedStashMessage(D2ClientStrc* pClient, SharedStashPhase phase, uint32_t page) {
+    // send 0x9D w/ custom action. max size 257?
+    SCMD_STASH_PAGE_CHANGE tStashPageChange = { SCMD_CUSTOM_OP_CODE, CMD_MAGIC, SCMD_SHARED_STASH_OP2, phase, page };
+    byte pBuffer[0xCE] = { };
+    memset(&pBuffer, 0, sizeof(pBuffer));
+    memcpy(&pBuffer, &tStashPageChange, sizeof(tStashPageChange));
+    void* packetRange[2] = {
+        &pBuffer,
+        (uint8_t*)&pBuffer + 0xCE
+    };
+    SCMD_QueuePacket(gpSCMDManager, pClient->dwClientId, packetRange);
+}
+
+void __fastcall SCMD_HandleSharedStashMessage(SCMD_STASH_PAGE_CHANGE* pData) {
+    switch (pData->nPhase) {
+    case SaveStarted:
+        std::cout << "Client saved" << std::endl;
+        CCMD_SendSharedStashMessage(SaveCompleted, pData->nPage);
+        break;
+    case OldSharedStashFreed:
+        std::cout << "Sending new shared stash to server" << std::endl;
+        UpdateStashFileName(pData->nPage);
+        reinterpret_cast<void(__fastcall*)()>(Pattern::Address(0x10e080))(); // CLIENT_ReadSaveAndSend_D2CLTSYS_OPENCHAR()
+        CCMD_SendSharedStashMessage(NewSharedStashLoadedAndAttachMessagesSent, pData->nPage);
+        break;
+    case NewSharedStashUnitsCreated:
+        std::cout << "New shared stash units created" << std::endl;
+        auto pBankPanel = WidgetFindChild(*gpPanelManager, "BankExpansionLayout");
+        if (pBankPanel) {
+            std::cout << "Selecting tab" << std::endl;
+            int32_t nSelectedTab = 0;   //This doesnt really seem to matter...
+            Message m = {
+                "BankPanelMessage"_hash64,
+                "SelectTab"_hash64,
+                (uint64_t)&nSelectedTab
+            };
+            BankPanelMessage(pBankPanel, m);
+        }
+        break;
+    }
+}
+
+int64_t __fastcall CCMD_HandleSharedStashMessage(D2GameStrc* pGame, D2UnitStrc* pUnit, CCMD_STASH_PAGE_CHANGE* pData) {
+    auto pClient = pUnit->pPlayerData->pClient;
+    switch (pData->nPhase) {
+    case PageChanged:
+        // First server packet
+        // Think I could maybe mash this and the SUNIT_RemoveAllSharedStashes together...
+        std::cout << "Saving all clients" << std::endl;
+        reinterpret_cast<void(__fastcall*)(D2GameStrc*)>(Pattern::Address(0x28f510))(pClient->pGame);    // GAME_SaveClients
+    //    SCMD_SendSharedStashMessage(pClient, SaveStarted, pData->nPage);
+    //    break;
+    //case SaveCompleted:
+        std::cout << "Freeing current shared stash" << std::endl;
+        reinterpret_cast<void(__fastcall*)(D2GameStrc*, D2UnitStrc*)>(Pattern::Address(0x28bf00))(pClient->pGame, pClient->pPlayer); // SUNIT_RemoveAllSharedStashes
+        SCMD_SendSharedStashMessage(pClient, OldSharedStashFreed, pData->nPage);
+        break;
+    case NewSharedStashLoadedAndAttachMessagesSent:
+        std::cout << "Loading new shared stash" << std::endl;
+        std::cout << "# of saves attached: " << pClient->nSaveHeaderSize << std::endl;
+        //pClient->dwClientState = 1; //CLIENTSTATE_GAME_INIT_SENT needed for D2CLTSYS_OPENCHAR to attach save to D2ClientStrc
+        //pClient->dwFlags &= ~8;
+        reinterpret_cast<void(__fastcall*)(D2GameStrc*, D2ClientStrc*, D2UnitStrc*)>(Pattern::Address(0x319b70))(pClient->pGame, pClient, pClient->pPlayer); // Parse shared stash save headers in D2ClientStrc
+        reinterpret_cast<void(__fastcall*)(D2ClientStrc*)>(Pattern::Address(0x2a08a0))(pClient); // CLIENTS_FreeSaveHeader
+        SCMD_SendSharedStashMessage(pClient, NewSharedStashUnitsCreated, pData->nPage);
+        //pClient->dwFlags |= 8;
+        //pClient->dwClientState = 4; //CLIENTSTATE_INGAME
+        break;
+    }
+    return 1;
+}
+
+void __fastcall SCMDHANDLER_Custom(uint8_t* pPacket) {
+    uint64_t magic = *(uint64_t*)(pPacket + 1);
+    if (magic == CMD_MAGIC) {
+        SCMD_CUSTOM* pData = (SCMD_CUSTOM*)pPacket;
+        if (pData->opcode2 == SCMD_SHARED_STASH_OP2) {
+            SCMD_HandleSharedStashMessage((SCMD_STASH_PAGE_CHANGE*)pPacket);
+        }
+    } else {
+        D2CLIENT_PACKETCALLBACK_Rcv0x2B_SCMD_CORRECT_PATH(pPacket);
+    }
+}
+
+int64_t __fastcall CCMDHANDLER_Custom(D2GameStrc* pGame, D2UnitStrc* pUnit, uint8_t* pPacket, int nPacketSize) {
+    uint64_t magic = *(uint64_t*)(pPacket + 1);
+    if (magic == CMD_MAGIC) {
+        CCMD_CUSTOM* pData = (CCMD_CUSTOM*)pPacket;
+        if (pData->opcode2 == CCMD_SHARED_STASH_OP2) {
+            return CCMD_HandleSharedStashMessage(pGame, pUnit, (CCMD_STASH_PAGE_CHANGE*)pPacket);
+        }
+        return 1;
+    }
+    else {
+        return D2GAME_PACKETCALLBACK_Rcv0x20_CCMD_TRANSMUTE(pGame, pUnit, pPacket, nPacketSize);
+    }
+}
+
+char __fastcall CCMD_ProcessClientSystemMessageHook(uint8_t* pData, int64_t nSize) {
+    auto result = oCCMD_ProcessClientSystemMessage(pData, nSize);;
+    const int32_t nClientId = *(int32_t*)pData;
+    uint8_t* pPacket = ((uint8_t*)pData + 4);
+    if (*pPacket == 0x6C) { //D2CLTSYS_OPENCHAR
+        auto pClient = gpClientList[nClientId];
+        while (pClient->dwClientId != nClientId) {
+            pClient = *(D2ClientStrc**)pClient->pNext;
+            if (!pClient)
+                return 0;
+        }
+        if (pClient->dwClientState == 0x4) {
+            reinterpret_cast<bool(__fastcall*)(int32_t, uint8_t*, int64_t, char)>(Pattern::Address(0x2a06f0))(nClientId, pPacket + 3, pPacket[1], pPacket[2] != 0); //CLIENTS_AttachSaveFile
+            return 1;
+        } 
+    }
+    return result;
+}
+
+void __fastcall GenerateSharedStash() {
+    std::cout << "Generating new stash with " << nNumberOfTabs << " tabs" << std::endl;
+    for (int i = 0; i < nNumberOfTabs; i++) {
+        CCMD_SendNewEmptyStashMessage();
+    }
+}
+
+void OnStashPageChanged(uint32_t nSelectedPage) {
+    std::cout << "Sending CCMD_STASH_PAGE_CHANGE" << std::endl;
+    gSelectedPage = nSelectedPage;
+    CCMD_SendSharedStashMessage(PageChanged, nSelectedPage);
+}
+
+// Might be better than global vars
+/*
+void __fastcall HookedBankPanelMessage(D2BankPanelWidget* pBankPanel, int64_t* pMessages) {
+    oBankPanelMessage(pBankPanel, pMessages);
+    if (pMessages[0] == "DropdownListWidgetMessage"_hash64
+        && pMessages[1] == "OptionSelected"_hash64) {
+        auto pBankPages = WidgetFindChild(pBankPanel, "BankPages");
+        if (pBankPages) {
+            auto nSelectedPage = *(uint32_t*)((int64_t)pBankPages + 0x178C);
+            OnStashPageChanged(nSelectedPage);
+        }
+    }
+}
+*/
+
+void __fastcall HookedBankPanelDraw(D2BankPanelWidget* pBankPanel) {
+    oBankPanelDraw(pBankPanel);
+    //todo hook OnSelectionChange for widget?
+    auto pBankPages = WidgetFindChild(pBankPanel, "BankPages");
+    if (pBankPages) {
+        auto nSelectedPage = *(uint32_t*)((int64_t)pBankPages + 0x178C);
+        if (nSelectedPage != gSelectedPage) {
+            OnStashPageChanged(nSelectedPage);
+        }
+    }
+}
+
+#pragma endregion
+
 
 #pragma region Window/Detour Handlers
 BOOL is_main_window(HWND handle)
@@ -529,7 +774,8 @@ std::atomic<bool> keepPolling{ true };
 
 void PollClientStatus() {
     while (keepPolling) {
-        std::cout << "Current Status: " << CheckClientStatusChange() << std::endl;
+        auto result = CheckClientStatusChange();
+        //std::cout << "Current Status: " << result << std::endl;
         std::this_thread::sleep_for(std::chrono::seconds(1));
     }
 }
@@ -780,21 +1026,45 @@ void D2RHUD::OnDraw() {
         DetourTransactionCommit();
     }
 
-    if (!oGetSelectedBankPanelTab) {
-        DetourTransactionBegin();
-        DetourUpdateThread(GetCurrentThread());
-        oGetSelectedBankPanelTab = reinterpret_cast<GetSelectedBankPanelTab_t>(Pattern::Address(getSelectedBankPanelTab));
-        DetourAttach(&(PVOID&)oGetSelectedBankPanelTab, HookedGetSelectedBankPanelTab);
-        DetourTransactionCommit();
-    }
-
     if (!oBankPanelDraw) {
         DetourTransactionBegin();
         DetourUpdateThread(GetCurrentThread());
         oBankPanelDraw = reinterpret_cast<BankPanelDraw_t>(Pattern::Address(bankPanelDraw));
         DetourAttach(&(PVOID&)oBankPanelDraw, HookedBankPanelDraw);
         DetourTransactionCommit();
+        UpdateStashFileName(gSelectedPage);
+        DWORD oldProtect = 0;
+        std::cout << "gpCCMDHandlerTable " << std::hex << gpCCMDHandlerTable << std::endl;
+        VirtualProtect(&gpCCMDHandlerTable[CCMD_CUSTOM_OP_CODE], sizeof(D2CCMDStrc), PAGE_EXECUTE_READWRITE, &oldProtect);
+        gpCCMDHandlerTable[CCMD_CUSTOM_OP_CODE].pfHandler = (CCMDHANDLER*)&CCMDHANDLER_Custom;
+        VirtualProtect(&gpCCMDHandlerTable[CCMD_CUSTOM_OP_CODE], sizeof(D2CCMDStrc), oldProtect, &oldProtect);
+
+        std::cout << "gpSCMDHandlerTable " << std::hex << gpSCMDHandlerTable << std::endl;
+        VirtualProtect(&gpSCMDHandlerTable[SCMD_CUSTOM_OP_CODE], sizeof(D2SCMDStrc), PAGE_EXECUTE_READWRITE, &oldProtect);
+        gpSCMDHandlerTable[SCMD_CUSTOM_OP_CODE].pfHandler = (SCMDHANDLER*)&SCMDHANDLER_Custom;
+        VirtualProtect(&gpSCMDHandlerTable[SCMD_CUSTOM_OP_CODE], sizeof(D2SCMDStrc), oldProtect, &oldProtect);
+        
+        // Patch default "generate new shared stash" code
+        size_t nSize = 0x10e5e6 - 0x10e45a;
+        auto SharedStashGenerate = (uint8_t*)Pattern::Address(0x10e45a);
+        VirtualProtect(SharedStashGenerate, nSize, PAGE_EXECUTE_READWRITE, &oldProtect);
+        memset(SharedStashGenerate, 0x90, nSize);   //noop it.
+        uint8_t* p = SharedStashGenerate;
+        *p++ = 0x48; *p++ = 0xB8;                          // mov rax, imm64
+        *(uint64_t*)p = (uint64_t)&GenerateSharedStash;    // imm64
+        p += 8;
+        *p++ = 0xFF; *p++ = 0xD0;                          // call rax
+        VirtualProtect(SharedStashGenerate, nSize, oldProtect, &oldProtect);
     }
+
+    if (!oCCMD_ProcessClientSystemMessage) {
+        DetourTransactionBegin();
+        DetourUpdateThread(GetCurrentThread());
+        oCCMD_ProcessClientSystemMessage = reinterpret_cast<CCMD_ProcessClientSystemMessage_t>(Pattern::Address(ccmdProcessClientSystemMessage));
+        DetourAttach(&(PVOID&)oCCMD_ProcessClientSystemMessage, CCMD_ProcessClientSystemMessageHook);
+        DetourTransactionCommit();
+    }
+    
 
     if (!settings.monsterStatsDisplay)
         return;
@@ -971,7 +1241,8 @@ bool D2RHUD::OnKeyPressed(short key)
 
     // If CTRL + ALT + V are pressed together, show the message box
     if (ctrlPressed && altPressed && vPressed) {
-        ShowVersionMessage();
+        //ShowVersionMessage();
+        OnStashPageChanged(gSelectedPage + 1);
         ctrlPressed = altPressed = vPressed = false; // Reset state
         return true;
     }

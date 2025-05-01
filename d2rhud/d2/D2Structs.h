@@ -1,12 +1,32 @@
 #pragma once
 #include "D2Enums.h"
+#include "Reclass.h"
 #include <cstdint>
 
 struct D2Client {
-	uint8_t unknown1[0x198];
+	uint32_t dwClientId; //0x0000
+	uint32_t dwClientState; //0x0004
+	char pad_0008[36]; //0x0008
+	char szName[16]; //0x002C
+	char pad_003C[336]; //0x003C
+	uint32_t dwUnitType; //0x018C
+	uint32_t dwUnitGUID; //0x0190
+	char pad_0194[4]; //0x0194
 	uint64_t pPlayer;
 	uint8_t unknown2[0x90];
 	uint64_t pGame;
+	char pad_0238[552]; //0x0238
+	uint32_t dwFlags; //0x0460
+	char pad_0464[244]; //0x0464
+	D2Client* pNext; //0x0558
+};
+
+template<size_t T>
+struct small_string_opt {
+	const char* str;
+	size_t length;
+	size_t alloc;
+	char data[T];
 };
 
 struct blz_string {
@@ -27,13 +47,6 @@ struct D2MouseHoverStruct {
 	uint32_t HoveredUnitId;
 };
 
-struct D2UnitStrc {
-	uint32_t dwUnitType; //0x0000
-	uint32_t dwClassId; //0x0004
-	uint32_t dwUnitId; //0x0008
-};
-
-struct D2GameStrc;
 #pragma pack()
 
 constexpr uint64_t fnv1a_64(const char* s, size_t count) {

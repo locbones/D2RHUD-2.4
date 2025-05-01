@@ -1,7 +1,7 @@
 ﻿  main.cpp
 C:\Users\djsch\Github\D2RHUD-2.4\d2rhud-injector\main.cpp(134,16): warning C4267: 'initializing': conversion from 'size_t' to 'long', possible loss of data
   Generating code
-  Previous IPDB not found, fall back to full compilation.
-  All 1268 functions were compiled because no usable IPDB/IOBJ from previous compilation was found.
+  Previous IPDB was built with incompatible compiler, fall back to full compilation.
+  All 1290 functions were compiled because no usable IPDB/IOBJ from previous compilation was found.
   Finished generating code
   d2rhud-injector.vcxproj -> C:\Users\djsch\Github\D2RHUD-2.4\x64\Release\d2rhud-injector.exe
