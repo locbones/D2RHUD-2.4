@@ -1241,7 +1241,7 @@ bool D2RHUD::OnKeyPressed(short key)
 
     // If CTRL + ALT + V are pressed together, show the message box
     if (ctrlPressed && altPressed && vPressed) {
-        //ShowVersionMessage();
+        ShowVersionMessage();
         OnStashPageChanged(gSelectedPage + 1);
         ctrlPressed = altPressed = vPressed = false; // Reset state
         return true;
