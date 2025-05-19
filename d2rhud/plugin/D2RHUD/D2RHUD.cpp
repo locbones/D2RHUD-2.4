@@ -837,15 +837,27 @@ MonsterStatsDisplaySettings getMonsterStatsDisplaySetting(const std::string& con
         return cachedSettings;
     }
 
+    // Helper to clean a value (trim spaces, quotes, etc.)
     auto cleanValue = [](std::string value) -> std::string {
         value.erase(0, value.find_first_not_of(" \t\""));
         value.erase(value.find_last_not_of(" \t\n\r\",") + 1);
         return value;
         };
 
+    // Helper to strip inline comments
+    auto stripComments = [](std::string& line) {
+        std::size_t commentPos = line.find("//");
+        if (commentPos == std::string::npos)
+            commentPos = line.find("#");
+        if (commentPos != std::string::npos)
+            line = line.substr(0, commentPos);
+        };
+
     std::unordered_map<std::string, std::string> settings;
     std::string line;
     while (std::getline(configFile, line)) {
+        stripComments(line);
+
         std::size_t pos = line.find(":");
         if (pos == std::string::npos) continue;
 
@@ -869,11 +881,21 @@ MonsterStatsDisplaySettings getMonsterStatsDisplaySetting(const std::string& con
     cachedSettings.messageColor = settings["Message Color"];
     cachedSettings.socketDisplay = settings["SocketDisplay"] == "true";
     cachedSettings.HPRollover = settings["HPRolloverMods"] == "true";
-    cachedSettings.HPRolloverAmt = std::stoi(settings["HPRollover%"]);
-    cachedSettings.HPRolloverDiff = std::stoi(settings["HPRolloverDifficulty"]);
 
+    try {
+        cachedSettings.HPRolloverAmt = std::stoi(settings["HPRollover%"]);
+        cachedSettings.HPRolloverDiff = std::stoi(settings["HPRolloverDifficulty"]);
+    }
+    catch (const std::exception& e) {
+        std::cerr << "Error parsing numeric values: " << e.what() << std::endl;
+        cachedSettings.HPRolloverAmt = 0;
+        cachedSettings.HPRolloverDiff = 0;
+    }
+
+    isCached = true;
     return cachedSettings;
 }
+
 
 MonsterStatsDisplaySettings settings = getMonsterStatsDisplaySetting(configFilePath);
 #pragma endregion
@@ -1024,7 +1046,7 @@ void __fastcall ScaleDamage(D2DamageInfoStrc* pDamageInfo, D2DamageStatTableStrc
         if (nPlayerCount > 8) {
             float ratio = static_cast<float>(nPlayerCount - 8) / (nMaxPlayerCount - 8);
             float damageScale = 1.0f - ratio * (nMaxDamageReductionPercent / 100.0f);
-
+            *pDamageStatTableRecord->pOffsetInDamageStrc *= damageScale;
             /*
             // Open log file in append mode
             std::ofstream log("d2r_hp.txt", std::ios::app);
