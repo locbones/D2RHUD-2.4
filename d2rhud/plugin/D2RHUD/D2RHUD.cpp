@@ -1236,7 +1236,7 @@ void D2RHUD::OnDraw() {
     }
 
     D2UnitStrc* pUnit, * pUnitServer;
-    D2UnitStrc* pUnitPlayer = UNITS_GetServerUnitByTypeAndId(pGame, UNIT_PLAYER, 1);
+    //D2UnitStrc* pUnitPlayer = UNITS_GetServerUnitByTypeAndId(pGame, UNIT_PLAYER, 1);
 
     if (pGame != nullptr)
     {

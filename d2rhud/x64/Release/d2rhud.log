@@ -3,8 +3,8 @@ C:\Users\djsch\Github\D2RHUD-2.4\d2rhud\plugin\D2RHUD\D2RHUD.cpp(1042,34): warni
 C:\Users\djsch\Github\D2RHUD-2.4\d2rhud\plugin\D2RHUD\D2RHUD.cpp(1049,61): warning C4244: '*=': conversion from 'float' to 'int32_t', possible loss of data
 LINK : warning LNK4098: defaultlib 'LIBCMT' conflicts with use of other libs; use /NODEFAULTLIB:library
   Generating code
-  116 of 2796 functions ( 4.1%) were compiled, the rest were copied from previous compilation.
-    1 functions were new in current compilation
-    79 functions had inline decision re-evaluated but remain unchanged
+  34 of 2796 functions ( 1.2%) were compiled, the rest were copied from previous compilation.
+    9 functions were new in current compilation
+    85 functions had inline decision re-evaluated but remain unchanged
   Finished generating code
   d2rhud.vcxproj -> C:\Users\djsch\Github\D2RHUD-2.4\x64\Release\d2rhud.dll
