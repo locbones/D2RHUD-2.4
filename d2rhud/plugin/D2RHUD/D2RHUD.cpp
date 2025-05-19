@@ -1025,6 +1025,7 @@ void __fastcall ScaleDamage(D2DamageInfoStrc* pDamageInfo, D2DamageStatTableStrc
             float ratio = static_cast<float>(nPlayerCount - 8) / (nMaxPlayerCount - 8);
             float damageScale = 1.0f - ratio * (nMaxDamageReductionPercent / 100.0f);
 
+            /*
             // Open log file in append mode
             std::ofstream log("d2r_hp.txt", std::ios::app);
             if (log.is_open()) {
@@ -1038,6 +1039,7 @@ void __fastcall ScaleDamage(D2DamageInfoStrc* pDamageInfo, D2DamageStatTableStrc
                 log << ". Damage after " << std::dec << (*pDamageStatTableRecord->pOffsetInDamageStrc >> 8) << std::endl;
                 log.close(); // optional, handled by destructor, but explicit here
             }
+            */
         }
     }
 }
