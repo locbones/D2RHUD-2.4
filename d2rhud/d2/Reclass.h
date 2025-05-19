@@ -1,4 +1,3 @@
-// Created with ReClass.NET 1.2 by KN4CK3R
 #pragma once
 
 #include <cstdint>
@@ -8,8 +7,11 @@
 
 class D2SeedStrc {
 public:
-	uint32_t nLowSeed; //0x0000
-	uint32_t nHighSeed; //0x0004
+	union //0x0000
+	{
+		int32_t dwSeed[2]; //0x0000
+		int64_t lSeed; //0x0000
+	};
 }; //Size: 0x0008
 static_assert(sizeof(D2SeedStrc) == 0x8);
 
@@ -45,8 +47,9 @@ public:
 	char pad_0040[72]; //0x0040
 	class D2StatListExStrc* pStatListEx; //0x0088
 	class D2InventoryStrc* pInventory; //0x0090
-	char pad_0098[144]; //0x0098
-	uint32_t dwFlagEx; //0x0128
+	char pad_0098[140]; //0x0098
+	uint32_t dwFlags; //0x0124
+	uint32_t dwFlagsEx; //0x0128
 	char pad_012C[36]; //0x012C
 	class D2UnitStrc* pListNext; //0x0150
 	class D2UnitStrc* pRoomNext; //0x0158
@@ -59,7 +62,14 @@ static_assert(sizeof(D2UnitStrc) == 0x258);
 
 class D2GameStrc {
 public:
-	char pad_0000[336]; //0x0000
+	char pad_0000[257]; //0x0000
+	uint8_t nGameType; //0x0101
+	char pad_0102[2]; //0x0102
+	uint8_t nDifficulty; //0x0104
+	char pad_0105[3]; //0x0105
+	uint32_t bExpansion; //0x0108
+	uint32_t dwGameType; //0x010C
+	char pad_0110[64]; //0x0110
 	class D2ClientStrc* pClientList; //0x0150
 	uint32_t nClients; //0x0158
 	char pad_015C[32]; //0x015C
@@ -97,12 +107,11 @@ public:
 	class D2GameStrc* pGame; //0x0230
 	char pad_0238[552]; //0x0238
 	uint32_t dwFlags; //0x0460
-	char pad_0464[252]; //0x0464
-	class D2ClientStrc* pNext; //0x0560
-	char pad_0568[2856]; //0x0568
-}; //Size: 0x1090
-static_assert(sizeof(D2ClientStrc) == 0x1090);
-
+	char pad_0464[244]; //0x0464
+	class D2ClientStrc* pNext; //0x0558
+	char pad_0560[2856]; //0x0560
+}; //Size: 0x1088
+static_assert(sizeof(D2ClientStrc) == 0x1088);
 
 class D2ItemDataStrc {
 public:
@@ -114,9 +123,11 @@ static_assert(sizeof(D2ItemDataStrc) == 0x8C);
 
 class D2MonsterDataStrc {
 public:
-	char pad_0000[136]; //0x0000
-}; //Size: 0x0088
-static_assert(sizeof(D2MonsterDataStrc) == 0x88);
+	class D2MonStatsTxt* pMonstatsTxt; //0x0000
+	uint8_t nComponent[16]; //0x0008
+	char pad_0018[120]; //0x0018
+}; //Size: 0x0090
+static_assert(sizeof(D2MonsterDataStrc) == 0x90);
 
 class D2ObjectDataStrc {
 public:
@@ -191,9 +202,40 @@ static_assert(sizeof(D2PanelManager) == 0x78);
 class D2DataTablesStrc {
 public:
 	class D2PlayerClassTxt* pPlayerClassTxt; //0x0000
-	char pad_0008[7288]; //0x0008
-}; //Size: 0x1C80
-static_assert(sizeof(D2DataTablesStrc) == 0x1C80);
+	char pad_0008[3824]; //0x0008
+	class D2MonStatsTxt* pMonStatsTxt; //0x0EF8
+	int64_t nMonStatsTxtRecordCount; //0x0F00
+	char pad_0F08[48]; //0x0F08
+	class D2MonStats2Txt* pMonStats2Txt; //0x0F38
+	int64_t nMonStats2TxtRecordCount; //0x0F40
+	char pad_0F48[408]; //0x0F48
+	class D2MonLvlTxt* pMonLvlTxt; //0x10E0
+	int64_t nMonLvlTxtRecordCount; //0x10E8
+	char pad_10F0[96]; //0x10F0
+	class D2SkillsTxt* pSkillsTxt; //0x1150
+	int64_t nSkillsTxtRecordCount; //0x1158
+	char pad_1160[152]; //0x1160
+	class D2ItemStatCostTxt* pItemStatCostTxt; //0x11F8
+	int64_t nItemStatCostTxtRecordCount; //0x1200
+	char pad_1208[40]; //0x1208
+	class D2MonEquipTxt* pMonEquipTxt; //0x1230
+	int64_t nMonEquipTxtRecordId; //0x1238
+	char pad_1240[208]; //0x1240
+	class D2MonPropTxt* pMonPropTxt; //0x1310
+	int64_t nMonPropTxtRecordCount; //0x1318
+	char pad_1320[104]; //0x1320
+	class D2LevelsTxt* pLevelsTxt; //0x1388
+	int64_t nLevelsTxtRecordCount; //0x1390
+	char pad_1398[1656]; //0x1398
+	class D2ItemsTxt* pItemsTxt; //0x1A10
+	int64_t nItemsTxtRecordCount; //0x1A18
+	char pad_1A20[8]; //0x1A20
+	class D2ItemsTxt* pWeapons; //0x1A28
+	class D2ItemsTxt* pArmor; //0x1A30
+	class D2ItemsTxt* pMisc; //0x1A38
+	char pad_1A40[584]; //0x1A40
+}; //Size: 0x1C88
+static_assert(sizeof(D2DataTablesStrc) == 0x1C88);
 
 class D2PlayerClassTxt {
 public:
@@ -203,7 +245,9 @@ static_assert(sizeof(D2PlayerClassTxt) == 0x88);
 
 class D2ActiveRoomStrc {
 public:
-	char pad_0000[136]; //0x0000
+	char pad_0000[24]; //0x0000
+	class D2DrlgRoomStrc* pDrlgRoom; //0x0018
+	char pad_0020[104]; //0x0020
 }; //Size: 0x0088
 static_assert(sizeof(D2ActiveRoomStrc) == 0x88);
 
@@ -213,11 +257,12 @@ public:
 }; //Size: 0x0088
 static_assert(sizeof(D2DrlgActStrc) == 0x88);
 
-class D2StatListExStrc {
+class D2StatListExStrc // 0xB58
+{
 public:
-	char pad_0000[136]; //0x0000
-}; //Size: 0x0088
-static_assert(sizeof(D2StatListExStrc) == 0x88);
+	char pad_0000[2904]; //0x0000
+}; //Size: 0x0B58
+static_assert(sizeof(D2StatListExStrc) == 0xB58);
 
 class D2InventoryStrc {
 public:
@@ -284,4 +329,216 @@ public:
 	char pad_0010[120]; //0x0010
 }; //Size: 0x0088
 static_assert(sizeof(D2SaveHeaderStrc) == 0x88);
+
+class D2MonStatsTxt {
+public:
+	uint16_t nId; //0x0000
+	char pad_0002[58]; //0x0002
+	union //0x003C
+	{
+		uint8_t nMonStatsFlags[4]; //0x0000
+		uint32_t dwMonStatsFlags; //0x0000
+	};
+	char pad_0040[8]; //0x0040
+	uint16_t wMonStatsEx; //0x0048
+	char pad_004A[148]; //0x004A
+	uint16_t nLevel[3]; //0x00DE
+	char pad_00E4[248]; //0x00E4
+}; //Size: 0x01DC
+static_assert(sizeof(D2MonStatsTxt) == 0x1DC);
+
+class D2MonStats2Txt {
+public:
+	uint32_t dwId; //0x0000
+	char pad_0004[292]; //0x0004
+}; //Size: 0x0128
+static_assert(sizeof(D2MonStats2Txt) == 0x128);
+
+class D2ItemStatCostTxt {
+public:
+	uint16_t wStatId; //0x0000
+	char pad_0002[322]; //0x0002
+}; //Size: 0x0144
+static_assert(sizeof(D2ItemStatCostTxt) == 0x144);
+
+class D2LevelsTxt // 388
+{
+public:
+	char pad_0000[26]; //0x0000
+	uint16_t wMonLvlEx[3]; //0x001A
+	char pad_0020[356]; //0x0020
+}; //Size: 0x0184
+static_assert(sizeof(D2LevelsTxt) == 0x184);
+
+class D2MonPropTxt {
+public:
+	char pad_0000[136]; //0x0000
+}; //Size: 0x0088
+static_assert(sizeof(D2MonPropTxt) == 0x88);
+
+class D2SkillsTxt {
+public:
+	char pad_0000[136]; //0x0000
+}; //Size: 0x0088
+static_assert(sizeof(D2SkillsTxt) == 0x88);
+
+class D2MonEquipTxt {
+public:
+	char pad_0000[136]; //0x0000
+}; //Size: 0x0088
+static_assert(sizeof(D2MonEquipTxt) == 0x88);
+
+class D2ItemsTxt {
+public:
+	char pad_0000[436]; //0x0000
+}; //Size: 0x01B4
+static_assert(sizeof(D2ItemsTxt) == 0x1B4);
+
+class D2ItemDropStrc {
+public:
+	char pad_0000[16]; //0x0000
+	class D2GameStrc* pGame; //0x0010
+	char pad_0018[8]; //0x0018
+	uint32_t nId; //0x0020
+	uint32_t nSpawnType; //0x0024
+	uint32_t nX; //0x0028
+	uint32_t nY; //0x002C
+	class D2ActiveRoomStrc* pRoom; //0x0030
+	uint16_t wUnitInitFlags; //0x0038
+	char pad_003A[94]; //0x003A
+}; //Size: 0x0098
+static_assert(sizeof(D2ItemDropStrc) == 0x98);
+
+class D2PlayerCountBonusStrc {
+public:
+	int32_t nHP; //0x0000
+	int32_t nExperience; //0x0004
+	int32_t nMonsterSkillBonus; //0x0008
+	int32_t nDifficulty; //0x000C
+	int32_t nPlayerCount; //0x0010
+}; //Size: 0x0014
+static_assert(sizeof(D2PlayerCountBonusStrc) == 0x14);
+
+class D2MonStatsInitStrc {
+public:
+	int32_t nMinHP; //0x0000
+	int32_t nMaxHP; //0x0004
+	int32_t nAC; //0x0008
+	int32_t nTH; //0x000C
+	int32_t nExp; //0x0010
+	int32_t nA1MinD; //0x0014
+	int32_t nA1MaxD; //0x0018
+	int32_t nA2MinD; //0x001C
+	int32_t nA2MaxD; //0x0020
+	int32_t nS1MinD; //0x0024
+	int32_t nS1MaxD; //0x0028
+	int32_t nElMinD; //0x002C
+	int32_t nElMaxD; //0x0030
+	int32_t nElDur; //0x0034
+}; //Size: 0x0038
+static_assert(sizeof(D2MonStatsInitStrc) == 0x38);
+
+class D2DrlgRoomStrc {
+public:
+	char pad_0000[144]; //0x0000
+	class D2DrlgLevelStrc* pLevel; //0x0090
+	char pad_0098[240]; //0x0098
+}; //Size: 0x0188
+static_assert(sizeof(D2DrlgRoomStrc) == 0x188);
+
+class D2DrlgLevelStrc {
+public:
+	char pad_0000[504]; //0x0000
+	uint32_t nLevelId; //0x01F8
+	char pad_01FC[140]; //0x01FC
+}; //Size: 0x0288
+static_assert(sizeof(D2DrlgLevelStrc) == 0x288);
+
+class D2MonLvlTxt {
+public:
+	char pad_0000[120]; //0x0000
+}; //Size: 0x0078
+static_assert(sizeof(D2MonLvlTxt) == 0x78);
+
+class D2DamageStrc {
+public:
+	int32_t dwHitFlags; //0x0000
+	int16_t wResultFlags; //0x0004
+	int16_t wExtra; //0x0006
+	char pad_0008[20]; //0x0008
+	int32_t dwPhysDamage; //0x001C
+	int32_t dwEnDmgPct; //0x0020
+	int32_t dwFireDamage; //0x0024
+	int32_t dwBurnDamage; //0x0028
+	char pad_002C[4]; //0x002C
+	int32_t dwLtngDamage; //0x0030
+	int32_t dwMagDamage; //0x0034
+	int32_t dwColdDamage; //0x0038
+	int32_t dwPoisDamage; //0x003C
+	int32_t dwPoisLen; //0x0040
+	char pad_0044[220]; //0x0044
+	int32_t dwColdLen; //0x0120
+	int32_t dwBurnLen; //0x0124
+	int32_t dwLifeLeech; //0x0128
+	int32_t dwManaLeech; //0x012C
+	int32_t dwStamLeech; //0x0130
+	int32_t dwStunLen; //0x0134
+	int32_t dwAbsLife; //0x0138
+	int32_t dwDmgTotal; //0x013C
+	char pad_0140[4]; //0x0140
+	int32_t dwPiercePct; //0x0144
+	int32_t dwDamageRate; //0x0148
+	char pad_014C[4]; //0x014C
+	int32_t dwHitClass; //0x0150
+	uint8_t nHitClassActiveSet; //0x0154
+	char pad_0155[3]; //0x0155
+	int32_t dwConvPct; //0x0158
+	int32_t nOverlay; //0x015C
+}; //Size: 0x0160
+static_assert(sizeof(D2DamageStrc) == 0x160);
+
+class D2CombatStrc {
+public:
+	class D2GameStrc* pGame; //0x0000
+	uint32_t dwAttackerType; //0x0008
+	int32_t dwAttackerId; //0x000C
+	int32_t dwDefenderType; //0x0010
+	int32_t dwDefenderId; //0x0014
+	char pad_0018[256]; //0x0018
+}; //Size: 0x0118
+static_assert(sizeof(D2CombatStrc) == 0x118);
+
+class D2DamageInfoStrc {
+public:
+	class D2GameStrc* pGame; //0x0000
+	class D2DifficultyLevelsTxt* pDifficultyLevelsTxt; //0x0008
+	class D2UnitStrc* pAttacker; //0x0010
+	class D2UnitStrc* pDefender; //0x0018
+	int32_t bAttackerIsMonster; //0x0020
+	int32_t bDefenderIsMonster; //0x0024
+	class D2DamageStrc* pDamage; //0x0028
+	int32_t nDamageReduction[4]; //0x0030
+}; //Size: 0x0040
+static_assert(sizeof(D2DamageInfoStrc) == 0x40);
+
+class D2DamageStatTableStrc {
+public:
+	int32_t* pOffsetInDamageStrc; //0x0000
+	int32_t nResStatId; //0x0008
+	int32_t nMaxResStatId; //0x000C
+	int32_t nPierceStatId; //0x0010
+	int32_t nAbsorbPctStatId; //0x0014
+	int32_t nAbsorbStatId; //0x0018
+	int32_t nDamageReductionType; //0x001C
+	char pad_0020[8]; //0x0020
+	char* szName; //0x0028
+	uint8_t nShiftDamage; //0x0030
+}; //Size: 0x0031
+static_assert(sizeof(D2DamageStatTableStrc) == 0x31);
+
+class D2DifficultyLevelsTxt {
+public:
+	char pad_0000[136]; //0x0000
+}; //Size: 0x0088
+static_assert(sizeof(D2DifficultyLevelsTxt) == 0x88);
 #pragma pack(pop)

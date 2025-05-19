@@ -33,7 +33,7 @@
 //Startup memory edits found in the config file are performed by D2RLAN 
 std::string configFilePath = "config.json";
 std::string filename = "../Launcher/D2RLAN_Config.txt";
-std::string Version = "1.0.4";
+std::string Version = "1.0.5";
 
 struct MonsterStatsDisplaySettings {
     bool monsterStatsDisplay;
@@ -41,10 +41,15 @@ struct MonsterStatsDisplaySettings {
     std::string playerNameColor;
     std::string messageColor;
     bool socketDisplay;
+    bool HPRollover;
+    std::int32_t HPRolloverAmt;
+    std::int32_t HPRolloverDiff;
 };
 static MonsterStatsDisplaySettings cachedSettings;
 
 static D2Client* GetClientPtr();
+
+static D2DataTablesStrc* sgptDataTables = reinterpret_cast<D2DataTablesStrc*>(Pattern::Address(0x1c9e980));
 
 #pragma region Monster & Command Constants
 const char* ResistanceNames[6] = { "   ", "   ", "   ", "   ", "   ", "   " };
@@ -339,8 +344,6 @@ public:
 static char* gpSharedStashString = reinterpret_cast<char*>(Pattern::Address(0x1577390));
 static char* gpSharedStashHCString = reinterpret_cast<char*>(Pattern::Address(0x1577428));
 
-static uint8_t* tcpipPatch = reinterpret_cast<uint8_t*>(Pattern::Address(0x749AC));
-
 static int64_t* gpSCMDManager = reinterpret_cast<int64_t*>(Pattern::Address(0x18682b0));
 static int64_t* gpCCMDManager = reinterpret_cast<int64_t*>(Pattern::Address(0x1888310));
 
@@ -365,10 +368,12 @@ void __fastcall UpdateStashFileName(uint32_t nSelectedPage) {
     strcpy(gpSharedStashHCString, hcString.c_str());
     VirtualProtect(gpSharedStashHCString, 0x32, oldProtect, &oldProtect);
 
+    /*
+    static uint8_t* tcpipPatch = reinterpret_cast<uint8_t*>(Pattern::Address(0x749AC));
     VirtualProtect(tcpipPatch, 0x1, PAGE_READWRITE, &oldProtect);
     *tcpipPatch = 0xEB;
     VirtualProtect(tcpipPatch, 0x1, oldProtect, &oldProtect);
-    //reinterpret_cast<void(__fastcall*)(char*, int64_t)>(Pattern::Address(0x6bed10))(pPath, 2LL); // maybe useful someday... get mod save directory
+    */
 }
 
 const std::vector<uint8_t> emptyStashTab = std::vector<uint8_t>{ 0x55, 0xaa, 0x55, 0xaa, 0x01, 0x00, 0x00, 0x00, 0x62, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x44, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x4a, 0x4d, 0x00, 0x00 };
@@ -492,10 +497,8 @@ char __fastcall CCMD_ProcessClientSystemMessageHook(uint8_t* pData, int64_t nSiz
     uint8_t* pPacket = ((uint8_t*)pData + 4);
     if (*pPacket == 0x6C) { //D2CLTSYS_OPENCHAR
         auto pClient = gpClientList[nClientId];
-        while (pClient->dwClientId != nClientId) {
-            pClient = *(D2ClientStrc**)pClient->pNext;
-            if (!pClient)
-                return 0;
+        if (!pClient) {
+            return result;
         }
         if (pClient->dwClientState == 0x4) {
             reinterpret_cast<bool(__fastcall*)(int32_t, uint8_t*, int64_t, char)>(Pattern::Address(0x2a06f0))(nClientId, pPacket + 3, pPacket[1], pPacket[2] != 0); //CLIENTS_AttachSaveFile
@@ -865,6 +868,9 @@ MonsterStatsDisplaySettings getMonsterStatsDisplaySetting(const std::string& con
     cachedSettings.playerNameColor = settings["Player Name Color"];
     cachedSettings.messageColor = settings["Message Color"];
     cachedSettings.socketDisplay = settings["SocketDisplay"] == "true";
+    cachedSettings.HPRollover = settings["HPRolloverMods"] == "true";
+    cachedSettings.HPRolloverAmt = std::stoi(settings["HPRollover%"]);
+    cachedSettings.HPRolloverDiff = std::stoi(settings["HPRolloverDifficulty"]);
 
     return cachedSettings;
 }
@@ -989,6 +995,64 @@ void __fastcall GameMenuOnClickHandlerHook(uint64_t a1, Widget* pWidget) {
 }
 #pragma endregion
 
+#pragma region Monster Stats
+
+typedef BOOL(__fastcall* STATLISTEX_SetStatListExStat_t)(D2StatListExStrc* pStatListEx, D2C_ItemStats nStat, int32_t nValue, uint16_t nLayer);
+static STATLISTEX_SetStatListExStat_t STATLISTEX_SetStatListExStat = reinterpret_cast<STATLISTEX_SetStatListExStat_t>(Pattern::Address(0x1e5270));
+
+typedef void(__fastcall* MONSTER_GetPlayerCountBonus_t)(D2GameStrc* pGame, D2PlayerCountBonusStrc* pPlayerCountBonus, D2ActiveRoomStrc* pRoom, D2UnitStrc* pMonster);
+static MONSTER_GetPlayerCountBonus_t oMONSTER_GetPlayerCountBonus = nullptr;
+
+typedef void(__fastcall* SUNITDMG_ApplyResistancesAndAbsorb_t)(D2DamageInfoStrc* pDamageInfo, D2DamageStatTableStrc* pDamageStatTableRecord, int32_t bDontAbsorb);
+static SUNITDMG_ApplyResistancesAndAbsorb_t oSUNITDMG_ApplyResistancesAndAbsorb = nullptr;
+
+static int32_t* gnVirtualPlayerCount = reinterpret_cast<int32_t*>(Pattern::Address(0x1d637e4));
+
+void __fastcall HookedMONSTER_GetPlayerCountBonus(D2GameStrc* pGame, D2PlayerCountBonusStrc* pPlayerCountBonus, D2ActiveRoomStrc* pRoom, D2UnitStrc* pMonster) {
+    oMONSTER_GetPlayerCountBonus(pGame, pPlayerCountBonus, pRoom, pMonster);
+    // cap max hp bonus at 300%. once it gets to 500% + it can rollover quickly causing monsters to have negative hp.
+    if (pPlayerCountBonus->nPlayerCount > 8 && pGame->nDifficulty > cachedSettings.HPRolloverDiff) {
+        pPlayerCountBonus->nHP = 300;
+    }
+}
+
+const int32_t nMaxPlayerCount = 65535;
+float nMaxDamageReductionPercent = cachedSettings.HPRolloverAmt;
+void __fastcall ScaleDamage(D2DamageInfoStrc* pDamageInfo, D2DamageStatTableStrc* pDamageStatTableRecord) {
+    if (pDamageInfo->bDefenderIsMonster && *pDamageStatTableRecord->pOffsetInDamageStrc > 0) {
+        auto nPlayerCount = STATLIST_GetUnitStatSigned(pDamageInfo->pDefender, STAT_MONSTER_PLAYERCOUNT, 0);
+        if (nPlayerCount > 8) {
+            float ratio = static_cast<float>(nPlayerCount - 8) / (nMaxPlayerCount - 8);
+            float damageScale = 1.0f - ratio * (nMaxDamageReductionPercent / 100.0f);
+
+            // Open log file in append mode
+            std::ofstream log("d2r_hp.txt", std::ios::app);
+            if (log.is_open()) {
+                log << "Player count " << nPlayerCount << " scaling damage to " << (1.f - damageScale) * 100.f;
+                log << "% reduction. Damage before " << std::dec << (*pDamageStatTableRecord->pOffsetInDamageStrc >> 8);
+            }
+
+            *pDamageStatTableRecord->pOffsetInDamageStrc *= damageScale;
+
+            if (log.is_open()) {
+                log << ". Damage after " << std::dec << (*pDamageStatTableRecord->pOffsetInDamageStrc >> 8) << std::endl;
+                log.close(); // optional, handled by destructor, but explicit here
+            }
+        }
+    }
+}
+
+void __fastcall HookedSUNITDMG_ApplyResistancesAndAbsorb(D2DamageInfoStrc* pDamageInfo, D2DamageStatTableStrc* pDamageStatTableRecord, int32_t bDontAbsorb) {
+    oSUNITDMG_ApplyResistancesAndAbsorb(pDamageInfo, pDamageStatTableRecord, bDontAbsorb);
+
+    if (pDamageInfo->pGame->nDifficulty > cachedSettings.HPRolloverDiff) {
+        ScaleDamage(pDamageInfo, pDamageStatTableRecord);
+    }
+}
+
+#pragma endregion
+
+
 #pragma region Draw Loop for Detours and Stats Display
 void D2RHUD::OnDraw() {
 
@@ -1064,6 +1128,54 @@ void D2RHUD::OnDraw() {
         DetourAttach(&(PVOID&)oCCMD_ProcessClientSystemMessage, CCMD_ProcessClientSystemMessageHook);
         DetourTransactionCommit();
     }
+
+    if (cachedSettings.HPRollover && !oSUNITDMG_ApplyResistancesAndAbsorb) {
+        DetourTransactionBegin();
+        DetourUpdateThread(GetCurrentThread());
+        oSUNITDMG_ApplyResistancesAndAbsorb = reinterpret_cast<SUNITDMG_ApplyResistancesAndAbsorb_t>(Pattern::Address(0x3253d0));
+        DetourAttach(&(PVOID&)oSUNITDMG_ApplyResistancesAndAbsorb, HookedSUNITDMG_ApplyResistancesAndAbsorb);
+        DetourTransactionCommit();
+    }
+
+    if (cachedSettings.HPRollover && !oMONSTER_GetPlayerCountBonus) {
+        DetourTransactionBegin();
+        DetourUpdateThread(GetCurrentThread());
+        oMONSTER_GetPlayerCountBonus = reinterpret_cast<MONSTER_GetPlayerCountBonus_t>(Pattern::Address(0x341120));
+        DetourAttach(&(PVOID&)oMONSTER_GetPlayerCountBonus, HookedMONSTER_GetPlayerCountBonus);
+        DetourTransactionCommit();
+
+        // Patch max player count for testing
+        /*
+        DWORD oldProtect = 0;
+        {
+            for (uint32_t patches : {0x135EF8, 0x135F16, 0x1E31CCC, 0x1E31D64}) {
+                auto PlayerCount = (uint32_t*)Pattern::Address(patches);
+                VirtualProtect(PlayerCount, 4, PAGE_EXECUTE_READWRITE, &oldProtect);
+                *PlayerCount = 65535;
+                VirtualProtect(PlayerCount, 4, oldProtect, &oldProtect);
+            }
+        }
+        {
+            size_t nSize = 17;
+            auto PlayerCount = (uint8_t*)Pattern::Address(0x11FE12);
+            VirtualProtect(PlayerCount, nSize, PAGE_EXECUTE_READWRITE, &oldProtect);
+            memset(PlayerCount, 0x90, nSize);
+            uint8_t* p = PlayerCount;
+            *p++ = 0x41; *p++ = 0x89; *p++ = 0xC4;
+            VirtualProtect(PlayerCount, nSize, oldProtect, &oldProtect);
+        }
+        {
+            size_t nSize = 3;
+            auto PlayerCount = (uint8_t*)Pattern::Address(0x136910);
+            VirtualProtect(PlayerCount, nSize, PAGE_EXECUTE_READWRITE, &oldProtect);
+            memset(PlayerCount, 0x90, nSize);
+            uint8_t* p = PlayerCount;
+            *p++ = 0x89; *p++ = 0xC8;
+            VirtualProtect(PlayerCount, nSize, oldProtect, &oldProtect);
+        }
+        */
+        
+    }
     
 
     if (!settings.monsterStatsDisplay)
@@ -1100,6 +1212,7 @@ void D2RHUD::OnDraw() {
     }
 
     D2UnitStrc* pUnit, * pUnitServer;
+    D2UnitStrc* pUnitPlayer = UNITS_GetServerUnitByTypeAndId(pGame, UNIT_PLAYER, 1);
 
     if (pGame != nullptr)
     {
@@ -1115,7 +1228,7 @@ void D2RHUD::OnDraw() {
     if (!pUnit || !pUnitServer)
         return;
 
-    std::cout << "Monster Stats Display is enabled." << std::endl;
+    // std::cout << "Monster Stats Display is enabled." << std::endl;
     // Check if HP is greater than 0 (avoid displaying NPC stats)
     if (STATLIST_GetUnitStatSigned(pUnitServer, STAT_HITPOINTS, 0) != 0)
     {
@@ -1173,6 +1286,10 @@ void D2RHUD::OnDraw() {
                     drawList->AddText({ center - (width / 2.0f) + 1, ypercent2 }, IM_COL32(255, 255, 255, 255), hp.c_str());
                 }
             }
+
+            /* Debug Example - Retrieves stat references from D2Enums.h, Remove the // at start of line to use */
+            //std::string coldimmunity1 = std::format("EXP%: {}", STATLIST_GetUnitStatSigned(pUnitPlayer, 85, 0));
+            //drawList->AddText({ 20, 10 }, IM_COL32(170, 50, 50, 255), coldimmunity1.c_str());
         }
     }
 }
