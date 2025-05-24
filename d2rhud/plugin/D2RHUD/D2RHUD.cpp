@@ -1216,47 +1216,47 @@ void D2RHUD::OnDraw() {
     float ypercent1 = display_size.y * 0.0745f;
     float ypercent2 = display_size.y * 0.043f;
 
+    ImFont* selectedFont = nullptr;
+    bool fontPushed = false;
+
     if (display_size.y <= 720)
-        ImGui::PushFont(io.Fonts->Fonts[0]);
-    if (display_size.y > 720 && display_size.y <= 900)
-        ImGui::PushFont(io.Fonts->Fonts[1]);
-    if (display_size.y > 900 && display_size.y <= 1080)
-        ImGui::PushFont(io.Fonts->Fonts[2]);
-    if (display_size.y > 1080 && display_size.y <= 1440)
-        ImGui::PushFont(io.Fonts->Fonts[3]);
-    if (display_size.y > 1440 && display_size.y <= 2160)
-        ImGui::PushFont(io.Fonts->Fonts[4]);
+        selectedFont = io.Fonts->Fonts[0];
+    else if (display_size.y <= 900)
+        selectedFont = io.Fonts->Fonts[1];
+    else if (display_size.y <= 1080)
+        selectedFont = io.Fonts->Fonts[2];
+    else if (display_size.y <= 1440)
+        selectedFont = io.Fonts->Fonts[3];
+    else if (display_size.y <= 2160)
+        selectedFont = io.Fonts->Fonts[4];
 
-    if (!gMouseHover->IsHovered) {
-        return;
-    }
-
-    if (gMouseHover->HoveredUnitType > UNIT_MONSTER) {
-        return;
-    }
-
-    D2UnitStrc* pUnit, * pUnitServer;
-    //D2UnitStrc* pUnitPlayer = UNITS_GetServerUnitByTypeAndId(pGame, UNIT_PLAYER, 1);
-
-    if (pGame != nullptr)
+    if (selectedFont)
     {
-        pUnit = UNITS_GetServerUnitByTypeAndId(pGame, gMouseHover->HoveredUnitType, gMouseHover->HoveredUnitId);
-        pUnitServer = UNITS_GetServerUnitByTypeAndId(pGame, gMouseHover->HoveredUnitType, gMouseHover->HoveredUnitId);
-    }
-    else
-    {
-        pUnit = GetClientUnitPtrFunc(Pattern::Address(unitDataOffset + 0x400 * gMouseHover->HoveredUnitType), gMouseHover->HoveredUnitId & 0x7F, gMouseHover->HoveredUnitId, gMouseHover->HoveredUnitType);
-        pUnitServer = GetClientUnitPtrFunc(Pattern::Address(unitDataOffset + 0x400 * gMouseHover->HoveredUnitType), gMouseHover->HoveredUnitId & 0x7F, gMouseHover->HoveredUnitId, gMouseHover->HoveredUnitType);
+        ImGui::PushFont(selectedFont);
+        fontPushed = true;
     }
 
-    if (!pUnit || !pUnitServer)
-        return;
-
-    // std::cout << "Monster Stats Display is enabled." << std::endl;
-    // Check if HP is greater than 0 (avoid displaying NPC stats)
-    if (STATLIST_GetUnitStatSigned(pUnitServer, STAT_HITPOINTS, 0) != 0)
+    do
     {
-        // Retrieve all Resistance stats and display them equally spaced and centered based on resolution variables
+        if (!gMouseHover->IsHovered) break;
+        if (gMouseHover->HoveredUnitType > UNIT_MONSTER) break;
+
+        D2UnitStrc* pUnit, * pUnitServer;
+        if (pGame != nullptr)
+        {
+            pUnit = UNITS_GetServerUnitByTypeAndId(pGame, gMouseHover->HoveredUnitType, gMouseHover->HoveredUnitId);
+            pUnitServer = UNITS_GetServerUnitByTypeAndId(pGame, gMouseHover->HoveredUnitType, gMouseHover->HoveredUnitId);
+        }
+        else
+        {
+            pUnit = GetClientUnitPtrFunc(Pattern::Address(unitDataOffset + 0x400 * gMouseHover->HoveredUnitType), gMouseHover->HoveredUnitId & 0x7F, gMouseHover->HoveredUnitId, gMouseHover->HoveredUnitType);
+            pUnitServer = GetClientUnitPtrFunc(Pattern::Address(unitDataOffset + 0x400 * gMouseHover->HoveredUnitType), gMouseHover->HoveredUnitId & 0x7F, gMouseHover->HoveredUnitId, gMouseHover->HoveredUnitType);
+        }
+
+        if (!pUnit || !pUnitServer) break;
+
+        if (STATLIST_GetUnitStatSigned(pUnitServer, STAT_HITPOINTS, 0) == 0) break;
+
         if (pUnit)
         {
             float totalWidth = 0.f;
@@ -1272,29 +1272,21 @@ void D2RHUD::OnDraw() {
 
             for (int i = 0; i < 6; i++)
             {
-                if (i > 0)
-                {
-                    totalWidth += spaceWidth;
-                }
+                if (i > 0) totalWidth += spaceWidth;
                 widths[i] = ImGui::CalcTextSize(resistances[i].c_str()).x;
                 totalWidth += widths[i];
             }
-            auto startX = center - (totalWidth / 2.f);
+
+            float startX = center - (totalWidth / 2.f);
             for (int i = 0; i < 6; i++)
             {
-                if (i > 0)
-                {
-                    startX += spaceWidth;
-                }
-
+                if (i > 0) startX += spaceWidth;
                 drawList->AddText({ startX, ypercent1 }, ResistanceColors[i], resistances[i].c_str());
                 startX += widths[i];
             }
 
-            // Retrieve HP stat and add both value and % of max to display
             if (pUnitServer)
             {
-                // client has no HP data
                 if (pGame == nullptr)
                 {
                     auto clienthp = std::format("{}%", ((STATLIST_GetUnitStatSigned(pUnitServer, STAT_HITPOINTS, 0) >> 8) * 100) / (STATLIST_GetUnitStatSigned(pUnitServer, STAT_MAXHP, 0) >> 8));
@@ -1310,12 +1302,13 @@ void D2RHUD::OnDraw() {
                     drawList->AddText({ center - (width / 2.0f) + 1, ypercent2 }, IM_COL32(255, 255, 255, 255), hp.c_str());
                 }
             }
-
-            /* Debug Example - Retrieves stat references from D2Enums.h, Remove the // at start of line to use */
-            //std::string coldimmunity1 = std::format("EXP%: {}", STATLIST_GetUnitStatSigned(pUnitPlayer, 85, 0));
-            //drawList->AddText({ 20, 10 }, IM_COL32(170, 50, 50, 255), coldimmunity1.c_str());
         }
-    }
+
+    } while (false);
+
+    if (fontPushed)
+        ImGui::PopFont();
+
 }
 
 #pragma endregion

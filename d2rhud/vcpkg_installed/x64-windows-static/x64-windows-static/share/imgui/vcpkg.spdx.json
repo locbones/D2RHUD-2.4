@@ -3,13 +3,13 @@
   "spdxVersion": "SPDX-2.2",
   "dataLicense": "CC0-1.0",
   "SPDXID": "SPDXRef-DOCUMENT",
-  "documentNamespace": "https://spdx.org/spdxdocs/imgui-x64-windows-static-1.88#1-f90c3c17-71c9-4963-8282-2906fa9b8ebf",
-  "name": "imgui:x64-windows-static@1.88#1 3aa6de0d771d66bcb90845838f055ad19ec0bdbd6c8d1ef1b10871c622d3c51e",
+  "documentNamespace": "https://spdx.org/spdxdocs/imgui-x64-windows-static-1.91.9-5f34d298-5c00-4c35-8f11-b6ba3fb654e9",
+  "name": "imgui:x64-windows-static@1.91.9 13e5bfc7d0ae68c39b7acf407ed15a974031ca76c6df3748851bb4584eb178ef",
   "creationInfo": {
     "creators": [
-      "Tool: vcpkg-3247920fbdd47d08f36cbd480addd9890d3c2435"
+      "Tool: vcpkg-2025-05-19-ece4c0f6b8fae9e94513d544c7aa753dd2c82337"
     ],
-    "created": "2022-10-22T22:03:32Z"
+    "created": "2025-05-24T13:32:00Z"
   },
   "relationships": [
     {
@@ -72,8 +72,8 @@
     {
       "name": "imgui",
       "SPDXID": "SPDXRef-port",
-      "versionInfo": "1.88#1",
-      "downloadLocation": "NOASSERTION",
+      "versionInfo": "1.91.9",
+      "downloadLocation": "git+https://github.com/Microsoft/vcpkg#ports/imgui",
       "homepage": "https://github.com/ocornut/imgui",
       "licenseConcluded": "MIT",
       "licenseDeclared": "NOASSERTION",
@@ -84,7 +84,7 @@
     {
       "name": "imgui:x64-windows-static",
       "SPDXID": "SPDXRef-binary",
-      "versionInfo": "3aa6de0d771d66bcb90845838f055ad19ec0bdbd6c8d1ef1b10871c622d3c51e",
+      "versionInfo": "13e5bfc7d0ae68c39b7acf407ed15a974031ca76c6df3748851bb4584eb178ef",
       "downloadLocation": "NONE",
       "licenseConcluded": "MIT",
       "licenseDeclared": "NOASSERTION",
@@ -92,21 +92,49 @@
       "comment": "This is a binary package built by vcpkg."
     },
     {
-      "SPDXID": "SPDXRef-resource-1",
+      "SPDXID": "SPDXRef-resource-0",
       "name": "ocornut/imgui",
-      "downloadLocation": "git+https://github.com/ocornut/imgui@9cd9c2eff99877a3f10a7f9c2a3a5b9c15ea36c6",
+      "downloadLocation": "git+https://github.com/ocornut/imgui@v1.91.9-docking",
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
       "copyrightText": "NOASSERTION",
       "checksums": [
         {
           "algorithm": "SHA512",
-          "checksumValue": "4a9bf74f5f3971bcb954449bdef27e491a0abebc55356bcf0491c7e17dc941c90cf81d539fe4de1e23137866f55456776fcded34a4df2fb16b9020fe1b8d7851"
+          "checksumValue": "3a019533e638b2023e0c71d0455561ee9d589ff33b677c8135345e85c28edb7b83580271d49a787e0e838fd6217d1625baad65e6559ae7faec53f3a309917ecd"
+        }
+      ]
+    },
+    {
+      "SPDXID": "SPDXRef-resource-1",
+      "name": "ocornut/imgui",
+      "downloadLocation": "git+https://github.com/ocornut/imgui@v1.91.9",
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "c9393bd9f6b49b036ad6ab3ba4d972876c6f60ce7f5c13a7a56ff11b3559ea3211b0caa03eed10b4f4fbe9c371e14f7f24866bd476652f543f3ed3aa878ea930"
         }
       ]
     },
     {
       "SPDXID": "SPDXRef-resource-2",
+      "name": "ocornut/imgui_test_engine",
+      "downloadLocation": "git+https://github.com/ocornut/imgui_test_engine@v1.91.9",
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "44d6fd1c26c9c2cb3fcbd1560dba8e056f84dc170051dcb8db5d642945fb26475006a8166486f7f62e900a97d65f2f98d364ac06c121a57309b3229cc41556a4"
+        }
+      ]
+    },
+    {
+      "SPDXID": "SPDXRef-resource-3",
       "name": "imgui_fonts_droid_sans.h",
       "packageFileName": "imgui_fonts_droid_sans.h",
       "downloadLocation": "https://raw.githubusercontent.com/libigl/libigl-imgui/c3efb9b62780f55f9bba34561f79a3087e057fc0/imgui_fonts_droid_sans.h",
@@ -128,7 +156,7 @@
       "checksums": [
         {
           "algorithm": "SHA256",
-          "checksumValue": "262faed507149c89aab7572fd2c2a968f843ca2900043e30a9c339735ed08a8f"
+          "checksumValue": "257e81df093db871165b6ad2f072a613fb84de69e3e45d21d09036a9c840624b"
         }
       ],
       "licenseConcluded": "NOASSERTION",
@@ -140,7 +168,7 @@
       "checksums": [
         {
           "algorithm": "SHA256",
-          "checksumValue": "91528f60cca93d3bce042d2ac16a63169025ec25a34453b49803126ed19153ae"
+          "checksumValue": "5da843cca9f52801645959f6318ebcb867837b1523924dc535d9f418abb19ae8"
         }
       ],
       "licenseConcluded": "NOASSERTION",
@@ -152,7 +180,7 @@
       "checksums": [
         {
           "algorithm": "SHA256",
-          "checksumValue": "57c9f3b2390b46253700d9488d7ede6645566c679e3d7da06e4535028d7c4d70"
+          "checksumValue": "f3e5124cfb4118494e494e400980cbf73603b79d14d4a88937caa46f41bbc415"
         }
       ],
       "licenseConcluded": "NOASSERTION",
@@ -164,7 +192,7 @@
       "checksums": [
         {
           "algorithm": "SHA256",
-          "checksumValue": "b55b92054ffb519ed575ab29f6c7f52eeebecfd2aef5e778da342abd3c0683b2"
+          "checksumValue": "97a8aa8938479cd67948c728c9c7e55848cf46c1f35a90921056bf1fa054268d"
         }
       ],
       "licenseConcluded": "NOASSERTION",

@@ -29,15 +29,17 @@ endmacro()
 include(CMakeFindDependencyMacro)
 
 if (OFF)
-    find_dependency(glfw3 CONFIG)
+    if (NOT "")
+        find_dependency(glfw3 CONFIG)
+    endif()
 endif()
 
 if (OFF)
     find_dependency(GLUT)
 endif()
 
-if (OFF OR OFF)
-    find_dependency(SDL2 CONFIG)
+if (OFF OR OFF OR OFF)
+    find_dependency(SDL3 CONFIG)
 endif()
 
 if (OFF)
@@ -46,6 +48,18 @@ endif()
 
 if (OFF)
     find_dependency(freetype CONFIG)
+endif()
+
+if (OFF)
+    find_dependency(plutosvg CONFIG)
+endif()
+
+if (OFF)
+    find_dependency(Allegro CONFIG)
+endif()
+
+if (OFF)
+    find_dependency(Stb)
 endif()
 
 include("${CMAKE_CURRENT_LIST_DIR}/imgui-targets.cmake")

@@ -3,13 +3,13 @@
   "spdxVersion": "SPDX-2.2",
   "dataLicense": "CC0-1.0",
   "SPDXID": "SPDXRef-DOCUMENT",
-  "documentNamespace": "https://spdx.org/spdxdocs/detours-x64-windows-static-4.0.1#7-e7f9d0c4-d733-4a8e-a1b3-51097aa829e7",
-  "name": "detours:x64-windows-static@4.0.1#7 2a9200ebc27ef667256eff6976bf785b45ffd8a116857517f00b002d6a887335",
+  "documentNamespace": "https://spdx.org/spdxdocs/detours-x64-windows-static-4.0.1#8-8f5265ff-eae1-4dcd-9f75-46d5fff7c1fa",
+  "name": "detours:x64-windows-static@4.0.1#8 be9f7447bfedacf6c631fed492577f146fef869e83d04f3f6eb492d87d7716ea",
   "creationInfo": {
     "creators": [
-      "Tool: vcpkg-3247920fbdd47d08f36cbd480addd9890d3c2435"
+      "Tool: vcpkg-2025-05-19-ece4c0f6b8fae9e94513d544c7aa753dd2c82337"
     ],
-    "created": "2022-10-22T22:15:29Z"
+    "created": "2025-05-24T13:31:55Z"
   },
   "relationships": [
     {
@@ -72,10 +72,10 @@
     {
       "name": "detours",
       "SPDXID": "SPDXRef-port",
-      "versionInfo": "4.0.1#7",
-      "downloadLocation": "NOASSERTION",
+      "versionInfo": "4.0.1#8",
+      "downloadLocation": "git+https://github.com/Microsoft/vcpkg#ports/detours",
       "homepage": "https://github.com/microsoft/Detours",
-      "licenseConcluded": "NOASSERTION",
+      "licenseConcluded": "MIT",
       "licenseDeclared": "NOASSERTION",
       "copyrightText": "NOASSERTION",
       "description": "Detours is a software package for monitoring and instrumenting API calls on Windows.",
@@ -84,15 +84,15 @@
     {
       "name": "detours:x64-windows-static",
       "SPDXID": "SPDXRef-binary",
-      "versionInfo": "2a9200ebc27ef667256eff6976bf785b45ffd8a116857517f00b002d6a887335",
+      "versionInfo": "be9f7447bfedacf6c631fed492577f146fef869e83d04f3f6eb492d87d7716ea",
       "downloadLocation": "NONE",
-      "licenseConcluded": "NOASSERTION",
+      "licenseConcluded": "MIT",
       "licenseDeclared": "NOASSERTION",
       "copyrightText": "NOASSERTION",
       "comment": "This is a binary package built by vcpkg."
     },
     {
-      "SPDXID": "SPDXRef-resource-1",
+      "SPDXID": "SPDXRef-resource-0",
       "name": "microsoft/Detours",
       "downloadLocation": "git+https://github.com/microsoft/Detours@v4.0.1",
       "licenseConcluded": "NOASSERTION",
@@ -125,7 +125,7 @@
       "checksums": [
         {
           "algorithm": "SHA256",
-          "checksumValue": "f2dde6bac043483f6ac25f9ee06d07ac15c41c56ef198e187aff91f4f42a1ddf"
+          "checksumValue": "de79cfbddeae23bd81594ed5d90f4ae1ee9491bf887727ce451e860601a1237f"
         }
       ],
       "licenseConcluded": "NOASSERTION",
@@ -149,7 +149,7 @@
       "checksums": [
         {
           "algorithm": "SHA256",
-          "checksumValue": "26d6224a197921073fd5ca83027955c5c21fd4407aefd9620f5eadcd73d3f28c"
+          "checksumValue": "3231630f682f63d120172a43309838c2508207bd5bb94136b9527ea082dfa234"
         }
       ],
       "licenseConcluded": "NOASSERTION",

@@ -11,5 +11,6 @@ x64-windows-static/lib/detours.lib
 x64-windows-static/share/
 x64-windows-static/share/detours/
 x64-windows-static/share/detours/copyright
+x64-windows-static/share/detours/usage
 x64-windows-static/share/detours/vcpkg.spdx.json
 x64-windows-static/share/detours/vcpkg_abi_info.txt

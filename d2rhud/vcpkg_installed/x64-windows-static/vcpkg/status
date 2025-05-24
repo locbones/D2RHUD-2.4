@@ -1,0 +1,46 @@
+Package: detours
+Version: 4.0.1
+Port-Version: 8
+Architecture: x64-windows-static
+Multi-Arch: same
+Abi: be9f7447bfedacf6c631fed492577f146fef869e83d04f3f6eb492d87d7716ea
+Description: Detours is a software package for monitoring and instrumenting API calls on Windows.
+Status: install ok installed
+
+Package: vcpkg-cmake-config
+Version: 2024-05-23
+Architecture: x64-windows
+Multi-Arch: same
+Abi: c97909f4e0a93b2c586c7bf093db02345e7ab76af3fb2b189af035cb998a7fa3
+Status: install ok installed
+
+Package: vcpkg-cmake
+Version: 2024-04-23
+Architecture: x64-windows
+Multi-Arch: same
+Abi: a249fd6db0f68d1f689b4f12fa8a8079ca9bfb66c47d71592873606a59bdc2e8
+Status: install ok installed
+
+Package: imgui
+Version: 1.91.9
+Depends: vcpkg-cmake:x64-windows, vcpkg-cmake-config:x64-windows
+Architecture: x64-windows-static
+Multi-Arch: same
+Abi: 13e5bfc7d0ae68c39b7acf407ed15a974031ca76c6df3748851bb4584eb178ef
+Description: Bloat-free Immediate Mode Graphical User interface for C++ with minimal dependencies.
+Status: install ok installed
+
+Package: imgui
+Feature: dx12-binding
+Architecture: x64-windows-static
+Multi-Arch: same
+Description: Make available DirectX12 binding
+Status: install ok installed
+
+Package: imgui
+Feature: win32-binding
+Architecture: x64-windows-static
+Multi-Arch: same
+Description: Make available Win32 binding
+Status: install ok installed
+

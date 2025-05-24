@@ -455,12 +455,14 @@ namespace D3D12 {
 				return io.WantCaptureMouse ? 0 : CallWindowProc(OriginalWndProc, hWnd, msg, wParam, lParam);
 			case WM_KEYDOWN:
 				if (wParam < 256)
-					io.KeysDown[wParam] = 1;
+					io.AddKeyEvent(static_cast<ImGuiKey>(wParam), true);
 				return io.WantCaptureKeyboard ? 0 : CallWindowProc(OriginalWndProc, hWnd, msg, wParam, lParam);
+
 			case WM_KEYUP:
 				if (wParam < 256)
-					io.KeysDown[wParam] = 0;
+					io.AddKeyEvent(static_cast<ImGuiKey>(wParam), false);
 				return io.WantCaptureKeyboard ? 0 : CallWindowProc(OriginalWndProc, hWnd, msg, wParam, lParam);
+
 			case WM_CHAR:
 				// You can also use ToAscii()+GetKeyboardState() to retrieve characters.
 				if (wParam > 0 && wParam < 0x10000)

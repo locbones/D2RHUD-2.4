@@ -3,13 +3,13 @@
   "spdxVersion": "SPDX-2.2",
   "dataLicense": "CC0-1.0",
   "SPDXID": "SPDXRef-DOCUMENT",
-  "documentNamespace": "https://spdx.org/spdxdocs/vcpkg-cmake-config-x64-windows-2022-02-06#1-b6501105-b19d-49e6-91f7-9a9e07298c0e",
-  "name": "vcpkg-cmake-config:x64-windows@2022-02-06#1 de9d14cc762c285191da0f9d84e3666c65b6d6d12301b6261aba07af34b4edd8",
+  "documentNamespace": "https://spdx.org/spdxdocs/vcpkg-cmake-config-x64-windows-2024-05-23-292f8280-94f2-4ecf-bcac-fdbfb2c2426f",
+  "name": "vcpkg-cmake-config:x64-windows@2024-05-23 c97909f4e0a93b2c586c7bf093db02345e7ab76af3fb2b189af035cb998a7fa3",
   "creationInfo": {
     "creators": [
-      "Tool: vcpkg-3247920fbdd47d08f36cbd480addd9890d3c2435"
+      "Tool: vcpkg-2025-05-19-ece4c0f6b8fae9e94513d544c7aa753dd2c82337"
     ],
-    "created": "2022-10-22T22:03:25Z"
+    "created": "2025-05-24T13:31:55Z"
   },
   "relationships": [
     {
@@ -82,8 +82,8 @@
     {
       "name": "vcpkg-cmake-config",
       "SPDXID": "SPDXRef-port",
-      "versionInfo": "2022-02-06#1",
-      "downloadLocation": "NOASSERTION",
+      "versionInfo": "2024-05-23",
+      "downloadLocation": "git+https://github.com/Microsoft/vcpkg#ports/vcpkg-cmake-config",
       "licenseConcluded": "MIT",
       "licenseDeclared": "NOASSERTION",
       "copyrightText": "NOASSERTION",
@@ -92,7 +92,7 @@
     {
       "name": "vcpkg-cmake-config:x64-windows",
       "SPDXID": "SPDXRef-binary",
-      "versionInfo": "de9d14cc762c285191da0f9d84e3666c65b6d6d12301b6261aba07af34b4edd8",
+      "versionInfo": "c97909f4e0a93b2c586c7bf093db02345e7ab76af3fb2b189af035cb998a7fa3",
       "downloadLocation": "NONE",
       "licenseConcluded": "MIT",
       "licenseDeclared": "NOASSERTION",
@@ -143,7 +143,7 @@
       "checksums": [
         {
           "algorithm": "SHA256",
-          "checksumValue": "4ffbabc2feab69abd21267f57669ef5e404bcbfa5ab6d93234374d98f5ff1864"
+          "checksumValue": "3964c3d0e6b39c7f42cebd5949cccdc7eb6feb83ee434fe73756c954b173c5c2"
         }
       ],
       "licenseConcluded": "NOASSERTION",
@@ -155,7 +155,7 @@
       "checksums": [
         {
           "algorithm": "SHA256",
-          "checksumValue": "f92905382d90e37fa2addd96becce31f5075175196b117de6dd997a4ac1d6d06"
+          "checksumValue": "f3880578674f1bdbc54b67c5fc3787aaab8ee8bcf4e3e6e008204bf4ab67aa0b"
         }
       ],
       "licenseConcluded": "NOASSERTION",

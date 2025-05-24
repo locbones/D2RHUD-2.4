@@ -1,7 +1,0 @@
-Package: imgui
-Feature: win32-binding
-Architecture: x64-windows-static
-Multi-Arch: same
-Description: Make available Win32 binding
-Type: Port
-Status: install ok installed
