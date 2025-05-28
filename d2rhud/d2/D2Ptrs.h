@@ -8,7 +8,6 @@ FUNC_DEF(int32_t, __fastcall, STATLIST_GetUnitStatSigned, (D2UnitStrc* pUnit, ui
 FUNC_DEF(D2UnitStrc*, __fastcall, UNITS_GetClientUnitByIdAndType, (uint32_t nUnitId, D2C_UnitTypes nUnitType));
 FUNC_DEF(D2UnitStrc*, __fastcall, UNITS_GetServerUnitByTypeAndId, (D2GameStrc* pGame, D2C_UnitTypes nUnitType, uint32_t nUnitId));
 
-FUNC_DEF(void, __fastcall, ITEMS_GetName, (D2UnitStrc* pItem, char* pBuffer));
 FUNC_DEF(void, __fastcall, ITEMS_Description, (D2UnitStrc* pItem, char* pBuffer, uint64_t nBufferSize, int a4, int a5, int a6, unsigned int a7, int a8));
 
 FUNC_DEF(__int64, __fastcall, INVENTORY_AutoSort, (uint32_t pUnitID, D2C_ItemInvPage page));
@@ -28,7 +27,6 @@ namespace D2Ptrs {
 
         FUNC_PATTERNREF(UNITS_GetClientUnitByIdAndType, NULL, "E8 ? ? ? ? 8B 4F 05", 1);
         FUNC_PATTERNREF(UNITS_GetServerUnitByTypeAndId, NULL, "E8 ? ? ? ? 46 8D 04 37 ", 1);
-        FUNC_PATTERNREF(ITEMS_GetName, NULL, "E8 ? ? ? ? EB 18 48 8D 95 ? ? ? ?", 1);
         FUNC_PATTERNREF(ITEMS_Description, NULL, "E8 ? ? ? ? 8B 8C 24 ? ? ? ? 48 FF C7", 1);
 
         FUNC_PATTERN(INVENTORY_AutoSort, NULL, "40 53 56 41 55 B8 ? ? ? ?");

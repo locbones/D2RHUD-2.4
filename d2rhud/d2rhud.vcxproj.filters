@@ -10,6 +10,7 @@
     <ClCompile Include="plugin\D2RHUD\D2RHUD.cpp" />
     <ClCompile Include="Pattern.cpp" />
     <ClCompile Include="plugin\KeyMappings.cpp" />
+    <ClCompile Include="plugin\ItemFilter\ItemFilter.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="D3D12Hook.h" />
@@ -23,5 +24,6 @@
     <ClInclude Include="d2\D2Enums.h" />
     <ClInclude Include="plugin\KeyMappings.h" />
     <ClInclude Include="d2\Reclass.h" />
+    <ClInclude Include="plugin\ItemFilter\ItemFilter.h" />
   </ItemGroup>
 </Project>

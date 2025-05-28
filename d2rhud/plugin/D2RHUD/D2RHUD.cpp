@@ -21,6 +21,8 @@
 #include <cstdint>
 #include <filesystem>
 #include "../../D3D12Hook.h"
+#include "../ItemFilter/ItemFilter.h"
+#include <regex>
 
 /*
 - Chat Detours/Structures by Killshot
@@ -33,23 +35,16 @@
 //Startup memory edits found in the config file are performed by D2RLAN 
 std::string configFilePath = "config.json";
 std::string filename = "../Launcher/D2RLAN_Config.txt";
-std::string Version = "1.0.5 HF";
+std::string lootFile = "../D2R/lootfilter.lua";
+std::string Version = "1.0.6";
 
-struct MonsterStatsDisplaySettings {
-    bool monsterStatsDisplay;
-    std::string channelColor;
-    std::string playerNameColor;
-    std::string messageColor;
-    bool socketDisplay;
-    bool HPRollover;
-    std::int32_t HPRolloverAmt;
-    std::int32_t HPRolloverDiff;
-};
 static MonsterStatsDisplaySettings cachedSettings;
 
 static D2Client* GetClientPtr();
 
 static D2DataTablesStrc* sgptDataTables = reinterpret_cast<D2DataTablesStrc*>(Pattern::Address(0x1c9e980));
+
+ItemFilter* itemFilter = new ItemFilter();
 
 #pragma region Monster & Command Constants
 const char* ResistanceNames[6] = { "   ", "   ", "   ", "   ", "   ", "   " };
@@ -71,34 +66,6 @@ std::string automaticCommand4;
 std::string automaticCommand5;
 std::string automaticCommand6;
 std::time_t lastLogTimestamp = 0;
-#pragma endregion
-
-#pragma region Item Name
-const int32_t getItemNameBufferSize = 0x400;
-const uint32_t getItemNameOffset = 0x149b60;
-
-typedef void(__fastcall* GetItemName_t)(D2UnitStrc* pUnit, char* pBuffer);
-static GetItemName_t oGetItemName = nullptr;
-
-void __fastcall HookedGetItemName(D2UnitStrc* pUnit, char* pBuffer) {
-    oGetItemName(pUnit, pBuffer);
-    auto pUnitToUse = pUnit;
-    D2GameStrc* pGame = nullptr;
-    D2Client* pGameClient = GetClientPtr();
-    if (pGameClient != nullptr) {
-        pGame = (D2GameStrc*)pGameClient->pGame;
-        if (pGame != nullptr) {
-            pUnitToUse = UNITS_GetServerUnitByTypeAndId(pGame, UNIT_ITEM, pUnit->dwUnitId);
-        }
-    }
-    if (cachedSettings.socketDisplay && pUnitToUse != nullptr) {
-        int32_t nSockets = STATLIST_GetUnitStatSigned(pUnitToUse, STAT_ITEM_NUMSOCKETS, 0);
-        if (nSockets > 0) {
-            snprintf(pBuffer, getItemNameBufferSize, "%s ÿcN(%d)\0", pBuffer, nSockets);
-        }
-    }
-}
-
 #pragma endregion
 
 #pragma region Chat/Debug Structures
@@ -324,22 +291,6 @@ typedef void(__fastcall* D2CLIENT_PACKETCALLBACK_Rcv0x2B_SCMD_CORRECT_PATH_t)(ui
 static D2CLIENT_PACKETCALLBACK_Rcv0x2B_SCMD_CORRECT_PATH_t D2CLIENT_PACKETCALLBACK_Rcv0x2B_SCMD_CORRECT_PATH =
     reinterpret_cast<D2CLIENT_PACKETCALLBACK_Rcv0x2B_SCMD_CORRECT_PATH_t>(Pattern::Address(0xDA3B0));
 
-
-using SCMDHANDLER = int64_t(__fastcall*)(uint8_t* pPacket);
-using SCMDHANDLEREX = int64_t(__fastcall*)(D2UnitStrc* pUnit, uint8_t* pPacket);
-
-class D2SCMDStrc {
-public:
-    SCMDHANDLER* pfHandler;
-    int64_t nPacketSize;
-    SCMDHANDLEREX* pfHandlerEx;
-};
-
-using CCMDHANDLER = int64_t(__fastcall*)(D2GameStrc* pGame, D2UnitStrc* pUnit, uint8_t* pPacket, int nPacketSize);
-class D2CCMDStrc {
-public:
-    CCMDHANDLER* pfHandler;
-};
 
 static char* gpSharedStashString = reinterpret_cast<char*>(Pattern::Address(0x1577390));
 static char* gpSharedStashHCString = reinterpret_cast<char*>(Pattern::Address(0x1577428));
@@ -1106,14 +1057,6 @@ void D2RHUD::OnDraw() {
         menuClickHookInstalled = true;
     }
 
-    if (!oGetItemName) {
-        DetourTransactionBegin();
-        DetourUpdateThread(GetCurrentThread());
-        oGetItemName = reinterpret_cast<GetItemName_t>(Pattern::Address(getItemNameOffset));
-        DetourAttach(&(PVOID&)oGetItemName, HookedGetItemName);
-        DetourTransactionCommit();
-    }
-
     if (!oBankPanelDraw) {
         DetourTransactionBegin();
         DetourUpdateThread(GetCurrentThread());
@@ -1122,12 +1065,10 @@ void D2RHUD::OnDraw() {
         DetourTransactionCommit();
         UpdateStashFileName(gSelectedPage);
         DWORD oldProtect = 0;
-        std::cout << "gpCCMDHandlerTable " << std::hex << gpCCMDHandlerTable << std::endl;
         VirtualProtect(&gpCCMDHandlerTable[CCMD_CUSTOM_OP_CODE], sizeof(D2CCMDStrc), PAGE_EXECUTE_READWRITE, &oldProtect);
         gpCCMDHandlerTable[CCMD_CUSTOM_OP_CODE].pfHandler = (CCMDHANDLER*)&CCMDHANDLER_Custom;
         VirtualProtect(&gpCCMDHandlerTable[CCMD_CUSTOM_OP_CODE], sizeof(D2CCMDStrc), oldProtect, &oldProtect);
 
-        std::cout << "gpSCMDHandlerTable " << std::hex << gpSCMDHandlerTable << std::endl;
         VirtualProtect(&gpSCMDHandlerTable[SCMD_CUSTOM_OP_CODE], sizeof(D2SCMDStrc), PAGE_EXECUTE_READWRITE, &oldProtect);
         gpSCMDHandlerTable[SCMD_CUSTOM_OP_CODE].pfHandler = (SCMDHANDLER*)&SCMDHANDLER_Custom;
         VirtualProtect(&gpSCMDHandlerTable[SCMD_CUSTOM_OP_CODE], sizeof(D2SCMDStrc), oldProtect, &oldProtect);
@@ -1201,6 +1142,10 @@ void D2RHUD::OnDraw() {
         
     }
     
+    if (!itemFilter->bInstalled) {
+        itemFilter->Install(cachedSettings);
+    }
+
 
     if (!settings.monsterStatsDisplay)
         return;
@@ -1381,13 +1326,44 @@ bool D2RHUD::OnKeyPressed(short key)
         return true;
     }
 
-    return false;
+    return itemFilter->OnKeyPressed(key);
 }
 
 //Show D2RHUD Version Info as a MessageBox Popup
 void D2RHUD::ShowVersionMessage()
 {
-    std::string message = "Version: " + std::string(Version);
+    std::string parsedVersion = "Unknown";
+
+    try
+    {
+        std::ifstream file(lootFile);
+        if (file.is_open())
+        {
+            std::string line;
+            std::regex versionRegex(R"(local\s+version\s*=\s*\"([^\"]+)\")");
+            std::smatch match;
+            int lineCount = 0;
+
+            while (std::getline(file, line))
+            {
+                ++lineCount;
+                if (lineCount == 4 && std::regex_search(line, match, versionRegex))
+                {
+                    parsedVersion = match[1];
+                    break;
+                }
+            }
+        }
+    }
+    catch (const std::exception& ex)
+    {
+        parsedVersion = std::string("Error: ") + ex.what();
+    }
+
+    std::string message = "D2RHUD Version: " + Version + "\n"
+        "LootFilter Version: " + parsedVersion;
+
     MessageBoxA(nullptr, message.c_str(), "Debug Display", MB_OK | MB_ICONINFORMATION);
 }
+
 #pragma endregion

@@ -2,6 +2,7 @@
 #include "D2Enums.h"
 #include "Reclass.h"
 #include <cstdint>
+#include <string>
 
 struct D2Client {
 	uint32_t dwClientId; //0x0000
@@ -48,6 +49,37 @@ struct D2MouseHoverStruct {
 };
 
 #pragma pack()
+
+using SCMDHANDLER = int64_t(__fastcall*)(uint8_t* pPacket);
+using SCMDHANDLEREX = int64_t(__fastcall*)(D2UnitStrc* pUnit, uint8_t* pPacket);
+
+class D2SCMDStrc {
+public:
+	SCMDHANDLER* pfHandler;
+	int64_t nPacketSize;
+	SCMDHANDLEREX* pfHandlerEx;
+};
+
+using CCMDHANDLER = int64_t(__fastcall*)(D2GameStrc* pGame, D2UnitStrc* pUnit, uint8_t* pPacket, int nPacketSize);
+class D2CCMDStrc {
+public:
+	CCMDHANDLER* pfHandler;
+};
+
+
+#pragma region Custom Structs
+class D2ItemFilterResultStrc {
+public:
+	bool bHide = false;
+	std::string szName = "%s";
+	std::string szDescription = "%s";
+};
+
+class D2UnitStrcCustom : public D2UnitStrc {
+public:
+	class D2ItemFilterResultStrc* pFilterResult;
+};
+#pragma endregion
 
 constexpr uint64_t fnv1a_64(const char* s, size_t count) {
 	return ((count ? fnv1a_64(s, count - 1) : 14695981039346656037u) ^ s[count]) * 1099511628211u;

@@ -44,3 +44,21 @@ Multi-Arch: same
 Description: Make available Win32 binding
 Status: install ok installed
 
+Package: lua
+Version: 5.4.7
+Depends: vcpkg-cmake:x64-windows, vcpkg-cmake-config:x64-windows
+Architecture: x64-windows-static
+Multi-Arch: same
+Abi: ad2111afd84c09473e6aa8e1d00234c24de737c1a665530112140bdd545517bd
+Description: A powerful, fast, lightweight, embeddable scripting language
+Status: install ok installed
+
+Package: sol2
+Version: 3.5.0
+Depends: vcpkg-cmake:x64-windows, vcpkg-cmake-config:x64-windows
+Architecture: x64-windows-static
+Multi-Arch: same
+Abi: ce58d0c0b0383f27642fa790a18ccd854b55e5979ba973ddcee93ed0190e24d1
+Description: Sol3 (sol2 v3.0) - a C++ <-> Lua API wrapper with advanced features and top notch performance
+Status: install ok installed
+
