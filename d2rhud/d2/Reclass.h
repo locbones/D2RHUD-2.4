@@ -663,4 +663,13 @@ public:
 	char pad_0831[1367]; //0x0831
 }; //Size: 0x0D88
 static_assert(sizeof(D2DrlgStrc) == 0xD88);
+
+class D2BufferStrc {
+public:
+	uint8_t* pBuffer; //0x0000
+	int64_t nMaxSize; //0x0008
+	int64_t nUnk0x10; //0x0010
+	int64_t nUnk0x18; //0x0018
+}; //Size: 0x0020
+static_assert(sizeof(D2BufferStrc) == 0x20);
 #pragma pack(pop)

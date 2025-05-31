@@ -20,6 +20,12 @@ static SCMDHANDLER oD2CLIENT_PACKETCALLBACK_Rcv0x0A_SCMD_REMOVEUNIT = reinterpre
 static SCMDHANDLER oD2CLIENT_PACKETCALLBACK_Rcv0x9C_SCMD_ITEMEX = reinterpret_cast<SCMDHANDLER>(Pattern::Address(0xDD040));
 static SCMDHANDLER oD2CLIENT_PACKETCALLBACK_Rcv0x9D_SCMD_ITEMUNITEX = reinterpret_cast<SCMDHANDLER>(Pattern::Address(0xDD4E0));
 
+typedef int64_t(__fastcall* ITEMS_Serialize_t)(D2UnitStrc* pUnit, D2BufferStrc* pBuffer, uint32_t a3, int32_t a4, int32_t a5);
+static ITEMS_Serialize_t oITEMS_Serialize = reinterpret_cast<ITEMS_Serialize_t>(Pattern::Address(0x207610));
+
+typedef void* (__fastcall* BASE64_Encode_t)(char* pOutput, int64_t* pOutputLength, uint8_t* pInput, uint64_t nInputLength);
+static BASE64_Encode_t oBASE64_Encode = reinterpret_cast<BASE64_Encode_t>(Pattern::Address(0xae5970));
+
 
 typedef D2UnitStrc*(__fastcall* UNITS_AllocUnit_t)(uint32_t dwUnitType);
 static UNITS_AllocUnit_t oUNITS_AllocUnit = reinterpret_cast<UNITS_AllocUnit_t>(Pattern::Address(0x208670));
@@ -47,6 +53,8 @@ static D2ClientStrc** gpClientList = reinterpret_cast<D2ClientStrc**>(Pattern::A
 static sol::state lua;
 static sol::protected_function applyFilter;
 static MonsterStatsDisplaySettings cachedSettings;
+
+std::string gWelcomeMessage;
 
 D2UnitStrc* GetUnitByIdAndType(D2UnitStrc** ppUnitsList, uint32_t nUnitId, D2C_UnitTypes nUnitType) {
 	auto ppUnitList = &ppUnitsList[nUnitType * 0x80];
@@ -126,11 +134,11 @@ void RegisterD2UnitStrc(sol::state& s) {
 	);
 
 	auto itemType = s.new_usertype<D2ItemUnitStrc>("D2ItemUnitStrc", sol::no_constructor,
-		"Name", sol::readonly_property([](D2UnitStrc* pThat) -> const char* {
-			char* pBuffer = new char[0x400];
+		"Name", sol::readonly_property([](D2UnitStrc* pThat) -> std::string {
+			char pBuffer[0x400] = {};
 			Hooked_ITEMS_GetName(pThat, pBuffer);
-			return pBuffer;
-		}),
+			return std::string(pBuffer);
+			}),
 		"Data", sol::readonly_property([](D2UnitStrc* pThat) -> D2ItemDataStrc* { return pThat->pItemData; }),
 		"Txt", sol::readonly_property([](D2UnitStrc* pThat) -> D2ItemsTxt { return sgptDataTables->pItemsTxt[pThat->dwClassId]; }),
 		"IsOnGround", sol::readonly_property([](D2UnitStrc* pThat) -> bool { return pThat->dwAnimMode == IMODE_ONGROUND; }),
@@ -158,6 +166,38 @@ void RegisterD2UnitStrc(sol::state& s) {
 		sol::base_classes, sol::bases<D2UnitStrc>()
 	);
 	itemType["IsType"] = oITEMS_CheckItemTypeId;
+	itemType["Link"] = [](D2UnitStrc* pThat, char color) -> std::string {
+		char pLinkData[0x558] = {};
+		char pName[0x400] = {};
+		char pOutput[0x400] = {};
+		int64_t nLinkDataSize = 0x558;
+		uint8_t pSerialized[0x400] = {};
+		D2BufferStrc pBuffer = {
+			pSerialized,
+			0x400
+		};
+		//Serialize item data
+		uint32_t nOldAnimMode = pThat->dwAnimMode;
+		pThat->dwAnimMode = IMODE_STORED;
+		oITEMS_Serialize(pThat, &pBuffer, 1, 1, 0);
+		pThat->dwAnimMode = nOldAnimMode;
+		// b64 encode it
+		oBASE64_Encode(pLinkData, &nLinkDataSize, pSerialized, pBuffer.nUnk0x18 ? pBuffer.nUnk0x10 + 1 : pBuffer.nUnk0x10);
+		std::string szBase64ItemData = std::string(pLinkData, nLinkDataSize);
+		// get end of name. single line.
+		Hooked_ITEMS_GetName(pThat, pName);
+		std::string szName = std::string(pName);
+		size_t pos = szName.rfind('\n');
+		if (pos != std::string::npos) {
+			szName.erase(0, pos + 1);
+		}
+		// format it [{name}]
+		std::string szNameFormatted = std::format("ÿc0ÿc{}[{}ÿc{}]ÿc0", color, szName, color);
+		int32_t nStrLen = szNameFormatted.length() - 4; //why - 4?
+		// build ÿi item link
+		snprintf(pOutput, 0x400, "%sÿi%d.%d.%s", szNameFormatted.c_str(), 0, nStrLen, szBase64ItemData.c_str());
+		return std::string(pOutput);
+		};
 }
 
 int32_t ReadLocationFromExternalProcess(HANDLE hProcess)
@@ -222,8 +262,11 @@ bool HandleError(sol::protected_function_result result) {
 	return false;
 }
 
+sol::protected_function getWelcomeMessage;
 void LoadScript() {
 	applyFilter = sol::nil;
+	getWelcomeMessage = sol::nil;
+
 	auto env = sol::environment(lua, sol::create, lua.globals());
 	std::string fullPath = std::filesystem::absolute("lootfilter.lua").string();
 	sol::load_result load_result = lua.load_file(fullPath);
@@ -232,12 +275,17 @@ void LoadScript() {
 		PrintGameMessage(err.what());
 		return;
 	}
+
 	sol::protected_function func = load_result;
 	sol::set_environment(env, func);
 	if (HandleError(load_result())) return;
+
 	applyFilter = env["ApplyFilter"];
+	getWelcomeMessage = env["GetWelcomeMessage"];
+
 	sol::set_environment(env, applyFilter);
 }
+
 
 void InitializeLUA() {
 	lua.open_libraries(sol::lib::base, sol::lib::package,
@@ -353,8 +401,24 @@ bool ItemFilter::Install(MonsterStatsDisplaySettings settings) {
 
 bool ItemFilter::OnKeyPressed(short key) {
 	if (key == 'R' && (GetKeyState(VK_CONTROL) & 0x8000)) {
-		PrintGameMessage("Loot Filter Reloaded");
 		LoadScript();
+
+		std::string message = "Loot Filter Reloaded";
+		if (getWelcomeMessage.valid()) {
+			sol::protected_function_result result = getWelcomeMessage();
+			if (result.valid()) {
+				sol::object obj = result;
+				if (obj.is<std::string>()) {
+					std::string welcome = obj.as<std::string>();
+					if (!welcome.empty()) {
+						message = welcome;
+					}
+				}
+			}
+		}
+
+		PrintGameMessage(message.c_str());
+
 		auto ppClientItem = &ppClientUnitList[UNIT_ITEM * 0x80];
 		for (int i = 0; i < 128; i++) {
 			auto pItem = ppClientItem[i];
@@ -363,7 +427,11 @@ bool ItemFilter::OnKeyPressed(short key) {
 				pItem = pItem->pListNext;
 			}
 		}
+
 		return true;
 	}
 	return false;
 }
+
+
+
