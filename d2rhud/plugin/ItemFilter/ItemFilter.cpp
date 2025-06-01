@@ -54,6 +54,12 @@ static sol::state lua;
 static sol::protected_function applyFilter;
 static MonsterStatsDisplaySettings cachedSettings;
 
+typedef void(__fastcall* GFX_DrawFilledRect_t)(int x, int y, int w, int h, float* rgba);
+static GFX_DrawFilledRect_t oGFX_DrawFilledRect = reinterpret_cast<GFX_DrawFilledRect_t>(Pattern::Address(0x439280));
+
+typedef int64_t* (__fastcall* UI_DrawGroundItemBackground_t)(D2UnitRectStrc* pRect, const char* szText, float* rgba);
+static UI_DrawGroundItemBackground_t oUI_DrawGroundItemBackground = reinterpret_cast<UI_DrawGroundItemBackground_t>(Pattern::Address(0xc027f0));
+
 std::string gWelcomeMessage;
 
 D2UnitStrc* GetUnitByIdAndType(D2UnitStrc** ppUnitsList, uint32_t nUnitId, D2C_UnitTypes nUnitType) {
@@ -64,6 +70,8 @@ D2UnitStrc* GetUnitByIdAndType(D2UnitStrc** ppUnitsList, uint32_t nUnitId, D2C_U
 	}
 	return pHashEntry;
 }
+
+
 
 void PrintGameMessage(std::string message) {
 	std::cout << message << std::endl;
@@ -103,8 +111,21 @@ void __fastcall Hooked_ITEMS_GetName(D2UnitStrc* pUnit, char* pBuffer) {
 void RegisterD2ItemFilterResultStrc(sol::state& s) {
 	auto type = s.new_usertype<D2ItemFilterResultStrc>("D2ItemFilterResultStrc", sol::no_constructor,
 		"Hide", &D2ItemFilterResultStrc::bHide,
-		"Name", &D2ItemFilterResultStrc::szName
+		"Name", &D2ItemFilterResultStrc::szName,
+		"Background", &D2ItemFilterResultStrc::nBackgroundColorGround
 	);
+}
+
+int64_t* __fastcall Hooked_UI_DrawGroundItemBackground(D2UnitRectStrc* pRect, const char* szText, float* rgba) {
+	auto pUnit = reinterpret_cast<D2UnitStrcCustom*>(GetUnitByIdAndType(ppClientUnitList, pRect->dwUnitId, UNIT_ITEM));
+	if (pUnit->pFilterResult) {
+		auto backGroundColor = pUnit->pFilterResult->nBackgroundColorGround;
+		rgba[0] = backGroundColor[0];
+		rgba[1] = backGroundColor[1];
+		rgba[2] = backGroundColor[2];
+		rgba[3] = backGroundColor[3];
+	}
+	return oUI_DrawGroundItemBackground(pRect, szText, rgba);
 }
 
 int32_t STATLIST_GetUnitStatSignedLayer0(D2UnitStrc* pThat, uint32_t nStatId) {
@@ -382,6 +403,7 @@ bool ItemFilter::Install(MonsterStatsDisplaySettings settings) {
 
 		// Stuff we want to do w/ the filter
 		DetourAttach(&(PVOID&)oITEMS_GetName, Hooked_ITEMS_GetName);
+		DetourAttach(&(PVOID&)oUI_DrawGroundItemBackground, Hooked_UI_DrawGroundItemBackground);
 
 		DWORD oldProtect = 0;
 		auto UnitSize = (int32_t*)Pattern::Address(0x2086ca);

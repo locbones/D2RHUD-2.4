@@ -1342,12 +1342,10 @@ void D2RHUD::ShowVersionMessage()
             std::string line;
             std::regex versionRegex(R"(local\s+version\s*=\s*\"([^\"]+)\")");
             std::smatch match;
-            int lineCount = 0;
 
             while (std::getline(file, line))
             {
-                ++lineCount;
-                if (lineCount == 4 && std::regex_search(line, match, versionRegex))
+                if (std::regex_search(line, match, versionRegex))
                 {
                     parsedVersion = match[1];
                     break;
@@ -1365,5 +1363,6 @@ void D2RHUD::ShowVersionMessage()
 
     MessageBoxA(nullptr, message.c_str(), "Debug Display", MB_OK | MB_ICONINFORMATION);
 }
+
 
 #pragma endregion

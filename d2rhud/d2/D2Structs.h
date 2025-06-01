@@ -3,6 +3,7 @@
 #include "Reclass.h"
 #include <cstdint>
 #include <string>
+#include <vector>
 
 struct D2Client {
 	uint32_t dwClientId; //0x0000
@@ -73,6 +74,8 @@ public:
 	bool bHide = false;
 	std::string szName = "%s";
 	std::string szDescription = "%s";
+
+	std::vector<float> nBackgroundColorGround = { 0.f, 0.f, 0.f, 0.95f };
 };
 
 class D2UnitStrcCustom : public D2UnitStrc {

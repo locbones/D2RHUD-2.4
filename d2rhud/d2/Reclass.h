@@ -672,4 +672,14 @@ public:
 	int64_t nUnk0x18; //0x0018
 }; //Size: 0x0020
 static_assert(sizeof(D2BufferStrc) == 0x20);
+
+class D2UnitRectStrc {
+public:
+	int32_t nX; //0x0000
+	int32_t nY; //0x0004
+	int32_t nW; //0x0008
+	int32_t nH; //0x000C
+	uint32_t dwUnitId; //0x0010
+}; //Size: 0x0014
+static_assert(sizeof(D2UnitRectStrc) == 0x14);
 #pragma pack(pop)
