@@ -60,6 +60,12 @@ static GFX_DrawFilledRect_t oGFX_DrawFilledRect = reinterpret_cast<GFX_DrawFille
 typedef int64_t* (__fastcall* UI_DrawGroundItemBackground_t)(D2UnitRectStrc* pRect, const char* szText, float* rgba);
 static UI_DrawGroundItemBackground_t oUI_DrawGroundItemBackground = reinterpret_cast<UI_DrawGroundItemBackground_t>(Pattern::Address(0xc027f0));
 
+typedef int64_t* (__fastcall* TooltipsPanel_DrawTooltip_t)(int64_t* a1);
+static TooltipsPanel_DrawTooltip_t oTooltipsPanel_DrawTooltip = reinterpret_cast<TooltipsPanel_DrawTooltip_t>(Pattern::Address(0x5ba0c0));
+
+typedef D2UnitStrc* (__fastcall* UNITS_GetHoveredUnit_t)(uint32_t nClientPlayerListIndex);
+static UNITS_GetHoveredUnit_t oUNITS_GetHoveredUnit = reinterpret_cast<UNITS_GetHoveredUnit_t>(Pattern::Address(0xdedb0));
+
 std::string gWelcomeMessage;
 
 D2UnitStrc* GetUnitByIdAndType(D2UnitStrc** ppUnitsList, uint32_t nUnitId, D2C_UnitTypes nUnitType) {
@@ -70,8 +76,6 @@ D2UnitStrc* GetUnitByIdAndType(D2UnitStrc** ppUnitsList, uint32_t nUnitId, D2C_U
 	}
 	return pHashEntry;
 }
-
-
 
 void PrintGameMessage(std::string message) {
 	std::cout << message << std::endl;
@@ -108,22 +112,65 @@ void __fastcall Hooked_ITEMS_GetName(D2UnitStrc* pUnit, char* pBuffer) {
 	}
 }
 
+int64_t* __fastcall Hooked_TooltipsPanel_DrawTooltip(int64_t* a1) {
+	auto pUnit = reinterpret_cast<D2UnitStrcCustom*>(oUNITS_GetHoveredUnit(*gpClientPlayerListIndex));
+	if (pUnit && pUnit->pFilterResult) {
+		auto rgba = (float*)a1 + 0x5A;
+		auto pRect = reinterpret_cast<D2UnitRectStrc*>((uint32_t*)a1 + 0x18);
+		auto& backGroundColor = pUnit->pFilterResult->nBackgroundColorGround;
+
+		rgba[0] = backGroundColor[0];
+		rgba[1] = backGroundColor[1];
+		rgba[2] = backGroundColor[2];
+		rgba[3] = backGroundColor[3];
+
+		auto& border = pUnit->pFilterResult->nBorderColorGround;
+		float borderWidth = (border.size() >= 5) ? border[4] : 0.0f;
+
+		if (borderWidth > 0.0f && border.size() >= 4) {
+			oGFX_DrawFilledRect(
+				pRect->nX - borderWidth,
+				pRect->nY - borderWidth,
+				pRect->nX + pRect->nW + borderWidth,
+				pRect->nY + pRect->nH + borderWidth,
+				border.data()
+			);
+		}
+	}
+	return oTooltipsPanel_DrawTooltip(a1);
+}
+
 void RegisterD2ItemFilterResultStrc(sol::state& s) {
 	auto type = s.new_usertype<D2ItemFilterResultStrc>("D2ItemFilterResultStrc", sol::no_constructor,
 		"Hide", &D2ItemFilterResultStrc::bHide,
 		"Name", &D2ItemFilterResultStrc::szName,
-		"Background", &D2ItemFilterResultStrc::nBackgroundColorGround
+		"Background", &D2ItemFilterResultStrc::nBackgroundColorGround,
+		"Border", &D2ItemFilterResultStrc::nBorderColorGround
 	);
 }
 
 int64_t* __fastcall Hooked_UI_DrawGroundItemBackground(D2UnitRectStrc* pRect, const char* szText, float* rgba) {
 	auto pUnit = reinterpret_cast<D2UnitStrcCustom*>(GetUnitByIdAndType(ppClientUnitList, pRect->dwUnitId, UNIT_ITEM));
-	if (pUnit->pFilterResult) {
-		auto backGroundColor = pUnit->pFilterResult->nBackgroundColorGround;
+	if (pUnit && pUnit->pFilterResult) {
+		auto& backGroundColor = pUnit->pFilterResult->nBackgroundColorGround;
+
 		rgba[0] = backGroundColor[0];
 		rgba[1] = backGroundColor[1];
 		rgba[2] = backGroundColor[2];
 		rgba[3] = backGroundColor[3];
+
+		auto& border = pUnit->pFilterResult->nBorderColorGround;
+		float borderWidth = (border.size() >= 5) ? border[4] : 0.0f;
+
+		if (borderWidth > 0.0f && border.size() >= 4) {
+			oGFX_DrawFilledRect(
+				pRect->nX - borderWidth,
+				pRect->nY - borderWidth,
+				pRect->nX + pRect->nW + borderWidth,
+				pRect->nY + pRect->nH + borderWidth,
+				border.data()
+			);
+		}
 	}
 	return oUI_DrawGroundItemBackground(pRect, szText, rgba);
 }
@@ -404,6 +451,7 @@ bool ItemFilter::Install(MonsterStatsDisplaySettings settings) {
 		// Stuff we want to do w/ the filter
 		DetourAttach(&(PVOID&)oITEMS_GetName, Hooked_ITEMS_GetName);
 		DetourAttach(&(PVOID&)oUI_DrawGroundItemBackground, Hooked_UI_DrawGroundItemBackground);
+		DetourAttach(&(PVOID&)oTooltipsPanel_DrawTooltip, Hooked_TooltipsPanel_DrawTooltip);
 
 		DWORD oldProtect = 0;
 		auto UnitSize = (int32_t*)Pattern::Address(0x2086ca);

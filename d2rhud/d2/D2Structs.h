@@ -67,7 +67,6 @@ public:
 	CCMDHANDLER* pfHandler;
 };
 
-
 #pragma region Custom Structs
 class D2ItemFilterResultStrc {
 public:
@@ -76,6 +75,7 @@ public:
 	std::string szDescription = "%s";
 
 	std::vector<float> nBackgroundColorGround = { 0.f, 0.f, 0.f, 0.95f };
+	std::vector<float> nBorderColorGround = { 0.f, 0.f, 0.f, 0.f, 0.f }; // RGBA + width
 };
 
 class D2UnitStrcCustom : public D2UnitStrc {
