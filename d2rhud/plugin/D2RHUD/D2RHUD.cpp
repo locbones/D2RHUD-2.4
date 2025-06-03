@@ -36,7 +36,7 @@
 std::string configFilePath = "config.json";
 std::string filename = "../Launcher/D2RLAN_Config.txt";
 std::string lootFile = "../D2R/lootfilter.lua";
-std::string Version = "1.0.8";
+std::string Version = "1.0.9";
 
 static MonsterStatsDisplaySettings cachedSettings;
 

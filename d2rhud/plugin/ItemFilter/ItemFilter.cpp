@@ -89,6 +89,18 @@ void PrintGameMessage(std::string message) {
 }
 
 
+bool HandleError(const sol::protected_function_result& result) {
+	if (!result.valid()) {
+		sol::error err = result;
+		PrintGameMessage(err.what());
+		return true;
+	}
+	return false;
+}
+
+class D2ItemUnitStrc : public D2UnitStrc {};
+class D2PlayerUnitStrc : public D2UnitStrc {};
+
 void __fastcall Hooked_ITEMS_GetName(D2UnitStrc* pUnit, char* pBuffer) {
 	oITEMS_GetName(pUnit, pBuffer);
 	auto pUnitToUse = pUnit;
@@ -109,14 +121,36 @@ void __fastcall Hooked_ITEMS_GetName(D2UnitStrc* pUnit, char* pBuffer) {
 			}
 		}
 		strncpy(pBuffer, cBuffer, 0x400);
+
+		if (pUnitCustom->pFilterResult->cbNameFunction.valid()) {
+			std::string szName = std::string(pBuffer);
+			sol::protected_function_result result =	pUnitCustom->pFilterResult->cbNameFunction(
+				reinterpret_cast<D2ItemUnitStrc*>(pUnit),
+				szName,
+				GetTickCount()
+			);
+			if (HandleError(result)) {
+				return;
+			}
+			sol::object data = result;
+			if (data.valid() && data.is<std::string>()) {
+				szName = data.as<std::string>();
+			}
+			strncpy(pBuffer, szName.c_str(), 0x400);
+			
+		}
 	}
 }
 
-int64_t* __fastcall Hooked_TooltipsPanel_DrawTooltip(int64_t* a1) {
-	auto pUnit = reinterpret_cast<D2UnitStrcCustom*>(oUNITS_GetHoveredUnit(*gpClientPlayerListIndex));
+void HandleItemBackground(D2UnitStrcCustom* pUnit, D2UnitRectStrc* pRect, float* rgba) {
 	if (pUnit && pUnit->pFilterResult) {
-		auto rgba = (float*)a1 + 0x5A;
-		auto pRect = reinterpret_cast<D2UnitRectStrc*>((uint32_t*)a1 + 0x18);
+		if (pUnit->pFilterResult->cbBackgroundFunction.valid()) {
+			HandleError(pUnit->pFilterResult->cbBackgroundFunction(
+				reinterpret_cast<D2ItemUnitStrc*>(pUnit),
+				pUnit->pFilterResult,
+				GetTickCount()
+			));
+		}
 		auto& backGroundColor = pUnit->pFilterResult->nBackgroundColorGround;
 
 		rgba[0] = backGroundColor[0];
@@ -137,6 +171,11 @@ int64_t* __fastcall Hooked_TooltipsPanel_DrawTooltip(int64_t* a1) {
 			);
 		}
 	}
+}
+
+int64_t* __fastcall Hooked_TooltipsPanel_DrawTooltip(int64_t* a1) {
+	auto pUnit = reinterpret_cast<D2UnitStrcCustom*>(oUNITS_GetHoveredUnit(*gpClientPlayerListIndex));
+	HandleItemBackground(pUnit, reinterpret_cast<D2UnitRectStrc*>((uint32_t*)a1 + 0x18), (float*)a1 + 0x5A);
 	return oTooltipsPanel_DrawTooltip(a1);
 }
 
@@ -145,42 +184,21 @@ void RegisterD2ItemFilterResultStrc(sol::state& s) {
 		"Hide", &D2ItemFilterResultStrc::bHide,
 		"Name", &D2ItemFilterResultStrc::szName,
 		"Background", &D2ItemFilterResultStrc::nBackgroundColorGround,
-		"Border", &D2ItemFilterResultStrc::nBorderColorGround
+		"Border", &D2ItemFilterResultStrc::nBorderColorGround,
+		"BackgroundFunction", &D2ItemFilterResultStrc::cbBackgroundFunction,
+		"NameFunction", &D2ItemFilterResultStrc::cbNameFunction
 	);
 }
 
 int64_t* __fastcall Hooked_UI_DrawGroundItemBackground(D2UnitRectStrc* pRect, const char* szText, float* rgba) {
 	auto pUnit = reinterpret_cast<D2UnitStrcCustom*>(GetUnitByIdAndType(ppClientUnitList, pRect->dwUnitId, UNIT_ITEM));
-	if (pUnit && pUnit->pFilterResult) {
-		auto& backGroundColor = pUnit->pFilterResult->nBackgroundColorGround;
-
-		rgba[0] = backGroundColor[0];
-		rgba[1] = backGroundColor[1];
-		rgba[2] = backGroundColor[2];
-		rgba[3] = backGroundColor[3];
-
-		auto& border = pUnit->pFilterResult->nBorderColorGround;
-		float borderWidth = (border.size() >= 5) ? border[4] : 0.0f;
-
-		if (borderWidth > 0.0f && border.size() >= 4) {
-			oGFX_DrawFilledRect(
-				pRect->nX - borderWidth,
-				pRect->nY - borderWidth,
-				pRect->nX + pRect->nW + borderWidth,
-				pRect->nY + pRect->nH + borderWidth,
-				border.data()
-			);
-		}
-	}
+	HandleItemBackground(pUnit, pRect, rgba);
 	return oUI_DrawGroundItemBackground(pRect, szText, rgba);
 }
 
 int32_t STATLIST_GetUnitStatSignedLayer0(D2UnitStrc* pThat, uint32_t nStatId) {
 	return STATLIST_GetUnitStatSigned(pThat, nStatId, 0);
 }
-
-class D2ItemUnitStrc : public D2UnitStrc {};
-class D2PlayerUnitStrc : public D2UnitStrc {};
 
 void RegisterD2UnitStrc(sol::state& s) {
 	auto unitType = s.new_usertype<D2UnitStrc>("D2UnitStrc", sol::no_constructor,
@@ -321,14 +339,6 @@ void RegisterBasicTypes(sol::state& s) {
 	s.set_function("ISet", [](sol::variadic_args args) { std::set<std::int32_t> l; for (auto&& arg : args) { l.insert(arg.as<std::int32_t>()); } return l; });
 }
 
-bool HandleError(sol::protected_function_result result) {
-	if (!result.valid()) {
-		sol::error err = result;
-		PrintGameMessage(err.what());
-		return true;
-	}
-	return false;
-}
 
 sol::protected_function getWelcomeMessage;
 void LoadScript() {

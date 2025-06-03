@@ -4,6 +4,8 @@
 #include <cstdint>
 #include <string>
 #include <vector>
+#define SOL_ALL_SAFETIES_ON 1
+#include <sol/sol.hpp>
 
 struct D2Client {
 	uint32_t dwClientId; //0x0000
@@ -76,6 +78,14 @@ public:
 
 	std::vector<float> nBackgroundColorGround = { 0.f, 0.f, 0.f, 0.95f };
 	std::vector<float> nBorderColorGround = { 0.f, 0.f, 0.f, 0.f, 0.f }; // RGBA + width
+
+	sol::protected_function cbBackgroundFunction = sol::nil;
+	sol::protected_function cbNameFunction = sol::nil;
+
+	~D2ItemFilterResultStrc() {
+		cbBackgroundFunction = sol::nil;
+		cbNameFunction = sol::nil;
+	}
 };
 
 class D2UnitStrcCustom : public D2UnitStrc {
