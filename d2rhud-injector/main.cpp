@@ -14,7 +14,7 @@ std::wstring ExePath();
 void EjectDLL(const int& pid, const std::wstring& path);
 void InjectDLL(const int& pid, const std::wstring& path);
 
-#define ORIGINAL_DLL_NAME L"d2rhud.dll"
+#define ORIGINAL_DLL_NAME L"D2RHUD.dll"
 #define RENAMED_DLL_NAME  L"d2rhudb.dll"
 
 int main(int argc, char* argv[])
