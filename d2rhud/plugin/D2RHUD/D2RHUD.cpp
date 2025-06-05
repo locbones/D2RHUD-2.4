@@ -1034,44 +1034,11 @@ std::chrono::steady_clock::time_point g_ItemFilterMessageStartTime;
 
 #pragma region Draw Loop for Detours and Stats Display
 void D2RHUD::OnDraw() {
-
     D2GameStrc* pGame = nullptr;
     D2Client* pGameClient = GetClientPtr();
 
     if (pGameClient != nullptr)
         pGame = (D2GameStrc*)pGameClient->pGame;
-
-    auto drawList = ImGui::GetBackgroundDrawList();
-    auto min = drawList->GetClipRectMin();
-    auto max = drawList->GetClipRectMax();
-    auto width = max.x - min.x;
-    auto center = width / 2.f;
-
-    ImGuiIO& io = ImGui::GetIO();
-    ImVec2 display_size = io.DisplaySize;
-    float ypercent1 = display_size.y * 0.0745f;
-    float ypercent2 = display_size.y * 0.043f;
-
-    ImFont* selectedFont = nullptr;
-    bool fontPushed = false;
-
-    // Select UI font based on resolution
-    if (display_size.y <= 720)
-        selectedFont = io.Fonts->Fonts[0];
-    else if (display_size.y <= 900)
-        selectedFont = io.Fonts->Fonts[1];
-    else if (display_size.y <= 1080)
-        selectedFont = io.Fonts->Fonts[2];
-    else if (display_size.y <= 1440)
-        selectedFont = io.Fonts->Fonts[3];
-    else if (display_size.y <= 2160)
-        selectedFont = io.Fonts->Fonts[4];
-
-    if (selectedFont)
-    {
-        ImGui::PushFont(selectedFont);
-        fontPushed = true;
-    }
 
     if (g_ShouldShowItemFilterMessage)
     {
@@ -1080,6 +1047,7 @@ void D2RHUD::OnDraw() {
 
         if (elapsed.count() < 3)
         {
+            ImGuiIO& io = ImGui::GetIO();
             ImFont* largeFont = io.Fonts->Fonts[4];
             if (largeFont)
                 ImGui::PushFont(largeFont);
@@ -1098,9 +1066,6 @@ void D2RHUD::OnDraw() {
             g_ShouldShowItemFilterMessage = false;
     }
 
-    if (fontPushed)
-        ImGui::PopFont();
-    
     if (!menuClickHookInstalled)
     {
         mainMenuClickHandlerOrig = reinterpret_cast<GameMenuOnClickHandler>(Pattern::Address(mainMenuClickHandlerOffset));
@@ -1136,7 +1101,7 @@ void D2RHUD::OnDraw() {
         VirtualProtect(&gpSCMDHandlerTable[SCMD_CUSTOM_OP_CODE], sizeof(D2SCMDStrc), PAGE_EXECUTE_READWRITE, &oldProtect);
         gpSCMDHandlerTable[SCMD_CUSTOM_OP_CODE].pfHandler = (SCMDHANDLER*)&SCMDHANDLER_Custom;
         VirtualProtect(&gpSCMDHandlerTable[SCMD_CUSTOM_OP_CODE], sizeof(D2SCMDStrc), oldProtect, &oldProtect);
-        
+
         // Patch default "generate new shared stash" code
         size_t nSize = 0x10e5e6 - 0x10e45a;
         auto SharedStashGenerate = (uint8_t*)Pattern::Address(0x10e45a);
@@ -1203,9 +1168,9 @@ void D2RHUD::OnDraw() {
             VirtualProtect(PlayerCount, nSize, oldProtect, &oldProtect);
         }
         */
-        
+
     }
-    
+
     if (!itemFilter->bInstalled) {
         itemFilter->Install(cachedSettings);
     }
@@ -1214,14 +1179,39 @@ void D2RHUD::OnDraw() {
     if (!settings.monsterStatsDisplay)
         return;
 
-    
+    auto drawList = ImGui::GetBackgroundDrawList();
+    auto min = drawList->GetClipRectMin();
+    auto max = drawList->GetClipRectMax();
+    auto width = max.x - min.x;
+    auto center = width / 2.f;
 
-    
+    ImGuiIO& io = ImGui::GetIO();
+    ImVec2 display_size = io.DisplaySize;
+    float ypercent1 = display_size.y * 0.0745f;
+    float ypercent2 = display_size.y * 0.043f;
+
+    ImFont* selectedFont = nullptr;
+    bool fontPushed = false;
+
+    if (display_size.y <= 720)
+        selectedFont = io.Fonts->Fonts[0];
+    else if (display_size.y <= 900)
+        selectedFont = io.Fonts->Fonts[1];
+    else if (display_size.y <= 1080)
+        selectedFont = io.Fonts->Fonts[2];
+    else if (display_size.y <= 1440)
+        selectedFont = io.Fonts->Fonts[3];
+    else if (display_size.y <= 2160)
+        selectedFont = io.Fonts->Fonts[4];
+
+    if (selectedFont)
+    {
+        ImGui::PushFont(selectedFont);
+        fontPushed = true;
+    }
 
     do
     {
-        
-
         if (!gMouseHover->IsHovered) break;
         if (gMouseHover->HoveredUnitType > UNIT_MONSTER) break;
 
@@ -1292,7 +1282,6 @@ void D2RHUD::OnDraw() {
 
     if (fontPushed)
         ImGui::PopFont();
-
 }
 
 #pragma endregion
