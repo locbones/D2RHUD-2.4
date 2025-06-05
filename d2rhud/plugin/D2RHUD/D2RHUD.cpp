@@ -36,7 +36,7 @@
 std::string configFilePath = "config.json";
 std::string filename = "../Launcher/D2RLAN_Config.txt";
 std::string lootFile = "../D2R/lootfilter.lua";
-std::string Version = "1.0.9";
+std::string Version = "1.1.0";
 
 static MonsterStatsDisplaySettings cachedSettings;
 
@@ -1028,6 +1028,10 @@ void __fastcall HookedSUNITDMG_ApplyResistancesAndAbsorb(D2DamageInfoStrc* pDama
 #pragma endregion
 
 
+std::string g_ItemFilterStatusMessage = "";
+bool g_ShouldShowItemFilterMessage = false;
+std::chrono::steady_clock::time_point g_ItemFilterMessageStartTime;
+
 #pragma region Draw Loop for Detours and Stats Display
 void D2RHUD::OnDraw() {
 
@@ -1037,6 +1041,66 @@ void D2RHUD::OnDraw() {
     if (pGameClient != nullptr)
         pGame = (D2GameStrc*)pGameClient->pGame;
 
+    auto drawList = ImGui::GetBackgroundDrawList();
+    auto min = drawList->GetClipRectMin();
+    auto max = drawList->GetClipRectMax();
+    auto width = max.x - min.x;
+    auto center = width / 2.f;
+
+    ImGuiIO& io = ImGui::GetIO();
+    ImVec2 display_size = io.DisplaySize;
+    float ypercent1 = display_size.y * 0.0745f;
+    float ypercent2 = display_size.y * 0.043f;
+
+    ImFont* selectedFont = nullptr;
+    bool fontPushed = false;
+
+    // Select UI font based on resolution
+    if (display_size.y <= 720)
+        selectedFont = io.Fonts->Fonts[0];
+    else if (display_size.y <= 900)
+        selectedFont = io.Fonts->Fonts[1];
+    else if (display_size.y <= 1080)
+        selectedFont = io.Fonts->Fonts[2];
+    else if (display_size.y <= 1440)
+        selectedFont = io.Fonts->Fonts[3];
+    else if (display_size.y <= 2160)
+        selectedFont = io.Fonts->Fonts[4];
+
+    if (selectedFont)
+    {
+        ImGui::PushFont(selectedFont);
+        fontPushed = true;
+    }
+
+    if (g_ShouldShowItemFilterMessage)
+    {
+        auto now = std::chrono::steady_clock::now();
+        auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - g_ItemFilterMessageStartTime);
+
+        if (elapsed.count() < 3)
+        {
+            ImFont* largeFont = io.Fonts->Fonts[4];
+            if (largeFont)
+                ImGui::PushFont(largeFont);
+
+            auto drawList = ImGui::GetBackgroundDrawList();
+            ImVec2 screenSize = ImGui::GetIO().DisplaySize;
+            ImVec2 textSize = ImGui::CalcTextSize(g_ItemFilterStatusMessage.c_str());
+            ImVec2 textPos = ImVec2((screenSize.x - textSize.x) * 0.5f, (screenSize.y - textSize.y) * 0.1f);
+
+            drawList->AddText(textPos, IM_COL32(199, 179, 119, 255), g_ItemFilterStatusMessage.c_str());
+
+            if (largeFont)
+                ImGui::PopFont();
+        }
+        else
+            g_ShouldShowItemFilterMessage = false;
+    }
+
+    if (fontPushed)
+        ImGui::PopFont();
+    
     if (!menuClickHookInstalled)
     {
         mainMenuClickHandlerOrig = reinterpret_cast<GameMenuOnClickHandler>(Pattern::Address(mainMenuClickHandlerOffset));
@@ -1150,39 +1214,14 @@ void D2RHUD::OnDraw() {
     if (!settings.monsterStatsDisplay)
         return;
 
-    auto drawList = ImGui::GetBackgroundDrawList();
-    auto min = drawList->GetClipRectMin();
-    auto max = drawList->GetClipRectMax();
-    auto width = max.x - min.x;
-    auto center = width / 2.f;
+    
 
-    ImGuiIO& io = ImGui::GetIO();
-    ImVec2 display_size = io.DisplaySize;
-    float ypercent1 = display_size.y * 0.0745f;
-    float ypercent2 = display_size.y * 0.043f;
-
-    ImFont* selectedFont = nullptr;
-    bool fontPushed = false;
-
-    if (display_size.y <= 720)
-        selectedFont = io.Fonts->Fonts[0];
-    else if (display_size.y <= 900)
-        selectedFont = io.Fonts->Fonts[1];
-    else if (display_size.y <= 1080)
-        selectedFont = io.Fonts->Fonts[2];
-    else if (display_size.y <= 1440)
-        selectedFont = io.Fonts->Fonts[3];
-    else if (display_size.y <= 2160)
-        selectedFont = io.Fonts->Fonts[4];
-
-    if (selectedFont)
-    {
-        ImGui::PushFont(selectedFont);
-        fontPushed = true;
-    }
+    
 
     do
     {
+        
+
         if (!gMouseHover->IsHovered) break;
         if (gMouseHover->HoveredUnitType > UNIT_MONSTER) break;
 

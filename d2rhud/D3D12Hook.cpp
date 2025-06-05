@@ -187,6 +187,7 @@ namespace D3D12 {
 				io.Fonts->AddFontFromFileTTF(fontPath.c_str(), 18.0f);
 				io.Fonts->AddFontFromFileTTF(fontPath.c_str(), 24.0f);
 				io.Fonts->AddFontFromFileTTF(fontPath.c_str(), 36.0f);
+				io.Fonts->AddFontFromFileTTF(fontPath.c_str(), 48.0f);
 				FontLoaded = true;
 			}
 			else {

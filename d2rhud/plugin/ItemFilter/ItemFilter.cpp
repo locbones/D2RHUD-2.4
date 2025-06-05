@@ -5,6 +5,8 @@
 #include <sol/sol.hpp>
 #include <filesystem>
 #include <set>
+#include <imgui.h>
+#include "../d2rhud/d2rhud.h"
 
 #pragma pack(1)
 class D2GSPacketSrv0A {
@@ -65,6 +67,12 @@ static TooltipsPanel_DrawTooltip_t oTooltipsPanel_DrawTooltip = reinterpret_cast
 
 typedef D2UnitStrc* (__fastcall* UNITS_GetHoveredUnit_t)(uint32_t nClientPlayerListIndex);
 static UNITS_GetHoveredUnit_t oUNITS_GetHoveredUnit = reinterpret_cast<UNITS_GetHoveredUnit_t>(Pattern::Address(0xdedb0));
+
+typedef void(__fastcall* DATATBLS_LoadAllTxts_t)();
+static DATATBLS_LoadAllTxts_t oDATATBLS_LoadAllTxts = reinterpret_cast<DATATBLS_LoadAllTxts_t>(Pattern::Address(0x1de6c0));
+
+typedef void(__fastcall* DATATBLS_UnloadAllBins_t)();
+static DATATBLS_UnloadAllBins_t oDATATBLS_UnloadAllBins = reinterpret_cast<DATATBLS_UnloadAllBins_t>(Pattern::Address(0x1dd580));
 
 std::string gWelcomeMessage;
 
@@ -479,6 +487,18 @@ bool ItemFilter::Install(MonsterStatsDisplaySettings settings) {
 	return bInstalled;
 }
 
+D2UnitStrc* GetClientPlayerUnit() {
+	if (!ppClientUnitList || !gpClientPlayerListIndex || *gpClientPlayerListIndex < 0)
+		return nullptr;
+
+	uint32_t playerId = gpClientPlayerIds[*gpClientPlayerListIndex];
+	return GetUnitByIdAndType(ppClientUnitList, playerId, UNIT_PLAYER);
+}
+
+bool IsPlayerInGame() {
+	return GetClientPlayerUnit() != nullptr;
+}
+
 bool ItemFilter::OnKeyPressed(short key) {
 	if (key == 'R' && (GetKeyState(VK_CONTROL) & 0x8000)) {
 		LoadScript();
@@ -507,6 +527,18 @@ bool ItemFilter::OnKeyPressed(short key) {
 				pItem = pItem->pListNext;
 			}
 		}
+
+		if (!IsPlayerInGame())
+		{
+			oDATATBLS_UnloadAllBins();
+			oDATATBLS_LoadAllTxts();
+
+			g_ItemFilterStatusMessage = ".TXT Files have been reloaded!";
+			g_ShouldShowItemFilterMessage = true;
+			g_ItemFilterMessageStartTime = std::chrono::steady_clock::now();
+		}
+		else
+			g_ShouldShowItemFilterMessage = false;
 
 		return true;
 	}
