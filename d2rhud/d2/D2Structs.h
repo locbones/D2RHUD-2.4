@@ -79,6 +79,10 @@ public:
 	std::vector<float> nBackgroundColorGround = { 0.f, 0.f, 0.f, 0.95f };
 	std::vector<float> nBorderColorGround = { 0.f, 0.f, 0.f, 0.f, 0.f }; // RGBA + width
 
+	std::vector<float> nHoveredBackgroundColorGround = { 0.f, 0.25f, 0.5f, 1.f };
+	std::vector<float> nHoveredBorderColorGround = { 0.f, 0.f, 0.f, 0.f, 0.f }; // RGBA + width
+
+	sol::protected_function cbHoveredBackgroundFunction = sol::nil;
 	sol::protected_function cbBackgroundFunction = sol::nil;
 	sol::protected_function cbNameFunction = sol::nil;
 

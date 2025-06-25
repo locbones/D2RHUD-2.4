@@ -74,6 +74,9 @@ static DATATBLS_LoadAllTxts_t oDATATBLS_LoadAllTxts = reinterpret_cast<DATATBLS_
 typedef void(__fastcall* DATATBLS_UnloadAllBins_t)();
 static DATATBLS_UnloadAllBins_t oDATATBLS_UnloadAllBins = reinterpret_cast<DATATBLS_UnloadAllBins_t>(Pattern::Address(0x1dd580));
 
+typedef void(__fastcall* DATATBLS_LoadAllJson_t)();
+static DATATBLS_LoadAllJson_t oDATATBLS_LoadAllJson = reinterpret_cast<DATATBLS_LoadAllJson_t>(Pattern::Address(0x14c1b78));
+
 std::string gWelcomeMessage;
 
 D2UnitStrc* GetUnitByIdAndType(D2UnitStrc** ppUnitsList, uint32_t nUnitId, D2C_UnitTypes nUnitType) {
@@ -150,23 +153,29 @@ void __fastcall Hooked_ITEMS_GetName(D2UnitStrc* pUnit, char* pBuffer) {
 	}
 }
 
+inline bool IsHovered(float* rgba) {
+	return rgba[0] == 0.f && rgba[1] == 0.25f && rgba[2] == 0.5f && rgba[3] == 1.f;
+}
+
 void HandleItemBackground(D2UnitStrcCustom* pUnit, D2UnitRectStrc* pRect, float* rgba) {
 	if (pUnit && pUnit->pFilterResult) {
-		if (pUnit->pFilterResult->cbBackgroundFunction.valid()) {
-			HandleError(pUnit->pFilterResult->cbBackgroundFunction(
+		auto bIsHovered = IsHovered(rgba);
+		sol::protected_function fBackground = bIsHovered ? pUnit->pFilterResult->cbHoveredBackgroundFunction : pUnit->pFilterResult->cbBackgroundFunction;
+		if (fBackground.valid()) {
+			HandleError(fBackground(
 				reinterpret_cast<D2ItemUnitStrc*>(pUnit),
 				pUnit->pFilterResult,
 				GetTickCount()
 			));
 		}
-		auto& backGroundColor = pUnit->pFilterResult->nBackgroundColorGround;
-
+		auto& backGroundColor = bIsHovered ? pUnit->pFilterResult->nHoveredBackgroundColorGround : pUnit->pFilterResult->nBackgroundColorGround;
+		std::cout << bIsHovered << std::endl;
 		rgba[0] = backGroundColor[0];
 		rgba[1] = backGroundColor[1];
 		rgba[2] = backGroundColor[2];
 		rgba[3] = backGroundColor[3];
 
-		auto& border = pUnit->pFilterResult->nBorderColorGround;
+		auto& border = bIsHovered ? pUnit->pFilterResult->nHoveredBorderColorGround : pUnit->pFilterResult->nBorderColorGround;
 		float borderWidth = (border.size() >= 5) ? border[4] : 0.0f;
 
 		if (borderWidth > 0.0f && border.size() >= 4) {
@@ -192,8 +201,11 @@ void RegisterD2ItemFilterResultStrc(sol::state& s) {
 		"Hide", &D2ItemFilterResultStrc::bHide,
 		"Name", &D2ItemFilterResultStrc::szName,
 		"Background", &D2ItemFilterResultStrc::nBackgroundColorGround,
+		"HoveredBackground", &D2ItemFilterResultStrc::nHoveredBackgroundColorGround,
 		"Border", &D2ItemFilterResultStrc::nBorderColorGround,
+		"HoveredBorder", &D2ItemFilterResultStrc::nHoveredBorderColorGround,
 		"BackgroundFunction", &D2ItemFilterResultStrc::cbBackgroundFunction,
+		"HoveredBackgroundFunction", &D2ItemFilterResultStrc::cbHoveredBackgroundFunction,
 		"NameFunction", &D2ItemFilterResultStrc::cbNameFunction
 	);
 }
@@ -532,6 +544,7 @@ bool ItemFilter::OnKeyPressed(short key) {
 		{
 			oDATATBLS_UnloadAllBins();
 			oDATATBLS_LoadAllTxts();
+			oDATATBLS_LoadAllJson();
 
 			g_ItemFilterStatusMessage = ".TXT Files have been reloaded!";
 			g_ShouldShowItemFilterMessage = true;
