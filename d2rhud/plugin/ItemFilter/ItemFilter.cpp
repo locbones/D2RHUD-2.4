@@ -74,9 +74,6 @@ static DATATBLS_LoadAllTxts_t oDATATBLS_LoadAllTxts = reinterpret_cast<DATATBLS_
 typedef void(__fastcall* DATATBLS_UnloadAllBins_t)();
 static DATATBLS_UnloadAllBins_t oDATATBLS_UnloadAllBins = reinterpret_cast<DATATBLS_UnloadAllBins_t>(Pattern::Address(0x1dd580));
 
-typedef void(__fastcall* DATATBLS_LoadAllJson_t)();
-static DATATBLS_LoadAllJson_t oDATATBLS_LoadAllJson = reinterpret_cast<DATATBLS_LoadAllJson_t>(Pattern::Address(0x14c1b78));
-
 std::string gWelcomeMessage;
 
 D2UnitStrc* GetUnitByIdAndType(D2UnitStrc** ppUnitsList, uint32_t nUnitId, D2C_UnitTypes nUnitType) {
@@ -544,7 +541,6 @@ bool ItemFilter::OnKeyPressed(short key) {
 		{
 			oDATATBLS_UnloadAllBins();
 			oDATATBLS_LoadAllTxts();
-			oDATATBLS_LoadAllJson();
 
 			g_ItemFilterStatusMessage = ".TXT Files have been reloaded!";
 			g_ShouldShowItemFilterMessage = true;
