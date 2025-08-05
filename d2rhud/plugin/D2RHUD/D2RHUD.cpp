@@ -2041,10 +2041,10 @@ void D2RHUD::OnDraw() {
 
                 ImVec2 textSize = ImGui::CalcTextSize(line.c_str());
 
-                float posX = screenSize.x - textSize.x - paddingX - horizontalOffset;
+                float posX = screenSize.x - textSize.x - paddingX - horizontalOffset + 45;
                 if (isUltraWide)
                 {
-                    posX = screenSize.x * 0.935f - textSize.x;
+                    posX = screenSize.x * 0.905f - textSize.x;
                 }
                 ImVec2 pos = ImVec2(posX, paddingY + lineHeight * lineIndex + horizontalOffset + 10.0f);
 
