@@ -23,6 +23,9 @@
 #include "../../D3D12Hook.h"
 #include "../ItemFilter/ItemFilter.h"
 #include <regex>
+#include <ctime>
+#include "../../D2/json.hpp"
+#include <random>
 
 /*
 - Chat Detours/Structures by Killshot
@@ -36,7 +39,8 @@
 std::string configFilePath = "config.json";
 std::string filename = "../Launcher/D2RLAN_Config.txt";
 std::string lootFile = "../D2R/lootfilter.lua";
-std::string Version = "1.1.1";
+std::string Version = "1.1.2";
+using json = nlohmann::json;
 
 static MonsterStatsDisplaySettings cachedSettings;
 
@@ -120,6 +124,8 @@ const uint8_t CCMD_DEBUGCHEAT = 0x15;
 const uint8_t SCMD_CHATSTART = 0x26;
 const uint64_t SaveAndExitButtonHash = 0x621D53C05FCA5A67;
 const uint32_t detectGameStatusOffset = 0x1DC76F8; //unknown, just convenient
+const uint32_t modNameOffset = 0x1BF084F;
+
 
 static D2Client* GetClientPtr()
 {
@@ -630,7 +636,6 @@ std::vector<std::string> ReadAutomaticCommandsFromFile(const std::string& filena
                 commands.erase(0, commaPos + 1);
             }
 
-            // Handle any remaining command after the last comma
             std::string command = Trim(commands);
             if (!command.empty()) {
                 automaticCommands.push_back(command);
@@ -640,12 +645,10 @@ std::vector<std::string> ReadAutomaticCommandsFromFile(const std::string& filena
         }
     }
 
-    // Handle less than 6 commands by filling with empty strings or skipping
     while (automaticCommands.size() < 6) {
-        automaticCommands.push_back("");  // Optionally add empty strings if less than 6
+        automaticCommands.push_back("");
     }
 
-    // Now assign the values to your automaticCommand variables if necessary
     if (automaticCommands.size() >= 6) {
         automaticCommand1 = automaticCommands[0];
         automaticCommand2 = automaticCommands[1];
@@ -672,8 +675,6 @@ void WriteToDebugLog(const std::string& message) {
     if (logFile.is_open()) {
         std::time_t now = std::time(nullptr);
         std::tm* localTime = std::localtime(&now);
-
-        // Write formatted log entry
         logFile << "[" << std::put_time(localTime, "%a %b %d %T %Y") << "] " << message << std::endl;
 
         logFile.close();
@@ -682,6 +683,28 @@ void WriteToDebugLog(const std::string& message) {
 #pragma endregion
 
 #pragma region Startup Options Control
+static std::string GetModName() {
+    uint64_t pModNameAddr = Pattern::Address(modNameOffset);
+    if (pModNameAddr == 0) {
+        return "";
+    }
+
+    const char* pModName = reinterpret_cast<const char*>(pModNameAddr);
+    if (!pModName) {
+        return "";
+    }
+
+    return std::string(pModName);
+}
+
+std::string GetExecutableDir()
+{
+    char buffer[MAX_PATH];
+    GetModuleFileNameA(nullptr, buffer, MAX_PATH);
+    std::filesystem::path exePath(buffer);
+    return exePath.parent_path().string();
+}
+
 static int GetClientStatus() {
     uint64_t pClients = Pattern::Address(detectGameStatusOffset);
     return (pClients != NULL) ? static_cast<int>(*(uint8_t*)pClients) : -1;
@@ -865,6 +888,8 @@ static GetUnitNameFptr GetUnitName = reinterpret_cast<GetUnitNameFptr>(Pattern::
 static BroadcastChatMessageFptr BroadcastChatMessage = reinterpret_cast<BroadcastChatMessageFptr>(Pattern::Address(BroadcastChatMessageOffset));
 static Send_SCMD_CHATSTART_Fptr Send_SCMD_CHATSTART = reinterpret_cast<Send_SCMD_CHATSTART_Fptr>(Pattern::Address(Send_SCMD_CHATSTARTOffset));
 static std::vector<std::string> g_automaticCommands;
+typedef void(__fastcall* MONSTER_InitializeStatsAndSkills_t)(D2GameStrc* pGame, D2ActiveRoomStrc* pRoom, D2UnitStrc* pMonster, int64_t* pMonRegData);
+static MONSTER_InitializeStatsAndSkills_t oMONSTER_InitializeStatsAndSkills = nullptr;
 
 void BroadcastChatMessageCustom(uint64_t pGame, const char* szSender, const char* szMsg) {
     SCMD_CHATSTART_PACKET chatStart = {};
@@ -989,6 +1014,8 @@ void __fastcall HookedMONSTER_GetPlayerCountBonus(D2GameStrc* pGame, D2PlayerCou
     }
 }
 
+
+
 const int32_t nMaxPlayerCount = 65535;
 float nMaxDamageReductionPercent = cachedSettings.HPRolloverAmt;
 void __fastcall ScaleDamage(D2DamageInfoStrc* pDamageInfo, D2DamageStatTableStrc* pDamageStatTableRecord) {
@@ -1022,6 +1049,741 @@ void __fastcall HookedSUNITDMG_ApplyResistancesAndAbsorb(D2DamageInfoStrc* pDama
 
     if (pDamageInfo->pGame->nDifficulty > cachedSettings.HPRolloverDiff) {
         ScaleDamage(pDamageInfo, pDamageStatTableRecord);
+    }
+}
+
+#pragma endregion
+
+#pragma region Terror Zones + Sunder
+
+struct DifficultySettings {
+    std::optional<int> bound_incl_min;
+    std::optional<int> bound_incl_max;
+    std::optional<int> boost_level;
+    std::optional<int> difficulty_scale;
+    std::optional<int> boost_experience_percent;
+    std::vector<std::pair<int, int>> stat_adjustments;
+};
+
+struct WarningInfo {
+    int announce_time_min = 0;
+    int tier = 0;
+};
+
+struct LevelName {
+    int id;
+    std::string name;
+};
+
+struct ZoneLevel {
+    int level_id = 0;
+
+    // Optional per-difficulty overrides
+    std::optional<DifficultySettings> normal;
+    std::optional<DifficultySettings> nightmare;
+    std::optional<DifficultySettings> hell;
+};
+
+struct ZoneGroup {
+    int id = 0;
+    std::vector<ZoneLevel> levels;
+};
+
+struct DesecratedZone {
+    std::time_t start_time_utc = 0;
+    std::time_t end_time_utc = 0;
+    int terror_duration_min = 0;
+    int terror_break_min = 0;
+    DifficultySettings default_normal;
+    DifficultySettings default_nightmare;
+    DifficultySettings default_hell;
+    std::vector<WarningInfo> warnings;
+    std::vector<ZoneGroup> zones;
+};
+
+struct TerrorZoneDisplayData
+{
+    int cycleLengthMin = 0;
+    int terrorDurationMin = 0;
+    int groupCount = 0;
+    int activeGroupIndex = -1;
+    time_t zoneStartUtc = 0;
+};
+
+// Structure for stat definition
+struct Stat {
+    D2C_ItemStats id;
+    int minValue;
+    int maxValue;
+    bool allowNegative; // determines if negative values are possible
+    bool isBinary;      // for stats like cannot be frozen
+};
+
+int playerLevel = 0;
+static std::string g_ActiveZoneInfoText;
+int g_ManualZoneGroupOverride = -1;
+time_t g_LastToggleTime = 0;
+TerrorZoneDisplayData g_TerrorZoneData;
+std::vector<DesecratedZone> gDesecratedZones;
+std::vector<LevelName> level_names;
+
+
+inline std::time_t parse_time_utc(const std::string& s) {
+    std::tm tm = {};
+    std::istringstream ss(s);
+    ss >> std::get_time(&tm, "%Y-%m-%d %H:%M:%S");
+    if (ss.fail()) {
+        return 0;
+    }
+    return _mkgmtime(&tm);
+}
+
+void from_json(const json& j, DifficultySettings& d) {
+
+    //Optional
+    if (j.contains("bound_incl_min"))
+        d.bound_incl_min = j.at("bound_incl_min").get<int>();
+
+    if (j.contains("bound_incl_max"))
+        d.bound_incl_max = j.at("bound_incl_max").get<int>();
+
+    if (j.contains("boost_level"))
+        d.boost_level = j.at("boost_level").get<int>();
+
+    if (j.contains("difficulty_scale"))
+        d.difficulty_scale = j.at("difficulty_scale").get<int>();
+
+    if (j.contains("boost_experience_percent"))
+        d.boost_experience_percent = j.at("boost_experience_percent").get<int>();
+
+    //Unused for now
+    if (j.contains("stat_adjustments")) {
+        d.stat_adjustments.clear();
+        for (const auto& item : j.at("stat_adjustments")) {
+            if (item.is_array() && item.size() == 2) {
+                d.stat_adjustments.emplace_back(item[0].get<int>(), item[1].get<int>());
+            }
+        }
+    }
+}
+
+
+void from_json(const json& j, WarningInfo& w) {
+    w.announce_time_min = j.at("announce_time_min").get<int>();
+    w.tier = j.at("tier").get<int>();
+}
+
+void from_json(const json& j, ZoneLevel& zl) {
+    // Required
+    j.at("level_id").get_to(zl.level_id);
+
+    // Optional
+    if (j.contains("normal")) zl.normal = j.at("normal").get<DifficultySettings>();
+    if (j.contains("nightmare")) zl.nightmare = j.at("nightmare").get<DifficultySettings>();
+    if (j.contains("hell")) zl.hell = j.at("hell").get<DifficultySettings>();
+}
+
+void from_json(const json& j, ZoneGroup& zg) {
+    zg.id = j.at("id").get<int>();
+    zg.levels = j.at("levels").get<std::vector<ZoneLevel>>();
+}
+
+void from_json(const json& j, DesecratedZone& dz) {
+    dz.start_time_utc = parse_time_utc(j.at("start_time_utc").get<std::string>());
+    dz.end_time_utc = parse_time_utc(j.at("end_time_utc").get<std::string>());
+    dz.terror_duration_min = j.at("terror_duration_min").get<int>();
+    dz.terror_break_min = j.at("terror_break_min").get<int>();
+    dz.default_normal = j.at("default_normal").get<DifficultySettings>();
+    dz.default_nightmare = j.at("default_nightmare").get<DifficultySettings>();
+    dz.default_hell = j.at("default_hell").get<DifficultySettings>();
+    dz.warnings = j.at("warnings").get<std::vector<WarningInfo>>();
+    dz.zones = j.at("zones").get<std::vector<ZoneGroup>>();
+    
+}
+
+void from_json(const nlohmann::json& j, LevelName& ln) {
+    j.at("id").get_to(ln.id);
+    j.at("name").get_to(ln.name);
+}
+
+
+std::string StripComments(const std::string& content) {
+    std::string result;
+    bool inComment = false;
+
+    for (size_t i = 0; i < content.length(); ++i) {
+        if (!inComment && content[i] == '/' && i + 1 < content.length() && content[i + 1] == '*') {
+            inComment = true;
+            ++i;
+        }
+        else if (inComment && content[i] == '*' && i + 1 < content.length() && content[i + 1] == '/') {
+            inComment = false;
+            ++i;
+        }
+        else if (!inComment) {
+            result += content[i];
+        }
+    }
+
+    return result;
+}
+
+// Returns a list of (stat name, rolled value) Unused for now
+std::vector<std::pair<D2C_ItemStats, int>> SelectRandomStats(std::mt19937& rng) {
+    std::vector<Stat> allStats = {
+        { STAT_FIRERESIST, 10, 10, true,  false },
+        { STAT_FIRERESIST, 20, 20, true,  false },
+        { STAT_FIRERESIST, 30, 30, true,  false },
+    };
+
+    std::shuffle(allStats.begin(), allStats.end(), rng);
+    std::uniform_int_distribution<> countDist(1, 5);
+    int statCount = countDist(rng);
+
+    std::vector<std::pair<D2C_ItemStats, int>> result;
+    std::uniform_real_distribution<> chance(0.0, 1.0);
+
+    for (int i = 0; i < statCount; ++i) {
+        const Stat& s = allStats[i];
+        int value = 0;
+
+        if (s.isBinary) {
+            value = 1;
+        }
+        else if (s.allowNegative && s.minValue < 0) {
+            bool chooseNegative = chance(rng) < 0.25; // 25% chance negative
+
+            int upperBound = (s.maxValue < 0) ? s.maxValue : 0;
+            int lowerBound = (s.minValue > 0) ? s.minValue : 0;
+
+            if (chooseNegative) {
+                std::uniform_int_distribution<> dist(s.minValue, upperBound);
+                value = dist(rng);
+            }
+            else {
+                std::uniform_int_distribution<> dist(lowerBound, s.maxValue);
+                value = dist(rng);
+            }
+        }
+        else {
+            std::uniform_int_distribution<> dist(s.minValue, s.maxValue);
+            value = dist(rng);
+        }
+
+        result.emplace_back(s.id, value);
+    }
+
+    return result;
+}
+
+bool LoadDesecratedZones(const std::string& filename) {
+    std::ifstream file(filename);
+    if (!file.is_open()) {
+        MessageBoxA(nullptr, "Failed to open desecrated zones config file.", "Error", MB_ICONERROR);
+        return false;
+    }
+
+    std::stringstream buffer;
+    buffer << file.rdbuf();
+    std::string content = StripComments(buffer.str());
+
+    json j;
+    try {
+        j = json::parse(content);
+    }
+    catch (const std::exception& e) {
+        MessageBoxA(nullptr, ("JSON parse error: " + std::string(e.what())).c_str(), "Error", MB_ICONERROR);
+        return false;
+    }
+
+    if (!j.contains("desecrated_zones")) {
+        MessageBoxA(nullptr, "Unable to locate a valid TZ config", "Error", MB_ICONERROR);
+        return false;
+    }
+
+    if (!j.contains("level_names")) {
+        MessageBoxA(nullptr, "Unable to locate valid level names for TZ", "Error", MB_ICONERROR);
+        return false;
+    }
+
+    try {
+        gDesecratedZones = j.at("desecrated_zones").get<std::vector<DesecratedZone>>();
+        level_names = j.at("level_names").get<std::vector<LevelName>>();
+    }
+    catch (const std::exception& e) {
+        MessageBoxA(nullptr, ("JSON field parse error: " + std::string(e.what())).c_str(), "Error", MB_ICONERROR);
+        return false;
+    }
+
+    std::ofstream log("desecrated_zones_log.txt", std::ios::trunc);
+    if (!log.is_open()) {
+        MessageBoxA(nullptr, "Failed to create log file.", "Error", MB_ICONERROR);
+        return true;
+    }
+    /*
+    for (size_t i = 0; i < gDesecratedZones.size(); ++i) {
+        const auto& zone = gDesecratedZones[i];
+
+        log << "Zone " << i << ":\n";
+        log << "Start Time: " << zone.start_time_utc << "\n";
+        log << "End Time: " << zone.end_time_utc << "\n";
+
+        const auto logDifficulty = [&](const std::string& label, const DifficultySettings& diff) {
+            log << "  " << label << ":\n";
+            log << "    bound_incl_min: " << diff.bound_incl_min << "\n";
+            log << "    bound_incl_max: " << diff.bound_incl_max << "\n";
+            log << "    boost_level: " << diff.boost_level << "\n";
+            log << "    difficulty_scale: " << diff.difficulty_scale << "\n";
+            log << "    boost_experience_percent: " << diff.boost_experience_percent << "\n";
+            };
+
+        logDifficulty("Normal", zone.default_normal);
+        logDifficulty("Nightmare", zone.default_nightmare);
+        logDifficulty("Hell", zone.default_hell);
+
+        log << "\n";
+    }
+    */
+
+    return true;
+}
+
+void UpdateActiveZoneInfoText(time_t currentUtc)
+{
+    g_ActiveZoneInfoText.clear();
+
+    for (const auto& zone : gDesecratedZones)
+    {
+        if (currentUtc < zone.start_time_utc || currentUtc > zone.end_time_utc)
+            continue;
+
+        int groupCount = static_cast<int>(zone.zones.size());
+        if (groupCount == 0)
+            continue;
+
+        int cycleLengthMin = zone.terror_duration_min + zone.terror_break_min;
+        if (cycleLengthMin <= 0)
+            continue;
+
+        int activeGroupIndex = g_ManualZoneGroupOverride;
+        if (activeGroupIndex == -1)
+        {
+            // Auto mode: calculate based on time
+            int minutesSinceStart = static_cast<int>((currentUtc - zone.start_time_utc) / 60);
+            int cyclePos = minutesSinceStart % (cycleLengthMin * groupCount);
+            activeGroupIndex = cyclePos / cycleLengthMin;
+        }
+        else
+        {
+            // Clamp manual override index to groupCount-1
+            if (activeGroupIndex >= groupCount)
+                activeGroupIndex = groupCount - 1;
+        }
+
+        if (activeGroupIndex >= groupCount)
+            continue;
+
+        const ZoneGroup& activeGroup = zone.zones[activeGroupIndex];
+
+        // Store terror zone timing info for live update display
+        g_TerrorZoneData.cycleLengthMin = cycleLengthMin;
+        g_TerrorZoneData.terrorDurationMin = zone.terror_duration_min;
+        g_TerrorZoneData.groupCount = groupCount;
+        g_TerrorZoneData.activeGroupIndex = activeGroupIndex;
+        g_TerrorZoneData.zoneStartUtc = zone.start_time_utc;
+
+        std::stringstream ss;
+        for (const auto& zl : activeGroup.levels)
+        {
+            auto it = std::find_if(level_names.begin(), level_names.end(),
+                [&](const LevelName& ln) { return ln.id == zl.level_id; });
+
+            if (it != level_names.end())
+                ss << it->name << "\n";
+            else
+                ss << "(Unknown Level ID: " << zl.level_id << ")\n";
+        }
+
+        g_ActiveZoneInfoText = ss.str();
+
+        break;
+    }
+}
+
+void CheckToggleManualZoneGroup()
+{
+    bool ctrlPressed = (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0;
+    bool altPressed = (GetAsyncKeyState(VK_MENU) & 0x8000) != 0;
+    bool tPressed = (GetAsyncKeyState('Z') & 0x8000) != 0;
+
+    time_t now = std::time(nullptr);
+
+    if (ctrlPressed && altPressed && tPressed && (now - g_LastToggleTime) > 1)
+    {
+        g_LastToggleTime = now;
+
+        if (g_ManualZoneGroupOverride == -1)
+            g_ManualZoneGroupOverride = 0;
+        else
+            g_ManualZoneGroupOverride++;
+
+        const int maxGroups = 5;
+        if (g_ManualZoneGroupOverride >= maxGroups)
+            g_ManualZoneGroupOverride = -1;
+
+        UpdateActiveZoneInfoText(now);
+
+        /*
+        std::string msg = (g_ManualZoneGroupOverride == -1) ?
+            "TerrorZone group override OFF (auto mode)" :
+            "TerrorZone group override ON: Group " + std::to_string(g_ManualZoneGroupOverride);
+        MessageBoxA(nullptr, msg.c_str(), "TerrorZone Override", MB_OK | MB_ICONINFORMATION);
+        */
+    }
+}
+
+int GetPlayerDifficulty(D2UnitStrc* pPlayer) {
+    if (!pPlayer || !pPlayer->pDynamicPath) return -1;
+    auto pRoom = pPlayer->pDynamicPath->pRoom;
+    if (!pRoom || !pRoom->pDrlgRoom) return -1;
+    auto pLevel = pRoom->pDrlgRoom->pLevel;
+    if (!pLevel || !pLevel->pDrlg) return -1;
+    return pLevel->pDrlg->nDifficulty;
+}
+
+void AddToResistances(D2UnitStrc* pUnit, D2C_ItemStats nStatId, uint32_t nValue, uint16_t nLayer = 0) {
+    auto nCurrentValue = STATLIST_GetUnitStatSigned(pUnit, nStatId, nLayer);
+
+    if (nCurrentValue >= 100) {
+
+        int newValue = nCurrentValue - nValue;
+        if (newValue < 95) { newValue = 95; }
+        STATLISTEX_SetStatListExStat(pUnit->pStatListEx, nStatId, newValue, nLayer);
+    }
+}
+
+constexpr uint16_t UNIQUE_LAYER = 1337;
+
+void AddToCurrentStat(D2UnitStrc* pUnit, D2C_ItemStats nStatId, uint32_t nValue) {
+    if (STATLIST_GetUnitStatSigned(pUnit, nStatId, UNIQUE_LAYER) > 0)
+        return;
+
+    int before = STATLIST_GetUnitStatSigned(pUnit, nStatId, 0);
+    STATLISTEX_SetStatListExStat(pUnit->pStatListEx, nStatId, before + nValue, 0);
+    STATLISTEX_SetStatListExStat(pUnit->pStatListEx, nStatId, nValue, UNIQUE_LAYER);
+}
+
+int GetLevelIdFromRoom(D2ActiveRoomStrc* pRoom)
+{
+    if (!pRoom || !pRoom->pDrlgRoom || !pRoom->pDrlgRoom->pLevel)
+        return -1;
+
+    return pRoom->pDrlgRoom->pLevel->nLevelId;
+}
+
+void AdjustMonsterLevel(D2UnitStrc* pUnit, D2C_ItemStats nStatId, uint32_t nValue, uint16_t nLayer = 0) {
+    auto monsterLevel = STATLIST_GetUnitStatSigned(pUnit, nStatId, nLayer);
+
+    if (playerLevel >= monsterLevel)
+        STATLISTEX_SetStatListExStat(pUnit->pStatListEx, nStatId, nValue, nLayer);
+}
+
+void __fastcall ApplyGhettoSunder(D2GameStrc* pGame, D2ActiveRoomStrc* pRoom,
+    D2UnitStrc* pUnit, int64_t* pMonRegData,
+    D2MonStatsInitStrc* monStatsInit) {
+    if (!pGame || !pUnit)
+        return;
+
+    // Track max stat values found among all players
+    int maxColdResist = INT_MIN;
+    int maxFireResist = INT_MIN;
+    int maxLightResist = INT_MIN;
+    int maxPoisonResist = INT_MIN;
+    int maxDamageResist = INT_MIN;
+    int maxMagicResist = INT_MIN;
+
+    for (int i = 0; i < 8; ++i) {
+        auto pClient = gpClientList[i];
+        if (!pClient)
+            continue;
+
+        uint32_t unitGUID = pClient->dwUnitGUID;
+        D2UnitStrc* pPlayerUnit = UNITS_GetServerUnitByTypeAndId(pGame, UNIT_PLAYER, unitGUID);
+        if (!pPlayerUnit)
+            continue;
+
+        int cold = STATLIST_GetUnitStatSigned(pPlayerUnit, 187, 0);
+        int fire = STATLIST_GetUnitStatSigned(pPlayerUnit, 189, 0);
+        int light = STATLIST_GetUnitStatSigned(pPlayerUnit, 190, 0);
+        int poison = STATLIST_GetUnitStatSigned(pPlayerUnit, 191, 0);
+        int damage = STATLIST_GetUnitStatSigned(pPlayerUnit, 192, 0);
+        int magic = STATLIST_GetUnitStatSigned(pPlayerUnit, 193, 0);
+
+        if (cold > maxColdResist) maxColdResist = cold;
+        if (fire > maxFireResist) maxFireResist = fire;
+        if (light > maxLightResist) maxLightResist = light;
+        if (poison > maxPoisonResist) maxPoisonResist = poison;
+        if (damage > maxDamageResist) maxDamageResist = damage;
+        if (magic > maxMagicResist) maxMagicResist = magic;
+    }
+
+    // Now apply highest values to the monster unit
+    if (maxColdResist > INT_MIN)
+        AddToResistances(pUnit, STAT_COLDRESIST, maxColdResist);
+    if (maxFireResist > INT_MIN)
+        AddToResistances(pUnit, STAT_FIRERESIST, maxFireResist);
+    if (maxLightResist > INT_MIN)
+        AddToResistances(pUnit, STAT_LIGHTRESIST, maxLightResist);
+    if (maxPoisonResist > INT_MIN)
+        AddToResistances(pUnit, STAT_POISONRESIST, maxPoisonResist);
+    if (maxDamageResist > INT_MIN)
+        AddToResistances(pUnit, STAT_DAMAGERESIST, maxDamageResist);
+    if (maxMagicResist > INT_MIN)
+        AddToResistances(pUnit, STAT_MAGICRESIST, maxMagicResist);
+}
+
+void __fastcall ApplyStatAdjustments(
+    D2GameStrc* pGame,
+    D2ActiveRoomStrc* pRoom,
+    D2UnitStrc* pUnit,
+    int64_t* pMonRegData,
+    D2MonStatsInitStrc* monStatsInit,
+    const DifficultySettings& settings)
+{
+    if (!pGame)
+        return;
+
+    for (int i = 0; i < 8; ++i) {
+        auto pClient = gpClientList[i];
+        if (!pClient)
+            continue;
+
+        uint32_t unitGUID = pClient->dwUnitGUID;
+        D2UnitStrc* pPlayerUnit = UNITS_GetServerUnitByTypeAndId(pGame, UNIT_PLAYER, unitGUID);
+        if (!pPlayerUnit)
+            continue;
+
+        for (const auto& [statID, value] : settings.stat_adjustments) {
+            AddToCurrentStat(pPlayerUnit, static_cast<D2C_ItemStats>(statID), value);
+        }
+    }
+}
+
+void __fastcall ApplyGhettoTerrorZone(D2GameStrc* pGame, D2ActiveRoomStrc* pRoom,
+    D2UnitStrc* pUnit, int64_t* pMonRegData,
+    D2MonStatsInitStrc* monStatsInit)
+{
+    g_ActiveZoneInfoText.clear();
+
+    if (!pGame || !pRoom || !pUnit)
+        return;
+
+    int levelId = GetLevelIdFromRoom(pRoom);
+    if (levelId == -1)
+        return;
+
+    D2UnitStrc* pUnitPlayer = UNITS_GetServerUnitByTypeAndId(pGame, UNIT_PLAYER, 1);
+    if (!pUnitPlayer)
+        return;
+
+    playerLevel = STATLIST_GetUnitStatSigned(pUnitPlayer, STAT_LEVEL, 0);
+    int difficulty = GetPlayerDifficulty(pUnitPlayer);
+    if (difficulty < 0 || difficulty > 2)
+        return;
+
+    time_t currentUtc = std::time(nullptr);
+
+    for (const auto& zone : gDesecratedZones)
+    {
+        if (currentUtc < zone.start_time_utc || currentUtc > zone.end_time_utc)
+            continue;
+
+        int groupCount = static_cast<int>(zone.zones.size());
+        if (groupCount == 0)
+            continue;
+
+        int cycleLengthMin = zone.terror_duration_min + zone.terror_break_min;
+        if (cycleLengthMin <= 0)
+            continue;
+
+        int minutesSinceStart = static_cast<int>((currentUtc - zone.start_time_utc) / 60);
+        int cyclePos = minutesSinceStart % (cycleLengthMin * groupCount);
+        int activeGroupIndex = (g_ManualZoneGroupOverride == -1) ? (cyclePos / cycleLengthMin) : g_ManualZoneGroupOverride;
+
+        if (activeGroupIndex < 0 || activeGroupIndex >= groupCount)
+            continue;
+
+        const ZoneGroup& activeGroup = zone.zones[activeGroupIndex];
+
+        // Store terror zone timing info
+        g_TerrorZoneData.cycleLengthMin = cycleLengthMin;
+        g_TerrorZoneData.terrorDurationMin = zone.terror_duration_min;
+        g_TerrorZoneData.groupCount = groupCount;
+        g_TerrorZoneData.activeGroupIndex = activeGroupIndex;
+        g_TerrorZoneData.zoneStartUtc = zone.start_time_utc;
+
+        std::stringstream ss;
+        for (const auto& zl : activeGroup.levels)
+        {
+            auto it = std::find_if(level_names.begin(), level_names.end(),
+                [&](const LevelName& ln) { return ln.id == zl.level_id; });
+
+            if (it != level_names.end())
+                ss << it->name << "\n";
+            else
+                ss << "(Unknown Level ID: " << zl.level_id << ")\n";
+        }
+
+        g_ActiveZoneInfoText = ss.str();
+       // MessageBoxA(nullptr, ss.str().c_str(), "Active Zone Info Text", MB_OK | MB_ICONINFORMATION);
+
+        // Time remaining logic
+        int positionInFullCycle = cyclePos % cycleLengthMin;
+
+        int remainingMinutes = 0;
+        int remainingSeconds = 0;
+        if (positionInFullCycle < zone.terror_duration_min)
+        {
+            int totalSecondsInPhase = zone.terror_duration_min * 60;
+            int secondsIntoPhase = (currentUtc - zone.start_time_utc) % (cycleLengthMin * 60) % (zone.terror_duration_min * 60);
+            int secondsRemaining = totalSecondsInPhase - secondsIntoPhase;
+            remainingMinutes = secondsRemaining / 60;
+            remainingSeconds = secondsRemaining % 60;
+        }
+        else
+        {
+            int totalSecondsInCycle = cycleLengthMin * 60;
+            int secondsIntoCycle = (currentUtc - zone.start_time_utc) % totalSecondsInCycle;
+            int secondsRemaining = totalSecondsInCycle - secondsIntoCycle;
+            remainingMinutes = secondsRemaining / 60;
+            remainingSeconds = secondsRemaining % 60;
+        }
+
+        // Try to find a ZoneLevel override for the current level
+        const ZoneLevel* matchingZoneLevel = nullptr;
+        for (const auto& zl : activeGroup.levels)
+        {
+            if (zl.level_id == levelId)
+            {
+                matchingZoneLevel = &zl;
+                break;
+            }
+        }
+        if (!matchingZoneLevel)
+            continue;
+
+        // Get global fallback settings for this difficulty
+        const DifficultySettings* globalDefaults = nullptr;
+        switch (difficulty)
+        {
+        case 0: globalDefaults = &zone.default_normal; break;
+        case 1: globalDefaults = &zone.default_nightmare; break;
+        case 2: globalDefaults = &zone.default_hell; break;
+        }
+        if (!globalDefaults)
+            continue;
+
+        // Get level-specific override for this difficulty
+        const std::optional<DifficultySettings>* levelOverride = nullptr;
+        switch (difficulty)
+        {
+        case 0: levelOverride = &matchingZoneLevel->normal; break;
+        case 1: levelOverride = &matchingZoneLevel->nightmare; break;
+        case 2: levelOverride = &matchingZoneLevel->hell; break;
+        }
+
+        // Merge level override with global fallback
+        int boostLevel = globalDefaults->boost_level.value_or(0);
+        int boundMin = globalDefaults->bound_incl_min.value_or(1);
+        int boundMax = globalDefaults->bound_incl_max.value_or(99);
+
+        if (levelOverride && levelOverride->has_value())
+        {
+            const DifficultySettings & override = levelOverride->value();
+            if (override.boost_level) boostLevel = override.boost_level.value();
+            if (override.bound_incl_min) boundMin = override.bound_incl_min.value();
+            if (override.bound_incl_max) boundMax = override.bound_incl_max.value();
+        }
+
+        // Clamp the level
+        int boostedLevel = playerLevel + boostLevel;
+        if (boostedLevel < boundMin)
+            boostedLevel = boundMin;
+        else if (boostedLevel > boundMax)
+            boostedLevel = boundMax;
+
+        // Apply and debug
+        int before = STATLIST_GetUnitStatSigned(pUnit, STAT_LEVEL, 0);
+        AdjustMonsterLevel(pUnit, STAT_LEVEL, boostedLevel);
+        int after = STATLIST_GetUnitStatSigned(pUnit, STAT_LEVEL, 0);
+        
+        /*
+        std::random_device rd;
+        std::mt19937 rng(rd());
+
+        auto selectedStats = SelectRandomStats(rng);
+
+        for (const auto& [statId, value] : selectedStats) {
+            AddToCurrentStat(pUnit, statId, value);
+        }
+
+        // Show what boost was applied
+        std::stringstream ss2;
+        ss2 << "Applied Boost Level: " << difficultySettings->boost_level
+            << "\nBefore: " << before << "\nAfter: " << after;
+
+        MessageBoxA(nullptr, ss2.str().c_str(), "Terror Zone Boost Applied", MB_OK);
+        */
+
+        return;
+    }
+}
+
+void __fastcall HookedMONSTER_InitializeStatsAndSkills(D2GameStrc* pGame, D2ActiveRoomStrc* pRoom, D2UnitStrc* pUnit, int64_t* pMonRegData) {
+    oMONSTER_InitializeStatsAndSkills(pGame, pRoom, pUnit, pMonRegData);
+
+    if (!pUnit || pUnit->dwUnitType != UNIT_MONSTER || !pUnit->pMonsterData || !pUnit->pMonsterData->pMonstatsTxt) {
+        return;
+    }
+
+    int32_t nClassId = pUnit->dwClassId;
+    auto pMonStatsTxtRecord = pUnit->pMonsterData->pMonstatsTxt;
+    auto wMonStatsEx = sgptDataTables->pMonStatsTxt[nClassId].wMonStatsEx;
+
+    if (wMonStatsEx >= sgptDataTables->nMonStats2TxtRecordCount) {
+        return;
+    }
+
+    auto pMonStats2TxtRecord = sgptDataTables->pMonStats2Txt[wMonStatsEx];
+    D2MonStatsInitStrc monStatsInit = {};
+    std::string path = std::format("{0}/Mods/{1}/{1}.mpq/data/hd/global/excel/desecratedzones.json", GetExecutableDir(), GetModName());
+    LoadDesecratedZones(path);
+    ApplyGhettoTerrorZone(pGame, pRoom, pUnit, pMonRegData, &monStatsInit);
+    ApplyGhettoSunder(pGame, pRoom, pUnit, pMonRegData, &monStatsInit);
+
+    D2UnitStrc* pUnitPlayer = UNITS_GetServerUnitByTypeAndId(pGame, UNIT_PLAYER, 1);
+    if (!pUnitPlayer)
+        return;
+
+    int difficulty = GetPlayerDifficulty(pUnitPlayer);
+    if (difficulty < 0 || difficulty > 2)
+        return;
+
+    time_t currentUtc = std::time(nullptr);
+
+    for (const auto& zone : gDesecratedZones)
+    {
+        const DifficultySettings* difficultySettings = nullptr;
+        switch (difficulty)
+        {
+        case 0: difficultySettings = &zone.default_normal; break;
+        case 1: difficultySettings = &zone.default_nightmare; break;
+        case 2: difficultySettings = &zone.default_hell; break;
+        }
+        if (!difficultySettings)
+            continue;
+
+        //ApplyStatAdjustments(pGame, pRoom, pUnit, pMonRegData, &monStatsInit, *difficultySettings);
     }
 }
 
@@ -1171,10 +1933,17 @@ void D2RHUD::OnDraw() {
 
     }
 
+    if (!oMONSTER_InitializeStatsAndSkills) {
+        DetourTransactionBegin();
+        DetourUpdateThread(GetCurrentThread());
+        oMONSTER_InitializeStatsAndSkills = reinterpret_cast<MONSTER_InitializeStatsAndSkills_t>(Pattern::Address(0x33f380));
+        DetourAttach(&(PVOID&)oMONSTER_InitializeStatsAndSkills, HookedMONSTER_InitializeStatsAndSkills);
+        DetourTransactionCommit();      
+    }
+
     if (!itemFilter->bInstalled) {
         itemFilter->Install(cachedSettings);
     }
-
 
     if (!settings.monsterStatsDisplay)
         return;
@@ -1212,6 +1981,85 @@ void D2RHUD::OnDraw() {
 
     do
     {
+        //Terror Zone Listing
+        if (!g_ActiveZoneInfoText.empty())
+        {
+            ImDrawList* drawList = ImGui::GetForegroundDrawList();
+            ImVec2 screenSize = ImGui::GetIO().DisplaySize;
+            time_t currentUtc = std::time(nullptr);
+            int remainingMinutes = 0;
+            int remainingSeconds = 0;
+
+            if (g_TerrorZoneData.cycleLengthMin > 0 && g_TerrorZoneData.groupCount > 0 && g_TerrorZoneData.activeGroupIndex >= 0)
+            {
+                int totalCycleMinutes = g_TerrorZoneData.cycleLengthMin * g_TerrorZoneData.groupCount;
+                int minutesSinceStart = static_cast<int>((currentUtc - g_TerrorZoneData.zoneStartUtc) / 60);
+                int cyclePos = minutesSinceStart % totalCycleMinutes;
+                int positionInCycle = cyclePos % g_TerrorZoneData.cycleLengthMin;
+
+                if (positionInCycle < g_TerrorZoneData.terrorDurationMin)
+                {
+                    // In terror phase
+                    int totalSecondsInPhase = g_TerrorZoneData.terrorDurationMin * 60;
+                    int secondsIntoPhase = (currentUtc - g_TerrorZoneData.zoneStartUtc) % (g_TerrorZoneData.cycleLengthMin * 60) % (g_TerrorZoneData.terrorDurationMin * 60);
+                    int secondsRemaining = totalSecondsInPhase - secondsIntoPhase;
+                    remainingMinutes = secondsRemaining / 60;
+                    remainingSeconds = secondsRemaining % 60;
+                }
+                else
+                {
+                    // In break phase
+                    int totalSecondsInCycle = g_TerrorZoneData.cycleLengthMin * 60;
+                    int secondsIntoCycle = (currentUtc - g_TerrorZoneData.zoneStartUtc) % totalSecondsInCycle;
+                    int secondsRemaining = totalSecondsInCycle - secondsIntoCycle;
+                    remainingMinutes = secondsRemaining / 60;
+                    remainingSeconds = secondsRemaining % 60;
+                }
+            }
+
+            std::string finalText = g_ActiveZoneInfoText +
+                "Next Rotation In: " + std::to_string(remainingMinutes) + "m " + std::to_string(remainingSeconds) + "s\n";
+
+            float paddingX = 20.0f;
+            float paddingY = 10.0f;
+            float horizontalOffset = 50.0f;
+
+            float aspectRatio = screenSize.x / screenSize.y;
+            bool isUltraWide = aspectRatio > 2.0f;
+
+            size_t start = 0;
+            float lineHeight = ImGui::GetTextLineHeight();
+            int lineIndex = 0;
+
+            // Draw main info text
+            while (true)
+            {
+                size_t end = finalText.find('\n', start);
+                std::string line = (end == std::string::npos) ? finalText.substr(start) : finalText.substr(start, end - start);
+                if (line.empty())
+                    break;
+
+                ImVec2 textSize = ImGui::CalcTextSize(line.c_str());
+
+                float posX = screenSize.x - textSize.x - paddingX - horizontalOffset;
+                if (isUltraWide)
+                {
+                    posX = screenSize.x * 0.935f - textSize.x;
+                }
+                ImVec2 pos = ImVec2(posX, paddingY + lineHeight * lineIndex + horizontalOffset + 10.0f);
+
+                drawList->AddText(ImVec2(pos.x + 1, pos.y + 1), IM_COL32(0, 0, 0, 255), line.c_str());
+                drawList->AddText(pos, IM_COL32(150, 50, 150, 255), line.c_str());
+
+                if (end == std::string::npos)
+                    break;
+                start = end + 1;
+                lineIndex++;
+            }
+
+            CheckToggleManualZoneGroup();
+        }
+
         if (!gMouseHover->IsHovered) break;
         if (gMouseHover->HoveredUnitType > UNIT_MONSTER) break;
 
@@ -1274,7 +2122,7 @@ void D2RHUD::OnDraw() {
                         STATLIST_GetUnitStatSigned(pUnitServer, STAT_MAXHP, 0) >> 8);
                     auto width = ImGui::CalcTextSize(hp.c_str()).x;
                     drawList->AddText({ center - (width / 2.0f) + 1, ypercent2 }, IM_COL32(255, 255, 255, 255), hp.c_str());
-                }
+                }   
             }
         }
 
@@ -1304,20 +2152,17 @@ bool D2RHUD::OnKeyPressed(short key)
         { "Custom Command 6: ", nullptr },
     };
 
+    // Handle standard and custom commands
     for (const auto& [searchString, debugCommand] : commands) {
         if (debugCommand != nullptr) { // Standard Commands
             std::string result = ReadCommandFromFile(filename, searchString);
             if (!result.empty()) {
                 auto it = keyMap.find(result);
-                if (it != keyMap.end() && key == it->second) {
-                    if (GetClientStatus() == 1)
-                    {
-                        if (searchString == "Transmute: ")
-                            D2CLIENT_Transmute();
-                        else
-                            ExecuteDebugCheatFunc(debugCommand);
-                    }
-
+                if (it != keyMap.end() && key == it->second && GetClientStatus() == 1) {
+                    if (searchString == "Transmute: ")
+                        D2CLIENT_Transmute();
+                    else
+                        ExecuteDebugCheatFunc(debugCommand);
                     return true;
                 }
             }
@@ -1325,37 +2170,51 @@ bool D2RHUD::OnKeyPressed(short key)
         else { // Custom Commands
             std::string commandKey, commandValue;
             ReadCommandWithValuesFromFile(filename, searchString, commandKey, commandValue);
-
             if (!commandKey.empty() && !commandValue.empty()) {
                 auto it = keyMap.find(commandKey);
-                if (it != keyMap.end() && key == it->second) {
-                    if (GetClientStatus() == 1) {
-                        if (commandValue.find("/") != std::string::npos)
-                            CLIENT_playerCommand(commandValue, commandValue);
-                        else
-                            ExecuteDebugCheatFunc(commandValue.c_str());
-                    }
+                if (it != keyMap.end() && key == it->second && GetClientStatus() == 1) {
+                    if (commandValue.find("/") != std::string::npos)
+                        CLIENT_playerCommand(commandValue, commandValue);
+                    else
+                        ExecuteDebugCheatFunc(commandValue.c_str());
                     return true;
                 }
             }
         }
     }
 
-    // Track key presses for the version display
+    // === Handle Open Panel Commands (like opening cube) ===
+    std::string openPanelKey = ReadCommandFromFile(filename, "Open Cube Panel: ");
+    if (!openPanelKey.empty()) {
+        auto it = keyMap.find(openPanelKey);
+        if (it != keyMap.end() && key == it->second && GetClientStatus() == 1) {
+            if (gpClientList) {
+                auto pClient = *gpClientList;
+                if (pClient && pClient->pGame) {
+                    reinterpret_cast<int32_t(__fastcall*)(D2GameStrc*, D2UnitStrc*)>(
+                        Pattern::Address(0x34F5A0)
+                        )(pClient->pGame, pClient->pPlayer); // SKILLITEM_pSpell07_OpenCube
+                }
+            }
+            return true;
+        }
+    }
+
+    // Version display
     if (key == VK_CONTROL) ctrlPressed = true;
     if (key == VK_MENU) altPressed = true;
     if (key == 'V') vPressed = true;
 
-    // If CTRL + ALT + V are pressed together, show the message box
     if (ctrlPressed && altPressed && vPressed) {
         ShowVersionMessage();
         OnStashPageChanged(gSelectedPage + 1);
-        ctrlPressed = altPressed = vPressed = false; // Reset state
+        ctrlPressed = altPressed = vPressed = false;
         return true;
     }
 
     return itemFilter->OnKeyPressed(key);
 }
+
 
 //Show D2RHUD Version Info as a MessageBox Popup
 void D2RHUD::ShowVersionMessage()

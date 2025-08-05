@@ -513,6 +513,7 @@ bool ItemFilter::OnKeyPressed(short key) {
 		LoadScript();
 
 		std::string message = "Loot Filter Reloaded";
+
 		if (getWelcomeMessage.valid()) {
 			sol::protected_function_result result = getWelcomeMessage();
 			if (result.valid()) {
@@ -551,8 +552,6 @@ bool ItemFilter::OnKeyPressed(short key) {
 
 		return true;
 	}
+
 	return false;
 }
-
-
-

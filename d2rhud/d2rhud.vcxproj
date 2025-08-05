@@ -92,6 +92,7 @@
     <None Include="vcpkg.json" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="..\..\..\Downloads\json.hpp" />
     <ClInclude Include="d2\D2Enums.h" />
     <ClInclude Include="d2\D2Ptrs.h" />
     <ClInclude Include="d2\D2Structs.h" />

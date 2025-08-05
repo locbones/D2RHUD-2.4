@@ -25,5 +25,6 @@
     <ClInclude Include="plugin\KeyMappings.h" />
     <ClInclude Include="d2\Reclass.h" />
     <ClInclude Include="plugin\ItemFilter\ItemFilter.h" />
+    <ClInclude Include="..\..\..\Downloads\json.hpp" />
   </ItemGroup>
 </Project>
