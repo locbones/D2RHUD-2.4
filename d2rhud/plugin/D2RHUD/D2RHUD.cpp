@@ -2134,6 +2134,7 @@ void D2RHUD::OnDraw() {
 
 #pragma endregion
 
+
 #pragma region Hotkey Handler
 bool D2RHUD::OnKeyPressed(short key)
 {
@@ -2150,6 +2151,7 @@ bool D2RHUD::OnKeyPressed(short key)
         { "Custom Command 4: ", nullptr },
         { "Custom Command 5: ", nullptr },
         { "Custom Command 6: ", nullptr },
+        { "Open Cube Panel: ", nullptr },
     };
 
     // Handle standard and custom commands
