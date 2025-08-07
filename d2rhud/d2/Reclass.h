@@ -92,7 +92,9 @@ static_assert(sizeof(D2GameStrc) == 0x3888);
 class D2PlayerDataStrc {
 public:
 	char szName[16]; //0x0000
-	char pad_0010[104]; //0x0010
+	char pad_0010[48]; //0x0010
+	class D2BitBufferStrc* pQuestData[3];
+	char pad_0050[32]; //0x0010
 	uint32_t nPortalFlags; //0x0078
 	char pad_007C[116]; //0x007C
 	class D2ClientStrc* pClient; //0x00F0
