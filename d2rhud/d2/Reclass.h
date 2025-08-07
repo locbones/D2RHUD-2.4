@@ -48,14 +48,10 @@ public:
 	char pad_0040[72]; //0x0040
 	class D2StatListExStrc* pStatListEx; //0x0088
 	class D2InventoryStrc* pInventory; //0x0090
-	char pad_0098[104]; //0x0098
-	class D2SkillListStrc* pSkills; //0x0100
-	char pad_0108[28]; //0x0108
+	char pad_0098[140]; //0x0098
 	uint32_t dwFlags; //0x0124
 	uint32_t dwFlagsEx; //0x0128
-	char pad_012C[20]; //0x012C
-	class D2EventTimerStrc* pTimer; //0x0140
-	char pad_0148[8]; //0x0148
+	char pad_012C[36]; //0x012C
 	class D2UnitStrc* pListNext; //0x0150
 	class D2UnitStrc* pRoomNext; //0x0158
 	char pad_0160[24]; //0x0160
@@ -65,13 +61,10 @@ public:
 }; //Size: 0x01B8
 static_assert(sizeof(D2UnitStrc) == 0x1B8);
 
-class D2GameStrc // sizeof(0x5BA0)?
-{
+class D2GameStrc {
 public:
-	char pad_0000[8]; //0x0000
-	int32_t nGameId; //0x0008
-	char pad_000C[245]; //0x000C
-	uint8_t nGameType; //0x0101 0x101
+	char pad_0000[257]; //0x0000
+	uint8_t nGameType; //0x0101
 	uint8_t nHostLevel; //0x0102
 	uint8_t nAllowedLevelDifference; //0x0103
 	uint8_t nDifficulty; //0x0104
@@ -88,38 +81,26 @@ public:
 	uint32_t dwLastUsedUnitGUID[6]; //0x015C
 	char pad_0174[8]; //0x0174
 	uint32_t dwGameFrame; //0x017C
-	char pad_0180[16]; //0x0180
-	class D2EventTimerQueueStrc* pTimerQueue; //0x0190
-	char pad_0198[24]; //0x0198
-	class D2SeedStrc pGameSeed; //0x01B0
-	char pad_01B8[32]; //0x01B8
-	class D2MonsterRegionStrc* pMonReg[1024]; //0x01D8
-	class D2ObjectControlStrc* pObjectControl; //0x21D8 0x21D8
-	class D2QuestInfoStrc* pQuestControl; //0x21E0
-	char pad_21E8[80]; //0x21E8
-	class D2UnitStrc* pUnitList[5][128]; //0x2238 0x2238
-	char pad_3638[8640]; //0x3638
-	int64_t nSyncTimer; //0x57F8
-	int64_t nCreationTimeMs_Or_CPUTargetRatioFP10; //0x5800
-	char pad_5808[928]; //0x5808
-}; //Size: 0x5BA8
-static_assert(sizeof(D2GameStrc) == 0x5BA8);
+	char pad_0180[96]; //0x0180
+	class D2MonsterRegionStrc* pMonReg[1024]; //0x01E0
+	char pad_21E0[88]; //0x21E0
+	class D2UnitStrc* pUnitList[5][128]; //0x2238
+	char pad_3638[592]; //0x3638
+}; //Size: 0x3888
+static_assert(sizeof(D2GameStrc) == 0x3888);
 
 class D2PlayerDataStrc {
 public:
 	char szName[16]; //0x0000
-	char pad_0010[48]; //0x0010
-	class D2BitBufferStrc* pQuestData[3]; //0x0040
-	class D2WaypointDataStrc* pWaypointData[3]; //0x0058
-	char pad_0070[40]; //0x0070
-	uint32_t nPortalFlags; //0x0098
-	char pad_009C[116]; //0x009C
-	class D2ClientStrc* pClient; //0x0110
-	char pad_0118[236]; //0x0118
-	uint32_t dwGameFrame; //0x0204
-	char pad_0208[152]; //0x0208
-}; //Size: 0x02A0
-static_assert(sizeof(D2PlayerDataStrc) == 0x2A0);
+	char pad_0010[104]; //0x0010
+	uint32_t nPortalFlags; //0x0078
+	char pad_007C[116]; //0x007C
+	class D2ClientStrc* pClient; //0x00F0
+	char pad_00F8[236]; //0x00F8
+	uint32_t dwGameFrame; //0x01E4
+	char pad_01E8[152]; //0x01E8
+}; //Size: 0x0280
+static_assert(sizeof(D2PlayerDataStrc) == 0x280);
 
 class D2ClientStrc {
 public:
@@ -136,12 +117,9 @@ public:
 	uint64_t nSaveHeaderSize; //0x01A8
 	char pad_01B0[128]; //0x01B0
 	class D2GameStrc* pGame; //0x0230
-	char pad_0238[8]; //0x0238
-	class D2ActiveRoomStrc* pRoom; //0x0240
-	char pad_0248[536]; //0x0248
+	char pad_0238[552]; //0x0238
 	uint32_t dwFlags; //0x0460
-	uint32_t dwLastPacketTick; //0x0464
-	char pad_0468[240]; //0x0468
+	char pad_0464[244]; //0x0464
 	class D2ClientStrc* pNext; //0x0558
 	char pad_0560[2856]; //0x0560
 }; //Size: 0x1088
@@ -243,40 +221,21 @@ public:
 }; //Size: 0x0088
 static_assert(sizeof(D2StaticPathStrc) == 0x88);
 
-class blz__string16 {
+class D2Widget {
 public:
-	char* pData; //0x0000
-	uint64_t nLength; //0x0008
-	uint64_t nAlloc; //0x0010
-	char szData[16]; //0x0018
-}; //Size: 0x0028
-static_assert(sizeof(blz__string16) == 0x28);
-
-class D2Widget // [<D2R.exe> + 0x1d7c4e8]
-{
-public:
-	class blz__string16 tName; //0x0008
-	class D2Widget* pParent; //0x0030
-	char pad_0038[128]; //0x0038
-	bool bVisible; //0x00B8
-	bool bEnabled; //0x00B9
-	char pad_00BA[190]; //0x00BA
-
-	virtual int64_t Function0();
+	char pad_0000[184]; //0x0000
+	uint8_t bVisible; //0x00B8
+	char pad_00B9[191]; //0x00B9
 }; //Size: 0x0178
 static_assert(sizeof(D2Widget) == 0x178);
 
 class D2PanelManager {
 public:
-	char pad_0008[4208]; //0x0008
+	char pad_0008[112]; //0x0008
 
 	virtual void Init();
-	virtual void Func1();
-	virtual void Func2();
-	virtual void Draw();
-	virtual void OnMessage(D2PanelManager* pThat, int64_t* arMessages);
-}; //Size: 0x1078
-static_assert(sizeof(D2PanelManager) == 0x1078);
+}; //Size: 0x0078
+static_assert(sizeof(D2PanelManager) == 0x78);
 
 class D2MemoryPoolStrc {
 public:
@@ -289,9 +248,7 @@ static_assert(sizeof(D2MemoryPoolStrc) == 0xA0);
 class D2DataTablesStrc {
 public:
 	class D2PlayerClassTxt* pPlayerClassTxt; //0x0000
-	char pad_0008[624]; //0x0008
-	int64_t nStatesTxtRecordCount; //0x0278
-	char pad_0280[3192]; //0x0280
+	char pad_0008[3824]; //0x0008
 	class D2MonStatsTxt* pMonStatsTxt; //0x0EF8
 	int64_t nMonStatsTxtRecordCount; //0x0F00
 	char pad_0F08[48]; //0x0F08
@@ -336,33 +293,16 @@ static_assert(sizeof(D2PlayerClassTxt) == 0x88);
 
 class D2ActiveRoomStrc {
 public:
-	class D2ActiveRoomStrc** ppRoomList; //0x0000
-	char pad_0008[16]; //0x0008
+	char pad_0000[24]; //0x0000
 	class D2DrlgRoomStrc* pDrlgRoom; //0x0018
-	char pad_0020[32]; //0x0020
-	uint32_t nNumRooms; //0x0040
-	char pad_0044[196]; //0x0044
+	char pad_0020[232]; //0x0020
 }; //Size: 0x0108
 static_assert(sizeof(D2ActiveRoomStrc) == 0x108);
-
-class D2StatsArrayStrc {
-public:
-	char pad_0000[24]; //0x0000
-}; //Size: 0x0018
-static_assert(sizeof(D2StatsArrayStrc) == 0x18);
 
 class D2StatListExStrc // 0xB58
 {
 public:
-	char pad_0000[28]; //0x0000
-	int32_t dwFlags; //0x001C
-	char pad_0020[88]; //0x0020
-	class D2UnitStrc* pOwner; //0x0078
-	class D2StatsArrayStrc tCombinedStats; //0x0080
-	class D2StatsArrayStrc tItemStats; //0x0098
-	char pad_00B0[2584]; //0x00B0
-	uint32_t nStateFlags[6]; //0x0AC8
-	char pad_0AE0[120]; //0x0AE0
+	char pad_0000[2904]; //0x0000
 }; //Size: 0x0B58
 static_assert(sizeof(D2StatListExStrc) == 0xB58);
 
@@ -480,8 +420,7 @@ static_assert(sizeof(D2MonPropTxt) == 0x88);
 
 class D2SkillsTxt {
 public:
-	int16_t nSkillId; //0x0000
-	char pad_0002[134]; //0x0002
+	char pad_0000[136]; //0x0000
 }; //Size: 0x0088
 static_assert(sizeof(D2SkillsTxt) == 0x88);
 
@@ -743,222 +682,4 @@ public:
 	uint32_t dwUnitId; //0x0010
 }; //Size: 0x0014
 static_assert(sizeof(D2UnitRectStrc) == 0x14);
-
-class D2JsonKeyStrc {
-public:
-	char* szKey; //0x0000
-	uint64_t nKeyLen; //0x0008
-}; //Size: 0x0010
-static_assert(sizeof(D2JsonKeyStrc) == 0x10);
-
-class D2SCMDPacket {
-public:
-	uint8_t* pBegin; //0x0000
-	uint8_t* pEnd; //0x0008
-}; //Size: 0x0010
-static_assert(sizeof(D2SCMDPacket) == 0x10);
-
-class D2SCMDManager {
-public:
-	char pad_0008[8]; //0x0008
-
-	virtual int64_t Function0(uint16_t a2);
-	virtual void Function1();
-	virtual void Function2();
-	virtual void Function3(uint32_t a2, int64_t a3);
-	virtual int64_t Function4(int32_t a2);
-	virtual void SCMDQueuePacket(int32_t nClient, D2SCMDPacket* pPacketRange);
-}; //Size: 0x0010
-static_assert(sizeof(D2SCMDManager) == 0x10);
-
-class D2CCMDManager {
-public:
-	char pad_0008[8]; //0x0008
-
-	virtual void Function0();
-	virtual void Function1();
-	virtual void Function2();
-	virtual void Function3();
-	virtual void Function4();
-	virtual void Function5();
-	virtual void CCMD_QueuePacket(uint8_t* a2);
-}; //Size: 0x0010
-static_assert(sizeof(D2CCMDManager) == 0x10);
-
-class D2NetworkManager {
-public:
-	class D2SCMDManager tSCMDManager; //0x0000
-	char pad_0010[131152]; //0x0010
-	class D2CCMDManager tCCMDManager; //0x20060
-	char pad_20070[131960]; //0x20070
-}; //Size: 0x403E8
-static_assert(sizeof(D2NetworkManager) == 0x403E8);
-
-class D2AiTableStrc {
-public:
-	int64_t unk0x00; //0x0000
-	void* unk0x08; //0x0008
-	void* pAiParamFn; //0x0010
-	void* unk0x18; //0x0018
-}; //Size: 0x0020
-static_assert(sizeof(D2AiTableStrc) == 0x20);
-
-class D2AiTickParamStrc {
-public:
-	char pad_0000[384]; //0x0000
-}; //Size: 0x0180
-static_assert(sizeof(D2AiTickParamStrc) == 0x180);
-
-class D2ObjectControlStrc // 0x2138
-{
-public:
-	class D2SeedStrc pSeed; //0x0000
-	char pad_0008[8504]; //0x0008
-}; //Size: 0x2140
-static_assert(sizeof(D2ObjectControlStrc) == 0x2140);
-
-class D2QuestInfoStrc {
-public:
-	char pad_0000[800]; //0x0000
-}; //Size: 0x0320
-static_assert(sizeof(D2QuestInfoStrc) == 0x320);
-
-class D2QuestInitTableStrc {
-public:
-	void* pfInit; //0x0000
-	uint32_t nAct; //0x0008
-	uint32_t nVersion; //0x000C
-	uint32_t bNoSetState; //0x0010
-	int32_t nChainNo; //0x0014
-	uint64_t nQuestNo; //0x0018
-}; //Size: 0x0020
-static_assert(sizeof(D2QuestInitTableStrc) == 0x20);
-
-class D2QuestDataStrc {
-public:
-	char pad_0000[18]; //0x0000
-	uint16_t bActive; //0x0012
-	char pad_0014[1]; //0x0014
-	uint8_t nInitNo; //0x0015
-	char pad_0016[2]; //0x0016
-	uint32_t nSeqId; //0x0018
-	char pad_001C[596]; //0x001C
-	void* pfCallback[15]; //0x0270 0x270
-	class D2NPCMessageTableStrc* pNPCMessages; //0x02E8
-	uint32_t nQuestFilter; //0x02F0
-	char pad_02F4[4]; //0x02F4
-	void* pfStatusFilter; //0x02F8
-	void* pfActiveFilter; //0x0300
-	void* pfSeqFilter; //0x0308
-	char pad_0310[3416]; //0x0310
-}; //Size: 0x1068
-static_assert(sizeof(D2QuestDataStrc) == 0x1068);
-
-class D2NPCMessageTableStrc {
-public:
-	char pad_0000[136]; //0x0000
-}; //Size: 0x0088
-static_assert(sizeof(D2NPCMessageTableStrc) == 0x88);
-
-class D2QuestArgStrc {
-public:
-	class D2GameStrc* pGame; //0x0000
-	char pad_0008[16]; //0x0008
-	class D2UnitStrc* pPlayer; //0x0018
-	char pad_0020[96]; //0x0020
-}; //Size: 0x0080
-static_assert(sizeof(D2QuestArgStrc) == 0x80);
-
-class D2BitBufferStrc {
-public:
-	uint8_t* pBuffer; //0x0000
-	int32_t nBits; //0x0008
-	int32_t nPos; //0x000C
-	int32_t nPosBits; //0x0010
-	int32_t bFull; //0x0014
-}; //Size: 0x0018
-static_assert(sizeof(D2BitBufferStrc) == 0x18);
-
-class D2WaypointDataStrc {
-public:
-	char pad_0000[136]; //0x0000
-}; //Size: 0x0088
-static_assert(sizeof(D2WaypointDataStrc) == 0x88);
-
-class D2SkillStrc {
-public:
-	class D2SkillsTxt* pSkillsTxt; //0x0000
-	class D2SkillStrc* pNextSkill; //0x0008
-	char pad_0010[52]; //0x0010
-	int32_t nOwnerGUID; //0x0044
-	char pad_0048[64]; //0x0048
-}; //Size: 0x0088
-static_assert(sizeof(D2SkillStrc) == 0x88);
-
-class D2SkillListStrc {
-public:
-	class D2SkillStrc* pFirstSkill; //0x0000
-	class D2SkillStrc* pLeftSkill; //0x0008
-	class D2SkillStrc* pRightSkill; //0x0010
-	class D2SkillStrc* pUsedSkill; //0x0018
-	char pad_0020[96]; //0x0020
-}; //Size: 0x0080
-static_assert(sizeof(D2SkillListStrc) == 0x80);
-
-class D2MissileStrc {
-public:
-	char pad_0000[8]; //0x0000
-	class D2UnitStrc* pOwner; //0x0008
-	char pad_0010[112]; //0x0010
-}; //Size: 0x0080
-static_assert(sizeof(D2MissileStrc) == 0x80);
-
-class D2MissileDamageDataStrc {
-public:
-	char pad_0000[128]; //0x0000
-}; //Size: 0x0080
-static_assert(sizeof(D2MissileDamageDataStrc) == 0x80);
-
-class D2PathInfoStrc {
-public:
-	char pad_0000[128]; //0x0000
-}; //Size: 0x0080
-static_assert(sizeof(D2PathInfoStrc) == 0x80);
-
-class D2EventTimerStrc {
-public:
-	char pad_0000[48]; //0x0000
-	class D2EventTimerStrc* pNext; //0x0030
-	char pad_0038[80]; //0x0038
-}; //Size: 0x0088
-static_assert(sizeof(D2EventTimerStrc) == 0x88);
-
-class D2EventTimerQueueStrc {
-public:
-	char pad_0000[5176]; //0x0000
-	class D2EventTimerSlabListStrc* pSlabListHead; //0x1438
-	char pad_1440[7240]; //0x1440
-}; //Size: 0x3088
-static_assert(sizeof(D2EventTimerQueueStrc) == 0x3088);
-
-class D2EventTimerSlabListStrc {
-public:
-	char pad_0000[43200]; //0x0000
-	class D2EventTimerStrc* pFreeEventTimerListHead; //0xA8C0
-	char pad_A8C8[6080]; //0xA8C8
-}; //Size: 0xC088
-static_assert(sizeof(D2EventTimerSlabListStrc) == 0xC088);
-
-class D2HoradricCubePanel {
-public:
-	class blz__string16 tName; //0x0008
-	class D2Widget* pParent; //0x0030
-	char pad_0038[24]; //0x0038
-	bool bVisible; //0x0050
-	bool bEnabled; //0x0051
-	char pad_0052[30]; //0x0052
-
-	virtual int64_t Function1();
-}; //Size: 0x0070
-static_assert(sizeof(D2HoradricCubePanel) == 0x70);
 #pragma pack(pop)

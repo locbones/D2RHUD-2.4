@@ -39,12 +39,15 @@
 std::string configFilePath = "config.json";
 std::string filename = "../Launcher/D2RLAN_Config.txt";
 std::string lootFile = "../D2R/lootfilter.lua";
-std::string Version = "1.1.3";
-
+std::string Version = "1.1.2";
 using json = nlohmann::json;
+
 static MonsterStatsDisplaySettings cachedSettings;
+
 static D2Client* GetClientPtr();
+
 static D2DataTablesStrc* sgptDataTables = reinterpret_cast<D2DataTablesStrc*>(Pattern::Address(0x1c9e980));
+
 ItemFilter* itemFilter = new ItemFilter();
 
 #pragma region Monster & Command Constants
@@ -1123,13 +1126,7 @@ time_t g_LastToggleTime = 0;
 TerrorZoneDisplayData g_TerrorZoneData;
 std::vector<DesecratedZone> gDesecratedZones;
 std::vector<LevelName> level_names;
-typedef BOOL(__fastcall* QUESTRECORD_GetQuestState_t)(D2BitBufferStrc* pQuestRecord, int32_t nQuestId, int32_t nState);
-static QUESTRECORD_GetQuestState_t oQUESTRECORD_GetQuestState = reinterpret_cast<QUESTRECORD_GetQuestState_t>(Pattern::Address(0x243880));
-typedef int64_t(__fastcall* HUDWarnings__PopulateHUDWarnings_t)(void* pWidget);
-static HUDWarnings__PopulateHUDWarnings_t oHUDWarnings__PopulateHUDWarnings = nullptr;
-typedef void(__fastcall* Widget__OnClose_t)(void* pWidget);
-static Widget__OnClose_t oWidget__OnClose = nullptr;
-static char pCustom[1024];
+
 
 inline std::time_t parse_time_utc(const std::string& s) {
     std::tm tm = {};
@@ -1170,6 +1167,7 @@ void from_json(const json& j, DifficultySettings& d) {
     }
 }
 
+
 void from_json(const json& j, WarningInfo& w) {
     w.announce_time_min = j.at("announce_time_min").get<int>();
     w.tier = j.at("tier").get<int>();
@@ -1208,6 +1206,7 @@ void from_json(const nlohmann::json& j, LevelName& ln) {
     j.at("name").get_to(ln.name);
 }
 
+
 std::string StripComments(const std::string& content) {
     std::string result;
     bool inComment = false;
@@ -1229,23 +1228,19 @@ std::string StripComments(const std::string& content) {
     return result;
 }
 
-//Unused for now
+// Returns a list of (stat name, rolled value) Unused for now
 std::vector<std::pair<D2C_ItemStats, int>> SelectRandomStats(std::mt19937& rng) {
     std::vector<Stat> allStats = {
         { STAT_FIRERESIST, 10, 10, true,  false },
-        { STAT_COLDRESIST, 20, 20, true,  false },
-        { STAT_LIGHTRESIST, 30, 30, true,  false },
-        // Add more as needed
+        { STAT_FIRERESIST, 20, 20, true,  false },
+        { STAT_FIRERESIST, 30, 30, true,  false },
     };
 
-    // Shuffle to randomize selection order
     std::shuffle(allStats.begin(), allStats.end(), rng);
-
-    // Decide how many stats to include in this group
-    std::uniform_int_distribution<> countDist(1, std::min<int>(5, allStats.size()));
+    std::uniform_int_distribution<> countDist(1, 5);
     int statCount = countDist(rng);
 
-    std::vector<std::pair<D2C_ItemStats, int>> groupedStats;
+    std::vector<std::pair<D2C_ItemStats, int>> result;
     std::uniform_real_distribution<> chance(0.0, 1.0);
 
     for (int i = 0; i < statCount; ++i) {
@@ -1256,7 +1251,7 @@ std::vector<std::pair<D2C_ItemStats, int>> SelectRandomStats(std::mt19937& rng) 
             value = 1;
         }
         else if (s.allowNegative && s.minValue < 0) {
-            bool chooseNegative = chance(rng) < 0.25;
+            bool chooseNegative = chance(rng) < 0.25; // 25% chance negative
 
             int upperBound = (s.maxValue < 0) ? s.maxValue : 0;
             int lowerBound = (s.minValue > 0) ? s.minValue : 0;
@@ -1275,12 +1270,11 @@ std::vector<std::pair<D2C_ItemStats, int>> SelectRandomStats(std::mt19937& rng) 
             value = dist(rng);
         }
 
-        groupedStats.emplace_back(s.id, value);
+        result.emplace_back(s.id, value);
     }
 
-    return groupedStats;
+    return result;
 }
-
 
 bool LoadDesecratedZones(const std::string& filename) {
     std::ifstream file(filename);
@@ -1352,64 +1346,6 @@ bool LoadDesecratedZones(const std::string& filename) {
     */
 
     return true;
-}
-
-
-
-bool GetBaalQuest(D2UnitStrc* pPlayer, D2GameStrc* pGame) {
-    if (!pPlayer || !pPlayer->pPlayerData || !pGame)
-        return false;
-
-    auto pQuestData = pPlayer->pPlayerData->pQuestData[pGame->nDifficulty];
-    if (!pQuestData)
-        return false;
-
-    return pGame->bExpansion & oQUESTRECORD_GetQuestState(pQuestData, QUESTSTATEFLAG_A5Q6, QFLAG_REWARDGRANTED);
-}
-
-std::string BuildTerrorZoneInfoText()
-{
-    if (g_ActiveZoneInfoText.empty())
-        return "";
-
-    time_t currentUtc = std::time(nullptr);
-    int remainingMinutes = 0;
-    int remainingSeconds = 0;
-
-    if (g_TerrorZoneData.cycleLengthMin > 0 &&
-        g_TerrorZoneData.groupCount > 0 &&
-        g_TerrorZoneData.activeGroupIndex >= 0)
-    {
-        int totalCycleMinutes = g_TerrorZoneData.cycleLengthMin * g_TerrorZoneData.groupCount;
-        int minutesSinceStart = static_cast<int>((currentUtc - g_TerrorZoneData.zoneStartUtc) / 60);
-        int cyclePos = minutesSinceStart % totalCycleMinutes;
-        int positionInCycle = cyclePos % g_TerrorZoneData.cycleLengthMin;
-
-        if (positionInCycle < g_TerrorZoneData.terrorDurationMin)
-        {
-            // In terror phase
-            int totalSecondsInPhase = g_TerrorZoneData.terrorDurationMin * 60;
-            int secondsIntoPhase = (currentUtc - g_TerrorZoneData.zoneStartUtc) % (g_TerrorZoneData.cycleLengthMin * 60) % totalSecondsInPhase;
-            int secondsRemaining = totalSecondsInPhase - secondsIntoPhase;
-            remainingMinutes = secondsRemaining / 60;
-            remainingSeconds = secondsRemaining % 60;
-        }
-        else
-        {
-            // In break phase
-            int totalSecondsInCycle = g_TerrorZoneData.cycleLengthMin * 60;
-            int secondsIntoCycle = (currentUtc - g_TerrorZoneData.zoneStartUtc) % totalSecondsInCycle;
-            int secondsRemaining = totalSecondsInCycle - secondsIntoCycle;
-            remainingMinutes = secondsRemaining / 60;
-            remainingSeconds = secondsRemaining % 60;
-        }
-    }
-
-    std::string finalText = g_ActiveZoneInfoText +
-        "Next Rotation In: " + std::to_string(remainingMinutes) + "m " +
-        std::to_string(remainingSeconds) + "s\n";
-
-    return finalText;
 }
 
 void UpdateActiveZoneInfoText(time_t currentUtc)
@@ -1491,23 +1427,9 @@ void CheckToggleManualZoneGroup()
         else
             g_ManualZoneGroupOverride++;
 
-        // Find max groups available in the current active zone
-        int maxGroups = 0;
-        time_t currentUtc = now;
-
-        for (const auto& zone : gDesecratedZones)
-        {
-            if (currentUtc < zone.start_time_utc || currentUtc > zone.end_time_utc)
-                continue;
-
-            maxGroups = static_cast<int>(zone.zones.size());
-            break;
-        }
-
-        if (maxGroups == 0)
+        const int maxGroups = 5;
+        if (g_ManualZoneGroupOverride >= maxGroups)
             g_ManualZoneGroupOverride = -1;
-        else if (g_ManualZoneGroupOverride >= maxGroups)
-            g_ManualZoneGroupOverride = -1; // wrap back to first group
 
         UpdateActiveZoneInfoText(now);
 
@@ -1520,53 +1442,6 @@ void CheckToggleManualZoneGroup()
     }
 }
 
-int64_t Hooked_HUDWarnings__PopulateHUDWarnings(void* pWidget) {
-    D2GameStrc* pGame = nullptr;
-    D2Client* pGameClient = GetClientPtr();
-    D2UnitStrc* pUnitPlayer = nullptr;
-
-    if (pGameClient != nullptr)
-    {
-        pGame = (D2GameStrc*)pGameClient->pGame;
-        pUnitPlayer = UNITS_GetServerUnitByTypeAndId(pGame, UNIT_PLAYER, 1);
-    }
-
-    auto result = oHUDWarnings__PopulateHUDWarnings(pWidget);
-
-    auto tzInfoText = reinterpret_cast<int64_t>(WidgetFindChild(pWidget, "TerrorZoneInfoText"));
-    if (!tzInfoText) {
-        return result;
-    }
-
-    // Don't draw the custom HUD warning if Baal quest isn't complete
-    if (!GetBaalQuest(pUnitPlayer, pGame)) {
-        return result;
-    }
-
-    char** pOriginal = (char**)(tzInfoText + 0x88);
-    int64_t* nLength = (int64_t*)(tzInfoText + 0x90);
-
-    std::string finalText = BuildTerrorZoneInfoText();
-    if (finalText.empty())
-        return result;
-
-    strncpy(pCustom, finalText.c_str(), 255); // assuming pCustom is a char[256] or similar
-    pCustom[255] = '\0'; // null-terminate just in case
-
-    *pOriginal = pCustom;
-    *nLength = strlen(pCustom) + 1;
-
-    return result;
-}
-
-void Hooked__Widget__OnClose(void* pWidget) {
-    oWidget__OnClose(pWidget);
-    char* pName = *(reinterpret_cast<char**>(reinterpret_cast<char*>(pWidget) + 0x8));
-    if (strcmp(pName, "AutoMap") == 0) {
-        pCustom[0] = '\0';
-    }
-}
-
 int GetPlayerDifficulty(D2UnitStrc* pPlayer) {
     if (!pPlayer || !pPlayer->pDynamicPath) return -1;
     auto pRoom = pPlayer->pDynamicPath->pRoom;
@@ -1576,13 +1451,13 @@ int GetPlayerDifficulty(D2UnitStrc* pPlayer) {
     return pLevel->pDrlg->nDifficulty;
 }
 
-void SubtractResistances(D2UnitStrc* pUnit, D2C_ItemStats nStatId, uint32_t nValue, uint16_t nLayer = 0) {
+void AddToResistances(D2UnitStrc* pUnit, D2C_ItemStats nStatId, uint32_t nValue, uint16_t nLayer = 0) {
     auto nCurrentValue = STATLIST_GetUnitStatSigned(pUnit, nStatId, nLayer);
 
     if (nCurrentValue >= 100) {
 
         int newValue = nCurrentValue - nValue;
-        if (newValue < 99) { newValue = 99; }
+        if (newValue < 95) { newValue = 95; }
         STATLISTEX_SetStatListExStat(pUnit->pStatListEx, nStatId, newValue, nLayer);
     }
 }
@@ -1654,17 +1529,17 @@ void __fastcall ApplyGhettoSunder(D2GameStrc* pGame, D2ActiveRoomStrc* pRoom,
 
     // Now apply highest values to the monster unit
     if (maxColdResist > INT_MIN)
-        SubtractResistances(pUnit, STAT_COLDRESIST, maxColdResist);
+        AddToResistances(pUnit, STAT_COLDRESIST, maxColdResist);
     if (maxFireResist > INT_MIN)
-        SubtractResistances(pUnit, STAT_FIRERESIST, maxFireResist);
+        AddToResistances(pUnit, STAT_FIRERESIST, maxFireResist);
     if (maxLightResist > INT_MIN)
-        SubtractResistances(pUnit, STAT_LIGHTRESIST, maxLightResist);
+        AddToResistances(pUnit, STAT_LIGHTRESIST, maxLightResist);
     if (maxPoisonResist > INT_MIN)
-        SubtractResistances(pUnit, STAT_POISONRESIST, maxPoisonResist);
+        AddToResistances(pUnit, STAT_POISONRESIST, maxPoisonResist);
     if (maxDamageResist > INT_MIN)
-        SubtractResistances(pUnit, STAT_DAMAGERESIST, maxDamageResist);
+        AddToResistances(pUnit, STAT_DAMAGERESIST, maxDamageResist);
     if (maxMagicResist > INT_MIN)
-        SubtractResistances(pUnit, STAT_MAGICRESIST, maxMagicResist);
+        AddToResistances(pUnit, STAT_MAGICRESIST, maxMagicResist);
 }
 
 void __fastcall ApplyStatAdjustments(
@@ -1879,18 +1754,6 @@ void __fastcall HookedMONSTER_InitializeStatsAndSkills(D2GameStrc* pGame, D2Acti
         return;
     }
 
-    D2UnitStrc* pUnitPlayer = UNITS_GetServerUnitByTypeAndId(pGame, UNIT_PLAYER, 1);
-    if (!pUnitPlayer)
-        return;
-
-    int difficulty = GetPlayerDifficulty(pUnitPlayer);
-    if (difficulty < 0 || difficulty > 2)
-        return;
-
-    if (!GetBaalQuest(pUnitPlayer, pGame)) {
-        return;
-    }
-
     auto pMonStats2TxtRecord = sgptDataTables->pMonStats2Txt[wMonStatsEx];
     D2MonStatsInitStrc monStatsInit = {};
     std::string path = std::format("{0}/Mods/{1}/{1}.mpq/data/hd/global/excel/desecratedzones.json", GetExecutableDir(), GetModName());
@@ -1898,7 +1761,13 @@ void __fastcall HookedMONSTER_InitializeStatsAndSkills(D2GameStrc* pGame, D2Acti
     ApplyGhettoTerrorZone(pGame, pRoom, pUnit, pMonRegData, &monStatsInit);
     ApplyGhettoSunder(pGame, pRoom, pUnit, pMonRegData, &monStatsInit);
 
-    //MessageBoxA(nullptr, GetBaalQuest(pUnitPlayer, pGame) ? "Baal quest is complete." : "Baal quest is not complete.", "Terror Zone Boost Applied", MB_OK);
+    D2UnitStrc* pUnitPlayer = UNITS_GetServerUnitByTypeAndId(pGame, UNIT_PLAYER, 1);
+    if (!pUnitPlayer)
+        return;
+
+    int difficulty = GetPlayerDifficulty(pUnitPlayer);
+    if (difficulty < 0 || difficulty > 2)
+        return;
 
     time_t currentUtc = std::time(nullptr);
 
@@ -1977,7 +1846,6 @@ void D2RHUD::OnDraw() {
         DetourAttach(&(PVOID&)Process_SCMD_CHATSTART_Orig, Process_SCMD_CHATSTART_Hook);
         DetourTransactionCommit();
         menuClickHookInstalled = true;
-        
     }
 
     if (!oBankPanelDraw) {
@@ -2065,7 +1933,6 @@ void D2RHUD::OnDraw() {
 
     }
 
-
     if (!oMONSTER_InitializeStatsAndSkills) {
         DetourTransactionBegin();
         DetourUpdateThread(GetCurrentThread());
@@ -2078,15 +1945,8 @@ void D2RHUD::OnDraw() {
         itemFilter->Install(cachedSettings);
     }
 
-    if (!oHUDWarnings__PopulateHUDWarnings) {
-        DetourTransactionBegin();
-        DetourUpdateThread(GetCurrentThread());
-        oHUDWarnings__PopulateHUDWarnings = reinterpret_cast<HUDWarnings__PopulateHUDWarnings_t>(Pattern::Address(0xbb2a90));
-        DetourAttach(&(PVOID&)oHUDWarnings__PopulateHUDWarnings, Hooked_HUDWarnings__PopulateHUDWarnings);
-        oWidget__OnClose = reinterpret_cast<Widget__OnClose_t>(Pattern::Address(0x5766f0));
-        DetourAttach(&(PVOID&)oWidget__OnClose, Hooked__Widget__OnClose);
-        DetourTransactionCommit();
-    }
+    if (!settings.monsterStatsDisplay)
+        return;
 
     auto drawList = ImGui::GetBackgroundDrawList();
     auto min = drawList->GetClipRectMin();
@@ -2121,13 +1981,83 @@ void D2RHUD::OnDraw() {
 
     do
     {
-        CheckToggleManualZoneGroup();
-
-        if (!settings.monsterStatsDisplay)
+        //Terror Zone Listing
+        if (!g_ActiveZoneInfoText.empty())
         {
-            if (fontPushed)
-                ImGui::PopFont();
-            return;
+            ImDrawList* drawList = ImGui::GetForegroundDrawList();
+            ImVec2 screenSize = ImGui::GetIO().DisplaySize;
+            time_t currentUtc = std::time(nullptr);
+            int remainingMinutes = 0;
+            int remainingSeconds = 0;
+
+            if (g_TerrorZoneData.cycleLengthMin > 0 && g_TerrorZoneData.groupCount > 0 && g_TerrorZoneData.activeGroupIndex >= 0)
+            {
+                int totalCycleMinutes = g_TerrorZoneData.cycleLengthMin * g_TerrorZoneData.groupCount;
+                int minutesSinceStart = static_cast<int>((currentUtc - g_TerrorZoneData.zoneStartUtc) / 60);
+                int cyclePos = minutesSinceStart % totalCycleMinutes;
+                int positionInCycle = cyclePos % g_TerrorZoneData.cycleLengthMin;
+
+                if (positionInCycle < g_TerrorZoneData.terrorDurationMin)
+                {
+                    // In terror phase
+                    int totalSecondsInPhase = g_TerrorZoneData.terrorDurationMin * 60;
+                    int secondsIntoPhase = (currentUtc - g_TerrorZoneData.zoneStartUtc) % (g_TerrorZoneData.cycleLengthMin * 60) % (g_TerrorZoneData.terrorDurationMin * 60);
+                    int secondsRemaining = totalSecondsInPhase - secondsIntoPhase;
+                    remainingMinutes = secondsRemaining / 60;
+                    remainingSeconds = secondsRemaining % 60;
+                }
+                else
+                {
+                    // In break phase
+                    int totalSecondsInCycle = g_TerrorZoneData.cycleLengthMin * 60;
+                    int secondsIntoCycle = (currentUtc - g_TerrorZoneData.zoneStartUtc) % totalSecondsInCycle;
+                    int secondsRemaining = totalSecondsInCycle - secondsIntoCycle;
+                    remainingMinutes = secondsRemaining / 60;
+                    remainingSeconds = secondsRemaining % 60;
+                }
+            }
+
+            std::string finalText = g_ActiveZoneInfoText +
+                "Next Rotation In: " + std::to_string(remainingMinutes) + "m " + std::to_string(remainingSeconds) + "s\n";
+
+            float paddingX = 20.0f;
+            float paddingY = 10.0f;
+            float horizontalOffset = 50.0f;
+
+            float aspectRatio = screenSize.x / screenSize.y;
+            bool isUltraWide = aspectRatio > 2.0f;
+
+            size_t start = 0;
+            float lineHeight = ImGui::GetTextLineHeight();
+            int lineIndex = 0;
+
+            // Draw main info text
+            while (true)
+            {
+                size_t end = finalText.find('\n', start);
+                std::string line = (end == std::string::npos) ? finalText.substr(start) : finalText.substr(start, end - start);
+                if (line.empty())
+                    break;
+
+                ImVec2 textSize = ImGui::CalcTextSize(line.c_str());
+
+                float posX = screenSize.x - textSize.x - paddingX - horizontalOffset + 45;
+                if (isUltraWide)
+                {
+                    posX = screenSize.x * 0.905f - textSize.x;
+                }
+                ImVec2 pos = ImVec2(posX, paddingY + lineHeight * lineIndex + horizontalOffset + 10.0f);
+
+                drawList->AddText(ImVec2(pos.x + 1, pos.y + 1), IM_COL32(0, 0, 0, 255), line.c_str());
+                drawList->AddText(pos, IM_COL32(150, 50, 150, 255), line.c_str());
+
+                if (end == std::string::npos)
+                    break;
+                start = end + 1;
+                lineIndex++;
+            }
+
+            CheckToggleManualZoneGroup();
         }
 
         if (!gMouseHover->IsHovered) break;
