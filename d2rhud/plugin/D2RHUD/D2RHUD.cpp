@@ -39,7 +39,7 @@
 std::string configFilePath = "config.json";
 std::string filename = "../Launcher/D2RLAN_Config.txt";
 std::string lootFile = "../D2R/lootfilter.lua";
-std::string Version = "1.1.4";
+std::string Version = "1.1.5";
 
 using json = nlohmann::json;
 static MonsterStatsDisplaySettings cachedSettings;
@@ -1003,16 +1003,17 @@ typedef void(__fastcall* SUNITDMG_ApplyResistancesAndAbsorb_t)(D2DamageInfoStrc*
 static SUNITDMG_ApplyResistancesAndAbsorb_t oSUNITDMG_ApplyResistancesAndAbsorb = nullptr;
 
 static int32_t* gnVirtualPlayerCount = reinterpret_cast<int32_t*>(Pattern::Address(0x1d637e4));
+int32_t playerCountGlobal;
 
 void __fastcall HookedMONSTER_GetPlayerCountBonus(D2GameStrc* pGame, D2PlayerCountBonusStrc* pPlayerCountBonus, D2ActiveRoomStrc* pRoom, D2UnitStrc* pMonster) {
     oMONSTER_GetPlayerCountBonus(pGame, pPlayerCountBonus, pRoom, pMonster);
+    playerCountGlobal = pPlayerCountBonus->nPlayerCount;
+
     // cap max hp bonus at 300%. once it gets to 500% + it can rollover quickly causing monsters to have negative hp.
     if (pPlayerCountBonus->nPlayerCount > 8 && pGame->nDifficulty > cachedSettings.HPRolloverDiff) {
         pPlayerCountBonus->nHP = 300;
     }
 }
-
-
 
 const int32_t nMaxPlayerCount = 65535;
 float nMaxDamageReductionPercent = cachedSettings.HPRolloverAmt; // e.g., 90 means 90% max reduction
@@ -1047,7 +1048,6 @@ void __fastcall ScaleDamage(D2DamageInfoStrc* pDamageInfo, D2DamageStatTableStrc
         }
     }
 }
-
 
 void __fastcall HookedSUNITDMG_ApplyResistancesAndAbsorb(D2DamageInfoStrc* pDamageInfo, D2DamageStatTableStrc* pDamageStatTableRecord, int32_t bDontAbsorb) {
     oSUNITDMG_ApplyResistancesAndAbsorb(pDamageInfo, pDamageStatTableRecord, bDontAbsorb);
@@ -1138,6 +1138,72 @@ static HUDWarnings__PopulateHUDWarnings_t oHUDWarnings__PopulateHUDWarnings = nu
 typedef void(__fastcall* Widget__OnClose_t)(void* pWidget);
 static Widget__OnClose_t oWidget__OnClose = nullptr;
 static char pCustom[1024];
+
+typedef BOOL(__stdcall* DATATBLS_CalculateMonsterStatsByLevel_t)(int nMonsterId, int nGameType, int nDifficulty, int nLevel, short nFlags, D2MonStatsInitStrc* pMonStatsInit);
+static DATATBLS_CalculateMonsterStatsByLevel_t oAdjustMonsterStats = reinterpret_cast<DATATBLS_CalculateMonsterStatsByLevel_t>(Pattern::Address(0x2356B0));
+
+BOOL CalculateMonsterStats(int monsterId, int gameType, int difficulty,
+    int level, short flags, D2MonStatsInitStrc& outStats)
+{
+    if (!oAdjustMonsterStats)
+        return FALSE;
+
+    return oAdjustMonsterStats(monsterId, gameType, difficulty, level, flags, &outStats);
+}
+
+inline int D2_ApplyRatio(int32_t nValue, int32_t nMultiplier, int32_t nDivisor)
+{
+    if (nDivisor)
+    {
+        if (nValue <= 0x100'000)
+        {
+            if (nMultiplier <= 0x10'000)
+                return nMultiplier * nValue / nDivisor;
+
+            if (nDivisor <= (nMultiplier >> 4))
+                return nValue * (nMultiplier / nDivisor);
+        }
+        else
+        {
+            if (nDivisor <= (nValue >> 4))
+                return nMultiplier * (nValue / nDivisor);
+        }
+
+        return ((int64_t)nMultiplier * (int64_t)nValue) / nDivisor;
+    }
+
+    return 0;
+}
+
+inline int32_t D2_ComputePercentage(int32_t nValue, int32_t nPercentage)
+{
+    return D2_ApplyRatio(nValue, nPercentage, 100);
+}
+
+inline uint64_t __fastcall SEED_RollRandomNumber(D2SeedStrc* pSeed)
+{
+    uint64_t lSeed = static_cast<uint64_t>(pSeed->dwSeed[1]) + 0x6AC690C5i64 * static_cast<uint64_t>(pSeed->dwSeed[0]);
+    pSeed->lSeed = lSeed;
+    return lSeed;
+}
+
+inline uint32_t __fastcall SEED_RollLimitedRandomNumber(D2SeedStrc* pSeed, int nMax)
+{
+    if (nMax > 0)
+    {
+        if ((nMax - 1) & nMax)
+            return (unsigned int)SEED_RollRandomNumber(pSeed) % nMax;
+        else
+            return SEED_RollRandomNumber(pSeed) & (nMax - 1);
+    }
+
+    return 0;
+}
+
+uint32_t __fastcall ITEMS_RollLimitedRandomNumber(D2SeedStrc* pSeed, int32_t nMax)
+{
+    return SEED_RollLimitedRandomNumber(pSeed, nMax);
+}
 
 inline std::time_t parse_time_utc(const std::string& s) {
     std::tm tm = {};
@@ -1490,7 +1556,7 @@ void CheckToggleManualZoneGroup()
 
     time_t now = std::time(nullptr);
 
-    if (ctrlPressed && altPressed && tPressed && (now - g_LastToggleTime) > 1)
+    if (ctrlPressed && altPressed && tPressed && (now - g_LastToggleTime) > 0.3)
     {
         g_LastToggleTime = now;
 
@@ -1602,13 +1668,24 @@ void SubtractResistances(D2UnitStrc* pUnit, D2C_ItemStats nStatId, uint32_t nVal
 constexpr uint16_t UNIQUE_LAYER = 1337;
 
 void AddToCurrentStat(D2UnitStrc* pUnit, D2C_ItemStats nStatId, uint32_t nValue) {
-    if (STATLIST_GetUnitStatSigned(pUnit, nStatId, UNIQUE_LAYER) > 0)
+    int currentValue = STATLIST_GetUnitStatSigned(pUnit, nStatId, 0);
+
+    // If the stat is already >= nValue, don't do anything
+    if (currentValue >= static_cast<int>(nValue))
         return;
 
-    int before = STATLIST_GetUnitStatSigned(pUnit, nStatId, 0);
-    STATLISTEX_SetStatListExStat(pUnit->pStatListEx, nStatId, before + nValue, 0);
-    STATLISTEX_SetStatListExStat(pUnit->pStatListEx, nStatId, nValue, UNIQUE_LAYER);
+    int offset = static_cast<int>(nValue) - currentValue;
+
+    // Output before/after stats via message box
+    char msg[256];
+    sprintf_s(msg, sizeof(msg), "Stat %d before: %d\nSetting to: %d\nOffset applied: %d", nStatId, currentValue, nValue, offset);
+    //MessageBoxA(nullptr, msg, "Stat Adjustment", MB_OK | MB_ICONINFORMATION);
+
+    // Apply the offset to get to the desired value
+    STATLISTEX_SetStatListExStat(pUnit->pStatListEx, nStatId, currentValue + offset, 0);
+    STATLISTEX_SetStatListExStat(pUnit->pStatListEx, nStatId, offset, UNIQUE_LAYER);
 }
+
 
 int GetLevelIdFromRoom(D2ActiveRoomStrc* pRoom)
 {
@@ -1625,9 +1702,7 @@ void AdjustMonsterLevel(D2UnitStrc* pUnit, D2C_ItemStats nStatId, uint32_t nValu
         STATLISTEX_SetStatListExStat(pUnit->pStatListEx, nStatId, nValue, nLayer);
 }
 
-void __fastcall ApplyGhettoSunder(D2GameStrc* pGame, D2ActiveRoomStrc* pRoom,
-    D2UnitStrc* pUnit, int64_t* pMonRegData,
-    D2MonStatsInitStrc* monStatsInit) {
+void __fastcall ApplyGhettoSunder(D2GameStrc* pGame, D2ActiveRoomStrc* pRoom, D2UnitStrc* pUnit, int64_t* pMonRegData, D2MonStatsInitStrc* monStatsInit) {
     if (!pGame || !pUnit)
         return;
 
@@ -1706,9 +1781,7 @@ void __fastcall ApplyStatAdjustments(
     }
 }
 
-void __fastcall ApplyGhettoTerrorZone(D2GameStrc* pGame, D2ActiveRoomStrc* pRoom,
-    D2UnitStrc* pUnit, int64_t* pMonRegData,
-    D2MonStatsInitStrc* monStatsInit)
+void __fastcall ApplyGhettoTerrorZone(D2GameStrc* pGame, D2ActiveRoomStrc* pRoom, D2UnitStrc* pUnit, int64_t* pMonRegData, D2MonStatsInitStrc* monStatsInit)
 {
     g_ActiveZoneInfoText.clear();
 
@@ -1842,35 +1915,40 @@ void __fastcall ApplyGhettoTerrorZone(D2GameStrc* pGame, D2ActiveRoomStrc* pRoom
             if (override.bound_incl_max) boundMax = override.bound_incl_max.value();
         }
 
-        // Clamp the level
+        // Clamp the level to TZ specs
         int boostedLevel = playerLevel + boostLevel;
         if (boostedLevel < boundMin)
             boostedLevel = boundMin;
         else if (boostedLevel > boundMax)
             boostedLevel = boundMax;
 
-        // Apply and debug
+        // Apply TZ Levels
         int before = STATLIST_GetUnitStatSigned(pUnit, STAT_LEVEL, 0);
         AdjustMonsterLevel(pUnit, STAT_LEVEL, boostedLevel);
         int after = STATLIST_GetUnitStatSigned(pUnit, STAT_LEVEL, 0);
 
-        /*
-        std::random_device rd;
-        std::mt19937 rng(rd());
+        D2PlayerCountBonusStrc* pPlayerCountBonus;
+        D2MonStatsInitStrc monStatsInit = {};
+        D2MonStatsTxt* pMonStatsTxtRecord = pUnit->pMonsterData->pMonstatsTxt;
+        int32_t playerCountModifier = 0;
 
-        auto selectedStats = SelectRandomStats(rng);
+        if (playerCountGlobal >= 9)
+            playerCountModifier = (playerCountGlobal - 2) * 50;
+        else
+            playerCountModifier = (playerCountGlobal - 1) * 50;
 
-        for (const auto& [statId, value] : selectedStats) {
-            AddToCurrentStat(pUnit, statId, value);
-        }
+        // Calculate for MonInit
+        CalculateMonsterStats(pUnit->dwClassId, 1, pGame->nDifficulty, STATLIST_GetUnitStatSigned(pUnit, STAT_LEVEL, 0), 7, monStatsInit);
 
-        // Show what boost was applied
-        std::stringstream ss2;
-        ss2 << "Applied Boost Level: " << difficultySettings->boost_level
-            << "\nBefore: " << before << "\nAfter: " << after;
+        const int32_t nBaseHp = monStatsInit.nMinHP + ITEMS_RollLimitedRandomNumber(&pUnit->pSeed, monStatsInit.nMaxHP - monStatsInit.nMinHP + 1);
+        const int32_t nHp = nBaseHp + D2_ComputePercentage(nBaseHp, playerCountModifier);
+        const int32_t nShiftedHp = nHp << 8;
 
-        MessageBoxA(nullptr, ss2.str().c_str(), "Terror Zone Boost Applied", MB_OK);
-        */
+        AddToCurrentStat(pUnit, STAT_MAXHP, nShiftedHp);
+        AddToCurrentStat(pUnit, STAT_HITPOINTS, nShiftedHp);
+        AddToCurrentStat(pUnit, STAT_ARMORCLASS, monStatsInit.nAC);
+        AddToCurrentStat(pUnit, STAT_EXPERIENCE, D2_ComputePercentage(monStatsInit.nExp, ((playerCountGlobal - 8) * 100) / 5));
+        AddToCurrentStat(pUnit, STAT_HPREGEN, (nShiftedHp * 2) >> 12);
 
         return;
     }
@@ -1931,7 +2009,6 @@ void __fastcall HookedMONSTER_InitializeStatsAndSkills(D2GameStrc* pGame, D2Acti
 }
 
 #pragma endregion
-
 
 std::string g_ItemFilterStatusMessage = "";
 bool g_ShouldShowItemFilterMessage = false;
@@ -2205,6 +2282,13 @@ void D2RHUD::OnDraw() {
                     auto width = ImGui::CalcTextSize(hp.c_str()).x;
                     drawList->AddText({ center - (width / 2.0f) + 1, ypercent2 }, IM_COL32(255, 255, 255, 255), hp.c_str());
                 }
+
+                /*
+                std::string ac = std::format("Atk Rating: {}", STATLIST_GetUnitStatSigned(pUnitServer, STAT_ARMORCLASS, 0));
+                drawList->AddText({ 20, 10 }, IM_COL32(170, 50, 50, 255), ac.c_str());
+                std::string xp = std::format("Experience: {}", STATLIST_GetUnitStatSigned(pUnitServer, STAT_EXPERIENCE, 0));
+                drawList->AddText({ 20, 30 }, IM_COL32(170, 50, 50, 255), xp.c_str());
+                */
             }
         }
 

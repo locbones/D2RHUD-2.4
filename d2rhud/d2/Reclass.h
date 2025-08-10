@@ -7,12 +7,25 @@
 
 class D2SeedStrc {
 public:
-	union //0x0000
+	union // offset 0x0000
 	{
-		int32_t dwSeed[2]; //0x0000
-		int64_t lSeed; //0x0000
+		int32_t dwSeed[2]; // 0x0000: dwSeed[0] = LowSeed, dwSeed[1] = HighSeed
+		int64_t lSeed;     // 0x0000: full 64-bit combined seed
 	};
-}; //Size: 0x0008
+	int32_t& LowSeed() {
+		return dwSeed[0];
+	}
+	int32_t& HighSeed() {
+		return dwSeed[1];
+	}
+	const int32_t& LowSeed() const {
+		return dwSeed[0];
+	}
+
+	const int32_t& HighSeed() const {
+		return dwSeed[1];
+	}
+};
 static_assert(sizeof(D2SeedStrc) == 0x8);
 
 class D2UnitStrc // [<D2R.exe> + 0x1d442e0 + (0x0 * 0x400) + (0x1 * 0x8)]
@@ -164,8 +177,8 @@ static_assert(sizeof(D2ItemDataStrc) == 0x118);
 class D2MonsterDataStrc {
 public:
 	class D2MonStatsTxt* pMonstatsTxt; //0x0000
-	uint8_t nComponent[16]; //0x0008
-	char pad_0018[120]; //0x0018
+	//uint8_t nComponent[16]; //0x0008
+	char pad_0018[136]; //0x0018
 }; //Size: 0x0090
 static_assert(sizeof(D2MonsterDataStrc) == 0x90);
 
@@ -385,7 +398,9 @@ public:
 	};
 	char pad_0040[8]; //0x0040
 	uint16_t wMonStatsEx; //0x0048
-	char pad_004A[148]; //0x004A
+	char pad_004A[112];
+	uint16_t wTreasureClass[3][4];//0x004A
+	char pad_004B[12];
 	uint16_t nLevel[3]; //0x00DE
 	char pad_00E4[248]; //0x00E4
 }; //Size: 0x01DC
