@@ -1479,36 +1479,41 @@ void __fastcall ForceTCDrops(D2GameStrc* pGame, D2UnitStrc* pMonster, D2UnitStrc
     int indexChamp = GetMonsterTreasure(monsters, pMonStatsTxtRecord->nId, difficulty, 1, TCEx);
     int indexUnique = GetMonsterTreasure(monsters, pMonStatsTxtRecord->nId, difficulty, 2, TCEx);
     int indexSuperUnique = GetMonsterTreasureSU(superuniques, nSuperUniqueId, difficulty, TCEx);
-    int unknownOffset1 = nTCId - indexRegular - 1;
-    int unknownOffset2 = nTCId - indexChamp - 1;
-    int unknownOffset3 = nTCId - indexUnique - 1;
-    int unknownOffset4 = nTCId - indexSuperUnique - 1;
+    int unknownOffset1 = nTCId - indexRegular + 1;
+    int unknownOffset2 = nTCId - indexChamp + 1;
+    int unknownOffset3 = nTCId - indexUnique + 1;
+    int unknownOffset4 = nTCId - indexSuperUnique + 1;
 
-    std::string debugMsg = std::format("nTCId being used: {}", pMonStatsTxtRecord->nId);
+    std::string debugMsg = std::format("nTCId being used: {}", pMonsterFlag);
     //MessageBoxA(nullptr, debugMsg.c_str(), "DropTCTest Debug", MB_OK | MB_ICONINFORMATION);
 
     //Force Boss Drops
-    if (pMonStatsTxtRecord->nId == 156 || pMonStatsTxtRecord->nId == 211 || pMonStatsTxtRecord->nId == 242 || pMonStatsTxtRecord->nId == 243 || pMonStatsTxtRecord->nId == 544)
-        nTCId = indexUnique + 192;
+    if (pMonStatsTxtRecord->nId == 156 || pMonStatsTxtRecord->nId == 211 ||
+        pMonStatsTxtRecord->nId == 242 || pMonStatsTxtRecord->nId == 243 ||
+        pMonStatsTxtRecord->nId == 544)
+    {
+        //MessageBoxA(nullptr, "Matched ID list", "Debug", MB_OK);
+        nTCId = indexUnique + unknownOffset3;
+        oDropTCTest(pGame, pMonster, pPlayer, nTCId, nQuality, nItemLevel, a7, ppItems, pnItemsDropped, nMaxItems);
+    }
     else
     {
+        //MessageBoxA(nullptr, "Flag-based branch", "Debug", MB_OK);
         if (pMonsterFlag & MONTYPEFLAG_SUPERUNIQUE)
             nTCId = indexSuperUnique + unknownOffset4;
         else if (pMonsterFlag & (MONTYPEFLAG_CHAMPION | MONTYPEFLAG_POSSESSED | MONTYPEFLAG_GHOSTLY))
             nTCId = indexChamp + unknownOffset2;
         else if (pMonsterFlag & (MONTYPEFLAG_UNIQUE | MONTYPEFLAG_MINION))
             nTCId = indexUnique + unknownOffset3;
-        else if (pMonsterFlag == 0)
-            nTCId = indexRegular + unknownOffset1;
         else
             nTCId = indexRegular + unknownOffset1;
+
+        oDropTCTest(pGame, pMonster, pPlayer, nTCId, nQuality, nItemLevel, a7, ppItems, pnItemsDropped, nMaxItems);
     }
 
     // Debug: show the nTCId being used
-    std::string debugMsg2 = std::format("Index being used: {}, {}", indexRegular, nTCId);
+    std::string debugMsg2 = std::format("Index being used: {}, {}, {}, {}", nItemLevel, nTCId, pMonStatsTxtRecord->nId, indexUnique);
     //MessageBoxA(nullptr, debugMsg2.c_str(), "DropTCTest Debug", MB_OK | MB_ICONINFORMATION);
-
-    oDropTCTest(pGame, pMonster, pPlayer, nTCId, nQuality, nItemLevel, a7, ppItems, pnItemsDropped, nMaxItems);
 }
 
 void __fastcall HookedDropTCTest(D2GameStrc* pGame, D2UnitStrc* pMonster, D2UnitStrc* pPlayer, int32_t nTCId, int32_t nQuality, int32_t nItemLevel, int32_t a7, D2UnitStrc** ppItems, int32_t* pnItemsDropped, int32_t nMaxItems)
