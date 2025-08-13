@@ -39,7 +39,7 @@
 std::string configFilePath = "config.json";
 std::string filename = "../Launcher/D2RLAN_Config.txt";
 std::string lootFile = "../D2R/lootfilter.lua";
-std::string Version = "1.1.5";
+std::string Version = "1.1.6";
 
 using json = nlohmann::json;
 static MonsterStatsDisplaySettings cachedSettings;
@@ -305,6 +305,7 @@ static D2CCMDStrc* gpCCMDHandlerTable = reinterpret_cast<D2CCMDStrc*>(Pattern::A
 static D2SCMDStrc* gpSCMDHandlerTable = reinterpret_cast<D2SCMDStrc*>(Pattern::Address(0x1841b40));
 static D2ClientStrc** gpClientList = reinterpret_cast<D2ClientStrc**>(Pattern::Address(0x1d637f0));
 static D2Widget** gpPanelManager = reinterpret_cast<D2Widget**>(Pattern::Address(0x1d7c4e8));
+
 
 static uint32_t gSelectedPage = 0;
 
@@ -720,6 +721,15 @@ void ExecuteCommand(const std::string& command) {
     }
 }
 
+int GetPlayerDifficulty(D2UnitStrc* pPlayer) {
+    if (!pPlayer || !pPlayer->pDynamicPath) return -1;
+    auto pRoom = pPlayer->pDynamicPath->pRoom;
+    if (!pRoom || !pRoom->pDrlgRoom) return -1;
+    auto pLevel = pRoom->pDrlgRoom->pLevel;
+    if (!pLevel || !pLevel->pDrlg) return -1;
+    return pLevel->pDrlg->nDifficulty;
+}
+
 void OnClientStatusChange() {
     std::this_thread::sleep_for(std::chrono::seconds(10));
 
@@ -868,7 +878,6 @@ MonsterStatsDisplaySettings getMonsterStatsDisplaySetting(const std::string& con
     return cachedSettings;
 }
 
-
 MonsterStatsDisplaySettings settings = getMonsterStatsDisplaySetting(configFilePath);
 #pragma endregion
 
@@ -1005,6 +1014,14 @@ static SUNITDMG_ApplyResistancesAndAbsorb_t oSUNITDMG_ApplyResistancesAndAbsorb 
 static int32_t* gnVirtualPlayerCount = reinterpret_cast<int32_t*>(Pattern::Address(0x1d637e4));
 int32_t playerCountGlobal;
 
+D2MonStatsTxt* __fastcall MONSTERMODE_GetMonStatsTxtRecord(int32_t nMonsterId)
+{
+    if (nMonsterId >= 0 && nMonsterId < sgptDataTables->nMonStatsTxtRecordCount)
+        return &sgptDataTables->pMonStatsTxt[nMonsterId];
+
+    return nullptr;
+}
+
 void __fastcall HookedMONSTER_GetPlayerCountBonus(D2GameStrc* pGame, D2PlayerCountBonusStrc* pPlayerCountBonus, D2ActiveRoomStrc* pRoom, D2UnitStrc* pMonster) {
     oMONSTER_GetPlayerCountBonus(pGame, pPlayerCountBonus, pRoom, pMonster);
     playerCountGlobal = pPlayerCountBonus->nPlayerCount;
@@ -1113,15 +1130,37 @@ struct TerrorZoneDisplayData
     int groupCount = 0;
     int activeGroupIndex = -1;
     time_t zoneStartUtc = 0;
+    std::vector<ZoneLevel> activeLevels;
 };
 
-// Structure for stat definition
 struct Stat {
     D2C_ItemStats id;
     int minValue;
     int maxValue;
-    bool allowNegative; // determines if negative values are possible
-    bool isBinary;      // for stats like cannot be frozen
+    bool allowNegative;
+    bool isBinary;
+};
+
+struct MonsterTreasureClass
+{
+    std::string MonsterName;
+    std::string Desecrated;
+    std::string DesecratedChamp;
+    std::string DesecratedUnique;
+    std::string Desecrated_N;
+    std::string DesecratedChamp_N;
+    std::string DesecratedUnique_N;
+    std::string Desecrated_H;
+    std::string DesecratedChamp_H;
+    std::string DesecratedUnique_H;
+};
+
+struct MonsterTreasureClassSU
+{
+    std::string MonsterName;
+    std::string Desecrated;
+    std::string Desecrated_N;
+    std::string Desecrated_H;
 };
 
 int playerLevel = 0;
@@ -1138,9 +1177,350 @@ static HUDWarnings__PopulateHUDWarnings_t oHUDWarnings__PopulateHUDWarnings = nu
 typedef void(__fastcall* Widget__OnClose_t)(void* pWidget);
 static Widget__OnClose_t oWidget__OnClose = nullptr;
 static char pCustom[1024];
-
 typedef BOOL(__stdcall* DATATBLS_CalculateMonsterStatsByLevel_t)(int nMonsterId, int nGameType, int nDifficulty, int nLevel, short nFlags, D2MonStatsInitStrc* pMonStatsInit);
 static DATATBLS_CalculateMonsterStatsByLevel_t oAdjustMonsterStats = reinterpret_cast<DATATBLS_CalculateMonsterStatsByLevel_t>(Pattern::Address(0x2356B0));
+typedef void(__fastcall* DropTCTest_t)(D2GameStrc* pGame, D2UnitStrc* pMonster, D2UnitStrc* pPlayer, int32_t nTCId, int32_t nQuality, int32_t nItemLevel, int32_t a7, D2UnitStrc** ppItems, int32_t* pnItemsDropped, int32_t nMaxItems);
+static DropTCTest_t oDropTCTest = nullptr;
+bool isTerrorized = false;
+
+std::vector<std::string> ReadTCexFile(const std::string& filename)
+{
+    std::vector<std::string> treasureClasses;
+    std::ifstream file(filename);
+    if (!file.is_open())
+    {
+        std::cerr << "Error opening file: " << filename << "\n";
+        return treasureClasses;
+    }
+
+    std::string line;
+    while (std::getline(file, line))
+    {
+        std::stringstream ss(line);
+        std::string firstColumn;
+        if (std::getline(ss, firstColumn, '\t'))
+            treasureClasses.push_back(firstColumn);
+    }
+    return treasureClasses;
+}
+
+int GetMonsterTreasure(const std::vector<MonsterTreasureClass>& monsters, size_t rowIndex, int diff, int monType, const std::vector<std::string>& tcexEntries)
+{
+    if (rowIndex >= monsters.size())
+    {
+        std::cerr << "Error: Row index out of range\n";
+        return -1;
+    }
+
+    const auto& m = monsters[rowIndex];
+
+    std::string treasureClassValue;
+    if (diff == 0)
+    {
+        if (monType == 0) treasureClassValue = m.Desecrated;
+        else if (monType == 1) treasureClassValue = m.DesecratedChamp;
+        else if (monType == 2) treasureClassValue = m.DesecratedUnique;
+    }
+    else if (diff == 1)
+    {
+        if (monType == 0) treasureClassValue = m.Desecrated_N;
+        else if (monType == 1) treasureClassValue = m.DesecratedChamp_N;
+        else if (monType == 2) treasureClassValue = m.DesecratedUnique_N;
+    }
+    else if (diff == 2)
+    {
+        if (monType == 0) treasureClassValue = m.Desecrated_H;
+        else if (monType == 1) treasureClassValue = m.DesecratedChamp_H;
+        else if (monType == 2) treasureClassValue = m.DesecratedUnique_H;
+    }
+    else
+    {
+        return -1;
+    }
+
+    // Search for treasureClassValue in tcexEntries
+    for (size_t i = 0; i < tcexEntries.size(); ++i)
+    {
+        if (tcexEntries[i] == treasureClassValue)
+            return static_cast<int>(i);
+    }
+
+    return -1;
+}
+
+int GetMonsterTreasureSU(const std::vector<MonsterTreasureClassSU>& monsters, size_t rowIndex, int diff, const std::vector<std::string>& tcexEntries)
+{
+    if (rowIndex >= monsters.size())
+    {
+        std::cerr << "Error: Row index out of range\n";
+        return -1;
+    }
+
+    const auto& m = monsters[rowIndex];
+
+    std::string treasureClassValue;
+    if (diff == 0)
+        treasureClassValue = m.Desecrated;
+    else if (diff == 1)
+        treasureClassValue = m.Desecrated_N;
+    else if (diff == 2)
+        treasureClassValue = m.Desecrated_H;
+    else
+        return -1;
+
+    // Search for treasureClassValue in tcexEntries
+    for (size_t i = 0; i < tcexEntries.size(); ++i)
+    {
+        if (tcexEntries[i] == treasureClassValue)
+            return static_cast<int>(i);
+    }
+
+    return -1;
+}
+
+std::vector<MonsterTreasureClass> ReadMonsterTreasureFile(const std::string& filename)
+{
+    std::vector<MonsterTreasureClass> results;
+    std::ifstream file(filename);
+
+    if (!file.is_open())
+    {
+        std::cerr << "Error: Unable to open file: " << filename << "\n";
+        return results;
+    }
+
+    std::string line;
+    bool isHeader = true;
+    int idxMonsterName = -1;
+    int idxDesecrated = -1;
+    int idxDesecratedChamp = -1;
+    int idxDesecratedUnique = -1;
+    int idxDesecrated_N = -1;
+    int idxDesecratedChamp_N = -1;
+    int idxDesecratedUnique_N = -1;
+    int idxDesecrated_H = -1;
+    int idxDesecratedChamp_H = -1;
+    int idxDesecratedUnique_H = -1;
+
+    while (std::getline(file, line))
+    {
+        std::stringstream ss(line);
+        std::vector<std::string> cols;
+        std::string cell;
+
+        while (std::getline(ss, cell, '\t'))
+            cols.push_back(cell);
+
+        if (isHeader)
+        {
+            for (size_t i = 0; i < cols.size(); ++i)
+            {
+                if (cols[i] == "Id") idxMonsterName = static_cast<int>(i);
+                else if (cols[i] == "TreasureClassDesecrated") idxDesecrated = static_cast<int>(i);
+                else if (cols[i] == "TreasureClassDesecratedChamp") idxDesecratedChamp = static_cast<int>(i);
+                else if (cols[i] == "TreasureClassDesecratedUnique") idxDesecratedUnique = static_cast<int>(i);
+                else if (cols[i] == "TreasureClassDesecrated(N)") idxDesecrated_N = static_cast<int>(i);
+                else if (cols[i] == "TreasureClassDesecratedChamp(N)") idxDesecratedChamp_N = static_cast<int>(i);
+                else if (cols[i] == "TreasureClassDesecratedUnique(N)") idxDesecratedUnique_N = static_cast<int>(i);
+                else if (cols[i] == "TreasureClassDesecrated(H)") idxDesecrated_H = static_cast<int>(i);
+                else if (cols[i] == "TreasureClassDesecratedChamp(H)") idxDesecratedChamp_H = static_cast<int>(i);
+                else if (cols[i] == "TreasureClassDesecratedUnique(H)") idxDesecratedUnique_H = static_cast<int>(i);
+            }
+
+            isHeader = false;
+            continue;
+        }
+
+        MonsterTreasureClass entry;
+
+        if (idxMonsterName >= 0 && idxMonsterName < (int)cols.size())
+            entry.MonsterName = cols[idxMonsterName];
+        if (idxDesecrated >= 0 && idxDesecrated < (int)cols.size())
+            entry.Desecrated = cols[idxDesecrated];
+        if (idxDesecratedChamp >= 0 && idxDesecratedChamp < (int)cols.size())
+            entry.DesecratedChamp = cols[idxDesecratedChamp];
+        if (idxDesecratedUnique >= 0 && idxDesecratedUnique < (int)cols.size())
+            entry.DesecratedUnique = cols[idxDesecratedUnique];
+        if (idxDesecrated_N >= 0 && idxDesecrated_N < (int)cols.size())
+            entry.Desecrated_N = cols[idxDesecrated_N];
+        if (idxDesecratedChamp_N >= 0 && idxDesecratedChamp_N < (int)cols.size())
+            entry.DesecratedChamp_N = cols[idxDesecratedChamp_N];
+        if (idxDesecratedUnique_N >= 0 && idxDesecratedUnique_N < (int)cols.size())
+            entry.DesecratedUnique_N = cols[idxDesecratedUnique_N];
+        if (idxDesecrated_H >= 0 && idxDesecrated_H < (int)cols.size())
+            entry.Desecrated_H = cols[idxDesecrated_H];
+        if (idxDesecratedChamp_H >= 0 && idxDesecratedChamp_H < (int)cols.size())
+            entry.DesecratedChamp_H = cols[idxDesecratedChamp_H];
+        if (idxDesecratedUnique_H >= 0 && idxDesecratedUnique_H < (int)cols.size())
+            entry.DesecratedUnique_H = cols[idxDesecratedUnique_H];
+
+        results.push_back(entry);
+    }
+
+    return results;
+}
+
+std::vector<MonsterTreasureClassSU> ReadMonsterTreasureFileSU(const std::string& filename)
+{
+    std::vector<MonsterTreasureClassSU> results;
+    std::ifstream file(filename);
+
+    if (!file.is_open())
+    {
+        std::cerr << "Error: Unable to open file: " << filename << "\n";
+        return results;
+    }
+
+    std::string line;
+    bool isHeader = true;
+    int idxMonsterName = -1;
+    int idxDesecrated = -1;
+    int idxDesecrated_N = -1;
+    int idxDesecrated_H = -1;
+
+    while (std::getline(file, line))
+    {
+        std::stringstream ss(line);
+        std::vector<std::string> cols;
+        std::string cell;
+
+        while (std::getline(ss, cell, '\t'))
+            cols.push_back(cell);
+
+        if (isHeader)
+        {
+            for (size_t i = 0; i < cols.size(); ++i)
+            {
+                if (cols[i] == "Superunique") idxMonsterName = static_cast<int>(i);
+                else if (cols[i] == "TC Desecrated") idxDesecrated = static_cast<int>(i);
+                else if (cols[i] == "TC(N) Desecrated") idxDesecrated_N = static_cast<int>(i);
+                else if (cols[i] == "TC(H) Desecrated") idxDesecrated_H = static_cast<int>(i);
+            }
+
+            isHeader = false;
+            continue;
+        }
+
+        MonsterTreasureClassSU entry;
+
+        if (idxMonsterName >= 0 && idxMonsterName < (int)cols.size())
+            entry.MonsterName = cols[idxMonsterName];
+        if (idxDesecrated >= 0 && idxDesecrated < (int)cols.size())
+            entry.Desecrated = cols[idxDesecrated];
+        if (idxDesecrated_N >= 0 && idxDesecrated_N < (int)cols.size())
+            entry.Desecrated_N = cols[idxDesecrated_N];
+        if (idxDesecrated_H >= 0 && idxDesecrated_H < (int)cols.size())
+            entry.Desecrated_H = cols[idxDesecrated_H];
+
+        results.push_back(entry);
+    }
+
+    return results;
+}
+
+int32_t __fastcall MONSTERUNIQUE_GetSuperUniqueBossHcIdx(D2GameStrc* pGame, D2UnitStrc* pUnit)
+{
+    if (pUnit && pUnit->dwUnitType == UNIT_MONSTER && pUnit->pMonsterData && pUnit->pMonsterData->nTypeFlag & MONTYPEFLAG_SUPERUNIQUE)
+        return pUnit->pMonsterData->wBossHcIdx;
+
+    return -1;
+}
+
+int32_t __fastcall MONSTERUNIQUE_CheckMonTypeFlag(D2UnitStrc* pUnit, uint16_t nFlag)
+{
+    if (pUnit && pUnit->dwUnitType == UNIT_MONSTER && pUnit->pMonsterData)
+        return (pUnit->pMonsterData->nTypeFlag & nFlag) != 0;
+
+    return 0;
+}
+
+void __fastcall ForceTCDrops(D2GameStrc* pGame, D2UnitStrc* pMonster, D2UnitStrc* pPlayer, int32_t nTCId, int32_t nQuality, int32_t nItemLevel, int32_t a7, D2UnitStrc** ppItems, int32_t* pnItemsDropped, int32_t nMaxItems)
+{
+    std::string MONFile = std::format("{0}/Mods/{1}/{1}.mpq/data/global/excel/monstats.txt", GetExecutableDir(), GetModName());
+    std::string SUFile = std::format("{0}/Mods/{1}/{1}.mpq/data/global/excel/superuniques.txt", GetExecutableDir(), GetModName());
+    std::string TCEXFile = std::format("{0}/Mods/{1}/{1}.mpq/data/global/excel/treasureclassex.txt", GetExecutableDir(), GetModName());
+
+    D2MonStatsTxt* pMonStatsTxtRecord = MONSTERMODE_GetMonStatsTxtRecord(pMonster->dwClassId);
+    if (!pMonStatsTxtRecord)
+    {
+        MessageBoxA(nullptr, "Failed to get monster stats record.", "Debug", MB_OK | MB_ICONERROR);
+        return;
+    }
+
+    auto pMonsterFlag = pMonster->pMonsterData->nTypeFlag;
+
+    auto monsters = ReadMonsterTreasureFile(MONFile);
+    auto superuniques = ReadMonsterTreasureFileSU(SUFile);
+    const int32_t nSuperUniqueId = MONSTERUNIQUE_GetSuperUniqueBossHcIdx(pGame, pMonster);
+
+    if (pMonStatsTxtRecord->nId >= monsters.size())
+    {
+        MessageBoxA(nullptr, "Monster ID out of range in monsters vector.", "Debug", MB_OK | MB_ICONERROR);
+        return;
+    }
+
+    D2UnitStrc* pUnitPlayer = UNITS_GetServerUnitByTypeAndId(pGame, UNIT_PLAYER, 1);
+    if (!pUnitPlayer)
+    {
+        MessageBoxA(nullptr, "Failed to get player unit.", "Debug", MB_OK | MB_ICONERROR);
+        return;
+    }
+
+    int difficulty = GetPlayerDifficulty(pUnitPlayer);
+    if (difficulty < 0 || difficulty > 2)
+    {
+        MessageBoxA(nullptr, "Invalid difficulty detected.", "Debug", MB_OK | MB_ICONERROR);
+        return;
+    }
+
+    const std::vector<std::string> TCEx = ReadTCexFile(TCEXFile);
+
+    int indexRegular = GetMonsterTreasure(monsters, pMonStatsTxtRecord->nId, difficulty, 0, TCEx);
+    int indexChamp = GetMonsterTreasure(monsters, pMonStatsTxtRecord->nId, difficulty, 1, TCEx);
+    int indexUnique = GetMonsterTreasure(monsters, pMonStatsTxtRecord->nId, difficulty, 2, TCEx);
+    int indexSuperUnique = GetMonsterTreasureSU(superuniques, nSuperUniqueId, difficulty, TCEx);
+    int unknownOffset1 = nTCId - indexRegular - 1;
+    int unknownOffset2 = nTCId - indexChamp - 1;
+    int unknownOffset3 = nTCId - indexUnique - 1;
+    int unknownOffset4 = nTCId - indexSuperUnique - 1;
+
+    std::string debugMsg = std::format("nTCId being used: {}", pMonStatsTxtRecord->nId);
+    //MessageBoxA(nullptr, debugMsg.c_str(), "DropTCTest Debug", MB_OK | MB_ICONINFORMATION);
+
+    //Force Boss Drops
+    if (pMonStatsTxtRecord->nId == 156 || pMonStatsTxtRecord->nId == 211 || pMonStatsTxtRecord->nId == 242 || pMonStatsTxtRecord->nId == 243 || pMonStatsTxtRecord->nId == 544)
+        nTCId = indexUnique + 192;
+    else
+    {
+        if (pMonsterFlag & MONTYPEFLAG_SUPERUNIQUE)
+            nTCId = indexSuperUnique + unknownOffset4;
+        else if (pMonsterFlag & (MONTYPEFLAG_CHAMPION | MONTYPEFLAG_POSSESSED | MONTYPEFLAG_GHOSTLY))
+            nTCId = indexChamp + unknownOffset2;
+        else if (pMonsterFlag & (MONTYPEFLAG_UNIQUE | MONTYPEFLAG_MINION))
+            nTCId = indexUnique + unknownOffset3;
+        else if (pMonsterFlag == 0)
+            nTCId = indexRegular + unknownOffset1;
+        else
+            nTCId = indexRegular + unknownOffset1;
+    }
+
+    // Debug: show the nTCId being used
+    std::string debugMsg2 = std::format("Index being used: {}, {}", indexRegular, nTCId);
+    //MessageBoxA(nullptr, debugMsg2.c_str(), "DropTCTest Debug", MB_OK | MB_ICONINFORMATION);
+
+    oDropTCTest(pGame, pMonster, pPlayer, nTCId, nQuality, nItemLevel, a7, ppItems, pnItemsDropped, nMaxItems);
+}
+
+void __fastcall HookedDropTCTest(D2GameStrc* pGame, D2UnitStrc* pMonster, D2UnitStrc* pPlayer, int32_t nTCId, int32_t nQuality, int32_t nItemLevel, int32_t a7, D2UnitStrc** ppItems, int32_t* pnItemsDropped, int32_t nMaxItems)
+{
+    if (isTerrorized == false)
+    {
+        oDropTCTest(pGame, pMonster, pPlayer, nTCId, nQuality, nItemLevel, a7, ppItems, pnItemsDropped, nMaxItems);
+        return;
+    }
+    else
+        ForceTCDrops(pGame, pMonster, pPlayer, nTCId, nQuality, nItemLevel, a7, ppItems, pnItemsDropped, nMaxItems);
+}
 
 BOOL CalculateMonsterStats(int monsterId, int gameType, int difficulty,
     int level, short flags, D2MonStatsInitStrc& outStats)
@@ -1355,7 +1735,6 @@ std::vector<std::pair<D2C_ItemStats, int>> SelectRandomStats(std::mt19937& rng) 
     return groupedStats;
 }
 
-
 bool LoadDesecratedZones(const std::string& filename) {
     std::ifstream file(filename);
     if (!file.is_open()) {
@@ -1428,8 +1807,6 @@ bool LoadDesecratedZones(const std::string& filename) {
     return true;
 }
 
-
-
 bool GetBaalQuest(D2UnitStrc* pPlayer, D2GameStrc* pGame) {
     if (!pPlayer || !pPlayer->pPlayerData || !pGame)
         return false;
@@ -1489,6 +1866,7 @@ std::string BuildTerrorZoneInfoText()
 void UpdateActiveZoneInfoText(time_t currentUtc)
 {
     g_ActiveZoneInfoText.clear();
+    g_TerrorZoneData.activeLevels.clear();  // clear previous active levels
 
     for (const auto& zone : gDesecratedZones)
     {
@@ -1513,7 +1891,6 @@ void UpdateActiveZoneInfoText(time_t currentUtc)
         }
         else
         {
-            // Clamp manual override index to groupCount-1
             if (activeGroupIndex >= groupCount)
                 activeGroupIndex = groupCount - 1;
         }
@@ -1540,6 +1917,9 @@ void UpdateActiveZoneInfoText(time_t currentUtc)
                 ss << it->name << "\n";
             else
                 ss << "(Unknown Level ID: " << zl.level_id << ")\n";
+
+            // Track active levels directly (store ZoneLevel structs)
+            g_TerrorZoneData.activeLevels.push_back(zl);
         }
 
         g_ActiveZoneInfoText = ss.str();
@@ -1597,7 +1977,6 @@ void CheckToggleManualZoneGroup()
     }
 }
 
-
 int64_t Hooked_HUDWarnings__PopulateHUDWarnings(void* pWidget) {
     D2GameStrc* pGame = nullptr;
     D2Client* pGameClient = GetClientPtr();
@@ -1628,8 +2007,8 @@ int64_t Hooked_HUDWarnings__PopulateHUDWarnings(void* pWidget) {
     if (finalText.empty())
         return result;
 
-    strncpy(pCustom, finalText.c_str(), 255); // assuming pCustom is a char[256] or similar
-    pCustom[255] = '\0'; // null-terminate just in case
+    strncpy(pCustom, finalText.c_str(), 255);
+    pCustom[255] = '\0';
 
     *pOriginal = pCustom;
     *nLength = strlen(pCustom) + 1;
@@ -1643,15 +2022,6 @@ void Hooked__Widget__OnClose(void* pWidget) {
     if (strcmp(pName, "AutoMap") == 0) {
         pCustom[0] = '\0';
     }
-}
-
-int GetPlayerDifficulty(D2UnitStrc* pPlayer) {
-    if (!pPlayer || !pPlayer->pDynamicPath) return -1;
-    auto pRoom = pPlayer->pDynamicPath->pRoom;
-    if (!pRoom || !pRoom->pDrlgRoom) return -1;
-    auto pLevel = pRoom->pDrlgRoom->pLevel;
-    if (!pLevel || !pLevel->pDrlg) return -1;
-    return pLevel->pDrlg->nDifficulty;
 }
 
 void SubtractResistances(D2UnitStrc* pUnit, D2C_ItemStats nStatId, uint32_t nValue, uint16_t nLayer = 0) {
@@ -1685,7 +2055,6 @@ void AddToCurrentStat(D2UnitStrc* pUnit, D2C_ItemStats nStatId, uint32_t nValue)
     STATLISTEX_SetStatListExStat(pUnit->pStatListEx, nStatId, currentValue + offset, 0);
     STATLISTEX_SetStatListExStat(pUnit->pStatListEx, nStatId, offset, UNIQUE_LAYER);
 }
-
 
 int GetLevelIdFromRoom(D2ActiveRoomStrc* pRoom)
 {
@@ -1754,13 +2123,7 @@ void __fastcall ApplyGhettoSunder(D2GameStrc* pGame, D2ActiveRoomStrc* pRoom, D2
         SubtractResistances(pUnit, STAT_MAGICRESIST, maxMagicResist);
 }
 
-void __fastcall ApplyStatAdjustments(
-    D2GameStrc* pGame,
-    D2ActiveRoomStrc* pRoom,
-    D2UnitStrc* pUnit,
-    int64_t* pMonRegData,
-    D2MonStatsInitStrc* monStatsInit,
-    const DifficultySettings& settings)
+void __fastcall ApplyStatAdjustments(D2GameStrc* pGame, D2ActiveRoomStrc* pRoom, D2UnitStrc* pUnit, int64_t* pMonRegData, D2MonStatsInitStrc* monStatsInit, const DifficultySettings& settings)
 {
     if (!pGame)
         return;
@@ -1786,20 +2149,33 @@ void __fastcall ApplyGhettoTerrorZone(D2GameStrc* pGame, D2ActiveRoomStrc* pRoom
     g_ActiveZoneInfoText.clear();
 
     if (!pGame || !pRoom || !pUnit)
+    {
+        isTerrorized = false;
         return;
+    }
 
     int levelId = GetLevelIdFromRoom(pRoom);
     if (levelId == -1)
+    {
+        isTerrorized = false;
         return;
+    }
 
     D2UnitStrc* pUnitPlayer = UNITS_GetServerUnitByTypeAndId(pGame, UNIT_PLAYER, 1);
     if (!pUnitPlayer)
+    {
+        isTerrorized = false;
         return;
+    }
 
     playerLevel = STATLIST_GetUnitStatSigned(pUnitPlayer, STAT_LEVEL, 0);
     int difficulty = GetPlayerDifficulty(pUnitPlayer);
     if (difficulty < 0 || difficulty > 2)
+    {
+        isTerrorized = false;
         return;
+    }
+        
 
     time_t currentUtc = std::time(nullptr);
 
@@ -1876,8 +2252,11 @@ void __fastcall ApplyGhettoTerrorZone(D2GameStrc* pGame, D2ActiveRoomStrc* pRoom
             if (zl.level_id == levelId)
             {
                 matchingZoneLevel = &zl;
+                isTerrorized = true;
                 break;
             }
+            else
+                isTerrorized = false;
         }
         if (!matchingZoneLevel)
             continue;
@@ -2177,6 +2556,14 @@ void D2RHUD::OnDraw() {
         DetourTransactionCommit();
     }
 
+    if (!oDropTCTest) {
+        DetourTransactionBegin();
+        DetourUpdateThread(GetCurrentThread());
+        oDropTCTest = reinterpret_cast<DropTCTest_t>(Pattern::Address(0x2f9d50));
+        DetourAttach(&(PVOID&)oDropTCTest, HookedDropTCTest);
+        DetourTransactionCommit();
+    }
+
     auto drawList = ImGui::GetBackgroundDrawList();
     auto min = drawList->GetClipRectMin();
     auto max = drawList->GetClipRectMax();
@@ -2369,20 +2756,18 @@ bool D2RHUD::OnKeyPressed(short key)
     }
 
     // Version display
-    if (key == VK_CONTROL) ctrlPressed = true;
-    if (key == VK_MENU) altPressed = true;
-    if (key == 'V') vPressed = true;
-
-    if (ctrlPressed && altPressed && vPressed) {
+    if ((GetAsyncKeyState(VK_CONTROL) & 0x8000) &&
+        (GetAsyncKeyState(VK_MENU) & 0x8000) &&
+        (GetAsyncKeyState('V') & 0x8000))
+    {
         ShowVersionMessage();
         OnStashPageChanged(gSelectedPage + 1);
-        ctrlPressed = altPressed = vPressed = false;
         return true;
     }
 
     return itemFilter->OnKeyPressed(key);
-}
 
+}
 
 //Show D2RHUD Version Info as a MessageBox Popup
 void D2RHUD::ShowVersionMessage()

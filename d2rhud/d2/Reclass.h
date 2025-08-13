@@ -174,11 +174,16 @@ public:
 }; //Size: 0x0118
 static_assert(sizeof(D2ItemDataStrc) == 0x118);
 
-class D2MonsterDataStrc {
+class D2MonsterDataStrc
+{
 public:
 	class D2MonStatsTxt* pMonstatsTxt; //0x0000
-	//uint8_t nComponent[16]; //0x0008
-	char pad_0018[136]; //0x0018
+	uint8_t nComponent[16]; //0x0008
+	char pad_0018[2]; //0x0018
+	uint8_t nTypeFlag; //0x001A
+	char pad_001B[15]; //0x001B
+	uint16_t wBossHcIdx; //0x002A
+	char pad_002C[100]; //0x002C
 }; //Size: 0x0090
 static_assert(sizeof(D2MonsterDataStrc) == 0x90);
 
