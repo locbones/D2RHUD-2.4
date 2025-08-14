@@ -40,7 +40,7 @@
 std::string configFilePath = "config.json";
 std::string filename = "../Launcher/D2RLAN_Config.txt";
 std::string lootFile = "../D2R/lootfilter.lua";
-std::string Version = "1.1.7";
+std::string Version = "1.1.8";
 
 using json = nlohmann::json;
 static MonsterStatsDisplaySettings cachedSettings;
@@ -1170,6 +1170,23 @@ struct MonsterTreasureClassSU
     std::string Desecrated_H;
 };
 
+struct StatValue
+{
+    D2C_ItemStats stat;
+    std::vector<int> value;
+};
+
+struct StatAdjustment
+{
+    bool random;
+    std::vector<StatValue> stats_values;
+};
+
+struct StatNameEntry {
+    int id;
+    std::string name;
+};
+
 int playerLevel = 0;
 static std::string g_ActiveZoneInfoText;
 int g_ManualZoneGroupOverride = -1;
@@ -1190,6 +1207,8 @@ static DATATBLS_CalculateMonsterStatsByLevel_t oAdjustMonsterStats = reinterpret
 typedef void(__fastcall* DropTCTest_t)(D2GameStrc* pGame, D2UnitStrc* pMonster, D2UnitStrc* pPlayer, int32_t nTCId, int32_t nQuality, int32_t nItemLevel, int32_t a7, D2UnitStrc** ppItems, int32_t* pnItemsDropped, int32_t nMaxItems);
 static DropTCTest_t oDropTCTest = nullptr;
 bool isTerrorized = false;
+std::vector<StatAdjustment> gStatAdjustments;
+std::unordered_map<int, std::string> gStatNames;
 
 std::vector<std::string> ReadTCexFile(const std::string& filename)
 {
@@ -1520,7 +1539,7 @@ void __fastcall ForceTCDrops(D2GameStrc* pGame, D2UnitStrc* pMonster, D2UnitStrc
     }
 
     // Debug: show the nTCId being used
-    std::string debugMsg2 = std::format("Index being used: {}, {}, {}, {}", nItemLevel, nTCId, pMonStatsTxtRecord->nId, indexUnique);
+    std::string debugMsg2 = std::format("Index being used: {}, {}, {}, {}", nItemLevel, nTCId, unknownOffset3, indexUnique);
     //MessageBoxA(nullptr, debugMsg2.c_str(), "DropTCTest Debug", MB_OK | MB_ICONINFORMATION);
 }
 
@@ -1688,81 +1707,101 @@ void from_json(const nlohmann::json& j, LevelGroup& lg) {
     j.at("levels").get_to(lg.levels);
 }
 
-
-std::string StripComments(const std::string& content) {
-    std::string result;
-    bool inComment = false;
-
-    for (size_t i = 0; i < content.length(); ++i) {
-        if (!inComment && content[i] == '/' && i + 1 < content.length() && content[i + 1] == '*') {
-            inComment = true;
-            ++i;
-        }
-        else if (inComment && content[i] == '*' && i + 1 < content.length() && content[i + 1] == '/') {
-            inComment = false;
-            ++i;
-        }
-        else if (!inComment) {
-            result += content[i];
-        }
-    }
-
-    return result;
+inline void from_json(const nlohmann::json& j, StatValue& sv)
+{
+    sv.stat = static_cast<D2C_ItemStats>(j.at("stat").get<int>());
+    j.at("value").get_to(sv.value);
 }
 
-//Unused for now
-std::vector<std::pair<D2C_ItemStats, int>> SelectRandomStats(std::mt19937& rng) {
-    std::vector<Stat> allStats = {
-        { STAT_FIRERESIST, 10, 10, true,  false },
-        { STAT_COLDRESIST, 20, 20, true,  false },
-        { STAT_LIGHTRESIST, 30, 30, true,  false },
-        // Add more as needed
-    };
+inline void from_json(const nlohmann::json& j, StatAdjustment& sa)
+{
+    j.at("random").get_to(sa.random);
+    j.at("stats_values").get_to(sa.stats_values);
+}
 
-    // Shuffle to randomize selection order
-    std::shuffle(allStats.begin(), allStats.end(), rng);
+struct Config
+{
+    std::vector<StatAdjustment> stat_adjustments;
+};
 
-    // Decide how many stats to include in this group
-    std::uniform_int_distribution<> countDist(1, std::min<int>(5, allStats.size()));
-    int statCount = countDist(rng);
+inline void from_json(const nlohmann::json& j, Config& cfg)
+{
+    if (j.contains("stat_adjustments"))
+        j.at("stat_adjustments").get_to(cfg.stat_adjustments);
+    else
+        cfg.stat_adjustments.clear();
+}
 
-    std::vector<std::pair<D2C_ItemStats, int>> groupedStats;
-    std::uniform_real_distribution<> chance(0.0, 1.0);
+void from_json(const nlohmann::json& j, StatNameEntry& entry) {
+    j.at("id").get_to(entry.id);
+    j.at("name").get_to(entry.name);
+}
 
-    for (int i = 0; i < statCount; ++i) {
-        const Stat& s = allStats[i];
-        int value = 0;
+struct StatNamesConfig {
+    std::vector<StatNameEntry> stat_names;
+};
 
-        if (s.isBinary) {
-            value = 1;
-        }
-        else if (s.allowNegative && s.minValue < 0) {
-            bool chooseNegative = chance(rng) < 0.25;
+void from_json(const nlohmann::json& j, StatNamesConfig& config) {
+    if (j.contains("stat_names") && j["stat_names"].is_array()) {
+        config.stat_names = j.at("stat_names").get<std::vector<StatNameEntry>>();
+    }
+}
 
-            int upperBound = (s.maxValue < 0) ? s.maxValue : 0;
-            int lowerBound = (s.minValue > 0) ? s.minValue : 0;
+std::string StripComments(const std::string& jsonWithComments) {
+    std::istringstream iss(jsonWithComments);
+    std::ostringstream oss;
+    std::string line;
+    bool in_block_comment = false;
 
-            if (chooseNegative) {
-                std::uniform_int_distribution<> dist(s.minValue, upperBound);
-                value = dist(rng);
+    while (std::getline(iss, line)) {
+        std::string newLine;
+        bool in_string = false;
+
+        for (size_t i = 0; i < line.length(); ++i) {
+            char c = line[i];
+
+            if (c == '\"') {
+                bool escaped = (i > 0 && line[i - 1] == '\\');
+                if (!escaped) in_string = !in_string;
             }
-            else {
-                std::uniform_int_distribution<> dist(lowerBound, s.maxValue);
-                value = dist(rng);
+
+            if (in_block_comment) {
+                if (c == '*' && i + 1 < line.length() && line[i + 1] == '/') {
+                    in_block_comment = false;
+                    ++i;
+                }
+                continue;
             }
-        }
-        else {
-            std::uniform_int_distribution<> dist(s.minValue, s.maxValue);
-            value = dist(rng);
+
+            if (!in_string && c == '/' && i + 1 < line.length() && line[i + 1] == '*') {
+                in_block_comment = true;
+                ++i;
+                continue;
+            }
+
+            if (!in_string && c == '/' && i + 1 < line.length() && line[i + 1] == '/') {
+                size_t trimEnd = newLine.find_last_not_of(" \t");
+                if (trimEnd != std::string::npos) {
+                    newLine = newLine.substr(0, trimEnd + 1);
+                }
+                else {
+                    newLine.clear();
+                }
+                break;
+            }
+
+            newLine += c;
         }
 
-        groupedStats.emplace_back(s.id, value);
+        if (!in_block_comment)
+            oss << newLine << "\n";
     }
 
-    return groupedStats;
+    return oss.str();
 }
 
 static std::vector<std::pair<D2C_ItemStats, int>> g_randomStats;
+std::unordered_map<D2C_ItemStats, int> gRandomStatsForMonsters;
 
 void InitRandomStatsForAllMonsters(bool forceNew = false) {
     static bool initialized = false;
@@ -1770,7 +1809,50 @@ void InitRandomStatsForAllMonsters(bool forceNew = false) {
     static std::mt19937 rng(rd());
 
     if (!initialized || forceNew) {
-        g_randomStats = SelectRandomStats(rng);
+        gRandomStatsForMonsters.clear();
+
+        for (const auto& adjustment : gStatAdjustments) {
+            std::vector<const StatValue*> statsToApply;
+
+            if (adjustment.random) {
+                std::uniform_int_distribution<size_t> countDist(1, adjustment.stats_values.size());
+                size_t numStats = countDist(rng);
+
+                std::vector<const StatValue*> shuffled;
+                for (const auto& sv : adjustment.stats_values)
+                    shuffled.push_back(&sv);
+                std::shuffle(shuffled.begin(), shuffled.end(), rng);
+
+                statsToApply.assign(shuffled.begin(), shuffled.begin() + numStats);
+            }
+            else {
+                for (const auto& sv : adjustment.stats_values)
+                    statsToApply.push_back(&sv);
+            }
+
+            for (const auto* statVal : statsToApply) {
+                int appliedValue = 0;
+
+                if (!statVal->value.empty()) {
+                    if (statVal->value.size() == 1) {
+                        appliedValue = statVal->value[0];
+                    }
+                    else {
+                        int minVal = *std::min_element(statVal->value.begin(), statVal->value.end());
+                        int maxVal = *std::max_element(statVal->value.begin(), statVal->value.end());
+                        std::uniform_int_distribution<int> valueDist(minVal, maxVal);
+
+                        do {
+                            appliedValue = valueDist(rng);
+                        } while (appliedValue == 0);
+                    }
+                }
+                if (appliedValue != 0) {
+                    gRandomStatsForMonsters[statVal->stat] = appliedValue;
+                }
+            }
+        }
+
         initialized = true;
     }
 }
@@ -1808,12 +1890,32 @@ bool LoadDesecratedZones(const std::string& filename) {
     try {
         gDesecratedZones = j.at("desecrated_zones").get<std::vector<DesecratedZone>>();
         level_names = j.at("level_names").get<std::vector<LevelName>>();
+
         if (j.contains("level_groups") && j["level_groups"].is_array()) {
             level_groups = j.at("level_groups").get<std::vector<LevelGroup>>();
         }
         else {
             level_groups.clear();
         }
+
+        if (j.contains("stat_adjustments") && j["stat_adjustments"].is_array()) {
+            gStatAdjustments = j.at("stat_adjustments").get<std::vector<StatAdjustment>>();
+        }
+        else {
+            gStatAdjustments.clear();
+        }
+
+        if (j.contains("stat_names") && j["stat_names"].is_array()) {
+            std::vector<StatNameEntry> statEntries = j.at("stat_names").get<std::vector<StatNameEntry>>();
+            gStatNames.clear();
+            for (const auto& entry : statEntries) {
+                gStatNames[entry.id] = entry.name;
+            }
+        }
+        else {
+            gStatNames.clear();
+        }
+
     }
     catch (const std::exception& e) {
         MessageBoxA(nullptr, ("JSON field parse error: " + std::string(e.what())).c_str(), "Error", MB_ICONERROR);
@@ -1863,6 +1965,43 @@ bool GetBaalQuest(D2UnitStrc* pPlayer, D2GameStrc* pGame) {
 
     return pGame->bExpansion & oQUESTRECORD_GetQuestState(pQuestData, QUESTSTATEFLAG_A5Q6, QFLAG_REWARDGRANTED);
 }
+
+std::string BuildTerrorZoneStatAdjustmentsText()
+{
+    if (gRandomStatsForMonsters.empty())
+        return "";
+
+    std::string finalText = "Stat Adjustments:\n";
+
+    for (const auto& [statID, value] : gRandomStatsForMonsters)
+    {
+        std::string statFormat;
+        auto it = gStatNames.find(statID);
+
+        if (it != gStatNames.end())
+            statFormat = it->second;
+        else
+            statFormat = "Unknown Stat (%d)";
+
+        if (value < 0) {
+            for (char& c : statFormat) {
+                if (c == '+') { c = '-'; break; }
+                if (c == '-') { c = '+'; break; }
+            }
+        }
+
+        size_t pos = statFormat.find("%d");
+        if (pos != std::string::npos)
+        {
+            statFormat.replace(pos, 2, std::to_string(std::abs(value)));
+        }
+
+        finalText += statFormat + "\n";
+    }
+
+    return finalText;
+}
+
 
 std::string BuildTerrorZoneInfoText()
 {
@@ -2003,7 +2142,7 @@ void UpdateActiveZoneInfoText(time_t currentUtc)
 
         std::stringstream ss;
 
-        // 1Print fully present groups first
+        // Print fully present groups first
         for (size_t gi = 0; gi < level_groups.size(); ++gi)
         {
             if (!groupFullyPresent[gi])
@@ -2077,25 +2216,25 @@ void CheckToggleManualZoneGroup()
             if (plusPressed)
             {
                 if (g_ManualZoneGroupOverride == -1)
-                    g_ManualZoneGroupOverride = 1; // Start at next group
+                    g_ManualZoneGroupOverride = 1;
                 else
                     g_ManualZoneGroupOverride++;
 
                 if (g_ManualZoneGroupOverride >= maxGroups)
-                    g_ManualZoneGroupOverride = -1; // Wrap back to auto mode
+                    g_ManualZoneGroupOverride = -1;
             }
             else if (minusPressed)
             {
                 if (g_ManualZoneGroupOverride == -1)
-                    g_ManualZoneGroupOverride = maxGroups - 1; // Start at last group
+                    g_ManualZoneGroupOverride = maxGroups - 1;
                 else
                     g_ManualZoneGroupOverride--;
 
                 if (g_ManualZoneGroupOverride < -1)
-                    g_ManualZoneGroupOverride = maxGroups - 1; // Wrap to last group
+                    g_ManualZoneGroupOverride = maxGroups - 1;
             }
         }
-        //InitRandomStatsForAllMonsters(true);
+        InitRandomStatsForAllMonsters(true);
         UpdateActiveZoneInfoText(static_cast<time_t>(now));
     }
 }
@@ -2105,17 +2244,19 @@ int64_t Hooked_HUDWarnings__PopulateHUDWarnings(void* pWidget) {
     D2Client* pGameClient = GetClientPtr();
     D2UnitStrc* pUnitPlayer = nullptr;
 
-    if (pGameClient != nullptr)
-    {
+    if (pGameClient != nullptr) {
         pGame = (D2GameStrc*)pGameClient->pGame;
         pUnitPlayer = UNITS_GetServerUnitByTypeAndId(pGame, UNIT_PLAYER, 1);
     }
 
     auto result = oHUDWarnings__PopulateHUDWarnings(pWidget);
 
-    auto tzInfoText = reinterpret_cast<int64_t>(WidgetFindChild(pWidget, "TerrorZoneInfoText"));
-    if (!tzInfoText) {
-        return result;
+    // Look for both widgets
+    void* tzInfoTextWidget = WidgetFindChild(pWidget, "TerrorZoneInfoText");
+    void* tzStatAdjustmentsWidget = WidgetFindChild(pWidget, "TerrorZoneStatAdjustments");
+
+    if (!tzInfoTextWidget && !tzStatAdjustmentsWidget) {
+        return result; // Neither widget exists
     }
 
     // Don't draw the custom HUD warning if Baal quest isn't complete
@@ -2123,21 +2264,41 @@ int64_t Hooked_HUDWarnings__PopulateHUDWarnings(void* pWidget) {
         return result;
     }
 
-    char** pOriginal = (char**)(tzInfoText + 0x88);
-    int64_t* nLength = (int64_t*)(tzInfoText + 0x90);
+    // Update TerrorZoneInfoText if present
+    if (tzInfoTextWidget) {
+        char** pOriginal = (char**)((int64_t)tzInfoTextWidget + 0x88);
+        int64_t* nLength = (int64_t*)((int64_t)tzInfoTextWidget + 0x90);
 
-    std::string finalText = BuildTerrorZoneInfoText();
-    if (finalText.empty())
-        return result;
+        std::string finalText = BuildTerrorZoneInfoText();
+        if (!finalText.empty()) {
+            static char pCustom[256];
+            strncpy(pCustom, finalText.c_str(), 255);
+            pCustom[255] = '\0';
 
-    strncpy(pCustom, finalText.c_str(), 255);
-    pCustom[255] = '\0';
+            *pOriginal = pCustom;
+            *nLength = strlen(pCustom) + 1;
+        }
+    }
 
-    *pOriginal = pCustom;
-    *nLength = strlen(pCustom) + 1;
+    // Update TerrorZoneStatAdjustments if present
+    if (tzStatAdjustmentsWidget) {
+        char** pOriginal = (char**)((int64_t)tzStatAdjustmentsWidget + 0x88);
+        int64_t* nLength = (int64_t*)((int64_t)tzStatAdjustmentsWidget + 0x90);
+
+        std::string finalText = BuildTerrorZoneStatAdjustmentsText();
+        if (!finalText.empty()) {
+            static char pCustom[256];
+            strncpy(pCustom, finalText.c_str(), 255);
+            pCustom[255] = '\0';
+
+            *pOriginal = pCustom;
+            *nLength = strlen(pCustom) + 1;
+        }
+    }
 
     return result;
 }
+
 
 void Hooked__Widget__OnClose(void* pWidget) {
     oWidget__OnClose(pWidget);
@@ -2163,13 +2324,11 @@ constexpr uint16_t UNIQUE_LAYER = 1337;
 void AddToCurrentStat(D2UnitStrc* pUnit, D2C_ItemStats nStatId, uint32_t nValue) {
     int currentValue = STATLIST_GetUnitStatSigned(pUnit, nStatId, 0);
 
-    // If the stat is already >= nValue, don't do anything
     if (currentValue >= static_cast<int>(nValue))
         return;
 
     int offset = static_cast<int>(nValue) - currentValue;
 
-    // Apply the offset to get to the desired value
     STATLISTEX_SetStatListExStat(pUnit->pStatListEx, nStatId, currentValue + offset, 0);
     STATLISTEX_SetStatListExStat(pUnit->pStatListEx, nStatId, offset, UNIQUE_LAYER);
 }
@@ -2189,7 +2348,8 @@ void AdjustMonsterLevel(D2UnitStrc* pUnit, D2C_ItemStats nStatId, uint32_t nValu
         STATLISTEX_SetStatListExStat(pUnit->pStatListEx, nStatId, nValue, nLayer);
 }
 
-void __fastcall ApplyGhettoSunder(D2GameStrc* pGame, D2ActiveRoomStrc* pRoom, D2UnitStrc* pUnit, int64_t* pMonRegData, D2MonStatsInitStrc* monStatsInit) {
+void __fastcall ApplyGhettoSunder(D2GameStrc* pGame, D2ActiveRoomStrc* pRoom, D2UnitStrc* pUnit, int64_t* pMonRegData, D2MonStatsInitStrc* monStatsInit) 
+{
     if (!pGame || !pUnit)
         return;
 
@@ -2226,7 +2386,7 @@ void __fastcall ApplyGhettoSunder(D2GameStrc* pGame, D2ActiveRoomStrc* pRoom, D2
         if (magic > maxMagicResist) maxMagicResist = magic;
     }
 
-    // Now apply highest values to the monster unit
+    // Apply highest values to the monster unit
     if (maxColdResist > INT_MIN)
         SubtractResistances(pUnit, STAT_COLDRESIST, maxColdResist);
     if (maxFireResist > INT_MIN)
@@ -2262,11 +2422,31 @@ void __fastcall ApplyStatAdjustments(D2GameStrc* pGame, D2ActiveRoomStrc* pRoom,
     }
 }
 
+void ApplyStatsToMonster(D2UnitStrc* pUnit)
+{
+    std::ostringstream msgStream;
+
+    for (const auto& [stat, value] : gRandomStatsForMonsters)
+    {
+        // Apply the stat to the unit
+        AddToCurrentStat(pUnit, stat, value);
+
+        // Optional debug output
+        msgStream << "Stat ID " << static_cast<int>(stat)
+            << " Applied Value: " << value << "\n";
+    }
+
+    //MessageBoxA(NULL, msgStream.str().c_str(), "Stat Adjustment Debug", MB_OK);
+}
+
+
+/*
 void ApplyStatsToMonster(D2UnitStrc* pUnit) {
     for (const auto& stat : g_randomStats) {
         AddToCurrentStat(pUnit, stat.first, stat.second);
     }
 }
+*/
 
 void ApplyMonsterDifficultyScaling(D2UnitStrc* pUnit, const DesecratedZone& zone, const ZoneLevel* matchingZoneLevel, int difficulty, int playerLevel, int playerCountGlobal, D2GameStrc* pGame)
 {
@@ -2414,7 +2594,6 @@ void __fastcall ApplyGhettoTerrorZone(D2GameStrc* pGame, D2ActiveRoomStrc* pRoom
             }
             else
             {
-                // Safety check: neither allLevels nor level_id present
                 ss << "(Invalid ZoneLevel entry)\n";
             }
         }
@@ -2446,7 +2625,8 @@ void __fastcall ApplyGhettoTerrorZone(D2GameStrc* pGame, D2ActiveRoomStrc* pRoom
             remainingSeconds = secondsRemaining % 60;
         }
 
-        // Try to find a ZoneLevel override for the current level
+        InitRandomStatsForAllMonsters(false);
+
         // Try to find a ZoneLevel override for the current level
         const ZoneLevel* matchingZoneLevel = nullptr;
         for (const auto& zl : activeGroup.levels)
@@ -2457,8 +2637,7 @@ void __fastcall ApplyGhettoTerrorZone(D2GameStrc* pGame, D2ActiveRoomStrc* pRoom
                 isTerrorized = true;
 
                 ApplyMonsterDifficultyScaling(pUnit, zone, matchingZoneLevel, difficulty, playerLevel, playerCountGlobal, pGame);
-                //InitRandomStatsForAllMonsters(false);
-                //ApplyStatsToMonster(pUnit);
+                ApplyStatsToMonster(pUnit);
                 break;
             }
         }
@@ -2493,23 +2672,23 @@ void __fastcall HookedMONSTER_InitializeStatsAndSkills(D2GameStrc* pGame, D2Acti
     if (!pUnitPlayer)
         return;
 
+    
     int difficulty = GetPlayerDifficulty(pUnitPlayer);
     if (difficulty < 0 || difficulty > 2)
         return;
+
+    auto pMonStats2TxtRecord = sgptDataTables->pMonStats2Txt[wMonStatsEx];
+    D2MonStatsInitStrc monStatsInit = {};
+    std::string path = std::format("{0}/Mods/{1}/{1}.mpq/data/hd/global/excel/desecratedzones.json", GetExecutableDir(), GetModName());
+    ApplyGhettoSunder(pGame, pRoom, pUnit, pMonRegData, &monStatsInit);
 
     if (!GetBaalQuest(pUnitPlayer, pGame)) {
         return;
     }
 
-    auto pMonStats2TxtRecord = sgptDataTables->pMonStats2Txt[wMonStatsEx];
-    D2MonStatsInitStrc monStatsInit = {};
-    std::string path = std::format("{0}/Mods/{1}/{1}.mpq/data/hd/global/excel/desecratedzones.json", GetExecutableDir(), GetModName());
     LoadDesecratedZones(path);
     ApplyGhettoTerrorZone(pGame, pRoom, pUnit, pMonRegData, &monStatsInit);
-    ApplyGhettoSunder(pGame, pRoom, pUnit, pMonRegData, &monStatsInit);
-
-    //MessageBoxA(nullptr, GetBaalQuest(pUnitPlayer, pGame) ? "Baal quest is complete." : "Baal quest is not complete.", "Terror Zone Boost Applied", MB_OK);
-
+    
     time_t currentUtc = std::time(nullptr);
 
     for (const auto& zone : gDesecratedZones)
