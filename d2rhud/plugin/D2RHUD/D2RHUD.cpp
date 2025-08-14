@@ -26,6 +26,7 @@
 #include <ctime>
 #include "../../D2/json.hpp"
 #include <random>
+#include <unordered_set>
 
 /*
 - Chat Detours/Structures by Killshot
@@ -39,7 +40,7 @@
 std::string configFilePath = "config.json";
 std::string filename = "../Launcher/D2RLAN_Config.txt";
 std::string lootFile = "../D2R/lootfilter.lua";
-std::string Version = "1.1.6";
+std::string Version = "1.1.7";
 
 using json = nlohmann::json;
 static MonsterStatsDisplaySettings cachedSettings;
@@ -1097,8 +1098,14 @@ struct LevelName {
     std::string name;
 };
 
+struct LevelGroup {
+    std::string name;
+    std::vector<int> levels; // level IDs in this group
+};
+
 struct ZoneLevel {
-    int level_id = 0;
+    std::optional<int> level_id;
+    bool allLevels = false;
 
     // Optional per-difficulty overrides
     std::optional<DifficultySettings> normal;
@@ -1170,6 +1177,7 @@ time_t g_LastToggleTime = 0;
 TerrorZoneDisplayData g_TerrorZoneData;
 std::vector<DesecratedZone> gDesecratedZones;
 std::vector<LevelName> level_names;
+std::vector<LevelGroup> level_groups;
 typedef BOOL(__fastcall* QUESTRECORD_GetQuestState_t)(D2BitBufferStrc* pQuestRecord, int32_t nQuestId, int32_t nState);
 static QUESTRECORD_GetQuestState_t oQUESTRECORD_GetQuestState = reinterpret_cast<QUESTRECORD_GetQuestState_t>(Pattern::Address(0x243880));
 typedef int64_t(__fastcall* HUDWarnings__PopulateHUDWarnings_t)(void* pWidget);
@@ -1635,10 +1643,18 @@ void from_json(const json& j, WarningInfo& w) {
 }
 
 void from_json(const json& j, ZoneLevel& zl) {
-    // Required
-    j.at("level_id").get_to(zl.level_id);
+    if (j.contains("all") && j.at("all").get<bool>() == true) {
+        zl.allLevels = true;
+        zl.level_id.reset();  // clear any level_id
+    }
+    else if (j.contains("level_id")) {
+        zl.level_id = j.at("level_id").get<int>();
+    }
+    else {
+        throw std::runtime_error("ZoneLevel must have either 'level_id' or 'all: true'");
+    }
 
-    // Optional
+    // Optional per-difficulty overrides
     if (j.contains("normal")) zl.normal = j.at("normal").get<DifficultySettings>();
     if (j.contains("nightmare")) zl.nightmare = j.at("nightmare").get<DifficultySettings>();
     if (j.contains("hell")) zl.hell = j.at("hell").get<DifficultySettings>();
@@ -1666,6 +1682,12 @@ void from_json(const nlohmann::json& j, LevelName& ln) {
     j.at("id").get_to(ln.id);
     j.at("name").get_to(ln.name);
 }
+
+void from_json(const nlohmann::json& j, LevelGroup& lg) {
+    j.at("name").get_to(lg.name);
+    j.at("levels").get_to(lg.levels);
+}
+
 
 std::string StripComments(const std::string& content) {
     std::string result;
@@ -1740,6 +1762,19 @@ std::vector<std::pair<D2C_ItemStats, int>> SelectRandomStats(std::mt19937& rng) 
     return groupedStats;
 }
 
+static std::vector<std::pair<D2C_ItemStats, int>> g_randomStats;
+
+void InitRandomStatsForAllMonsters(bool forceNew = false) {
+    static bool initialized = false;
+    static std::random_device rd;
+    static std::mt19937 rng(rd());
+
+    if (!initialized || forceNew) {
+        g_randomStats = SelectRandomStats(rng);
+        initialized = true;
+    }
+}
+
 bool LoadDesecratedZones(const std::string& filename) {
     std::ifstream file(filename);
     if (!file.is_open()) {
@@ -1773,6 +1808,7 @@ bool LoadDesecratedZones(const std::string& filename) {
     try {
         gDesecratedZones = j.at("desecrated_zones").get<std::vector<DesecratedZone>>();
         level_names = j.at("level_names").get<std::vector<LevelName>>();
+        level_groups = j.at("level_groups").get<std::vector<LevelGroup>>();
     }
     catch (const std::exception& e) {
         MessageBoxA(nullptr, ("JSON field parse error: " + std::string(e.what())).c_str(), "Error", MB_ICONERROR);
@@ -1875,6 +1911,7 @@ void UpdateActiveZoneInfoText(time_t currentUtc)
 
     for (const auto& zone : gDesecratedZones)
     {
+        // Skip zones not active
         if (currentUtc < zone.start_time_utc || currentUtc > zone.end_time_utc)
             continue;
 
@@ -1889,15 +1926,13 @@ void UpdateActiveZoneInfoText(time_t currentUtc)
         int activeGroupIndex = g_ManualZoneGroupOverride;
         if (activeGroupIndex == -1)
         {
-            // Auto mode: calculate based on time
             int minutesSinceStart = static_cast<int>((currentUtc - zone.start_time_utc) / 60);
             int cyclePos = minutesSinceStart % (cycleLengthMin * groupCount);
             activeGroupIndex = cyclePos / cycleLengthMin;
         }
-        else
+        else if (activeGroupIndex >= groupCount)
         {
-            if (activeGroupIndex >= groupCount)
-                activeGroupIndex = groupCount - 1;
+            activeGroupIndex = groupCount - 1;
         }
 
         if (activeGroupIndex >= groupCount)
@@ -1905,30 +1940,101 @@ void UpdateActiveZoneInfoText(time_t currentUtc)
 
         const ZoneGroup& activeGroup = zone.zones[activeGroupIndex];
 
-        // Store terror zone timing info for live update display
         g_TerrorZoneData.cycleLengthMin = cycleLengthMin;
         g_TerrorZoneData.terrorDurationMin = zone.terror_duration_min;
         g_TerrorZoneData.groupCount = groupCount;
         g_TerrorZoneData.activeGroupIndex = activeGroupIndex;
         g_TerrorZoneData.zoneStartUtc = zone.start_time_utc;
 
-        std::stringstream ss;
+        // Check if any level in the active group has allLevels = true
+        bool hasAllLevels = false;
         for (const auto& zl : activeGroup.levels)
         {
+            if (zl.allLevels)
+            {
+                hasAllLevels = true;
+                break;
+            }
+        }
+
+        if (hasAllLevels)
+        {
+            g_ActiveZoneInfoText = "All Levels have been Terrorized!\n";
+            break;
+        }
+
+        // Build set of active level IDs
+        std::unordered_set<int> activeLevelIds;
+        for (const auto& zl : activeGroup.levels)
+        {
+            if (zl.level_id.has_value())
+                activeLevelIds.insert(zl.level_id.value());
+        }
+
+        // Map level ID -> group index
+        std::unordered_map<int, int> levelToGroupIndex;
+        for (size_t gi = 0; gi < level_groups.size(); ++gi)
+        {
+            for (int lvlId : level_groups[gi].levels)
+                levelToGroupIndex[lvlId] = static_cast<int>(gi);
+        }
+
+        // Determine fully present groups
+        std::vector<bool> groupFullyPresent(level_groups.size(), false);
+        for (size_t gi = 0; gi < level_groups.size(); ++gi)
+        {
+            const auto& grp = level_groups[gi];
+            bool allPresent = !grp.levels.empty();
+            for (int lvlId : grp.levels)
+            {
+                if (activeLevelIds.find(lvlId) == activeLevelIds.end())
+                {
+                    allPresent = false;
+                    break;
+                }
+            }
+            groupFullyPresent[gi] = allPresent;
+        }
+
+        std::stringstream ss;
+
+        // 1Print fully present groups first
+        for (size_t gi = 0; gi < level_groups.size(); ++gi)
+        {
+            if (!groupFullyPresent[gi])
+                continue;
+
+            ss << level_groups[gi].name << "\n";
+        }
+
+        // Print individual levels not part of fully present groups
+        for (const auto& zl : activeGroup.levels)
+        {
+            g_TerrorZoneData.activeLevels.push_back(zl);
+
+            if (!zl.level_id.has_value())
+                continue;
+
+            int lvlId = zl.level_id.value();
+
+            auto git = levelToGroupIndex.find(lvlId);
+            if (git != levelToGroupIndex.end())
+            {
+                int gi = git->second;
+                if (groupFullyPresent[gi])
+                    continue;
+            }
+
             auto it = std::find_if(level_names.begin(), level_names.end(),
-                [&](const LevelName& ln) { return ln.id == zl.level_id; });
+                [&](const LevelName& ln) { return ln.id == lvlId; });
 
             if (it != level_names.end())
                 ss << it->name << "\n";
             else
-                ss << "(Unknown Level ID: " << zl.level_id << ")\n";
-
-            // Track active levels directly (store ZoneLevel structs)
-            g_TerrorZoneData.activeLevels.push_back(zl);
+                ss << "(Unknown Level ID: " << lvlId << ")\n";
         }
 
         g_ActiveZoneInfoText = ss.str();
-
         break;
     }
 }
@@ -1936,14 +2042,15 @@ void UpdateActiveZoneInfoText(time_t currentUtc)
 void CheckToggleManualZoneGroup()
 {
     bool ctrlPressed = (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0;
-    bool altPressed = (GetAsyncKeyState(VK_MENU) & 0x8000) != 0;
-    bool tPressed = (GetAsyncKeyState('Z') & 0x8000) != 0;
+    bool plusPressed = (GetAsyncKeyState(VK_ADD) & 0x8000) != 0;
+    bool minusPressed = (GetAsyncKeyState(VK_SUBTRACT) & 0x8000) != 0;
 
-    time_t now = std::time(nullptr);
+    static double lastToggleTime = 0;
+    double now = static_cast<double>(std::time(nullptr));
 
-    if (ctrlPressed && altPressed && tPressed && (now - g_LastToggleTime) > 0.3)
+    if (ctrlPressed && (plusPressed || minusPressed) && (now - lastToggleTime) > 0.3)
     {
-        g_LastToggleTime = now;
+        lastToggleTime = now;
 
         // Find max groups available in the current active zone
         int maxGroups = 0;
@@ -1962,23 +2069,29 @@ void CheckToggleManualZoneGroup()
         }
         else
         {
-            if (g_ManualZoneGroupOverride == -1)
-                g_ManualZoneGroupOverride = 1; // Start at next group
-            else
-                g_ManualZoneGroupOverride++;
+            if (plusPressed)
+            {
+                if (g_ManualZoneGroupOverride == -1)
+                    g_ManualZoneGroupOverride = 1; // Start at next group
+                else
+                    g_ManualZoneGroupOverride++;
 
-            if (g_ManualZoneGroupOverride >= maxGroups)
-                g_ManualZoneGroupOverride = -1; // Wrap back to auto mode
+                if (g_ManualZoneGroupOverride >= maxGroups)
+                    g_ManualZoneGroupOverride = -1; // Wrap back to auto mode
+            }
+            else if (minusPressed)
+            {
+                if (g_ManualZoneGroupOverride == -1)
+                    g_ManualZoneGroupOverride = maxGroups - 1; // Start at last group
+                else
+                    g_ManualZoneGroupOverride--;
+
+                if (g_ManualZoneGroupOverride < -1)
+                    g_ManualZoneGroupOverride = maxGroups - 1; // Wrap to last group
+            }
         }
-
-        UpdateActiveZoneInfoText(now);
-
-        /*
-        std::string msg = (g_ManualZoneGroupOverride == -1) ?
-            "TerrorZone group override OFF (auto mode)" :
-            "TerrorZone group override ON: Group " + std::to_string(g_ManualZoneGroupOverride);
-        MessageBoxA(nullptr, msg.c_str(), "TerrorZone Override", MB_OK | MB_ICONINFORMATION);
-        */
+        //InitRandomStatsForAllMonsters(true);
+        UpdateActiveZoneInfoText(static_cast<time_t>(now));
     }
 }
 
@@ -2050,11 +2163,6 @@ void AddToCurrentStat(D2UnitStrc* pUnit, D2C_ItemStats nStatId, uint32_t nValue)
         return;
 
     int offset = static_cast<int>(nValue) - currentValue;
-
-    // Output before/after stats via message box
-    char msg[256];
-    sprintf_s(msg, sizeof(msg), "Stat %d before: %d\nSetting to: %d\nOffset applied: %d", nStatId, currentValue, nValue, offset);
-    //MessageBoxA(nullptr, msg, "Stat Adjustment", MB_OK | MB_ICONINFORMATION);
 
     // Apply the offset to get to the desired value
     STATLISTEX_SetStatListExStat(pUnit->pStatListEx, nStatId, currentValue + offset, 0);
@@ -2149,9 +2257,75 @@ void __fastcall ApplyStatAdjustments(D2GameStrc* pGame, D2ActiveRoomStrc* pRoom,
     }
 }
 
+void ApplyStatsToMonster(D2UnitStrc* pUnit) {
+    for (const auto& stat : g_randomStats) {
+        AddToCurrentStat(pUnit, stat.first, stat.second);
+    }
+}
+
+void ApplyMonsterDifficultyScaling(D2UnitStrc* pUnit, const DesecratedZone& zone, const ZoneLevel* matchingZoneLevel, int difficulty, int playerLevel, int playerCountGlobal, D2GameStrc* pGame)
+{
+    // Get global defaults
+    const DifficultySettings* globalDefaults = nullptr;
+    switch (difficulty) {
+    case 0: globalDefaults = &zone.default_normal; break;
+    case 1: globalDefaults = &zone.default_nightmare; break;
+    case 2: globalDefaults = &zone.default_hell; break;
+    default: return; // invalid
+    }
+    if (!globalDefaults) return;
+
+    // Get optional level-specific override
+    const std::optional<DifficultySettings>* levelOverride = nullptr;
+    if (matchingZoneLevel) {
+        switch (difficulty) {
+        case 0: levelOverride = &matchingZoneLevel->normal; break;
+        case 1: levelOverride = &matchingZoneLevel->nightmare; break;
+        case 2: levelOverride = &matchingZoneLevel->hell; break;
+        }
+    }
+
+    // Merge values
+    int boostLevel = globalDefaults->boost_level.value_or(0);
+    int boundMin = globalDefaults->bound_incl_min.value_or(1);
+    int boundMax = globalDefaults->bound_incl_max.value_or(99);
+
+    if (levelOverride && levelOverride->has_value()) {
+        const DifficultySettings & override = levelOverride->value();
+        if (override.boost_level)     boostLevel = override.boost_level.value();
+        if (override.bound_incl_min)  boundMin = override.bound_incl_min.value();
+        if (override.bound_incl_max)  boundMax = override.bound_incl_max.value();
+    }
+
+    // Clamp boosted level
+    int boostedLevel = std::clamp(playerLevel + boostLevel, boundMin, boundMax);
+
+    // Apply monster level
+    AdjustMonsterLevel(pUnit, STAT_LEVEL, boostedLevel);
+
+    // Calculate player count HP modifier
+    int32_t playerCountModifier = (playerCountGlobal >= 9) ? (playerCountGlobal - 2) * 50 : (playerCountGlobal - 1) * 50;
+
+    // Calculate base monster stats
+    D2MonStatsInitStrc monStatsInit = {};
+    CalculateMonsterStats(pUnit->dwClassId, 1, pGame->nDifficulty, STATLIST_GetUnitStatSigned(pUnit, STAT_LEVEL, 0), 7, monStatsInit);
+
+    const int32_t nBaseHp = monStatsInit.nMinHP + ITEMS_RollLimitedRandomNumber(&pUnit->pSeed, monStatsInit.nMaxHP - monStatsInit.nMinHP + 1);
+    const int32_t nHp = nBaseHp + D2_ComputePercentage(nBaseHp, playerCountModifier);
+    const int32_t nShiftedHp = nHp << 8;
+
+    // Apply core stats
+    AddToCurrentStat(pUnit, STAT_MAXHP, nShiftedHp);
+    AddToCurrentStat(pUnit, STAT_HITPOINTS, nShiftedHp);
+    AddToCurrentStat(pUnit, STAT_ARMORCLASS, monStatsInit.nAC);
+    AddToCurrentStat(pUnit, STAT_EXPERIENCE, D2_ComputePercentage(monStatsInit.nExp, ((playerCountGlobal - 8) * 100) / 5));
+    AddToCurrentStat(pUnit, STAT_HPREGEN, (nShiftedHp * 2) >> 12);
+}
+
 void __fastcall ApplyGhettoTerrorZone(D2GameStrc* pGame, D2ActiveRoomStrc* pRoom, D2UnitStrc* pUnit, int64_t* pMonRegData, D2MonStatsInitStrc* monStatsInit)
 {
-    g_ActiveZoneInfoText.clear();
+    time_t currentUtc = std::time(nullptr);
+    //g_ActiveZoneInfoText.clear();
 
     if (!pGame || !pRoom || !pUnit)
     {
@@ -2181,9 +2355,7 @@ void __fastcall ApplyGhettoTerrorZone(D2GameStrc* pGame, D2ActiveRoomStrc* pRoom
         return;
     }
         
-
-    time_t currentUtc = std::time(nullptr);
-
+    //Loop through zones
     for (const auto& zone : gDesecratedZones)
     {
         if (currentUtc < zone.start_time_utc || currentUtc > zone.end_time_utc)
@@ -2216,16 +2388,35 @@ void __fastcall ApplyGhettoTerrorZone(D2GameStrc* pGame, D2ActiveRoomStrc* pRoom
         std::stringstream ss;
         for (const auto& zl : activeGroup.levels)
         {
-            auto it = std::find_if(level_names.begin(), level_names.end(),
-                [&](const LevelName& ln) { return ln.id == zl.level_id; });
+            if (zl.allLevels)
+            {
+                // Print all known level names
+                for (const auto& ln : level_names)
+                {
+                    ss << ln.name << "\n";
+                }
+            }
+            else if (zl.level_id.has_value())
+            {
+                // Print the specific level
+                auto it = std::find_if(level_names.begin(), level_names.end(),
+                    [&](const LevelName& ln) { return ln.id == zl.level_id.value(); });
 
-            if (it != level_names.end())
-                ss << it->name << "\n";
+                if (it != level_names.end())
+                    ss << it->name << "\n";
+                else
+                    ss << "(Unknown Level ID: " << zl.level_id.value() << ")\n";
+            }
             else
-                ss << "(Unknown Level ID: " << zl.level_id << ")\n";
+            {
+                // Safety check: neither allLevels nor level_id present
+                ss << "(Invalid ZoneLevel entry)\n";
+            }
         }
 
-        g_ActiveZoneInfoText = ss.str();
+
+        if (g_ActiveZoneInfoText == "")
+            g_ActiveZoneInfoText = ss.str();
         // MessageBoxA(nullptr, ss.str().c_str(), "Active Zone Info Text", MB_OK | MB_ICONINFORMATION);
 
          // Time remaining logic
@@ -2251,88 +2442,28 @@ void __fastcall ApplyGhettoTerrorZone(D2GameStrc* pGame, D2ActiveRoomStrc* pRoom
         }
 
         // Try to find a ZoneLevel override for the current level
+        // Try to find a ZoneLevel override for the current level
         const ZoneLevel* matchingZoneLevel = nullptr;
         for (const auto& zl : activeGroup.levels)
         {
-            if (zl.level_id == levelId)
+            if (zl.allLevels || (zl.level_id.has_value() && zl.level_id.value() == levelId))
             {
                 matchingZoneLevel = &zl;
                 isTerrorized = true;
+
+                ApplyMonsterDifficultyScaling(pUnit, zone, matchingZoneLevel, difficulty, playerLevel, playerCountGlobal, pGame);
+                //InitRandomStatsForAllMonsters(false);
+                //ApplyStatsToMonster(pUnit);
                 break;
             }
-            else
-                isTerrorized = false;
         }
+
+        // If no matching ZoneLevel was found, skip this monster
         if (!matchingZoneLevel)
+        {
+            isTerrorized = false;
             continue;
-
-        // Get global fallback settings for this difficulty
-        const DifficultySettings* globalDefaults = nullptr;
-        switch (difficulty)
-        {
-        case 0: globalDefaults = &zone.default_normal; break;
-        case 1: globalDefaults = &zone.default_nightmare; break;
-        case 2: globalDefaults = &zone.default_hell; break;
         }
-        if (!globalDefaults)
-            continue;
-
-        // Get level-specific override for this difficulty
-        const std::optional<DifficultySettings>* levelOverride = nullptr;
-        switch (difficulty)
-        {
-        case 0: levelOverride = &matchingZoneLevel->normal; break;
-        case 1: levelOverride = &matchingZoneLevel->nightmare; break;
-        case 2: levelOverride = &matchingZoneLevel->hell; break;
-        }
-
-        // Merge level override with global fallback
-        int boostLevel = globalDefaults->boost_level.value_or(0);
-        int boundMin = globalDefaults->bound_incl_min.value_or(1);
-        int boundMax = globalDefaults->bound_incl_max.value_or(99);
-
-        if (levelOverride && levelOverride->has_value())
-        {
-            const DifficultySettings & override = levelOverride->value();
-            if (override.boost_level) boostLevel = override.boost_level.value();
-            if (override.bound_incl_min) boundMin = override.bound_incl_min.value();
-            if (override.bound_incl_max) boundMax = override.bound_incl_max.value();
-        }
-
-        // Clamp the level to TZ specs
-        int boostedLevel = playerLevel + boostLevel;
-        if (boostedLevel < boundMin)
-            boostedLevel = boundMin;
-        else if (boostedLevel > boundMax)
-            boostedLevel = boundMax;
-
-        // Apply TZ Levels
-        int before = STATLIST_GetUnitStatSigned(pUnit, STAT_LEVEL, 0);
-        AdjustMonsterLevel(pUnit, STAT_LEVEL, boostedLevel);
-        int after = STATLIST_GetUnitStatSigned(pUnit, STAT_LEVEL, 0);
-
-        D2PlayerCountBonusStrc* pPlayerCountBonus;
-        D2MonStatsInitStrc monStatsInit = {};
-        D2MonStatsTxt* pMonStatsTxtRecord = pUnit->pMonsterData->pMonstatsTxt;
-        int32_t playerCountModifier = 0;
-
-        if (playerCountGlobal >= 9)
-            playerCountModifier = (playerCountGlobal - 2) * 50;
-        else
-            playerCountModifier = (playerCountGlobal - 1) * 50;
-
-        // Calculate for MonInit
-        CalculateMonsterStats(pUnit->dwClassId, 1, pGame->nDifficulty, STATLIST_GetUnitStatSigned(pUnit, STAT_LEVEL, 0), 7, monStatsInit);
-
-        const int32_t nBaseHp = monStatsInit.nMinHP + ITEMS_RollLimitedRandomNumber(&pUnit->pSeed, monStatsInit.nMaxHP - monStatsInit.nMinHP + 1);
-        const int32_t nHp = nBaseHp + D2_ComputePercentage(nBaseHp, playerCountModifier);
-        const int32_t nShiftedHp = nHp << 8;
-
-        AddToCurrentStat(pUnit, STAT_MAXHP, nShiftedHp);
-        AddToCurrentStat(pUnit, STAT_HITPOINTS, nShiftedHp);
-        AddToCurrentStat(pUnit, STAT_ARMORCLASS, monStatsInit.nAC);
-        AddToCurrentStat(pUnit, STAT_EXPERIENCE, D2_ComputePercentage(monStatsInit.nExp, ((playerCountGlobal - 8) * 100) / 5));
-        AddToCurrentStat(pUnit, STAT_HPREGEN, (nShiftedHp * 2) >> 12);
 
         return;
     }
@@ -2675,12 +2806,12 @@ void D2RHUD::OnDraw() {
                     drawList->AddText({ center - (width / 2.0f) + 1, ypercent2 }, IM_COL32(255, 255, 255, 255), hp.c_str());
                 }
 
-                /*
+                
                 std::string ac = std::format("Atk Rating: {}", STATLIST_GetUnitStatSigned(pUnitServer, STAT_ARMORCLASS, 0));
                 drawList->AddText({ 20, 10 }, IM_COL32(170, 50, 50, 255), ac.c_str());
                 std::string xp = std::format("Experience: {}", STATLIST_GetUnitStatSigned(pUnitServer, STAT_EXPERIENCE, 0));
                 drawList->AddText({ 20, 30 }, IM_COL32(170, 50, 50, 255), xp.c_str());
-                */
+                
             }
         }
 
