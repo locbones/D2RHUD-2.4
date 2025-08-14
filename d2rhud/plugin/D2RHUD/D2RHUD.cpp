@@ -1808,7 +1808,12 @@ bool LoadDesecratedZones(const std::string& filename) {
     try {
         gDesecratedZones = j.at("desecrated_zones").get<std::vector<DesecratedZone>>();
         level_names = j.at("level_names").get<std::vector<LevelName>>();
-        level_groups = j.at("level_groups").get<std::vector<LevelGroup>>();
+        if (j.contains("level_groups") && j["level_groups"].is_array()) {
+            level_groups = j.at("level_groups").get<std::vector<LevelGroup>>();
+        }
+        else {
+            level_groups.clear();
+        }
     }
     catch (const std::exception& e) {
         MessageBoxA(nullptr, ("JSON field parse error: " + std::string(e.what())).c_str(), "Error", MB_ICONERROR);
