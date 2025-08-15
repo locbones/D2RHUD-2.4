@@ -40,7 +40,7 @@
 std::string configFilePath = "config.json";
 std::string filename = "../Launcher/D2RLAN_Config.txt";
 std::string lootFile = "../D2R/lootfilter.lua";
-std::string Version = "1.2.0";
+std::string Version = "1.2.1";
 
 using json = nlohmann::json;
 static MonsterStatsDisplaySettings cachedSettings;
@@ -1269,9 +1269,7 @@ MonsterTreasureResult GetMonsterTreasure(const std::vector<MonsterTreasureClass>
         return result;
     }
 
-    LogDebug(std::format(
-        "GetMonsterTreasure called with: rowIndex={}, diff={}, monType={}, monsters.size={}, tcexEntries.size={}",
-        rowIndex, diff, monType, monsters.size(), tcexEntries.size()));
+    //LogDebug(std::format("GetMonsterTreasure called with: rowIndex={}, diff={}, monType={}, monsters.size={}, tcexEntries.size={}",rowIndex, diff, monType, monsters.size(), tcexEntries.size()));
 
     const auto& m = monsters[rowIndex];
     std::string treasureClassValue;
@@ -1574,15 +1572,27 @@ void __fastcall ForceTCDrops(D2GameStrc* pGame, D2UnitStrc* pMonster, D2UnitStrc
     MonsterTreasureResult uniqResult = GetMonsterTreasure(monsters, pMonStatsTxtRecord->nId, difficulty, 2, TCEx);
     MonsterTreasureResult superuniqResult = GetMonsterTreasureSU(superuniques, nSuperUniqueId, difficulty, TCEx);
 
+    //Base TC
+    int tcCheckRegular = regResult.tcCheckIndex;
+    int tcCheckChamp = champResult.tcCheckIndex;
+    int tcCheckUnique = uniqResult.tcCheckIndex;
+    int tcCheckSuperUnique = superuniqResult.tcCheckIndex;
+
+    //Terror TC
     int indexRegular = regResult.treasureIndex;
     int indexChamp = champResult.treasureIndex;
     int indexUnique = uniqResult.treasureIndex;
     int indexSuperUnique = superuniqResult.treasureIndex;
 
-    int tcCheckRegular = regResult.tcCheckIndex;
-    int tcCheckChamp = champResult.tcCheckIndex;
-    int tcCheckUnique = uniqResult.tcCheckIndex;
-    int tcCheckSuperUnique = superuniqResult.tcCheckIndex;
+    //Fallbacks
+    if (indexRegular == -1)
+        indexRegular = tcCheckRegular;
+    if (indexChamp == -1)
+        indexChamp = tcCheckChamp;
+    if (indexUnique == -1)
+        indexUnique = tcCheckUnique;
+    if (indexSuperUnique == -1)
+        indexSuperUnique = tcCheckSuperUnique;
 
     int unknownOffset = nTCId - tcCheckRegular;
 
@@ -2037,8 +2047,16 @@ bool GetBaalQuest(D2UnitStrc* pPlayer, D2GameStrc* pGame) {
     return pGame->bExpansion & oQUESTRECORD_GetQuestState(pQuestData, QUESTSTATEFLAG_A5Q6, QFLAG_REWARDGRANTED);
 }
 
+bool initialized = false;
+
 std::string BuildTerrorZoneStatAdjustmentsText()
 {
+    if (initialized == false)
+    {
+        InitRandomStatsForAllMonsters(true);
+        initialized = true;
+    }
+
     if (gRandomStatsForMonsters.empty())
         return "";
 
@@ -2076,6 +2094,8 @@ std::string BuildTerrorZoneStatAdjustmentsText()
 
 std::string BuildTerrorZoneInfoText()
 {
+    
+
     if (g_ActiveZoneInfoText.empty())
         return "";
 
@@ -2222,6 +2242,7 @@ void UpdateActiveZoneInfoText(time_t currentUtc)
             ss << level_groups[gi].name << "\n";
         }
 
+        
         // Print individual levels not part of fully present groups
         for (const auto& zl : activeGroup.levels)
         {
@@ -2248,6 +2269,7 @@ void UpdateActiveZoneInfoText(time_t currentUtc)
             else
                 ss << "(Unknown Level ID: " << lvlId << ")\n";
         }
+        
 
         g_ActiveZoneInfoText = ss.str();
         break;
@@ -2693,61 +2715,8 @@ void __fastcall ApplyGhettoTerrorZone(D2GameStrc* pGame, D2ActiveRoomStrc* pRoom
         g_TerrorZoneData.activeGroupIndex = activeGroupIndex;
         g_TerrorZoneData.zoneStartUtc = zone.start_time_utc;
 
-        std::stringstream ss;
-        for (const auto& zl : activeGroup.levels)
-        {
-            if (zl.allLevels)
-            {
-                // Print all known level names
-                for (const auto& ln : level_names)
-                {
-                    ss << ln.name << "\n";
-                }
-            }
-            else if (zl.level_id.has_value())
-            {
-                // Print the specific level
-                auto it = std::find_if(level_names.begin(), level_names.end(),
-                    [&](const LevelName& ln) { return ln.id == zl.level_id.value(); });
-
-                if (it != level_names.end())
-                    ss << it->name << "\n";
-                else
-                    ss << "(Unknown Level ID: " << zl.level_id.value() << ")\n";
-            }
-            else
-            {
-                ss << "(Invalid ZoneLevel entry)\n";
-            }
-        }
-
-
-        if (g_ActiveZoneInfoText == "")
-            g_ActiveZoneInfoText = ss.str();
-        // MessageBoxA(nullptr, ss.str().c_str(), "Active Zone Info Text", MB_OK | MB_ICONINFORMATION);
-
-         // Time remaining logic
-        int positionInFullCycle = cyclePos % cycleLengthMin;
-
-        int remainingMinutes = 0;
-        int remainingSeconds = 0;
-        if (positionInFullCycle < zone.terror_duration_min)
-        {
-            int totalSecondsInPhase = zone.terror_duration_min * 60;
-            int secondsIntoPhase = (currentUtc - zone.start_time_utc) % (cycleLengthMin * 60) % (zone.terror_duration_min * 60);
-            int secondsRemaining = totalSecondsInPhase - secondsIntoPhase;
-            remainingMinutes = secondsRemaining / 60;
-            remainingSeconds = secondsRemaining % 60;
-        }
-        else
-        {
-            int totalSecondsInCycle = cycleLengthMin * 60;
-            int secondsIntoCycle = (currentUtc - zone.start_time_utc) % totalSecondsInCycle;
-            int secondsRemaining = totalSecondsInCycle - secondsIntoCycle;
-            remainingMinutes = secondsRemaining / 60;
-            remainingSeconds = secondsRemaining % 60;
-        }
-
+        double now = static_cast<double>(std::time(nullptr));
+        UpdateActiveZoneInfoText(static_cast<time_t>(now));
         InitRandomStatsForAllMonsters(false);
 
         // Try to find a ZoneLevel override for the current level
