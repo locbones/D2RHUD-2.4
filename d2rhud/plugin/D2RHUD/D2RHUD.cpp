@@ -40,7 +40,7 @@
 std::string configFilePath = "config.json";
 std::string filename = "../Launcher/D2RLAN_Config.txt";
 std::string lootFile = "../D2R/lootfilter.lua";
-std::string Version = "1.1.9";
+std::string Version = "1.2.0";
 
 using json = nlohmann::json;
 static MonsterStatsDisplaySettings cachedSettings;
@@ -1100,7 +1100,7 @@ struct LevelName {
 
 struct LevelGroup {
     std::string name;
-    std::vector<int> levels; // level IDs in this group
+    std::vector<int> levels;
 };
 
 struct ZoneLevel {
@@ -1151,12 +1151,15 @@ struct Stat {
 struct MonsterTreasureClass
 {
     std::string MonsterName;
+    std::string TCChecker1;
     std::string Desecrated;
     std::string DesecratedChamp;
     std::string DesecratedUnique;
+    std::string TCChecker2;
     std::string Desecrated_N;
     std::string DesecratedChamp_N;
     std::string DesecratedUnique_N;
+    std::string TCChecker3;
     std::string Desecrated_H;
     std::string DesecratedChamp_H;
     std::string DesecratedUnique_H;
@@ -1165,8 +1168,11 @@ struct MonsterTreasureClass
 struct MonsterTreasureClassSU
 {
     std::string MonsterName;
+    std::string TCChecker1;
     std::string Desecrated;
+    std::string TCChecker2;
     std::string Desecrated_N;
+    std::string TCChecker3;
     std::string Desecrated_H;
 };
 
@@ -1185,6 +1191,11 @@ struct StatAdjustment
 struct StatNameEntry {
     int id;
     std::string name;
+};
+
+struct MonsterTreasureResult {
+    int treasureIndex;
+    int tcCheckIndex;
 };
 
 int playerLevel = 0;
@@ -1210,6 +1221,24 @@ bool isTerrorized = false;
 std::vector<StatAdjustment> gStatAdjustments;
 std::unordered_map<int, std::string> gStatNames;
 
+static void LogDebug(const std::string& msg)
+{
+    std::ofstream log("debug_log.txt", std::ios::app);
+    if (!log.is_open())
+        return;
+
+    // Timestamp
+    std::time_t t = std::time(nullptr);
+    std::tm tm{};
+#ifdef _WIN32
+    localtime_s(&tm, &t);
+#else
+    localtime_r(&t, &tm);
+#endif
+    log << "[" << std::put_time(&tm, "%Y-%m-%d %H:%M:%S") << "] " 
+        << msg << "\n";
+}
+
 std::vector<std::string> ReadTCexFile(const std::string& filename)
 {
     std::vector<std::string> treasureClasses;
@@ -1231,79 +1260,106 @@ std::vector<std::string> ReadTCexFile(const std::string& filename)
     return treasureClasses;
 }
 
-int GetMonsterTreasure(const std::vector<MonsterTreasureClass>& monsters, size_t rowIndex, int diff, int monType, const std::vector<std::string>& tcexEntries)
+MonsterTreasureResult GetMonsterTreasure(const std::vector<MonsterTreasureClass>& monsters, size_t rowIndex, int diff, int monType, const std::vector<std::string>& tcexEntries)
 {
-    if (rowIndex >= monsters.size())
-    {
-        std::cerr << "Error: Row index out of range\n";
-        return -1;
+    MonsterTreasureResult result{ -1, -1 };
+
+    if (rowIndex >= monsters.size()) {
+        LogDebug("Error: Row index out of range");
+        return result;
     }
 
-    const auto& m = monsters[rowIndex];
+    LogDebug(std::format(
+        "GetMonsterTreasure called with: rowIndex={}, diff={}, monType={}, monsters.size={}, tcexEntries.size={}",
+        rowIndex, diff, monType, monsters.size(), tcexEntries.size()));
 
+    const auto& m = monsters[rowIndex];
     std::string treasureClassValue;
-    if (diff == 0)
-    {
-        if (monType == 0) treasureClassValue = m.Desecrated;
+    std::string tcCheck;
+
+    if (diff == 0) {
+        if (monType == 0) { tcCheck = m.TCChecker1; treasureClassValue = m.Desecrated; }
         else if (monType == 1) treasureClassValue = m.DesecratedChamp;
         else if (monType == 2) treasureClassValue = m.DesecratedUnique;
     }
-    else if (diff == 1)
-    {
-        if (monType == 0) treasureClassValue = m.Desecrated_N;
+    else if (diff == 1) {
+        if (monType == 0) { tcCheck = m.TCChecker2; treasureClassValue = m.Desecrated_N; }
         else if (monType == 1) treasureClassValue = m.DesecratedChamp_N;
         else if (monType == 2) treasureClassValue = m.DesecratedUnique_N;
     }
-    else if (diff == 2)
-    {
-        if (monType == 0) treasureClassValue = m.Desecrated_H;
+    else if (diff == 2) {
+        if (monType == 0) { tcCheck = m.TCChecker3; treasureClassValue = m.Desecrated_H; }
         else if (monType == 1) treasureClassValue = m.DesecratedChamp_H;
         else if (monType == 2) treasureClassValue = m.DesecratedUnique_H;
     }
-    else
-    {
-        return -1;
+
+    for (size_t i = 0; i < tcexEntries.size(); ++i) {
+        if (tcexEntries[i] == treasureClassValue) {
+            result.treasureIndex = static_cast<int>(i) + 1;
+            break;
+        }
     }
 
-    // Search for treasureClassValue in tcexEntries
-    for (size_t i = 0; i < tcexEntries.size(); ++i)
-    {
-        if (tcexEntries[i] == treasureClassValue)
-            return static_cast<int>(i);
+    for (size_t i = 0; i < tcexEntries.size(); ++i) {
+        if (tcexEntries[i] == tcCheck) {
+            result.tcCheckIndex = static_cast<int>(i) + 1;
+            break;
+        }
     }
 
-    return -1;
+    //LogDebug(std::format("TC: {}, TC for TZ: {}", tcCheck, treasureClassValue));
+    //LogDebug(std::format("baseTCIndex: {}, terrorTCIndex: {}", result.tcCheckIndex, result.treasureIndex));
+
+    return result;
 }
 
-int GetMonsterTreasureSU(const std::vector<MonsterTreasureClassSU>& monsters, size_t rowIndex, int diff, const std::vector<std::string>& tcexEntries)
+
+MonsterTreasureResult GetMonsterTreasureSU(const std::vector<MonsterTreasureClassSU>& monsters, size_t rowIndex, int diff, const std::vector<std::string>& tcexEntries)
 {
-    if (rowIndex >= monsters.size())
-    {
+    MonsterTreasureResult result{ -1, -1 };
+
+    if (rowIndex >= monsters.size()) {
         std::cerr << "Error: Row index out of range\n";
-        return -1;
+        return result;
     }
 
     const auto& m = monsters[rowIndex];
-
     std::string treasureClassValue;
-    if (diff == 0)
-        treasureClassValue = m.Desecrated;
-    else if (diff == 1)
-        treasureClassValue = m.Desecrated_N;
-    else if (diff == 2)
-        treasureClassValue = m.Desecrated_H;
-    else
-        return -1;
+    std::string tcCheck;
 
-    // Search for treasureClassValue in tcexEntries
-    for (size_t i = 0; i < tcexEntries.size(); ++i)
-    {
-        if (tcexEntries[i] == treasureClassValue)
-            return static_cast<int>(i);
+    if (diff == 0) {
+        tcCheck = m.TCChecker1;
+        treasureClassValue = m.Desecrated;
+    }
+    else if (diff == 1) {
+        tcCheck = m.TCChecker2;
+        treasureClassValue = m.Desecrated_N;
+    }
+    else if (diff == 2) {
+        tcCheck = m.TCChecker3;
+        treasureClassValue = m.Desecrated_H;
+    }
+    else {
+        return result;
     }
 
-    return -1;
+    for (size_t i = 0; i < tcexEntries.size(); ++i) {
+        if (tcexEntries[i] == treasureClassValue) {
+            result.treasureIndex = static_cast<int>(i);
+            break;
+        }
+    }
+
+    for (size_t i = 0; i < tcexEntries.size(); ++i) {
+        if (tcexEntries[i] == tcCheck) {
+            result.tcCheckIndex = static_cast<int>(i);
+            break;
+        }
+    }
+
+    return result;
 }
+
 
 std::vector<MonsterTreasureClass> ReadMonsterTreasureFile(const std::string& filename)
 {
@@ -1319,12 +1375,15 @@ std::vector<MonsterTreasureClass> ReadMonsterTreasureFile(const std::string& fil
     std::string line;
     bool isHeader = true;
     int idxMonsterName = -1;
+    int idxTCChecker1 = -1;
     int idxDesecrated = -1;
     int idxDesecratedChamp = -1;
     int idxDesecratedUnique = -1;
+    int idxTCChecker2 = -1;
     int idxDesecrated_N = -1;
     int idxDesecratedChamp_N = -1;
     int idxDesecratedUnique_N = -1;
+    int idxTCChecker3 = -1;
     int idxDesecrated_H = -1;
     int idxDesecratedChamp_H = -1;
     int idxDesecratedUnique_H = -1;
@@ -1343,12 +1402,15 @@ std::vector<MonsterTreasureClass> ReadMonsterTreasureFile(const std::string& fil
             for (size_t i = 0; i < cols.size(); ++i)
             {
                 if (cols[i] == "Id") idxMonsterName = static_cast<int>(i);
+                else if (cols[i] == "TreasureClass1") idxTCChecker1 = static_cast<int>(i);
                 else if (cols[i] == "TreasureClassDesecrated") idxDesecrated = static_cast<int>(i);
                 else if (cols[i] == "TreasureClassDesecratedChamp") idxDesecratedChamp = static_cast<int>(i);
                 else if (cols[i] == "TreasureClassDesecratedUnique") idxDesecratedUnique = static_cast<int>(i);
+                else if (cols[i] == "TreasureClass1(N)") idxTCChecker2 = static_cast<int>(i);
                 else if (cols[i] == "TreasureClassDesecrated(N)") idxDesecrated_N = static_cast<int>(i);
                 else if (cols[i] == "TreasureClassDesecratedChamp(N)") idxDesecratedChamp_N = static_cast<int>(i);
                 else if (cols[i] == "TreasureClassDesecratedUnique(N)") idxDesecratedUnique_N = static_cast<int>(i);
+                else if (cols[i] == "TreasureClass1(H)") idxTCChecker3 = static_cast<int>(i);
                 else if (cols[i] == "TreasureClassDesecrated(H)") idxDesecrated_H = static_cast<int>(i);
                 else if (cols[i] == "TreasureClassDesecratedChamp(H)") idxDesecratedChamp_H = static_cast<int>(i);
                 else if (cols[i] == "TreasureClassDesecratedUnique(H)") idxDesecratedUnique_H = static_cast<int>(i);
@@ -1362,18 +1424,24 @@ std::vector<MonsterTreasureClass> ReadMonsterTreasureFile(const std::string& fil
 
         if (idxMonsterName >= 0 && idxMonsterName < (int)cols.size())
             entry.MonsterName = cols[idxMonsterName];
+        if (idxTCChecker1 >= 0 && idxTCChecker1 < (int)cols.size())
+            entry.TCChecker1 = cols[idxTCChecker1];
         if (idxDesecrated >= 0 && idxDesecrated < (int)cols.size())
             entry.Desecrated = cols[idxDesecrated];
         if (idxDesecratedChamp >= 0 && idxDesecratedChamp < (int)cols.size())
             entry.DesecratedChamp = cols[idxDesecratedChamp];
         if (idxDesecratedUnique >= 0 && idxDesecratedUnique < (int)cols.size())
             entry.DesecratedUnique = cols[idxDesecratedUnique];
+        if (idxTCChecker2 >= 0 && idxTCChecker2 < (int)cols.size())
+            entry.TCChecker2 = cols[idxTCChecker2];
         if (idxDesecrated_N >= 0 && idxDesecrated_N < (int)cols.size())
             entry.Desecrated_N = cols[idxDesecrated_N];
         if (idxDesecratedChamp_N >= 0 && idxDesecratedChamp_N < (int)cols.size())
             entry.DesecratedChamp_N = cols[idxDesecratedChamp_N];
         if (idxDesecratedUnique_N >= 0 && idxDesecratedUnique_N < (int)cols.size())
             entry.DesecratedUnique_N = cols[idxDesecratedUnique_N];
+        if (idxTCChecker3 >= 0 && idxTCChecker3 < (int)cols.size())
+            entry.TCChecker3 = cols[idxTCChecker3];
         if (idxDesecrated_H >= 0 && idxDesecrated_H < (int)cols.size())
             entry.Desecrated_H = cols[idxDesecrated_H];
         if (idxDesecratedChamp_H >= 0 && idxDesecratedChamp_H < (int)cols.size())
@@ -1475,10 +1543,10 @@ void __fastcall ForceTCDrops(D2GameStrc* pGame, D2UnitStrc* pMonster, D2UnitStrc
     }
 
     auto pMonsterFlag = pMonster->pMonsterData->nTypeFlag;
-
     auto monsters = ReadMonsterTreasureFile(MONFile);
     auto superuniques = ReadMonsterTreasureFileSU(SUFile);
     const int32_t nSuperUniqueId = MONSTERUNIQUE_GetSuperUniqueBossHcIdx(pGame, pMonster);
+    std::string tcCheck;
 
     if (pMonStatsTxtRecord->nId >= monsters.size())
     {
@@ -1501,46 +1569,49 @@ void __fastcall ForceTCDrops(D2GameStrc* pGame, D2UnitStrc* pMonster, D2UnitStrc
     }
 
     const std::vector<std::string> TCEx = ReadTCexFile(TCEXFile);
+    MonsterTreasureResult regResult = GetMonsterTreasure(monsters, pMonStatsTxtRecord->nId, difficulty, 0, TCEx);
+    MonsterTreasureResult champResult = GetMonsterTreasure(monsters, pMonStatsTxtRecord->nId, difficulty, 1, TCEx);
+    MonsterTreasureResult uniqResult = GetMonsterTreasure(monsters, pMonStatsTxtRecord->nId, difficulty, 2, TCEx);
+    MonsterTreasureResult superuniqResult = GetMonsterTreasureSU(superuniques, nSuperUniqueId, difficulty, TCEx);
 
-    int indexRegular = GetMonsterTreasure(monsters, pMonStatsTxtRecord->nId, difficulty, 0, TCEx);
-    int indexChamp = GetMonsterTreasure(monsters, pMonStatsTxtRecord->nId, difficulty, 1, TCEx);
-    int indexUnique = GetMonsterTreasure(monsters, pMonStatsTxtRecord->nId, difficulty, 2, TCEx);
-    int indexSuperUnique = GetMonsterTreasureSU(superuniques, nSuperUniqueId, difficulty, TCEx);
-    int unknownOffset1 = nTCId - indexRegular + 1;
-    int unknownOffset2 = nTCId - indexChamp + 1;
-    int unknownOffset3 = nTCId - indexUnique + 1;
-    int unknownOffset4 = nTCId - indexSuperUnique + 1;
+    int indexRegular = regResult.treasureIndex;
+    int indexChamp = champResult.treasureIndex;
+    int indexUnique = uniqResult.treasureIndex;
+    int indexSuperUnique = superuniqResult.treasureIndex;
 
-    std::string debugMsg = std::format("nTCId being used: {}", pMonsterFlag);
-    //MessageBoxA(nullptr, debugMsg.c_str(), "DropTCTest Debug", MB_OK | MB_ICONINFORMATION);
+    int tcCheckRegular = regResult.tcCheckIndex;
+    int tcCheckChamp = champResult.tcCheckIndex;
+    int tcCheckUnique = uniqResult.tcCheckIndex;
+    int tcCheckSuperUnique = superuniqResult.tcCheckIndex;
+
+    int unknownOffset = nTCId - tcCheckRegular;
+
+    //LogDebug(std::format("nTCId: {}, indexRegular: {}, unknownOffset: {}", nTCId, indexRegular, unknownOffset));
 
     //Force Boss Drops
     if (pMonStatsTxtRecord->nId == 156 || pMonStatsTxtRecord->nId == 211 ||
         pMonStatsTxtRecord->nId == 242 || pMonStatsTxtRecord->nId == 243 ||
         pMonStatsTxtRecord->nId == 544)
     {
-        //MessageBoxA(nullptr, "Matched ID list", "Debug", MB_OK);
-        nTCId = indexUnique + unknownOffset3;
+        nTCId = indexUnique + unknownOffset;
         oDropTCTest(pGame, pMonster, pPlayer, nTCId, nQuality, nItemLevel, a7, ppItems, pnItemsDropped, nMaxItems);
+       //LogDebug(std::format("nTCId Applied to Monster: {}", nTCId));
     }
     else
     {
         //MessageBoxA(nullptr, "Flag-based branch", "Debug", MB_OK);
         if (pMonsterFlag & MONTYPEFLAG_SUPERUNIQUE)
-            nTCId = indexSuperUnique + unknownOffset4;
+            nTCId = indexSuperUnique + unknownOffset;
         else if (pMonsterFlag & (MONTYPEFLAG_CHAMPION | MONTYPEFLAG_POSSESSED | MONTYPEFLAG_GHOSTLY))
-            nTCId = indexChamp + unknownOffset2;
+            nTCId = indexChamp + unknownOffset;
         else if (pMonsterFlag & (MONTYPEFLAG_UNIQUE | MONTYPEFLAG_MINION))
-            nTCId = indexUnique + unknownOffset3;
+            nTCId = indexUnique + unknownOffset;
         else
-            nTCId = indexRegular + unknownOffset1;
+            nTCId = indexRegular + unknownOffset;
 
+        //LogDebug(std::format("nTCId Applied to Monster: {}", nTCId));
         oDropTCTest(pGame, pMonster, pPlayer, nTCId, nQuality, nItemLevel, a7, ppItems, pnItemsDropped, nMaxItems);
     }
-
-    // Debug: show the nTCId being used
-    std::string debugMsg2 = std::format("Index being used: {}, {}, {}, {}", nItemLevel, nTCId, unknownOffset3, indexUnique);
-    //MessageBoxA(nullptr, debugMsg2.c_str(), "DropTCTest Debug", MB_OK | MB_ICONINFORMATION);
 }
 
 void __fastcall HookedDropTCTest(D2GameStrc* pGame, D2UnitStrc* pMonster, D2UnitStrc* pPlayer, int32_t nTCId, int32_t nQuality, int32_t nItemLevel, int32_t a7, D2UnitStrc** ppItems, int32_t* pnItemsDropped, int32_t nMaxItems)
@@ -3041,12 +3112,12 @@ void D2RHUD::OnDraw() {
                     drawList->AddText({ center - (width / 2.0f) + 1, ypercent2 }, IM_COL32(255, 255, 255, 255), hp.c_str());
                 }
 
-                
+                /*
                 std::string ac = std::format("Atk Rating: {}", STATLIST_GetUnitStatSigned(pUnitServer, STAT_ARMORCLASS, 0));
                 drawList->AddText({ 20, 10 }, IM_COL32(170, 50, 50, 255), ac.c_str());
                 std::string xp = std::format("Experience: {}", STATLIST_GetUnitStatSigned(pUnitServer, STAT_EXPERIENCE, 0));
                 drawList->AddText({ 20, 30 }, IM_COL32(170, 50, 50, 255), xp.c_str());
-                
+                */
             }
         }
 
