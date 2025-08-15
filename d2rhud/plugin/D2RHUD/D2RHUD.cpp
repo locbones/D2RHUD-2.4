@@ -40,7 +40,7 @@
 std::string configFilePath = "config.json";
 std::string filename = "../Launcher/D2RLAN_Config.txt";
 std::string lootFile = "../D2R/lootfilter.lua";
-std::string Version = "1.1.8";
+std::string Version = "1.1.9";
 
 using json = nlohmann::json;
 static MonsterStatsDisplaySettings cachedSettings;
@@ -2183,6 +2183,65 @@ void UpdateActiveZoneInfoText(time_t currentUtc)
     }
 }
 
+namespace {
+    static double gLastManualToggleTime = 0;
+}
+
+static void ToggleManualZoneGroupInternal(bool forward)
+{
+    double now = static_cast<double>(std::time(nullptr));
+    if ((now - gLastManualToggleTime) <= 0.3)
+        return;
+
+    gLastManualToggleTime = now;
+    int maxGroups = 0;
+
+    for (const auto& zone : gDesecratedZones)
+    {
+        if (now < zone.start_time_utc || now > zone.end_time_utc)
+            continue;
+
+        maxGroups = static_cast<int>(zone.zones.size());
+        break;
+    }
+
+    if (maxGroups == 0)
+        g_ManualZoneGroupOverride = -1;
+    else if (forward)
+    {
+        if (g_ManualZoneGroupOverride == -1)
+            g_ManualZoneGroupOverride = 1;
+        else
+            ++g_ManualZoneGroupOverride;
+
+        if (g_ManualZoneGroupOverride >= maxGroups)
+            g_ManualZoneGroupOverride = -1;
+    }
+    else
+    {
+        if (g_ManualZoneGroupOverride == -1)
+            g_ManualZoneGroupOverride = maxGroups - 1;
+        else
+            --g_ManualZoneGroupOverride;
+
+        if (g_ManualZoneGroupOverride < -1)
+            g_ManualZoneGroupOverride = maxGroups - 1;
+    }
+
+    InitRandomStatsForAllMonsters(true);
+    UpdateActiveZoneInfoText(static_cast<time_t>(now));
+}
+
+void CheckToggleForward()
+{
+    ToggleManualZoneGroupInternal(true);
+}
+
+void CheckToggleBackward()
+{
+    ToggleManualZoneGroupInternal(false);
+}
+
 void CheckToggleManualZoneGroup()
 {
     bool ctrlPressed = (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0;
@@ -2239,6 +2298,9 @@ void CheckToggleManualZoneGroup()
     }
 }
 
+static char gTZInfoText[256] = { 0 };
+static char gTZStatAdjText[256] = { 0 };
+
 int64_t Hooked_HUDWarnings__PopulateHUDWarnings(void* pWidget) {
     D2GameStrc* pGame = nullptr;
     D2Client* pGameClient = GetClientPtr();
@@ -2251,60 +2313,56 @@ int64_t Hooked_HUDWarnings__PopulateHUDWarnings(void* pWidget) {
 
     auto result = oHUDWarnings__PopulateHUDWarnings(pWidget);
 
-    // Look for both widgets
     void* tzInfoTextWidget = WidgetFindChild(pWidget, "TerrorZoneInfoText");
     void* tzStatAdjustmentsWidget = WidgetFindChild(pWidget, "TerrorZoneStatAdjustments");
 
     if (!tzInfoTextWidget && !tzStatAdjustmentsWidget) {
-        return result; // Neither widget exists
+        return result;
     }
 
-    // Don't draw the custom HUD warning if Baal quest isn't complete
     if (!GetBaalQuest(pUnitPlayer, pGame)) {
         return result;
     }
 
-    // Update TerrorZoneInfoText if present
+    // TerrorZoneInfoText
     if (tzInfoTextWidget) {
         char** pOriginal = (char**)((int64_t)tzInfoTextWidget + 0x88);
         int64_t* nLength = (int64_t*)((int64_t)tzInfoTextWidget + 0x90);
 
         std::string finalText = BuildTerrorZoneInfoText();
         if (!finalText.empty()) {
-            static char pCustom[256];
-            strncpy(pCustom, finalText.c_str(), 255);
-            pCustom[255] = '\0';
+            strncpy(gTZInfoText, finalText.c_str(), sizeof(gTZInfoText) - 1);
+            gTZInfoText[sizeof(gTZInfoText) - 1] = '\0';
 
-            *pOriginal = pCustom;
-            *nLength = strlen(pCustom) + 1;
+            *pOriginal = gTZInfoText;
+            *nLength = strlen(gTZInfoText) + 1;
         }
     }
 
-    // Update TerrorZoneStatAdjustments if present
+    // TerrorZoneStatAdjustments
     if (tzStatAdjustmentsWidget) {
         char** pOriginal = (char**)((int64_t)tzStatAdjustmentsWidget + 0x88);
         int64_t* nLength = (int64_t*)((int64_t)tzStatAdjustmentsWidget + 0x90);
 
         std::string finalText = BuildTerrorZoneStatAdjustmentsText();
         if (!finalText.empty()) {
-            static char pCustom[256];
-            strncpy(pCustom, finalText.c_str(), 255);
-            pCustom[255] = '\0';
+            strncpy(gTZStatAdjText, finalText.c_str(), sizeof(gTZStatAdjText) - 1);
+            gTZStatAdjText[sizeof(gTZStatAdjText) - 1] = '\0';
 
-            *pOriginal = pCustom;
-            *nLength = strlen(pCustom) + 1;
+            *pOriginal = gTZStatAdjText;
+            *nLength = strlen(gTZStatAdjText) + 1;
         }
     }
 
     return result;
 }
 
-
 void Hooked__Widget__OnClose(void* pWidget) {
     oWidget__OnClose(pWidget);
     char* pName = *(reinterpret_cast<char**>(reinterpret_cast<char*>(pWidget) + 0x8));
     if (strcmp(pName, "AutoMap") == 0) {
-        pCustom[0] = '\0';
+        gTZInfoText[0] = '\0';
+        gTZStatAdjText[0] = '\0';
     }
 }
 
@@ -2321,7 +2379,7 @@ void SubtractResistances(D2UnitStrc* pUnit, D2C_ItemStats nStatId, uint32_t nVal
 
 constexpr uint16_t UNIQUE_LAYER = 1337;
 
-void AddToCurrentStat(D2UnitStrc* pUnit, D2C_ItemStats nStatId, uint32_t nValue) {
+void SetStat(D2UnitStrc* pUnit, D2C_ItemStats nStatId, uint32_t nValue) {
     int currentValue = STATLIST_GetUnitStatSigned(pUnit, nStatId, 0);
 
     if (currentValue >= static_cast<int>(nValue))
@@ -2331,6 +2389,11 @@ void AddToCurrentStat(D2UnitStrc* pUnit, D2C_ItemStats nStatId, uint32_t nValue)
 
     STATLISTEX_SetStatListExStat(pUnit->pStatListEx, nStatId, currentValue + offset, 0);
     STATLISTEX_SetStatListExStat(pUnit->pStatListEx, nStatId, offset, UNIQUE_LAYER);
+}
+
+void AddToCurrentStat(D2UnitStrc* pUnit, D2C_ItemStats nStatId, uint32_t nValue) {
+    int currentValue = STATLIST_GetUnitStatSigned(pUnit, nStatId, 0);
+    STATLISTEX_SetStatListExStat(pUnit->pStatListEx, nStatId, currentValue + nValue, 1338);
 }
 
 int GetLevelIdFromRoom(D2ActiveRoomStrc* pRoom)
@@ -2417,7 +2480,7 @@ void __fastcall ApplyStatAdjustments(D2GameStrc* pGame, D2ActiveRoomStrc* pRoom,
             continue;
 
         for (const auto& [statID, value] : settings.stat_adjustments) {
-            AddToCurrentStat(pPlayerUnit, static_cast<D2C_ItemStats>(statID), value);
+            SetStat(pPlayerUnit, static_cast<D2C_ItemStats>(statID), value);
         }
     }
 }
@@ -2428,25 +2491,14 @@ void ApplyStatsToMonster(D2UnitStrc* pUnit)
 
     for (const auto& [stat, value] : gRandomStatsForMonsters)
     {
-        // Apply the stat to the unit
         AddToCurrentStat(pUnit, stat, value);
 
-        // Optional debug output
         msgStream << "Stat ID " << static_cast<int>(stat)
             << " Applied Value: " << value << "\n";
     }
 
     //MessageBoxA(NULL, msgStream.str().c_str(), "Stat Adjustment Debug", MB_OK);
 }
-
-
-/*
-void ApplyStatsToMonster(D2UnitStrc* pUnit) {
-    for (const auto& stat : g_randomStats) {
-        AddToCurrentStat(pUnit, stat.first, stat.second);
-    }
-}
-*/
 
 void ApplyMonsterDifficultyScaling(D2UnitStrc* pUnit, const DesecratedZone& zone, const ZoneLevel* matchingZoneLevel, int difficulty, int playerLevel, int playerCountGlobal, D2GameStrc* pGame)
 {
@@ -2500,17 +2552,17 @@ void ApplyMonsterDifficultyScaling(D2UnitStrc* pUnit, const DesecratedZone& zone
     const int32_t nShiftedHp = nHp << 8;
 
     // Apply core stats
-    AddToCurrentStat(pUnit, STAT_MAXHP, nShiftedHp);
-    AddToCurrentStat(pUnit, STAT_HITPOINTS, nShiftedHp);
-    AddToCurrentStat(pUnit, STAT_ARMORCLASS, monStatsInit.nAC);
-    AddToCurrentStat(pUnit, STAT_EXPERIENCE, D2_ComputePercentage(monStatsInit.nExp, ((playerCountGlobal - 8) * 100) / 5));
-    AddToCurrentStat(pUnit, STAT_HPREGEN, (nShiftedHp * 2) >> 12);
+    SetStat(pUnit, STAT_MAXHP, nShiftedHp);
+    SetStat(pUnit, STAT_HITPOINTS, nShiftedHp);
+    SetStat(pUnit, STAT_ARMORCLASS, monStatsInit.nAC);
+    SetStat(pUnit, STAT_EXPERIENCE, D2_ComputePercentage(monStatsInit.nExp, ((playerCountGlobal - 8) * 100) / 5));
+    SetStat(pUnit, STAT_HPREGEN, (nShiftedHp * 2) >> 12);
 }
 
 void __fastcall ApplyGhettoTerrorZone(D2GameStrc* pGame, D2ActiveRoomStrc* pRoom, D2UnitStrc* pUnit, int64_t* pMonRegData, D2MonStatsInitStrc* monStatsInit)
 {
     time_t currentUtc = std::time(nullptr);
-    //g_ActiveZoneInfoText.clear();
+    g_ActiveZoneInfoText.clear();
 
     if (!pGame || !pRoom || !pUnit)
     {
@@ -2874,6 +2926,7 @@ void D2RHUD::OnDraw() {
         oWidget__OnClose = reinterpret_cast<Widget__OnClose_t>(Pattern::Address(0x5766f0));
         DetourAttach(&(PVOID&)oWidget__OnClose, Hooked__Widget__OnClose);
         DetourTransactionCommit();
+        CheckToggleForward();
     }
 
     if (!oDropTCTest) {
@@ -2917,8 +2970,6 @@ void D2RHUD::OnDraw() {
 
     do
     {
-        CheckToggleManualZoneGroup();
-
         if (!settings.monsterStatsDisplay)
         {
             if (fontPushed)
@@ -3058,7 +3109,7 @@ bool D2RHUD::OnKeyPressed(short key)
         }
     }
 
-    // === Handle Open Panel Commands (like opening cube) ===
+    // Open Cube Panel
     std::string openPanelKey = ReadCommandFromFile(filename, "Open Cube Panel: ");
     if (!openPanelKey.empty()) {
         auto it = keyMap.find(openPanelKey);
@@ -3071,6 +3122,25 @@ bool D2RHUD::OnKeyPressed(short key)
                         )(pClient->pGame, pClient->pPlayer); // SKILLITEM_pSpell07_OpenCube
                 }
             }
+            return true;
+        }
+    }
+
+    // Cycle Terror Zones
+    std::string TZForwardKey = ReadCommandFromFile(filename, "Cycle TZ Forward: ");
+    if (!TZForwardKey.empty()) {
+        auto it = keyMap.find(TZForwardKey);
+        if (it != keyMap.end() && key == it->second && GetClientStatus() == 1) {
+            CheckToggleForward();
+            return true;
+        }
+    }
+
+    std::string TZBackwardKey = ReadCommandFromFile(filename, "Cycle TZ Backward: ");
+    if (!TZBackwardKey.empty()) {
+        auto it = keyMap.find(TZBackwardKey);
+        if (it != keyMap.end() && key == it->second && GetClientStatus() == 1) {
+            CheckToggleBackward();
             return true;
         }
     }
