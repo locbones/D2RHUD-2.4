@@ -40,7 +40,7 @@
 std::string configFilePath = "config.json";
 std::string filename = "../Launcher/D2RLAN_Config.txt";
 std::string lootFile = "../D2R/lootfilter.lua";
-std::string Version = "1.2.2";
+std::string Version = "1.2.3";
 
 using json = nlohmann::json;
 static MonsterStatsDisplaySettings cachedSettings;
@@ -1149,6 +1149,8 @@ struct StatValue
 struct StatAdjustment
 {
     bool random;
+    int minStats = 0;
+    int maxStats = 0;
     std::vector<StatValue> stats_values;
 };
 
@@ -1222,6 +1224,9 @@ static DropTCTest_t oDropTCTest = nullptr;
 bool isTerrorized = false;
 std::vector<StatAdjustment> gStatAdjustments;
 std::unordered_map<int, std::string> gStatNames;
+static std::vector<std::pair<D2C_ItemStats, int>> g_randomStats;
+std::unordered_map<D2C_ItemStats, int> gRandomStatsForMonsters;
+bool showStatAdjusts = true;
 
 static void LogDebug(const std::string& msg)
 {
@@ -1271,7 +1276,10 @@ MonsterTreasureResult GetMonsterTreasure(const std::vector<MonsterTreasureClass>
         return result;
     }
 
-    //LogDebug(std::format("GetMonsterTreasure called with: rowIndex={}, diff={}, monType={}, monsters.size={}, tcexEntries.size={}",rowIndex, diff, monType, monsters.size(), tcexEntries.size()));
+    LogDebug(std::format("GetMonsterTreasure called with: rowIndex={}, diff={}, monType={}, monsters.size={}, tcexEntries.size={}",rowIndex, diff, monType, monsters.size(), tcexEntries.size()));
+
+    if (rowIndex >= 410)
+        rowIndex++;
 
     const auto& m = monsters[rowIndex];
     std::string treasureClassValue;
@@ -1307,12 +1315,11 @@ MonsterTreasureResult GetMonsterTreasure(const std::vector<MonsterTreasureClass>
         }
     }
 
-    //LogDebug(std::format("TC: {}, TC for TZ: {}", tcCheck, treasureClassValue));
-    //LogDebug(std::format("baseTCIndex: {}, terrorTCIndex: {}", result.tcCheckIndex, result.treasureIndex));
+    LogDebug(std::format("TC: {}, TC for TZ: {}", tcCheck, treasureClassValue));
+    LogDebug(std::format("baseTCIndex: {}, terrorTCIndex: {}", result.tcCheckIndex, result.treasureIndex));
 
     return result;
 }
-
 
 MonsterTreasureResult GetMonsterTreasureSU(const std::vector<MonsterTreasureClassSU>& monsters, size_t rowIndex, int diff, const std::vector<std::string>& tcexEntries)
 {
@@ -1359,7 +1366,6 @@ MonsterTreasureResult GetMonsterTreasureSU(const std::vector<MonsterTreasureClas
 
     return result;
 }
-
 
 std::vector<MonsterTreasureClass> ReadMonsterTreasureFile(const std::string& filename)
 {
@@ -1598,7 +1604,7 @@ void __fastcall ForceTCDrops(D2GameStrc* pGame, D2UnitStrc* pMonster, D2UnitStrc
 
     int unknownOffset = nTCId - tcCheckRegular;
 
-    //LogDebug(std::format("nTCId: {}, indexRegular: {}, unknownOffset: {}", nTCId, indexRegular, unknownOffset));
+    LogDebug(std::format("nTCId: {}, indexRegular: {}, unknownOffset: {}", nTCId, indexRegular, unknownOffset));
 
     //Force Boss Drops
     if (pMonStatsTxtRecord->nId == 156 || pMonStatsTxtRecord->nId == 211 ||
@@ -1607,7 +1613,7 @@ void __fastcall ForceTCDrops(D2GameStrc* pGame, D2UnitStrc* pMonster, D2UnitStrc
     {
         nTCId = indexUnique + unknownOffset;
         oDropTCTest(pGame, pMonster, pPlayer, nTCId, nQuality, nItemLevel, a7, ppItems, pnItemsDropped, nMaxItems);
-       //LogDebug(std::format("nTCId Applied to Monster: {}", nTCId));
+       LogDebug(std::format("nTCId Applied to Monster: {}", nTCId));
     }
     else
     {
@@ -1621,7 +1627,7 @@ void __fastcall ForceTCDrops(D2GameStrc* pGame, D2UnitStrc* pMonster, D2UnitStrc
         else
             nTCId = indexRegular + unknownOffset;
 
-        //LogDebug(std::format("nTCId Applied to Monster: {}", nTCId));
+        LogDebug(std::format("nTCId Applied to Monster: {}", nTCId));
         oDropTCTest(pGame, pMonster, pPlayer, nTCId, nQuality, nItemLevel, a7, ppItems, pnItemsDropped, nMaxItems);
     }
 }
@@ -1734,10 +1740,6 @@ void from_json(const json& j, WarningInfo& w) {
     w.tier = j.at("tier").get<int>();
 }
 
-
-
-
-
 void from_json(const nlohmann::json& j, LevelName& ln) {
     j.at("id").get_to(ln.id);
     j.at("name").get_to(ln.name);
@@ -1758,6 +1760,17 @@ inline void from_json(const nlohmann::json& j, StatAdjustment& sa)
 {
     j.at("random").get_to(sa.random);
     j.at("stats_values").get_to(sa.stats_values);
+
+    if (j.contains("minmaxStats") && j["minmaxStats"].is_array() && j["minmaxStats"].size() == 2)
+    {
+        sa.minStats = j["minmaxStats"][0].get<int>();
+        sa.maxStats = j["minmaxStats"][1].get<int>();
+    }
+    else
+    {
+        sa.minStats = 0;
+        sa.maxStats = 0;
+    }
 }
 
 struct Config
@@ -1884,9 +1897,6 @@ std::string StripComments(const std::string& jsonWithComments) {
     return oss.str();
 }
 
-static std::vector<std::pair<D2C_ItemStats, int>> g_randomStats;
-std::unordered_map<D2C_ItemStats, int> gRandomStatsForMonsters;
-
 void InitRandomStatsForAllMonsters(bool forceNew = false) {
     static bool initialized = false;
     static std::random_device rd;
@@ -1895,20 +1905,33 @@ void InitRandomStatsForAllMonsters(bool forceNew = false) {
     if (!initialized || forceNew) {
         gRandomStatsForMonsters.clear();
 
-        // Helper lambda to process a vector of StatAdjustments
         auto processAdjustments = [&](const std::vector<StatAdjustment>& adjustments) {
             for (const auto& adjustment : adjustments) {
                 std::vector<const StatValue*> statsToApply;
 
                 if (adjustment.random) {
-                    std::uniform_int_distribution<size_t> countDist(1, adjustment.stats_values.size());
+                    size_t available = adjustment.stats_values.size();
+                    size_t lower = 1;
+                    size_t upper = available;
+
+                    if (adjustment.minStats > 0 && static_cast<size_t>(adjustment.minStats) <= available)
+                        lower = adjustment.minStats;
+
+                    if (adjustment.maxStats > 0 && static_cast<size_t>(adjustment.maxStats) < upper)
+                        upper = adjustment.maxStats;
+
+                    if (lower > upper)
+                        lower = upper;
+
+                    std::uniform_int_distribution<size_t> countDist(lower, upper);
                     size_t numStats = countDist(rng);
 
                     std::vector<const StatValue*> shuffled;
+                    shuffled.reserve(available);
                     for (const auto& sv : adjustment.stats_values)
                         shuffled.push_back(&sv);
-                    std::shuffle(shuffled.begin(), shuffled.end(), rng);
 
+                    std::shuffle(shuffled.begin(), shuffled.end(), rng);
                     statsToApply.assign(shuffled.begin(), shuffled.begin() + numStats);
                 }
                 else {
@@ -1941,10 +1964,9 @@ void InitRandomStatsForAllMonsters(bool forceNew = false) {
             }
             };
 
-        // 1️⃣ Apply global stat adjustments
         processAdjustments(gStatAdjustments);
 
-        // 2️⃣ Apply per-level stat adjustments for all zones
+        // Apply per-level stat adjustments for all zones
         for (const auto& dz : gDesecratedZones) {
             for (const auto& zg : dz.zones) {
                 for (const auto& lvl : zg.levels) {
@@ -1958,7 +1980,6 @@ void InitRandomStatsForAllMonsters(bool forceNew = false) {
         initialized = true;
     }
 }
-
 
 bool LoadDesecratedZones(const std::string& filename) {
     std::ifstream file(filename);
@@ -2055,7 +2076,7 @@ std::string BuildTerrorZoneStatAdjustmentsText()
         initialized = true;
     }
 
-    if (gRandomStatsForMonsters.empty())
+    if (gRandomStatsForMonsters.empty() || showStatAdjusts == false)
         return "";
 
     std::string finalText = "Stat Adjustments:\n";
@@ -2089,11 +2110,8 @@ std::string BuildTerrorZoneStatAdjustmentsText()
     return finalText;
 }
 
-
 std::string BuildTerrorZoneInfoText()
 {
-    
-
     if (g_ActiveZoneInfoText.empty())
         return "";
 
@@ -2140,7 +2158,7 @@ std::string BuildTerrorZoneInfoText()
 void UpdateActiveZoneInfoText(time_t currentUtc)
 {
     g_ActiveZoneInfoText.clear();
-    g_TerrorZoneData.activeLevels.clear();  // clear previous active levels
+    g_TerrorZoneData.activeLevels.clear();
 
     for (const auto& zone : gDesecratedZones)
     {
@@ -2267,7 +2285,6 @@ void UpdateActiveZoneInfoText(time_t currentUtc)
             else
                 ss << "(Unknown Level ID: " << lvlId << ")\n";
         }
-        
 
         g_ActiveZoneInfoText = ss.str();
         break;
@@ -2436,10 +2453,15 @@ int64_t Hooked_HUDWarnings__PopulateHUDWarnings(void* pWidget) {
         int64_t* nLength = (int64_t*)((int64_t)tzStatAdjustmentsWidget + 0x90);
 
         std::string finalText = BuildTerrorZoneStatAdjustmentsText();
-        if (!finalText.empty()) {
+
+        if (finalText.empty()) {
+            gTZStatAdjText[0] = '\0';
+            *pOriginal = gTZStatAdjText;
+            *nLength = 0;
+        }
+        else {
             strncpy(gTZStatAdjText, finalText.c_str(), sizeof(gTZStatAdjText) - 1);
             gTZStatAdjText[sizeof(gTZStatAdjText) - 1] = '\0';
-
             *pOriginal = gTZStatAdjText;
             *nLength = strlen(gTZStatAdjText) + 1;
         }
@@ -3161,6 +3183,59 @@ bool D2RHUD::OnKeyPressed(short key)
             return true;
         }
     }
+
+    std::string TZToggleStats = ReadCommandFromFile(filename, "Toggle Stat Adjustments Display: ");
+    if (!TZToggleStats.empty()) {
+        std::string boolPart;
+        std::string keyPart;
+        auto commaPos = TZToggleStats.find(',');
+        if (commaPos != std::string::npos) {
+            boolPart = TZToggleStats.substr(0, commaPos);
+            keyPart = TZToggleStats.substr(commaPos + 1);
+            keyPart.erase(0, keyPart.find_first_not_of(" \t"));
+        }
+        else {
+            keyPart = TZToggleStats;
+        }
+
+        if (!boolPart.empty()) {
+            std::string trimmed = boolPart;
+            trimmed.erase(0, trimmed.find_first_not_of(" \t"));
+            trimmed.erase(trimmed.find_last_not_of(" \t") + 1);
+            showStatAdjusts = (trimmed == "true" || trimmed == "1");
+        }
+
+        auto it = keyMap.find(keyPart);
+        if (it != keyMap.end() && key == it->second && GetClientStatus() == 1) {
+            showStatAdjusts = !showStatAdjusts;
+            std::ostringstream updatedLine;
+
+            updatedLine << "Toggle Stat Adjustments Display: "
+                << (showStatAdjusts ? "true" : "false")
+                << ", " << keyPart;
+
+            std::ifstream inFile(filename);
+            std::ostringstream buffer;
+            std::string line;
+            std::string targetPrefix = "Toggle Stat Adjustments Display: ";
+            while (std::getline(inFile, line)) {
+                if (line.find(targetPrefix) == 0) {
+                    buffer << updatedLine.str() << "\n";
+                }
+                else {
+                    buffer << line << "\n";
+                }
+            }
+            inFile.close();
+            std::ofstream outFile(filename, std::ios::trunc);
+            outFile << buffer.str();
+            outFile.close();
+
+            return true;
+        }
+    }
+
+
 
     // Version display
     if ((GetAsyncKeyState(VK_CONTROL) & 0x8000) &&
