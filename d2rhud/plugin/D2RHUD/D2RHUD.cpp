@@ -40,7 +40,7 @@
 std::string configFilePath = "config.json";
 std::string filename = "../Launcher/D2RLAN_Config.txt";
 std::string lootFile = "../D2R/lootfilter.lua";
-std::string Version = "1.2.1";
+std::string Version = "1.2.2";
 
 using json = nlohmann::json;
 static MonsterStatsDisplaySettings cachedSettings;
@@ -1085,7 +1085,6 @@ struct DifficultySettings {
     std::optional<int> boost_level;
     std::optional<int> difficulty_scale;
     std::optional<int> boost_experience_percent;
-    std::vector<std::pair<int, int>> stat_adjustments;
 };
 
 struct WarningInfo {
@@ -1103,42 +1102,7 @@ struct LevelGroup {
     std::vector<int> levels;
 };
 
-struct ZoneLevel {
-    std::optional<int> level_id;
-    bool allLevels = false;
 
-    // Optional per-difficulty overrides
-    std::optional<DifficultySettings> normal;
-    std::optional<DifficultySettings> nightmare;
-    std::optional<DifficultySettings> hell;
-};
-
-struct ZoneGroup {
-    int id = 0;
-    std::vector<ZoneLevel> levels;
-};
-
-struct DesecratedZone {
-    std::time_t start_time_utc = 0;
-    std::time_t end_time_utc = 0;
-    int terror_duration_min = 0;
-    int terror_break_min = 0;
-    DifficultySettings default_normal;
-    DifficultySettings default_nightmare;
-    DifficultySettings default_hell;
-    std::vector<WarningInfo> warnings;
-    std::vector<ZoneGroup> zones;
-};
-
-struct TerrorZoneDisplayData
-{
-    int cycleLengthMin = 0;
-    int terrorDurationMin = 0;
-    int groupCount = 0;
-    int activeGroupIndex = -1;
-    time_t zoneStartUtc = 0;
-    std::vector<ZoneLevel> activeLevels;
-};
 
 struct Stat {
     D2C_ItemStats id;
@@ -1191,6 +1155,44 @@ struct StatAdjustment
 struct StatNameEntry {
     int id;
     std::string name;
+};
+
+struct ZoneLevel {
+    std::optional<int> level_id;
+    bool allLevels = false;
+
+    // Optional per-difficulty overrides
+    std::optional<DifficultySettings> normal;
+    std::optional<DifficultySettings> nightmare;
+    std::optional<DifficultySettings> hell;
+    std::vector<StatAdjustment> stat_adjustments;
+};
+
+struct ZoneGroup {
+    int id = 0;
+    std::vector<ZoneLevel> levels;
+};
+
+struct DesecratedZone {
+    std::time_t start_time_utc = 0;
+    std::time_t end_time_utc = 0;
+    int terror_duration_min = 0;
+    int terror_break_min = 0;
+    DifficultySettings default_normal;
+    DifficultySettings default_nightmare;
+    DifficultySettings default_hell;
+    std::vector<WarningInfo> warnings;
+    std::vector<ZoneGroup> zones;
+};
+
+struct TerrorZoneDisplayData
+{
+    int cycleLengthMin = 0;
+    int terrorDurationMin = 0;
+    int groupCount = 0;
+    int activeGroupIndex = -1;
+    time_t zoneStartUtc = 0;
+    std::vector<ZoneLevel> activeLevels;
 };
 
 struct MonsterTreasureResult {
@@ -1725,16 +1727,6 @@ void from_json(const json& j, DifficultySettings& d) {
 
     if (j.contains("boost_experience_percent"))
         d.boost_experience_percent = j.at("boost_experience_percent").get<int>();
-
-    //Unused for now
-    if (j.contains("stat_adjustments")) {
-        d.stat_adjustments.clear();
-        for (const auto& item : j.at("stat_adjustments")) {
-            if (item.is_array() && item.size() == 2) {
-                d.stat_adjustments.emplace_back(item[0].get<int>(), item[1].get<int>());
-            }
-        }
-    }
 }
 
 void from_json(const json& j, WarningInfo& w) {
@@ -1742,41 +1734,9 @@ void from_json(const json& j, WarningInfo& w) {
     w.tier = j.at("tier").get<int>();
 }
 
-void from_json(const json& j, ZoneLevel& zl) {
-    if (j.contains("all") && j.at("all").get<bool>() == true) {
-        zl.allLevels = true;
-        zl.level_id.reset();  // clear any level_id
-    }
-    else if (j.contains("level_id")) {
-        zl.level_id = j.at("level_id").get<int>();
-    }
-    else {
-        throw std::runtime_error("ZoneLevel must have either 'level_id' or 'all: true'");
-    }
 
-    // Optional per-difficulty overrides
-    if (j.contains("normal")) zl.normal = j.at("normal").get<DifficultySettings>();
-    if (j.contains("nightmare")) zl.nightmare = j.at("nightmare").get<DifficultySettings>();
-    if (j.contains("hell")) zl.hell = j.at("hell").get<DifficultySettings>();
-}
 
-void from_json(const json& j, ZoneGroup& zg) {
-    zg.id = j.at("id").get<int>();
-    zg.levels = j.at("levels").get<std::vector<ZoneLevel>>();
-}
 
-void from_json(const json& j, DesecratedZone& dz) {
-    dz.start_time_utc = parse_time_utc(j.at("start_time_utc").get<std::string>());
-    dz.end_time_utc = parse_time_utc(j.at("end_time_utc").get<std::string>());
-    dz.terror_duration_min = j.at("terror_duration_min").get<int>();
-    dz.terror_break_min = j.at("terror_break_min").get<int>();
-    dz.default_normal = j.at("default_normal").get<DifficultySettings>();
-    dz.default_nightmare = j.at("default_nightmare").get<DifficultySettings>();
-    dz.default_hell = j.at("default_hell").get<DifficultySettings>();
-    dz.warnings = j.at("warnings").get<std::vector<WarningInfo>>();
-    dz.zones = j.at("zones").get<std::vector<ZoneGroup>>();
-
-}
 
 void from_json(const nlohmann::json& j, LevelName& ln) {
     j.at("id").get_to(ln.id);
@@ -1826,6 +1786,49 @@ void from_json(const nlohmann::json& j, StatNamesConfig& config) {
     if (j.contains("stat_names") && j["stat_names"].is_array()) {
         config.stat_names = j.at("stat_names").get<std::vector<StatNameEntry>>();
     }
+}
+
+void from_json(const json& j, ZoneLevel& zl) {
+    if (j.contains("all") && j.at("all").get<bool>() == true) {
+        zl.allLevels = true;
+        zl.level_id.reset();  // clear any level_id
+    }
+    else if (j.contains("level_id")) {
+        zl.level_id = j.at("level_id").get<int>();
+    }
+    else {
+        throw std::runtime_error("ZoneLevel must have either 'level_id' or 'all: true'");
+    }
+
+    // Optional per-difficulty overrides
+    if (j.contains("normal")) zl.normal = j.at("normal").get<DifficultySettings>();
+    if (j.contains("nightmare")) zl.nightmare = j.at("nightmare").get<DifficultySettings>();
+    if (j.contains("hell")) zl.hell = j.at("hell").get<DifficultySettings>();
+
+    if (j.contains("stat_adjustments") && j["stat_adjustments"].is_array()) {
+        zl.stat_adjustments = j.at("stat_adjustments").get<std::vector<StatAdjustment>>();
+    }
+    else {
+        zl.stat_adjustments.clear();
+    }
+}
+
+void from_json(const json& j, ZoneGroup& zg) {
+    zg.id = j.at("id").get<int>();
+    zg.levels = j.at("levels").get<std::vector<ZoneLevel>>();
+}
+
+void from_json(const json& j, DesecratedZone& dz) {
+    dz.start_time_utc = parse_time_utc(j.at("start_time_utc").get<std::string>());
+    dz.end_time_utc = parse_time_utc(j.at("end_time_utc").get<std::string>());
+    dz.terror_duration_min = j.at("terror_duration_min").get<int>();
+    dz.terror_break_min = j.at("terror_break_min").get<int>();
+    dz.default_normal = j.at("default_normal").get<DifficultySettings>();
+    dz.default_nightmare = j.at("default_nightmare").get<DifficultySettings>();
+    dz.default_hell = j.at("default_hell").get<DifficultySettings>();
+    dz.warnings = j.at("warnings").get<std::vector<WarningInfo>>();
+    dz.zones = j.at("zones").get<std::vector<ZoneGroup>>();
+
 }
 
 std::string StripComments(const std::string& jsonWithComments) {
@@ -1892,44 +1895,62 @@ void InitRandomStatsForAllMonsters(bool forceNew = false) {
     if (!initialized || forceNew) {
         gRandomStatsForMonsters.clear();
 
-        for (const auto& adjustment : gStatAdjustments) {
-            std::vector<const StatValue*> statsToApply;
+        // Helper lambda to process a vector of StatAdjustments
+        auto processAdjustments = [&](const std::vector<StatAdjustment>& adjustments) {
+            for (const auto& adjustment : adjustments) {
+                std::vector<const StatValue*> statsToApply;
 
-            if (adjustment.random) {
-                std::uniform_int_distribution<size_t> countDist(1, adjustment.stats_values.size());
-                size_t numStats = countDist(rng);
+                if (adjustment.random) {
+                    std::uniform_int_distribution<size_t> countDist(1, adjustment.stats_values.size());
+                    size_t numStats = countDist(rng);
 
-                std::vector<const StatValue*> shuffled;
-                for (const auto& sv : adjustment.stats_values)
-                    shuffled.push_back(&sv);
-                std::shuffle(shuffled.begin(), shuffled.end(), rng);
+                    std::vector<const StatValue*> shuffled;
+                    for (const auto& sv : adjustment.stats_values)
+                        shuffled.push_back(&sv);
+                    std::shuffle(shuffled.begin(), shuffled.end(), rng);
 
-                statsToApply.assign(shuffled.begin(), shuffled.begin() + numStats);
-            }
-            else {
-                for (const auto& sv : adjustment.stats_values)
-                    statsToApply.push_back(&sv);
-            }
+                    statsToApply.assign(shuffled.begin(), shuffled.begin() + numStats);
+                }
+                else {
+                    for (const auto& sv : adjustment.stats_values)
+                        statsToApply.push_back(&sv);
+                }
 
-            for (const auto* statVal : statsToApply) {
-                int appliedValue = 0;
+                for (const auto* statVal : statsToApply) {
+                    int appliedValue = 0;
 
-                if (!statVal->value.empty()) {
-                    if (statVal->value.size() == 1) {
-                        appliedValue = statVal->value[0];
+                    if (!statVal->value.empty()) {
+                        if (statVal->value.size() == 1) {
+                            appliedValue = statVal->value[0];
+                        }
+                        else {
+                            int minVal = *std::min_element(statVal->value.begin(), statVal->value.end());
+                            int maxVal = *std::max_element(statVal->value.begin(), statVal->value.end());
+                            std::uniform_int_distribution<int> valueDist(minVal, maxVal);
+
+                            do {
+                                appliedValue = valueDist(rng);
+                            } while (appliedValue == 0);
+                        }
                     }
-                    else {
-                        int minVal = *std::min_element(statVal->value.begin(), statVal->value.end());
-                        int maxVal = *std::max_element(statVal->value.begin(), statVal->value.end());
-                        std::uniform_int_distribution<int> valueDist(minVal, maxVal);
 
-                        do {
-                            appliedValue = valueDist(rng);
-                        } while (appliedValue == 0);
+                    if (appliedValue != 0) {
+                        gRandomStatsForMonsters[statVal->stat] = appliedValue;
                     }
                 }
-                if (appliedValue != 0) {
-                    gRandomStatsForMonsters[statVal->stat] = appliedValue;
+            }
+            };
+
+        // 1️⃣ Apply global stat adjustments
+        processAdjustments(gStatAdjustments);
+
+        // 2️⃣ Apply per-level stat adjustments for all zones
+        for (const auto& dz : gDesecratedZones) {
+            for (const auto& zg : dz.zones) {
+                for (const auto& lvl : zg.levels) {
+                    if (!lvl.stat_adjustments.empty()) {
+                        processAdjustments(lvl.stat_adjustments);
+                    }
                 }
             }
         }
@@ -1937,6 +1958,7 @@ void InitRandomStatsForAllMonsters(bool forceNew = false) {
         initialized = true;
     }
 }
+
 
 bool LoadDesecratedZones(const std::string& filename) {
     std::ifstream file(filename);
@@ -1996,7 +2018,6 @@ bool LoadDesecratedZones(const std::string& filename) {
         else {
             gStatNames.clear();
         }
-
     }
     catch (const std::exception& e) {
         MessageBoxA(nullptr, ("JSON field parse error: " + std::string(e.what())).c_str(), "Error", MB_ICONERROR);
@@ -2008,30 +2029,7 @@ bool LoadDesecratedZones(const std::string& filename) {
         MessageBoxA(nullptr, "Failed to create log file.", "Error", MB_ICONERROR);
         return true;
     }
-    /*
-    for (size_t i = 0; i < gDesecratedZones.size(); ++i) {
-        const auto& zone = gDesecratedZones[i];
 
-        log << "Zone " << i << ":\n";
-        log << "Start Time: " << zone.start_time_utc << "\n";
-        log << "End Time: " << zone.end_time_utc << "\n";
-
-        const auto logDifficulty = [&](const std::string& label, const DifficultySettings& diff) {
-            log << "  " << label << ":\n";
-            log << "    bound_incl_min: " << diff.bound_incl_min << "\n";
-            log << "    bound_incl_max: " << diff.bound_incl_max << "\n";
-            log << "    boost_level: " << diff.boost_level << "\n";
-            log << "    difficulty_scale: " << diff.difficulty_scale << "\n";
-            log << "    boost_experience_percent: " << diff.boost_experience_percent << "\n";
-            };
-
-        logDifficulty("Normal", zone.default_normal);
-        logDifficulty("Nightmare", zone.default_nightmare);
-        logDifficulty("Hell", zone.default_hell);
-
-        log << "\n";
-    }
-    */
 
     return true;
 }
@@ -2486,7 +2484,7 @@ void SetStat(D2UnitStrc* pUnit, D2C_ItemStats nStatId, uint32_t nValue) {
 
 void AddToCurrentStat(D2UnitStrc* pUnit, D2C_ItemStats nStatId, uint32_t nValue) {
     int currentValue = STATLIST_GetUnitStatSigned(pUnit, nStatId, 0);
-    STATLISTEX_SetStatListExStat(pUnit->pStatListEx, nStatId, currentValue + nValue, 1338);
+    STATLISTEX_SetStatListExStat(pUnit->pStatListEx, nStatId, currentValue + nValue, 0);
 }
 
 int GetLevelIdFromRoom(D2ActiveRoomStrc* pRoom)
@@ -2555,27 +2553,6 @@ void __fastcall ApplyGhettoSunder(D2GameStrc* pGame, D2ActiveRoomStrc* pRoom, D2
         SubtractResistances(pUnit, STAT_DAMAGERESIST, maxDamageResist);
     if (maxMagicResist > INT_MIN)
         SubtractResistances(pUnit, STAT_MAGICRESIST, maxMagicResist);
-}
-
-void __fastcall ApplyStatAdjustments(D2GameStrc* pGame, D2ActiveRoomStrc* pRoom, D2UnitStrc* pUnit, int64_t* pMonRegData, D2MonStatsInitStrc* monStatsInit, const DifficultySettings& settings)
-{
-    if (!pGame)
-        return;
-
-    for (int i = 0; i < 8; ++i) {
-        auto pClient = gpClientList[i];
-        if (!pClient)
-            continue;
-
-        uint32_t unitGUID = pClient->dwUnitGUID;
-        D2UnitStrc* pPlayerUnit = UNITS_GetServerUnitByTypeAndId(pGame, UNIT_PLAYER, unitGUID);
-        if (!pPlayerUnit)
-            continue;
-
-        for (const auto& [statID, value] : settings.stat_adjustments) {
-            SetStat(pPlayerUnit, static_cast<D2C_ItemStats>(statID), value);
-        }
-    }
 }
 
 void ApplyStatsToMonster(D2UnitStrc* pUnit)
@@ -2746,7 +2723,7 @@ void __fastcall ApplyGhettoTerrorZone(D2GameStrc* pGame, D2ActiveRoomStrc* pRoom
 }
 
 void __fastcall HookedMONSTER_InitializeStatsAndSkills(D2GameStrc* pGame, D2ActiveRoomStrc* pRoom, D2UnitStrc* pUnit, int64_t* pMonRegData) {
-    oMONSTER_InitializeStatsAndSkills(pGame, pRoom, pUnit, pMonRegData);
+oMONSTER_InitializeStatsAndSkills(pGame, pRoom, pUnit, pMonRegData);
 
     if (!pUnit || pUnit->dwUnitType != UNIT_MONSTER || !pUnit->pMonsterData || !pUnit->pMonsterData->pMonstatsTxt) {
         return;

@@ -181,7 +181,8 @@ public:
 	uint8_t nComponent[16]; //0x0008
 	char pad_0018[2]; //0x0018
 	uint8_t nTypeFlag; //0x001A
-	char pad_001B[15]; //0x001B
+	char pad_001B[5]; //0x001B
+	uint8_t nMonUmod[10];
 	uint16_t wBossHcIdx; //0x002A
 	char pad_002C[100]; //0x002C
 }; //Size: 0x0090
