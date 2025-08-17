@@ -1132,6 +1132,7 @@ struct MonsterTreasureClass
 struct MonsterTreasureClassSU
 {
     std::string MonsterName;
+    std::string BaseMonster;
     std::string TCChecker1;
     std::string Desecrated;
     std::string TCChecker2;
@@ -1330,6 +1331,8 @@ MonsterTreasureResult GetMonsterTreasureSU(const std::vector<MonsterTreasureClas
         return result;
     }
 
+    LogDebug(std::format("GetMonsterTreasureSU called with: rowIndex={}", rowIndex));
+
     const auto& m = monsters[rowIndex];
     std::string treasureClassValue;
     std::string tcCheck;
@@ -1363,6 +1366,9 @@ MonsterTreasureResult GetMonsterTreasureSU(const std::vector<MonsterTreasureClas
             break;
         }
     }
+
+    LogDebug(std::format("SU TC: {}, SU TC for TZ: {}", tcCheck, treasureClassValue));
+    LogDebug(std::format("SUbaseTCIndex: {}, SUterrorTCIndex: {}", result.tcCheckIndex, result.treasureIndex));
 
     return result;
 }
@@ -1475,8 +1481,12 @@ std::vector<MonsterTreasureClassSU> ReadMonsterTreasureFileSU(const std::string&
     std::string line;
     bool isHeader = true;
     int idxMonsterName = -1;
+    int idxBaseMonster = -1;
+    int idxTCChecker1 = -1;
     int idxDesecrated = -1;
+    int idxTCChecker2 = -1;
     int idxDesecrated_N = -1;
+    int idxTCChecker3 = -1;
     int idxDesecrated_H = -1;
 
     while (std::getline(file, line))
@@ -1493,8 +1503,12 @@ std::vector<MonsterTreasureClassSU> ReadMonsterTreasureFileSU(const std::string&
             for (size_t i = 0; i < cols.size(); ++i)
             {
                 if (cols[i] == "Superunique") idxMonsterName = static_cast<int>(i);
+                else if (cols[i] == "Class") idxBaseMonster = static_cast<int>(i);
+                else if (cols[i] == "TC") idxTCChecker1 = static_cast<int>(i);
                 else if (cols[i] == "TC Desecrated") idxDesecrated = static_cast<int>(i);
+                else if (cols[i] == "TC(N)") idxTCChecker2 = static_cast<int>(i);
                 else if (cols[i] == "TC(N) Desecrated") idxDesecrated_N = static_cast<int>(i);
+                else if (cols[i] == "TC(H)") idxTCChecker3 = static_cast<int>(i);
                 else if (cols[i] == "TC(H) Desecrated") idxDesecrated_H = static_cast<int>(i);
             }
 
@@ -1506,10 +1520,18 @@ std::vector<MonsterTreasureClassSU> ReadMonsterTreasureFileSU(const std::string&
 
         if (idxMonsterName >= 0 && idxMonsterName < (int)cols.size())
             entry.MonsterName = cols[idxMonsterName];
+        if (idxBaseMonster >= 0 && idxBaseMonster < (int)cols.size())
+            entry.BaseMonster = cols[idxBaseMonster];
+        if (idxTCChecker1 >= 0 && idxTCChecker1 < (int)cols.size())
+            entry.TCChecker1 = cols[idxTCChecker1];
         if (idxDesecrated >= 0 && idxDesecrated < (int)cols.size())
             entry.Desecrated = cols[idxDesecrated];
+        if (idxTCChecker2 >= 0 && idxTCChecker2 < (int)cols.size())
+            entry.TCChecker2 = cols[idxTCChecker2];
         if (idxDesecrated_N >= 0 && idxDesecrated_N < (int)cols.size())
             entry.Desecrated_N = cols[idxDesecrated_N];
+        if (idxTCChecker3 >= 0 && idxTCChecker3 < (int)cols.size())
+            entry.TCChecker3 = cols[idxTCChecker3];
         if (idxDesecrated_H >= 0 && idxDesecrated_H < (int)cols.size())
             entry.Desecrated_H = cols[idxDesecrated_H];
 
@@ -1604,7 +1626,7 @@ void __fastcall ForceTCDrops(D2GameStrc* pGame, D2UnitStrc* pMonster, D2UnitStrc
 
     int unknownOffset = nTCId - tcCheckRegular;
 
-    LogDebug(std::format("nTCId: {}, indexRegular: {}, unknownOffset: {}", nTCId, indexRegular, unknownOffset));
+    LogDebug(std::format("nTCId: {}, indexRegular: {}, unknownOffset: {}, indexSuperUnique: {},", nTCId, indexRegular, unknownOffset, indexSuperUnique));
 
     //Force Boss Drops
     if (pMonStatsTxtRecord->nId == 156 || pMonStatsTxtRecord->nId == 211 ||
@@ -1619,7 +1641,7 @@ void __fastcall ForceTCDrops(D2GameStrc* pGame, D2UnitStrc* pMonster, D2UnitStrc
     {
         //MessageBoxA(nullptr, "Flag-based branch", "Debug", MB_OK);
         if (pMonsterFlag & MONTYPEFLAG_SUPERUNIQUE)
-            nTCId = indexSuperUnique + unknownOffset;
+            nTCId = indexSuperUnique + (nTCId - indexSuperUnique);
         else if (pMonsterFlag & (MONTYPEFLAG_CHAMPION | MONTYPEFLAG_POSSESSED | MONTYPEFLAG_GHOSTLY))
             nTCId = indexChamp + unknownOffset;
         else if (pMonsterFlag & (MONTYPEFLAG_UNIQUE | MONTYPEFLAG_MINION))
