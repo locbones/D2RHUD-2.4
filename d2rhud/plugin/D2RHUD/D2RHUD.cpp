@@ -2160,9 +2160,10 @@ void UpdateActiveZoneInfoText(time_t currentUtc)
     g_ActiveZoneInfoText.clear();
     g_TerrorZoneData.activeLevels.clear();
 
+    std::stringstream ss;
+
     for (const auto& zone : gDesecratedZones)
     {
-        // Skip zones not active
         if (currentUtc < zone.start_time_utc || currentUtc > zone.end_time_utc)
             continue;
 
@@ -2197,7 +2198,6 @@ void UpdateActiveZoneInfoText(time_t currentUtc)
         g_TerrorZoneData.activeGroupIndex = activeGroupIndex;
         g_TerrorZoneData.zoneStartUtc = zone.start_time_utc;
 
-        // Check if any level in the active group has allLevels = true
         bool hasAllLevels = false;
         for (const auto& zl : activeGroup.levels)
         {
@@ -2210,8 +2210,8 @@ void UpdateActiveZoneInfoText(time_t currentUtc)
 
         if (hasAllLevels)
         {
-            g_ActiveZoneInfoText = "All Levels have been Terrorized!\n";
-            break;
+            ss << "All Levels have been Terrorized!\n";
+            continue; // don't break, continue to next zone
         }
 
         // Build set of active level IDs
@@ -2247,18 +2247,21 @@ void UpdateActiveZoneInfoText(time_t currentUtc)
             groupFullyPresent[gi] = allPresent;
         }
 
-        std::stringstream ss;
+        // Keep track of levels already printed via a fully present group
+        std::unordered_set<int> printedLevelIds;
 
         // Print fully present groups first
         for (size_t gi = 0; gi < level_groups.size(); ++gi)
         {
-            if (!groupFullyPresent[gi])
-                continue;
-
-            ss << level_groups[gi].name << "\n";
+            if (groupFullyPresent[gi])
+            {
+                ss << level_groups[gi].name << "\n";
+                // mark all levels in this group as printed
+                for (int lvlId : level_groups[gi].levels)
+                    printedLevelIds.insert(lvlId);
+            }
         }
 
-        
         // Print individual levels not part of fully present groups
         for (const auto& zl : activeGroup.levels)
         {
@@ -2269,13 +2272,8 @@ void UpdateActiveZoneInfoText(time_t currentUtc)
 
             int lvlId = zl.level_id.value();
 
-            auto git = levelToGroupIndex.find(lvlId);
-            if (git != levelToGroupIndex.end())
-            {
-                int gi = git->second;
-                if (groupFullyPresent[gi])
-                    continue;
-            }
+            if (printedLevelIds.find(lvlId) != printedLevelIds.end())
+                continue; // already printed via a fully present group
 
             auto it = std::find_if(level_names.begin(), level_names.end(),
                 [&](const LevelName& ln) { return ln.id == lvlId; });
@@ -2286,10 +2284,11 @@ void UpdateActiveZoneInfoText(time_t currentUtc)
                 ss << "(Unknown Level ID: " << lvlId << ")\n";
         }
 
-        g_ActiveZoneInfoText = ss.str();
-        break;
     }
+
+    g_ActiveZoneInfoText = ss.str();
 }
+
 
 namespace {
     static double gLastManualToggleTime = 0;
@@ -2297,13 +2296,17 @@ namespace {
 
 static void ToggleManualZoneGroupInternal(bool forward)
 {
+    std::string path = std::format("{0}/Mods/{1}/{1}.mpq/data/hd/global/excel/desecratedzones.json", GetExecutableDir(), GetModName());
+    LoadDesecratedZones(path);
     double now = static_cast<double>(std::time(nullptr));
+
     if ((now - gLastManualToggleTime) <= 0.3)
         return;
 
     gLastManualToggleTime = now;
     int maxGroups = 0;
 
+    // Find the first active zone with groups
     for (const auto& zone : gDesecratedZones)
     {
         if (now < zone.start_time_utc || now > zone.end_time_utc)
@@ -2314,26 +2317,24 @@ static void ToggleManualZoneGroupInternal(bool forward)
     }
 
     if (maxGroups == 0)
-        g_ManualZoneGroupOverride = -1;
-    else if (forward)
-    {
-        if (g_ManualZoneGroupOverride == -1)
-            g_ManualZoneGroupOverride = 1;
-        else
-            ++g_ManualZoneGroupOverride;
+        return; // no active groups
 
-        if (g_ManualZoneGroupOverride >= maxGroups)
-            g_ManualZoneGroupOverride = -1;
-    }
+    if (g_ManualZoneGroupOverride == -1)
+        g_ManualZoneGroupOverride = forward ? 0 : maxGroups - 1;
     else
     {
-        if (g_ManualZoneGroupOverride == -1)
-            g_ManualZoneGroupOverride = maxGroups - 1;
+        if (forward)
+        {
+            g_ManualZoneGroupOverride++;
+            if (g_ManualZoneGroupOverride >= maxGroups)
+                g_ManualZoneGroupOverride = 0; // wrap to first
+        }
         else
-            --g_ManualZoneGroupOverride;
-
-        if (g_ManualZoneGroupOverride < -1)
-            g_ManualZoneGroupOverride = maxGroups - 1;
+        {
+            g_ManualZoneGroupOverride--;
+            if (g_ManualZoneGroupOverride < 0)
+                g_ManualZoneGroupOverride = maxGroups - 1; // wrap to last
+        }
     }
 
     InitRandomStatsForAllMonsters(true);
@@ -2348,62 +2349,6 @@ void CheckToggleForward()
 void CheckToggleBackward()
 {
     ToggleManualZoneGroupInternal(false);
-}
-
-void CheckToggleManualZoneGroup()
-{
-    bool ctrlPressed = (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0;
-    bool plusPressed = (GetAsyncKeyState(VK_ADD) & 0x8000) != 0;
-    bool minusPressed = (GetAsyncKeyState(VK_SUBTRACT) & 0x8000) != 0;
-
-    static double lastToggleTime = 0;
-    double now = static_cast<double>(std::time(nullptr));
-
-    if (ctrlPressed && (plusPressed || minusPressed) && (now - lastToggleTime) > 0.3)
-    {
-        lastToggleTime = now;
-
-        // Find max groups available in the current active zone
-        int maxGroups = 0;
-        for (const auto& zone : gDesecratedZones)
-        {
-            if (now < zone.start_time_utc || now > zone.end_time_utc)
-                continue;
-
-            maxGroups = static_cast<int>(zone.zones.size());
-            break;
-        }
-
-        if (maxGroups == 0)
-        {
-            g_ManualZoneGroupOverride = -1;
-        }
-        else
-        {
-            if (plusPressed)
-            {
-                if (g_ManualZoneGroupOverride == -1)
-                    g_ManualZoneGroupOverride = 1;
-                else
-                    g_ManualZoneGroupOverride++;
-
-                if (g_ManualZoneGroupOverride >= maxGroups)
-                    g_ManualZoneGroupOverride = -1;
-            }
-            else if (minusPressed)
-            {
-                if (g_ManualZoneGroupOverride == -1)
-                    g_ManualZoneGroupOverride = maxGroups - 1;
-                else
-                    g_ManualZoneGroupOverride--;
-
-                if (g_ManualZoneGroupOverride < -1)
-                    g_ManualZoneGroupOverride = maxGroups - 1;
-            }
-        }
-        InitRandomStatsForAllMonsters(true);
-        UpdateActiveZoneInfoText(static_cast<time_t>(now));
-    }
 }
 
 static char gTZInfoText[256] = { 0 };
@@ -2957,7 +2902,7 @@ void D2RHUD::OnDraw() {
         itemFilter->Install(cachedSettings);
     }
 
-    if (!oHUDWarnings__PopulateHUDWarnings) {
+    if (!oHUDWarnings__PopulateHUDWarnings && GetClientStatus() == 1) {
         DetourTransactionBegin();
         DetourUpdateThread(GetCurrentThread());
         oHUDWarnings__PopulateHUDWarnings = reinterpret_cast<HUDWarnings__PopulateHUDWarnings_t>(Pattern::Address(0xbb2a90));
