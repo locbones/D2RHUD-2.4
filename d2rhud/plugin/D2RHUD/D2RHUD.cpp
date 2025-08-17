@@ -1596,11 +1596,15 @@ void __fastcall ForceTCDrops(D2GameStrc* pGame, D2UnitStrc* pMonster, D2UnitStrc
         return;
     }
 
+    int adjustedSID = 0;
+    if (nSuperUniqueId >= 42)
+        adjustedSID = nSuperUniqueId + 1;
+
     const std::vector<std::string> TCEx = ReadTCexFile(TCEXFile);
     MonsterTreasureResult regResult = GetMonsterTreasure(monsters, pMonStatsTxtRecord->nId, difficulty, 0, TCEx);
     MonsterTreasureResult champResult = GetMonsterTreasure(monsters, pMonStatsTxtRecord->nId, difficulty, 1, TCEx);
     MonsterTreasureResult uniqResult = GetMonsterTreasure(monsters, pMonStatsTxtRecord->nId, difficulty, 2, TCEx);
-    MonsterTreasureResult superuniqResult = GetMonsterTreasureSU(superuniques, nSuperUniqueId, difficulty, TCEx);
+    MonsterTreasureResult superuniqResult = GetMonsterTreasureSU(superuniques, adjustedSID, difficulty, TCEx);
 
     //Base TC
     int tcCheckRegular = regResult.tcCheckIndex;
@@ -1626,7 +1630,7 @@ void __fastcall ForceTCDrops(D2GameStrc* pGame, D2UnitStrc* pMonster, D2UnitStrc
 
     int unknownOffset = nTCId - tcCheckRegular;
 
-    LogDebug(std::format("nTCId: {}, indexRegular: {}, unknownOffset: {}, indexSuperUnique: {},", nTCId, indexRegular, unknownOffset, indexSuperUnique));
+    LogDebug(std::format("nTCId: {}, indexRegular: {}, unknownOffset: {},  indexUnique: {}, indexSuperUnique: {},", nTCId, indexRegular, unknownOffset, indexUnique, indexSuperUnique));
 
     //Force Boss Drops
     if (pMonStatsTxtRecord->nId == 156 || pMonStatsTxtRecord->nId == 211 ||
