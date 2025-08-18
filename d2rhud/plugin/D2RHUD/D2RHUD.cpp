@@ -1674,15 +1674,21 @@ void __fastcall ForceTCDrops(D2GameStrc* pGame, D2UnitStrc* pMonster, D2UnitStrc
     }
 
     int adjustedSID = 0;
+    int adjustedNID = 0;
     if (nSuperUniqueId >= 42)
         adjustedSID = nSuperUniqueId + 1;
+    else
+        adjustedSID = nSuperUniqueId;
+
     if (pMonStatsTxtRecord->nId >= 410)
-        pMonStatsTxtRecord->nId + 1;
+        adjustedNID = pMonStatsTxtRecord->nId + 1;
+    else
+        adjustedNID = pMonStatsTxtRecord->nId;
 
     const std::vector<std::string> TCEx = ReadTCexFile(TCEXFile);
-    MonsterTreasureResult regResult = GetMonsterTreasure(monsters, pMonStatsTxtRecord->nId, difficulty, 0, TCEx);
-    MonsterTreasureResult champResult = GetMonsterTreasure(monsters, pMonStatsTxtRecord->nId, difficulty, 1, TCEx);
-    MonsterTreasureResult uniqResult = GetMonsterTreasure(monsters, pMonStatsTxtRecord->nId, difficulty, 2, TCEx);
+    MonsterTreasureResult regResult = GetMonsterTreasure(monsters, adjustedNID, difficulty, 0, TCEx);
+    MonsterTreasureResult champResult = GetMonsterTreasure(monsters, adjustedNID, difficulty, 1, TCEx);
+    MonsterTreasureResult uniqResult = GetMonsterTreasure(monsters, adjustedNID, difficulty, 2, TCEx);
     MonsterTreasureResult superuniqResult = GetMonsterTreasureSU(superuniques, adjustedSID, difficulty, TCEx);
 
     //Base TC
