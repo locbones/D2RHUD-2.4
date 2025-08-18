@@ -36,6 +36,7 @@ void PluginManager::WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             }
         }
         break;
+
     case WM_KEYUP:
         if (wParam == VK_DELETE) {
             m_ShowSettings = !m_ShowSettings;
@@ -44,8 +45,38 @@ void PluginManager::WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             plugin->OnKeyReleased(wParam);
         }
         break;
+
+        // --- Add mouse button events ---
+    case WM_LBUTTONDOWN:
+        for (auto& plugin : m_Plugins) {
+            if (plugin->OnKeyPressed(VK_LBUTTON)) break;
+        }
+        break;
+
+    case WM_RBUTTONDOWN:
+        for (auto& plugin : m_Plugins) {
+            if (plugin->OnKeyPressed(VK_RBUTTON)) break;
+        }
+        break;
+
+    case WM_MBUTTONDOWN:
+        for (auto& plugin : m_Plugins) {
+            if (plugin->OnKeyPressed(VK_MBUTTON)) break;
+        }
+        break;
+
+    case WM_XBUTTONDOWN:
+    {
+        short xBtn = HIWORD(wParam) == XBUTTON1 ? VK_XBUTTON1 : VK_XBUTTON2;
+        for (auto& plugin : m_Plugins) {
+            if (plugin->OnKeyPressed(xBtn)) break;
+        }
+        break;
+    }
+
     default:
         break;
     }
 }
+
 

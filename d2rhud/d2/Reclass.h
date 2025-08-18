@@ -159,7 +159,8 @@ public:
 	uint32_t dwItemFlags; //0x0018
 	char pad_001C[24]; //0x001C
 	int32_t dwFileIndex; //0x0034
-	char pad_0038[10]; //0x0038
+	uint32_t dwItemLevel;
+	char pad_0038[6]; //0x0038
 	uint16_t wRarePrefix; //0x0042
 	uint16_t wRareSuffix; //0x0044
 	char pad_0046[2]; //0x0046
