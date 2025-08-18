@@ -40,7 +40,7 @@
 std::string configFilePath = "config.json";
 std::string filename = "../Launcher/D2RLAN_Config.txt";
 std::string lootFile = "../D2R/lootfilter.lua";
-std::string Version = "1.2.4";
+std::string Version = "1.2.5";
 
 using json = nlohmann::json;
 static MonsterStatsDisplaySettings cachedSettings;
@@ -862,7 +862,6 @@ MonsterStatsDisplaySettings getMonsterStatsDisplaySetting(const std::string& con
     cachedSettings.channelColor = settings["Channel Color"];
     cachedSettings.playerNameColor = settings["Player Name Color"];
     cachedSettings.messageColor = settings["Message Color"];
-    cachedSettings.socketDisplay = settings["SocketDisplay"] == "true";
     cachedSettings.HPRollover = settings["HPRolloverMods"] == "true";
 
     try {
@@ -874,6 +873,7 @@ MonsterStatsDisplaySettings getMonsterStatsDisplaySetting(const std::string& con
         cachedSettings.HPRolloverAmt = 0;
         cachedSettings.HPRolloverDiff = 0;
     }
+    cachedSettings.sunderedMonUMods = settings["SunderedMonUMods"] == "true";
 
     isCached = true;
     return cachedSettings;
@@ -1232,20 +1232,93 @@ static std::vector<std::pair<D2C_ItemStats, int>> g_randomStats;
 std::unordered_map<D2C_ItemStats, int> gRandomStatsForMonsters;
 bool showStatAdjusts = true;
 
+// UMod Offsets
+constexpr uint32_t umod8a_Offsets[] = { 0x2FC7E4, 0x2FC8AD }; // Fire
+constexpr uint32_t umod8b_Offsets[] = { 0x2FC968, 0xAF13F }; // Cold
+constexpr uint32_t umod8c_Offsets[] = { 0xAF20B, 0xAF2CF }; // Light
+constexpr uint32_t umod9_Offsets[] = { 0x2FC9EB, 0xAF35C }; // Fire
+constexpr uint32_t umod17_Offsets[] = { 0x2FCADD, 0xAF479 }; // Lightning
+constexpr uint32_t umod18_Offsets[] = { 0x2FCA64, 0xAF3E9 }; // Cold
+constexpr uint32_t umod23_Offsets[] = { 0x2FCB56, 0xAF495 }; // Poison
+constexpr uint32_t umod25_Offsets[] = { 0x2FCBCF, 0xAF522 }; // Magic
+constexpr uint32_t umod27a_Offsets[] = { 0x2FCC56, 0x2FCD22 }; // Fire
+constexpr uint32_t umod27b_Offsets[] = { 0x2FCDDC, 0xAF5B9 }; // Cold
+constexpr uint32_t umod27c_Offsets[] = { 0xAF698, 0xAF75C }; // Light
+constexpr uint32_t umod28_Offsets[] = { 0x2FCDEE, 0xAF778 }; // Physical
+
+void ApplyUModArray(const uint32_t* offsets, size_t count, uint32_t remainder)
+{
+    for (size_t i = 0; i < count; ++i)
+    {
+        uint64_t addr = Pattern::Address(offsets[i]);
+        if (!addr || addr < 0x10000)
+            continue;
+
+        uint8_t* pValue = reinterpret_cast<uint8_t*>(addr);
+        uint8_t oldValue = *pValue;
+        int newValue = static_cast<int>(oldValue) - static_cast<int>(remainder);
+
+        if (newValue < 0)
+            newValue = 0;
+
+        // Skip writing if value is already correct
+        if (static_cast<uint8_t>(newValue) == oldValue)
+            continue;
+
+        DWORD oldProtect;
+        if (VirtualProtect(pValue, 1, PAGE_EXECUTE_READWRITE, &oldProtect)) {
+            *pValue = static_cast<uint8_t>(newValue);
+            VirtualProtect(pValue, 1, oldProtect, &oldProtect);
+        }
+        else {
+            MessageBoxA(nullptr, "Failed to change memory protection!", "Error", MB_OK | MB_ICONERROR);
+        }
+    }
+}
+
+void ApplyUModOffsets(D2UnitStrc* pUnit, D2C_ItemStats nStatId, uint32_t remainder, uint16_t nLayer = 0) {
+    if (remainder <= 0)
+        return;
+    
+    int remainder1 = remainder - 40;
+    if (remainder1 < 0) remainder1 = 0;
+
+    int remainder2 = remainder - 75;
+    if (remainder2 < 0) remainder2 = 0;
+
+    int remainder3 = remainder - 20;
+    if (remainder3 < 0) remainder3 = 0;
+
+    int remainder4 = remainder - 50;
+    if (remainder4 < 0) remainder4 = 0;
+
+    if (cachedSettings.sunderedMonUMods)
+    {      
+        ApplyUModArray(umod8a_Offsets, sizeof(umod8a_Offsets) / sizeof(umod8a_Offsets[0]), remainder1);
+        ApplyUModArray(umod8b_Offsets, sizeof(umod8b_Offsets) / sizeof(umod8b_Offsets[0]), remainder1);
+        ApplyUModArray(umod8c_Offsets, sizeof(umod8c_Offsets) / sizeof(umod8c_Offsets[0]), remainder1);
+
+        ApplyUModArray(umod9_Offsets, sizeof(umod9_Offsets) / sizeof(umod9_Offsets[0]), remainder2);
+        ApplyUModArray(umod17_Offsets, sizeof(umod17_Offsets) / sizeof(umod17_Offsets[0]), remainder2);
+        ApplyUModArray(umod18_Offsets, sizeof(umod18_Offsets) / sizeof(umod18_Offsets[0]), remainder2);
+        ApplyUModArray(umod23_Offsets, sizeof(umod23_Offsets) / sizeof(umod23_Offsets[0]), remainder2);
+
+        ApplyUModArray(umod25_Offsets, sizeof(umod25_Offsets) / sizeof(umod25_Offsets[0]), remainder3);
+        ApplyUModArray(umod27a_Offsets, sizeof(umod27a_Offsets) / sizeof(umod27a_Offsets[0]), remainder3);
+        ApplyUModArray(umod27b_Offsets, sizeof(umod27b_Offsets) / sizeof(umod27b_Offsets[0]), remainder3);
+        ApplyUModArray(umod27c_Offsets, sizeof(umod27c_Offsets) / sizeof(umod27c_Offsets[0]), remainder3);
+
+        ApplyUModArray(umod28_Offsets, sizeof(umod28_Offsets) / sizeof(umod28_Offsets[0]), remainder4);
+
+    }
+}
+
 static void LogDebug(const std::string& msg)
 {
     std::ofstream log("debug_log.txt", std::ios::app);
     if (!log.is_open())
         return;
 
-    // Timestamp
-    std::time_t t = std::time(nullptr);
-    std::tm tm{};
-#ifdef _WIN32
-    localtime_s(&tm, &t);
-#else
-    localtime_r(&t, &tm);
-#endif
     log << msg << "\n";
 }
 
@@ -1603,6 +1676,8 @@ void __fastcall ForceTCDrops(D2GameStrc* pGame, D2UnitStrc* pMonster, D2UnitStrc
     int adjustedSID = 0;
     if (nSuperUniqueId >= 42)
         adjustedSID = nSuperUniqueId + 1;
+    if (pMonStatsTxtRecord->nId >= 410)
+        pMonStatsTxtRecord->nId + 1;
 
     const std::vector<std::string> TCEx = ReadTCexFile(TCEXFile);
     MonsterTreasureResult regResult = GetMonsterTreasure(monsters, pMonStatsTxtRecord->nId, difficulty, 0, TCEx);
@@ -1635,6 +1710,9 @@ void __fastcall ForceTCDrops(D2GameStrc* pGame, D2UnitStrc* pMonster, D2UnitStrc
     int unknownOffset = nTCId - tcCheckRegular;
 
     LogDebug(std::format("---------------------\nnTCId: {}, indexRegular: {}, unknownOffset: {},  indexUnique: {}, indexSuperUnique: {},", nTCId, indexRegular, unknownOffset, indexUnique, indexSuperUnique));
+
+    if (nTCId == 0)
+        oDropTCTest(pGame, pMonster, pPlayer, nTCId, nQuality, nItemLevel, a7, ppItems, pnItemsDropped, nMaxItems);
 
     //Force Boss Drops
     if (pMonStatsTxtRecord->nId == 156 || pMonStatsTxtRecord->nId == 211 ||
@@ -2075,13 +2153,6 @@ bool LoadDesecratedZones(const std::string& filename) {
         return false;
     }
 
-    std::ofstream log("desecrated_zones_log.txt", std::ios::trunc);
-    if (!log.is_open()) {
-        MessageBoxA(nullptr, "Failed to create log file.", "Error", MB_ICONERROR);
-        return true;
-    }
-
-
     return true;
 }
 
@@ -2313,12 +2384,10 @@ void UpdateActiveZoneInfoText(time_t currentUtc)
             else
                 ss << "(Unknown Level ID: " << lvlId << ")\n";
         }
-
     }
 
     g_ActiveZoneInfoText = ss.str();
 }
-
 
 namespace {
     static double gLastManualToggleTime = 0;
@@ -2454,15 +2523,24 @@ void Hooked__Widget__OnClose(void* pWidget) {
     }
 }
 
-void SubtractResistances(D2UnitStrc* pUnit, D2C_ItemStats nStatId, uint32_t nValue, uint16_t nLayer = 0) {
+uint32_t SubtractResistances(D2UnitStrc* pUnit, D2C_ItemStats nStatId, uint32_t nValue, uint16_t nLayer = 0) {
     auto nCurrentValue = STATLIST_GetUnitStatSigned(pUnit, nStatId, nLayer);
 
     if (nCurrentValue >= 100) {
-
         int newValue = nCurrentValue - nValue;
-        if (newValue < 99) { newValue = 99; }
+
+        //Calculate overshoot
+        uint32_t remainder = 0;
+        if (newValue < 99) {
+            remainder = 99 - newValue;
+            newValue = 99;
+        }
+
         STATLISTEX_SetStatListExStat(pUnit->pStatListEx, nStatId, newValue, nLayer);
+        return remainder;
     }
+
+    return 0;
 }
 
 constexpr uint16_t UNIQUE_LAYER = 1337;
@@ -2537,19 +2615,32 @@ void __fastcall ApplyGhettoSunder(D2GameStrc* pGame, D2ActiveRoomStrc* pRoom, D2
         if (magic > maxMagicResist) maxMagicResist = magic;
     }
 
-    // Apply highest values to the monster unit
-    if (maxColdResist > INT_MIN)
-        SubtractResistances(pUnit, STAT_COLDRESIST, maxColdResist);
-    if (maxFireResist > INT_MIN)
-        SubtractResistances(pUnit, STAT_FIRERESIST, maxFireResist);
-    if (maxLightResist > INT_MIN)
-        SubtractResistances(pUnit, STAT_LIGHTRESIST, maxLightResist);
-    if (maxPoisonResist > INT_MIN)
-        SubtractResistances(pUnit, STAT_POISONRESIST, maxPoisonResist);
-    if (maxDamageResist > INT_MIN)
-        SubtractResistances(pUnit, STAT_DAMAGERESIST, maxDamageResist);
-    if (maxMagicResist > INT_MIN)
-        SubtractResistances(pUnit, STAT_MAGICRESIST, maxMagicResist);
+    // Apply highest values to the monster unit and pass overshoot to Umods
+    if (maxColdResist > INT_MIN) {
+        auto rem = SubtractResistances(pUnit, STAT_COLDRESIST, maxColdResist);
+        ApplyUModOffsets(pUnit, STAT_COLDRESIST, rem);
+    }
+    if (maxFireResist > INT_MIN) {
+        auto rem = SubtractResistances(pUnit, STAT_FIRERESIST, maxFireResist);
+        ApplyUModOffsets(pUnit, STAT_FIRERESIST, rem);
+    }
+    if (maxLightResist > INT_MIN) {
+        auto rem = SubtractResistances(pUnit, STAT_LIGHTRESIST, maxLightResist);
+        ApplyUModOffsets(pUnit, STAT_LIGHTRESIST, rem);
+    }
+    if (maxPoisonResist > INT_MIN) {
+        auto rem = SubtractResistances(pUnit, STAT_POISONRESIST, maxPoisonResist);
+        ApplyUModOffsets(pUnit, STAT_POISONRESIST, rem);
+    }
+    if (maxDamageResist > INT_MIN) {
+        auto rem = SubtractResistances(pUnit, STAT_DAMAGERESIST, maxDamageResist);
+        ApplyUModOffsets(pUnit, STAT_DAMAGERESIST, rem);
+    }
+    if (maxMagicResist > INT_MIN) {
+        auto rem = SubtractResistances(pUnit, STAT_MAGICRESIST, maxMagicResist);
+        ApplyUModOffsets(pUnit, STAT_MAGICRESIST, rem);
+    }
+
 }
 
 void ApplyStatsToMonster(D2UnitStrc* pUnit)

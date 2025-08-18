@@ -8,10 +8,10 @@ struct MonsterStatsDisplaySettings {
     std::string channelColor;
     std::string playerNameColor;
     std::string messageColor;
-    bool socketDisplay;
     bool HPRollover;
     std::int32_t HPRolloverAmt;
     std::int32_t HPRolloverDiff;
+    bool sunderedMonUMods;
 };
 
 class D2RHUD : public Plugin {

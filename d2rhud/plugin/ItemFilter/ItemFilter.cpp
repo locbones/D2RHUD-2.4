@@ -122,12 +122,6 @@ void __fastcall Hooked_ITEMS_GetName(D2UnitStrc* pUnit, char* pBuffer) {
 		auto pUnitCustom = (D2UnitStrcCustom*)pUnit;
 		char cBuffer[0x400];
 		snprintf(cBuffer, 0x400, pUnitCustom->pFilterResult->szName.c_str(), pBuffer);
-		if (cachedSettings.socketDisplay) {
-			int32_t nSockets = STATLIST_GetUnitStatSigned(pUnitToUse, STAT_ITEM_NUMSOCKETS, 0);
-			if (nSockets > 0) {
-				snprintf(cBuffer, 0x400, "%s ÿcN(%d)\0", cBuffer, nSockets);
-			}
-		}
 		strncpy(pBuffer, cBuffer, 0x400);
 
 		if (pUnitCustom->pFilterResult->cbNameFunction.valid()) {
