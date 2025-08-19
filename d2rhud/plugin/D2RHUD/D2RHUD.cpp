@@ -40,7 +40,7 @@
 std::string configFilePath = "config.json";
 std::string filename = "../Launcher/D2RLAN_Config.txt";
 std::string lootFile = "../D2R/lootfilter.lua";
-std::string Version = "1.2.6";
+std::string Version = "1.2.5 HF";
 
 using json = nlohmann::json;
 static MonsterStatsDisplaySettings cachedSettings;
@@ -2586,21 +2586,6 @@ void __fastcall ApplyGhettoSunder(D2GameStrc* pGame, D2ActiveRoomStrc* pRoom, D2
 
     int rem;
 
-    if (rem <= 0)
-        return;
-
-    int remainder1 = rem - 40;
-    if (remainder1 < 0) remainder1 = 0;
-
-    int remainder2 = rem - 75;
-    if (remainder2 < 0) remainder2 = 0;
-
-    int remainder3 = rem - 20;
-    if (remainder3 < 0) remainder3 = 0;
-
-    int remainder4 = rem - 50;
-    if (remainder4 < 0) remainder4 = 0;
-
     // Apply highest values to the monster unit and pass overshoot to Umods
     if (maxColdResist > INT_MIN) {
         auto rem = SubtractResistances(pUnit, STAT_COLDRESIST, maxColdResist);
@@ -2617,9 +2602,8 @@ void __fastcall ApplyGhettoSunder(D2GameStrc* pGame, D2ActiveRoomStrc* pRoom, D2
             ApplyUModArray(umod18_Offsets, sizeof(umod18_Offsets) / sizeof(umod18_Offsets[0]), remainder2);
             ApplyUModArray(umod27b_Offsets, sizeof(umod27b_Offsets) / sizeof(umod27b_Offsets[0]), remainder3);
         }
-        
-        //ApplyUModOffsets(pUnit, STAT_COLDRESIST, rem);
     }
+    
     if (maxFireResist > INT_MIN) {
         auto rem = SubtractResistances(pUnit, STAT_FIRERESIST, maxFireResist);
         int remainder1 = rem - 40;
@@ -2635,7 +2619,6 @@ void __fastcall ApplyGhettoSunder(D2GameStrc* pGame, D2ActiveRoomStrc* pRoom, D2
             ApplyUModArray(umod9_Offsets, sizeof(umod9_Offsets) / sizeof(umod9_Offsets[0]), remainder2);
             ApplyUModArray(umod27a_Offsets, sizeof(umod27a_Offsets) / sizeof(umod27a_Offsets[0]), remainder3);
         }
-        //ApplyUModOffsets(pUnit, STAT_FIRERESIST, rem);
     }
     if (maxLightResist > INT_MIN) {
         auto rem = SubtractResistances(pUnit, STAT_LIGHTRESIST, maxLightResist);
@@ -2652,7 +2635,6 @@ void __fastcall ApplyGhettoSunder(D2GameStrc* pGame, D2ActiveRoomStrc* pRoom, D2
             ApplyUModArray(umod17_Offsets, sizeof(umod17_Offsets) / sizeof(umod17_Offsets[0]), remainder2);
             ApplyUModArray(umod27c_Offsets, sizeof(umod27c_Offsets) / sizeof(umod27c_Offsets[0]), remainder3);
         }
-        //ApplyUModOffsets(pUnit, STAT_LIGHTRESIST, rem);
     }
     if (maxPoisonResist > INT_MIN) {
         auto rem = SubtractResistances(pUnit, STAT_POISONRESIST, maxPoisonResist);
@@ -2661,16 +2643,14 @@ void __fastcall ApplyGhettoSunder(D2GameStrc* pGame, D2ActiveRoomStrc* pRoom, D2
 
         if (cachedSettings.sunderedMonUMods)
             ApplyUModArray(umod23_Offsets, sizeof(umod23_Offsets) / sizeof(umod23_Offsets[0]), remainder2);
-        //ApplyUModOffsets(pUnit, STAT_POISONRESIST, rem);
     }
     if (maxDamageResist > INT_MIN) {
         auto rem = SubtractResistances(pUnit, STAT_DAMAGERESIST, maxDamageResist);
         int remainder4 = rem - 50;
-        if (remainder4 < 0) remainder3 = 0;
+        if (remainder4 < 0) remainder4 = 0;
 
         if (cachedSettings.sunderedMonUMods)
             ApplyUModArray(umod28_Offsets, sizeof(umod28_Offsets) / sizeof(umod28_Offsets[0]), remainder4);
-        //ApplyUModOffsets(pUnit, STAT_DAMAGERESIST, rem);
     }
     if (maxMagicResist > INT_MIN) {
         auto rem = SubtractResistances(pUnit, STAT_MAGICRESIST, maxMagicResist);
@@ -2679,8 +2659,8 @@ void __fastcall ApplyGhettoSunder(D2GameStrc* pGame, D2ActiveRoomStrc* pRoom, D2
 
         if (cachedSettings.sunderedMonUMods)
             ApplyUModArray(umod25_Offsets, sizeof(umod25_Offsets) / sizeof(umod25_Offsets[0]), remainder3);
-        //ApplyUModOffsets(pUnit, STAT_MAGICRESIST, rem);
     }
+    
 }
 
 void ApplyStatsToMonster(D2UnitStrc* pUnit)
