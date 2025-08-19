@@ -40,7 +40,7 @@
 std::string configFilePath = "config.json";
 std::string filename = "../Launcher/D2RLAN_Config.txt";
 std::string lootFile = "../D2R/lootfilter.lua";
-std::string Version = "1.2.5 HFF";
+std::string Version = "1.2.5 HFG";
 
 using json = nlohmann::json;
 static MonsterStatsDisplaySettings cachedSettings;
@@ -1233,17 +1233,17 @@ std::unordered_map<D2C_ItemStats, int> gRandomStatsForMonsters;
 bool showStatAdjusts = true;
 
 // UMod Offsets
-constexpr uint32_t umod8a_Offsets[] = { 0x2FC7E4, 0x2FC8AD }; // Fire
-constexpr uint32_t umod8b_Offsets[] = { 0x2FC968, 0xAF13F }; // Cold
-constexpr uint32_t umod8c_Offsets[] = { 0xAF20B, 0xAF2CF }; // Light
+constexpr uint32_t umod8a_Offsets[] = { 0x2FC7E4, 0xAF13F }; // Cold
+constexpr uint32_t umod8b_Offsets[] = { 0x2FC8AD, 0xAF20B }; // Fire
+constexpr uint32_t umod8c_Offsets[] = { 0x2FC968, 0xAF2CF }; // Light
 constexpr uint32_t umod9_Offsets[] = { 0x2FC9EB, 0xAF35C }; // Fire
-constexpr uint32_t umod17_Offsets[] = { 0x2FCADD, 0xAF479 }; // Lightning
 constexpr uint32_t umod18_Offsets[] = { 0x2FCA64, 0xAF3E9 }; // Cold
+constexpr uint32_t umod17_Offsets[] = { 0x2FCADD, 0xAF479 }; // Lightning
 constexpr uint32_t umod23_Offsets[] = { 0x2FCB56, 0xAF495 }; // Poison
 constexpr uint32_t umod25_Offsets[] = { 0x2FCBCF, 0xAF522 }; // Magic
-constexpr uint32_t umod27a_Offsets[] = { 0x2FCC56, 0x2FCD22 }; // Fire
-constexpr uint32_t umod27b_Offsets[] = { 0x2FCDDC, 0xAF5B9 }; // Cold
-constexpr uint32_t umod27c_Offsets[] = { 0xAF698, 0xAF75C }; // Light
+constexpr uint32_t umod27a_Offsets[] = { 0x2FCC56, 0xAF5B9 }; // Cold
+constexpr uint32_t umod27b_Offsets[] = { 0x2FCD22, 0xAF698 }; // Fire
+constexpr uint32_t umod27c_Offsets[] = { 0x2FCDDB, 0xAF75C }; // Light
 constexpr uint32_t umod28_Offsets[] = { 0x2FCDEE, 0xAF778 }; // Physical
 
 void ApplyUModArray(const uint32_t* offsets, size_t count, uint32_t remainder)
@@ -2601,7 +2601,7 @@ void __fastcall ApplyGhettoSunder(D2GameStrc* pGame, D2ActiveRoomStrc* pRoom, D2
 
         if (cachedSettings.sunderedMonUMods)
         {
-            //ApplyUModArray(umod8b_Offsets, sizeof(umod8b_Offsets) / sizeof(umod8b_Offsets[0]), remainder1);
+            ApplyUModArray(umod8b_Offsets, sizeof(umod8b_Offsets) / sizeof(umod8b_Offsets[0]), remainder1);
             ApplyUModArray(umod18_Offsets, sizeof(umod18_Offsets) / sizeof(umod18_Offsets[0]), remainder2);
             ApplyUModArray(umod27b_Offsets, sizeof(umod27b_Offsets) / sizeof(umod27b_Offsets[0]), remainder3);
         }
@@ -2621,7 +2621,7 @@ void __fastcall ApplyGhettoSunder(D2GameStrc* pGame, D2ActiveRoomStrc* pRoom, D2
 
         if (cachedSettings.sunderedMonUMods)
         {
-            //ApplyUModArray(umod8a_Offsets, sizeof(umod8a_Offsets) / sizeof(umod8a_Offsets[0]), remainder1);
+            ApplyUModArray(umod8a_Offsets, sizeof(umod8a_Offsets) / sizeof(umod8a_Offsets[0]), remainder1);
             ApplyUModArray(umod9_Offsets, sizeof(umod9_Offsets) / sizeof(umod9_Offsets[0]), remainder2);
             ApplyUModArray(umod27a_Offsets, sizeof(umod27a_Offsets) / sizeof(umod27a_Offsets[0]), remainder3);
         }
@@ -2640,7 +2640,7 @@ void __fastcall ApplyGhettoSunder(D2GameStrc* pGame, D2ActiveRoomStrc* pRoom, D2
 
         if (cachedSettings.sunderedMonUMods)
         {
-            //ApplyUModArray(umod8c_Offsets, sizeof(umod8c_Offsets) / sizeof(umod8c_Offsets[0]), remainder1);
+            ApplyUModArray(umod8c_Offsets, sizeof(umod8c_Offsets) / sizeof(umod8c_Offsets[0]), remainder1);
             ApplyUModArray(umod17_Offsets, sizeof(umod17_Offsets) / sizeof(umod17_Offsets[0]), remainder2);
             ApplyUModArray(umod27c_Offsets, sizeof(umod27c_Offsets) / sizeof(umod27c_Offsets[0]), remainder3);
         }
