@@ -40,7 +40,7 @@
 std::string configFilePath = "config.json";
 std::string filename = "../Launcher/D2RLAN_Config.txt";
 std::string lootFile = "../D2R/lootfilter.lua";
-std::string Version = "1.2.5 HFJ";
+std::string Version = "1.2.6";
 
 using json = nlohmann::json;
 static MonsterStatsDisplaySettings cachedSettings;
@@ -1235,7 +1235,7 @@ bool showStatAdjusts = true;
 // UMod Offsets
 constexpr uint32_t umod8a_Offsets[] = { 0x2FC7E4, 0xAF13F }; // Cold
 constexpr uint32_t umod8b_Offsets[] = { 0x2FC8AD, 0xAF20B }; // Fire
-constexpr uint32_t umod8c_Offsets[] = { 0x2FC968, 0xAF2CF }; // Light
+constexpr uint32_t umod8c_Offsets[] = { 0x2FC967, 0xAF2CF }; // Light
 constexpr uint32_t umod9_Offsets[] = { 0x2FC9EB, 0xAF35C }; // Fire
 constexpr uint32_t umod18_Offsets[] = { 0x2FCA64, 0xAF3E9 }; // Cold
 constexpr uint32_t umod17_Offsets[] = { 0x2FCADD, 0xAF479 }; // Lightning
@@ -2549,10 +2549,8 @@ void AdjustMonsterLevel(D2UnitStrc* pUnit, D2C_ItemStats nStatId, uint32_t nValu
 static void LogSunder(const std::string& msg)
 {
     std::ofstream log("debug_sunder_log.txt", std::ios::app);
-    if (!log.is_open())
-        return;
+    if (!log.is_open()) return;
 
-    // Timestamp prefix
     std::time_t now = std::time(nullptr);
     std::tm tm{};
 #ifdef _WIN32
@@ -2562,8 +2560,31 @@ static void LogSunder(const std::string& msg)
 #endif
     char timebuf[32];
     std::strftime(timebuf, sizeof(timebuf), "[%Y-%m-%d %H:%M:%S] ", &tm);
-
     log << timebuf << msg << "\n";
+}
+
+static void ApplySunderForStat(D2UnitStrc* pUnit, D2C_ItemStats statId, int maxVal,
+    const std::vector<std::pair<const char*, int>>& umodCaps,
+    const std::vector<const uint32_t*>& umodArrays,
+    const std::vector<size_t>& umodSizes,
+    const std::string& statName)
+{
+    if (maxVal <= INT_MIN)
+        return;
+
+    int rem = SubtractResistances(pUnit, statId, maxVal);
+    //LogSunder(statName + " max=" + std::to_string(maxVal) + " SubtractResistances rem=" + std::to_string(rem));
+
+    for (size_t i = 0; i < umodArrays.size(); ++i) {
+        int val = rem - umodCaps[i].second;
+        if (val < 0) val = 0;
+        if (val > umodCaps[i].second) val = umodCaps[i].second;
+
+        //LogSunder(statName + " UMod[" + std::string(umodCaps[i].first) + "] cap=" + std::to_string(umodCaps[i].second) + " final=" + std::to_string(val));
+
+        if (cachedSettings.sunderedMonUMods)
+            ApplyUModArray(umodArrays[i], umodSizes[i], val);
+    }
 }
 
 void __fastcall ApplyGhettoSunder(D2GameStrc* pGame, D2ActiveRoomStrc* pRoom, D2UnitStrc* pUnit, int64_t* pMonRegData, D2MonStatsInitStrc* monStatsInit)
@@ -2575,83 +2596,56 @@ void __fastcall ApplyGhettoSunder(D2GameStrc* pGame, D2ActiveRoomStrc* pRoom, D2
 
     //LogSunder("=== Begin ApplyGhettoSunder ===");
 
-    // Track max stat values found among all players
-    int maxColdResist = INT_MIN;
-    int maxFireResist = INT_MIN;
-    int maxLightResist = INT_MIN;
-    int maxPoisonResist = INT_MIN;
-    int maxDamageResist = INT_MIN;
-    int maxMagicResist = INT_MIN;
+    // Track max stat values
+    int maxCold = INT_MIN, maxFire = INT_MIN, maxLight = INT_MIN;
+    int maxPoison = INT_MIN, maxDamage = INT_MIN, maxMagic = INT_MIN;
 
     for (int i = 0; i < 8; ++i) {
         auto pClient = gpClientList[i];
-        if (!pClient)
-            continue;
+        if (!pClient) continue;
 
-        uint32_t unitGUID = pClient->dwUnitGUID;
-        D2UnitStrc* pPlayerUnit = UNITS_GetServerUnitByTypeAndId(pGame, UNIT_PLAYER, unitGUID);
-        if (!pPlayerUnit)
-            continue;
+        uint32_t guid = pClient->dwUnitGUID;
+        D2UnitStrc* pPlayer = UNITS_GetServerUnitByTypeAndId(pGame, UNIT_PLAYER, guid);
+        if (!pPlayer) continue;
 
-        int cold = STATLIST_GetUnitStatSigned(pPlayerUnit, 187, 0);
-        int fire = STATLIST_GetUnitStatSigned(pPlayerUnit, 189, 0);
-        int light = STATLIST_GetUnitStatSigned(pPlayerUnit, 190, 0);
-        int poison = STATLIST_GetUnitStatSigned(pPlayerUnit, 191, 0);
-        int damage = STATLIST_GetUnitStatSigned(pPlayerUnit, 192, 0);
-        int magic = STATLIST_GetUnitStatSigned(pPlayerUnit, 193, 0);
+        int cold = STATLIST_GetUnitStatSigned(pPlayer, 187, 0);
+        int fire = STATLIST_GetUnitStatSigned(pPlayer, 189, 0);
+        int light = STATLIST_GetUnitStatSigned(pPlayer, 190, 0);
+        int poison = STATLIST_GetUnitStatSigned(pPlayer, 191, 0);
+        int damage = STATLIST_GetUnitStatSigned(pPlayer, 192, 0);
+        int magic = STATLIST_GetUnitStatSigned(pPlayer, 193, 0);
 
-        std::ostringstream oss;
-        oss << "Player[" << i << "] GUID=" << unitGUID
-            << " Cold=" << cold << " Fire=" << fire << " Light=" << light
-            << " Poison=" << poison << " Damage=" << damage << " Magic=" << magic;
-        //LogSunder(oss.str());
+        //LogSunder("Player[" + std::to_string(i) + "] GUID=" + std::to_string(guid) + " Cold=" + std::to_string(cold) + " Fire=" + std::to_string(fire) + " Light=" + std::to_string(light) + " Poison=" + std::to_string(poison) + " Damage=" + std::to_string(damage) + " Magic=" + std::to_string(magic));
 
-        if (cold > maxColdResist)   maxColdResist = cold;
-        if (fire > maxFireResist)   maxFireResist = fire;
-        if (light > maxLightResist)  maxLightResist = light;
-        if (poison > maxPoisonResist) maxPoisonResist = poison;
-        if (damage > maxDamageResist) maxDamageResist = damage;
-        if (magic > maxMagicResist)  maxMagicResist = magic;
+        if (cold > maxCold) maxCold = cold;
+        if (fire > maxFire) maxFire = fire;
+        if (light > maxLight) maxLight = light;
+        if (poison > maxPoison) maxPoison = poison;
+        if (damage > maxDamage) maxDamage = damage;
+        if (magic > maxMagic) maxMagic = magic;
     }
 
-    auto logResistApply = [&](const char* name, D2C_ItemStats statId, int maxVal,
-        const std::vector<std::pair<const char*, int>>& remainders)
-        {
-            if (maxVal == INT_MIN)
-                return;
-
-            int rem = SubtractResistances(pUnit, statId, maxVal);
-
-            std::ostringstream oss;
-            oss << name << ": max=" << maxVal << " after SubtractResistances rem=" << rem;
-            //LogSunder(oss.str());
-
-            for (auto& r : remainders) {
-                int val = rem - r.second;
-                if (val < 0) val = 0;
-                if (val > r.second) val = r.second;
-                std::ostringstream oss2;
-                oss2 << "  remainder cap[" << r.first << "]=" << r.second << " final=" << val;
-                //LogSunder(oss2.str());
-            }
-        };
-
+    // Apply each resist type with corresponding UMods
     if (STATLIST_GetUnitStatSigned(pUnit, STAT_COLDRESIST, 0) >= 100)
-        logResistApply("Cold", STAT_COLDRESIST, maxColdResist, { {"40",40},{"75",75},{"20",20} });
+        ApplySunderForStat(pUnit, STAT_COLDRESIST, maxCold, { {"40",40},{"75",75},{"20",20} }, { umod8a_Offsets, umod18_Offsets, umod27a_Offsets }, { sizeof(umod8a_Offsets) / sizeof(umod8a_Offsets[0]), sizeof(umod18_Offsets) / sizeof(umod18_Offsets[0]), sizeof(umod27a_Offsets) / sizeof(umod27a_Offsets[0]) }, "Cold");
+    
     if (STATLIST_GetUnitStatSigned(pUnit, STAT_FIRERESIST, 0) >= 100)
-        logResistApply("Fire", STAT_FIRERESIST, maxFireResist, { {"40",40},{"75",75},{"20",20} });
+        ApplySunderForStat(pUnit, STAT_FIRERESIST, maxFire, { {"40",40},{"75",75},{"20",20} }, { umod8b_Offsets, umod9_Offsets, umod27b_Offsets }, { sizeof(umod8b_Offsets) / sizeof(umod8b_Offsets[0]), sizeof(umod9_Offsets) / sizeof(umod9_Offsets[0]), sizeof(umod27b_Offsets) / sizeof(umod27b_Offsets[0]) }, "Fire");
+
     if (STATLIST_GetUnitStatSigned(pUnit, STAT_LIGHTRESIST, 0) >= 100)
-        logResistApply("Light", STAT_LIGHTRESIST, maxLightResist, { {"40",40},{"75",75},{"20",20} });
+        ApplySunderForStat(pUnit, STAT_LIGHTRESIST, maxLight, { {"40",40},{"75",75},{"20",20} }, { umod8c_Offsets, umod17_Offsets, umod27c_Offsets }, { sizeof(umod8c_Offsets) / sizeof(umod8c_Offsets[0]), sizeof(umod17_Offsets) / sizeof(umod17_Offsets[0]), sizeof(umod27c_Offsets) / sizeof(umod27c_Offsets[0]) }, "Light");
+
     if (STATLIST_GetUnitStatSigned(pUnit, STAT_POISONRESIST, 0) >= 100)
-        logResistApply("Poison", STAT_POISONRESIST, maxPoisonResist, { {"75",75} });
+        ApplySunderForStat(pUnit, STAT_POISONRESIST, maxPoison, { {"75",75} }, { umod23_Offsets }, { sizeof(umod23_Offsets) / sizeof(umod23_Offsets[0]) }, "Poison");
+
     if (STATLIST_GetUnitStatSigned(pUnit, STAT_DAMAGERESIST, 0) >= 100)
-        logResistApply("Damage", STAT_DAMAGERESIST, maxDamageResist, { {"50",50} });
+        ApplySunderForStat(pUnit, STAT_DAMAGERESIST, maxDamage, { {"50",50} }, { umod28_Offsets }, { sizeof(umod28_Offsets) / sizeof(umod28_Offsets[0]) }, "Damage");
+
     if (STATLIST_GetUnitStatSigned(pUnit, STAT_MAGICRESIST, 0) >= 100)
-        logResistApply("Magic", STAT_MAGICRESIST, maxMagicResist, { {"20",20} });
+        ApplySunderForStat(pUnit, STAT_MAGICRESIST, maxMagic, { {"20",20} }, { umod25_Offsets }, { sizeof(umod25_Offsets) / sizeof(umod25_Offsets[0]) }, "Magic");
 
     //LogSunder("=== End ApplyGhettoSunder ===");
 }
-
 void ApplyStatsToMonster(D2UnitStrc* pUnit)
 {
     std::ostringstream msgStream;
