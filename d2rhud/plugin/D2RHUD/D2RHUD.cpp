@@ -40,7 +40,7 @@
 std::string configFilePath = "config.json";
 std::string filename = "../Launcher/D2RLAN_Config.txt";
 std::string lootFile = "../D2R/lootfilter.lua";
-std::string Version = "1.2.5 HF";
+std::string Version = "1.2.5 HFF";
 
 using json = nlohmann::json;
 static MonsterStatsDisplaySettings cachedSettings;
@@ -2595,10 +2595,13 @@ void __fastcall ApplyGhettoSunder(D2GameStrc* pGame, D2ActiveRoomStrc* pRoom, D2
         if (remainder1 < 0) remainder1 = 0;
         if (remainder2 < 0) remainder2 = 0;
         if (remainder3 < 0) remainder3 = 0;
+        if (remainder1 > 40) remainder1 = 40;
+        if (remainder2 > 75) remainder2 = 75;
+        if (remainder3 > 20) remainder3 = 20;
 
         if (cachedSettings.sunderedMonUMods)
         {
-            ApplyUModArray(umod8b_Offsets, sizeof(umod8b_Offsets) / sizeof(umod8b_Offsets[0]), remainder1);
+            //ApplyUModArray(umod8b_Offsets, sizeof(umod8b_Offsets) / sizeof(umod8b_Offsets[0]), remainder1);
             ApplyUModArray(umod18_Offsets, sizeof(umod18_Offsets) / sizeof(umod18_Offsets[0]), remainder2);
             ApplyUModArray(umod27b_Offsets, sizeof(umod27b_Offsets) / sizeof(umod27b_Offsets[0]), remainder3);
         }
@@ -2612,10 +2615,13 @@ void __fastcall ApplyGhettoSunder(D2GameStrc* pGame, D2ActiveRoomStrc* pRoom, D2
         if (remainder1 < 0) remainder1 = 0;
         if (remainder2 < 0) remainder2 = 0;
         if (remainder3 < 0) remainder3 = 0;
+        if (remainder1 > 40) remainder1 = 40;
+        if (remainder2 > 75) remainder2 = 75;
+        if (remainder3 > 20) remainder3 = 20;
 
         if (cachedSettings.sunderedMonUMods)
         {
-            ApplyUModArray(umod8a_Offsets, sizeof(umod8a_Offsets) / sizeof(umod8a_Offsets[0]), remainder1);
+            //ApplyUModArray(umod8a_Offsets, sizeof(umod8a_Offsets) / sizeof(umod8a_Offsets[0]), remainder1);
             ApplyUModArray(umod9_Offsets, sizeof(umod9_Offsets) / sizeof(umod9_Offsets[0]), remainder2);
             ApplyUModArray(umod27a_Offsets, sizeof(umod27a_Offsets) / sizeof(umod27a_Offsets[0]), remainder3);
         }
@@ -2628,10 +2634,13 @@ void __fastcall ApplyGhettoSunder(D2GameStrc* pGame, D2ActiveRoomStrc* pRoom, D2
         if (remainder1 < 0) remainder1 = 0;
         if (remainder2 < 0) remainder2 = 0;
         if (remainder3 < 0) remainder3 = 0;
+        if (remainder1 > 40) remainder1 = 40;
+        if (remainder2 > 75) remainder2 = 75;
+        if (remainder3 > 20) remainder3 = 20;
 
         if (cachedSettings.sunderedMonUMods)
         {
-            ApplyUModArray(umod8c_Offsets, sizeof(umod8c_Offsets) / sizeof(umod8c_Offsets[0]), remainder1);
+            //ApplyUModArray(umod8c_Offsets, sizeof(umod8c_Offsets) / sizeof(umod8c_Offsets[0]), remainder1);
             ApplyUModArray(umod17_Offsets, sizeof(umod17_Offsets) / sizeof(umod17_Offsets[0]), remainder2);
             ApplyUModArray(umod27c_Offsets, sizeof(umod27c_Offsets) / sizeof(umod27c_Offsets[0]), remainder3);
         }
@@ -2640,6 +2649,7 @@ void __fastcall ApplyGhettoSunder(D2GameStrc* pGame, D2ActiveRoomStrc* pRoom, D2
         auto rem = SubtractResistances(pUnit, STAT_POISONRESIST, maxPoisonResist);
         int remainder2 = rem - 75;
         if (remainder2 < 0) remainder2 = 0;
+        if (remainder2 > 75) remainder2 = 75;
 
         if (cachedSettings.sunderedMonUMods)
             ApplyUModArray(umod23_Offsets, sizeof(umod23_Offsets) / sizeof(umod23_Offsets[0]), remainder2);
@@ -2648,6 +2658,7 @@ void __fastcall ApplyGhettoSunder(D2GameStrc* pGame, D2ActiveRoomStrc* pRoom, D2
         auto rem = SubtractResistances(pUnit, STAT_DAMAGERESIST, maxDamageResist);
         int remainder4 = rem - 50;
         if (remainder4 < 0) remainder4 = 0;
+        if (remainder4 > 50) remainder4 = 50;
 
         if (cachedSettings.sunderedMonUMods)
             ApplyUModArray(umod28_Offsets, sizeof(umod28_Offsets) / sizeof(umod28_Offsets[0]), remainder4);
@@ -2656,6 +2667,7 @@ void __fastcall ApplyGhettoSunder(D2GameStrc* pGame, D2ActiveRoomStrc* pRoom, D2
         auto rem = SubtractResistances(pUnit, STAT_MAGICRESIST, maxMagicResist);
         int remainder3 = rem - 20;
         if (remainder3 < 0) remainder3 = 0;
+        if (remainder3 > 20) remainder3 = 20;
 
         if (cachedSettings.sunderedMonUMods)
             ApplyUModArray(umod25_Offsets, sizeof(umod25_Offsets) / sizeof(umod25_Offsets[0]), remainder3);
