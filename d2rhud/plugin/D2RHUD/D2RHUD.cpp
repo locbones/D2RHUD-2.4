@@ -40,7 +40,7 @@
 std::string configFilePath = "config.json";
 std::string filename = "../Launcher/D2RLAN_Config.txt";
 std::string lootFile = "../D2R/lootfilter.lua";
-std::string Version = "1.2.6";
+std::string Version = "1.2.7";
 
 using json = nlohmann::json;
 static MonsterStatsDisplaySettings cachedSettings;
@@ -294,7 +294,6 @@ reinterpret_cast<D2GAME_PACKETCALLBACK_Rcv0x03_CCMD_RUNXY_t>(Pattern::Address(0x
 typedef void(__fastcall* D2CLIENT_PACKETCALLBACK_Rcv0x2B_SCMD_CORRECT_PATH_t)(uint8_t* pPacket);
 static D2CLIENT_PACKETCALLBACK_Rcv0x2B_SCMD_CORRECT_PATH_t D2CLIENT_PACKETCALLBACK_Rcv0x2B_SCMD_CORRECT_PATH =
 reinterpret_cast<D2CLIENT_PACKETCALLBACK_Rcv0x2B_SCMD_CORRECT_PATH_t>(Pattern::Address(0xDA3B0));
-
 
 static char* gpSharedStashString = reinterpret_cast<char*>(Pattern::Address(0x1577390));
 static char* gpSharedStashHCString = reinterpret_cast<char*>(Pattern::Address(0x1577428));
@@ -874,6 +873,7 @@ MonsterStatsDisplaySettings getMonsterStatsDisplaySetting(const std::string& con
         cachedSettings.HPRolloverDiff = 0;
     }
     cachedSettings.sunderedMonUMods = settings["SunderedMonUMods"] == "true";
+    cachedSettings.minionEquality = settings["MinionEquality"] == "true";
 
     isCached = true;
     return cachedSettings;
@@ -1231,6 +1231,12 @@ std::unordered_map<int, std::string> gStatNames;
 static std::vector<std::pair<D2C_ItemStats, int>> g_randomStats;
 std::unordered_map<D2C_ItemStats, int> gRandomStatsForMonsters;
 bool showStatAdjusts = true;
+std::string g_ItemFilterStatusMessage = "";
+bool g_ShouldShowItemFilterMessage = false;
+std::chrono::steady_clock::time_point g_ItemFilterMessageStartTime;
+//std::string g_TerrorizedStatusMessage = "";
+//bool g_ShouldShowTerrorizedMessage = false;
+//std::chrono::steady_clock::time_point g_TerrorizedMessageStartTime;
 
 // UMod Offsets
 constexpr uint32_t umod8a_Offsets[] = { 0x2FC7E4, 0xAF13F }; // Cold
@@ -1340,7 +1346,7 @@ MonsterTreasureResult GetMonsterTreasure(const std::vector<MonsterTreasureClass>
         else if (monType == 1) treasureClassValue = m.DesecratedChamp_H;
         else if (monType == 2) treasureClassValue = m.DesecratedUnique_H;
     }
-
+    
     for (size_t i = 0; i < tcexEntries.size(); ++i) {
         if (tcexEntries[i] == treasureClassValue) {
             result.treasureIndex = static_cast<int>(i) + 1;
@@ -1599,9 +1605,25 @@ int32_t __fastcall MONSTERUNIQUE_CheckMonTypeFlag(D2UnitStrc* pUnit, uint16_t nF
 
 void __fastcall ForceTCDrops(D2GameStrc* pGame, D2UnitStrc* pMonster, D2UnitStrc* pPlayer, int32_t nTCId, int32_t nQuality, int32_t nItemLevel, int32_t a7, D2UnitStrc** ppItems, int32_t* pnItemsDropped, int32_t nMaxItems)
 {
-    std::string MONFile = std::format("{0}/Mods/{1}/{1}.mpq/data/global/excel/monstats.txt", GetExecutableDir(), GetModName());
-    std::string SUFile = std::format("{0}/Mods/{1}/{1}.mpq/data/global/excel/superuniques.txt", GetExecutableDir(), GetModName());
-    std::string TCEXFile = std::format("{0}/Mods/{1}/{1}.mpq/data/global/excel/treasureclassex.txt", GetExecutableDir(), GetModName());
+    // Cached file data
+    static bool filesLoaded = false;
+    static decltype(ReadMonsterTreasureFile("")) monsters;
+    static decltype(ReadMonsterTreasureFileSU("")) superuniques;
+    static std::vector<std::string> TCEx;
+
+    if (!filesLoaded)
+    {
+        std::string basePath = std::format("{}/Mods/{}/{}.mpq/data/global/excel/", GetExecutableDir(), GetModName(), GetModName());
+        std::string MONFile = basePath + "monstats.txt";
+        std::string SUFile = basePath + "superuniques.txt";
+        std::string TCEXFile = basePath + "treasureclassex.txt";
+
+        monsters = ReadMonsterTreasureFile(MONFile);
+        superuniques = ReadMonsterTreasureFileSU(SUFile);
+        TCEx = ReadTCexFile(TCEXFile);
+
+        filesLoaded = true;
+    }
 
     D2MonStatsTxt* pMonStatsTxtRecord = MONSTERMODE_GetMonStatsTxtRecord(pMonster->dwClassId);
     if (!pMonStatsTxtRecord)
@@ -1611,10 +1633,7 @@ void __fastcall ForceTCDrops(D2GameStrc* pGame, D2UnitStrc* pMonster, D2UnitStrc
     }
 
     auto pMonsterFlag = pMonster->pMonsterData->nTypeFlag;
-    auto monsters = ReadMonsterTreasureFile(MONFile);
-    auto superuniques = ReadMonsterTreasureFileSU(SUFile);
     const int32_t nSuperUniqueId = MONSTERUNIQUE_GetSuperUniqueBossHcIdx(pGame, pMonster);
-    std::string tcCheck;
 
     if (pMonStatsTxtRecord->nId >= monsters.size())
     {
@@ -1636,46 +1655,26 @@ void __fastcall ForceTCDrops(D2GameStrc* pGame, D2UnitStrc* pMonster, D2UnitStrc
         return;
     }
 
-    int adjustedSID = 0;
-    int adjustedNID = 0;
-    if (nSuperUniqueId >= 42)
-        adjustedSID = nSuperUniqueId + 1;
-    else
-        adjustedSID = nSuperUniqueId;
+    // Adjust for Expansion Row
+    int adjustedSID = (nSuperUniqueId >= 42) ? nSuperUniqueId + 1 : nSuperUniqueId;
+    int adjustedNID = (pMonStatsTxtRecord->nId >= 410) ? pMonStatsTxtRecord->nId + 1 : pMonStatsTxtRecord->nId;
 
-    if (pMonStatsTxtRecord->nId >= 410)
-        adjustedNID = pMonStatsTxtRecord->nId + 1;
-    else
-        adjustedNID = pMonStatsTxtRecord->nId;
-
-    const std::vector<std::string> TCEx = ReadTCexFile(TCEXFile);
     MonsterTreasureResult regResult = GetMonsterTreasure(monsters, adjustedNID, difficulty, 0, TCEx);
     MonsterTreasureResult champResult = GetMonsterTreasure(monsters, adjustedNID, difficulty, 1, TCEx);
     MonsterTreasureResult uniqResult = GetMonsterTreasure(monsters, adjustedNID, difficulty, 2, TCEx);
     MonsterTreasureResult superuniqResult = GetMonsterTreasureSU(superuniques, adjustedSID, difficulty, TCEx);
 
-    //Base TC
+    // Base TC
     int tcCheckRegular = regResult.tcCheckIndex;
     int tcCheckChamp = champResult.tcCheckIndex;
     int tcCheckUnique = uniqResult.tcCheckIndex;
     int tcCheckSuperUnique = superuniqResult.tcCheckIndex;
 
-    //Terror TC
-    int indexRegular = regResult.treasureIndex;
-    int indexChamp = champResult.treasureIndex;
-    int indexUnique = uniqResult.treasureIndex;
-    int indexSuperUnique = superuniqResult.treasureIndex;
-
-    //Fallbacks
-    if (indexRegular == -1)
-        indexRegular = tcCheckRegular;
-    if (indexChamp == -1)
-        indexChamp = tcCheckChamp;
-    if (indexUnique == -1)
-        indexUnique = tcCheckUnique;
-    if (indexSuperUnique == -1)
-        indexSuperUnique = tcCheckSuperUnique;
-
+    // Terror TC
+    int indexRegular = (regResult.treasureIndex == -1) ? tcCheckRegular : regResult.treasureIndex;
+    int indexChamp = (champResult.treasureIndex == -1) ? tcCheckChamp : champResult.treasureIndex;
+    int indexUnique = (uniqResult.treasureIndex == -1) ? tcCheckUnique : uniqResult.treasureIndex;
+    int indexSuperUnique = (superuniqResult.treasureIndex == -1) ? tcCheckSuperUnique : superuniqResult.treasureIndex;
     int unknownOffset = nTCId - tcCheckRegular;
 
     LogDebug(std::format("---------------------\nnTCId: {}, indexRegular: {}, unknownOffset: {},  indexUnique: {}, indexSuperUnique: {},", nTCId, indexRegular, unknownOffset, indexUnique, indexSuperUnique));
@@ -1683,26 +1682,22 @@ void __fastcall ForceTCDrops(D2GameStrc* pGame, D2UnitStrc* pMonster, D2UnitStrc
     if (nTCId == 0)
         oDropTCTest(pGame, pMonster, pPlayer, nTCId, nQuality, nItemLevel, a7, ppItems, pnItemsDropped, nMaxItems);
 
-    //Force Boss Drops
-    if (pMonStatsTxtRecord->nId == 156 || pMonStatsTxtRecord->nId == 211 ||
-        pMonStatsTxtRecord->nId == 242 || pMonStatsTxtRecord->nId == 243 ||
-        pMonStatsTxtRecord->nId == 544)
+    // Force Boss Drops
+    if (pMonStatsTxtRecord->nId == 156 || pMonStatsTxtRecord->nId == 211 || pMonStatsTxtRecord->nId == 242 || pMonStatsTxtRecord->nId == 243 || pMonStatsTxtRecord->nId == 544)
     {
         nTCId = indexUnique + unknownOffset;
         oDropTCTest(pGame, pMonster, pPlayer, nTCId, nQuality, nItemLevel, a7, ppItems, pnItemsDropped, nMaxItems);
-       LogDebug(std::format("nTCId Applied to Monster: {}\n---------------------\n", nTCId));
+        LogDebug(std::format("nTCId Applied to Monster: {}\n---------------------\n", nTCId));
     }
     else
     {
-        //MessageBoxA(nullptr, "Flag-based branch", "Debug", MB_OK);
         if (pMonsterFlag & MONTYPEFLAG_SUPERUNIQUE)
             nTCId = indexSuperUnique + (nTCId - indexSuperUnique);
         else if (pMonsterFlag & (MONTYPEFLAG_CHAMPION | MONTYPEFLAG_POSSESSED | MONTYPEFLAG_GHOSTLY))
             nTCId = indexChamp + unknownOffset;
-        else if (pMonsterFlag & (MONTYPEFLAG_UNIQUE | MONTYPEFLAG_MINION))
+        else if ((pMonsterFlag & MONTYPEFLAG_UNIQUE) || (cachedSettings.minionEquality && (pMonsterFlag & MONTYPEFLAG_MINION)))
             nTCId = indexUnique + unknownOffset;
-        else
-            nTCId = indexRegular + unknownOffset;
+        else nTCId = indexRegular + unknownOffset;
 
         LogDebug(std::format("nTCId Applied to Monster: {}\n---------------------\n", nTCId));
         oDropTCTest(pGame, pMonster, pPlayer, nTCId, nQuality, nItemLevel, a7, ppItems, pnItemsDropped, nMaxItems);
@@ -2695,19 +2690,14 @@ void ApplyMonsterDifficultyScaling(D2UnitStrc* pUnit, const DesecratedZone& zone
         if (override.bound_incl_max)  boundMax = override.bound_incl_max.value();
     }
 
-    // Clamp boosted level
+    // Clamp boosted level and Apply
     int boostedLevel = std::clamp(playerLevel + boostLevel, boundMin, boundMax);
-
-    // Apply monster level
     AdjustMonsterLevel(pUnit, STAT_LEVEL, boostedLevel);
-
-    // Calculate player count HP modifier
     int32_t playerCountModifier = (playerCountGlobal >= 9) ? (playerCountGlobal - 2) * 50 : (playerCountGlobal - 1) * 50;
 
     // Calculate base monster stats
     D2MonStatsInitStrc monStatsInit = {};
     CalculateMonsterStats(pUnit->dwClassId, 1, pGame->nDifficulty, STATLIST_GetUnitStatSigned(pUnit, STAT_LEVEL, 0), 7, monStatsInit);
-
     const int32_t nBaseHp = monStatsInit.nMinHP + ITEMS_RollLimitedRandomNumber(&pUnit->pSeed, monStatsInit.nMaxHP - monStatsInit.nMinHP + 1);
     const int32_t nHp = nBaseHp + D2_ComputePercentage(nBaseHp, playerCountModifier);
     const int32_t nShiftedHp = nHp << 8;
@@ -2752,7 +2742,7 @@ void __fastcall ApplyGhettoTerrorZone(D2GameStrc* pGame, D2ActiveRoomStrc* pRoom
         isTerrorized = false;
         return;
     }
-        
+
     //Loop through zones
     for (const auto& zone : gDesecratedZones)
     {
@@ -2868,10 +2858,6 @@ oMONSTER_InitializeStatsAndSkills(pGame, pRoom, pUnit, pMonRegData);
 }
 
 #pragma endregion
-
-std::string g_ItemFilterStatusMessage = "";
-bool g_ShouldShowItemFilterMessage = false;
-std::chrono::steady_clock::time_point g_ItemFilterMessageStartTime;
 
 #pragma region Draw Loop for Detours and Stats Display
 void D2RHUD::OnDraw() {
