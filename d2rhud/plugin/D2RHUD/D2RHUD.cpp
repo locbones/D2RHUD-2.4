@@ -40,7 +40,7 @@
 std::string configFilePath = "config.json";
 std::string filename = "../Launcher/D2RLAN_Config.txt";
 std::string lootFile = "../D2R/lootfilter.lua";
-std::string Version = "1.2.7";
+std::string Version = "1.2.8";
 
 using json = nlohmann::json;
 static MonsterStatsDisplaySettings cachedSettings;
@@ -1070,9 +1070,6 @@ void __fastcall ScaleDamage(D2DamageInfoStrc* pDamageInfo, D2DamageStatTableStrc
 void __fastcall HookedSUNITDMG_ApplyResistancesAndAbsorb(D2DamageInfoStrc* pDamageInfo, D2DamageStatTableStrc* pDamageStatTableRecord, int32_t bDontAbsorb) {
     oSUNITDMG_ApplyResistancesAndAbsorb(pDamageInfo, pDamageStatTableRecord, bDontAbsorb);
 
-
-
-
     if (pDamageInfo->pGame->nDifficulty > cachedSettings.HPRolloverDiff) {
         ScaleDamage(pDamageInfo, pDamageStatTableRecord);
     }
@@ -1118,15 +1115,21 @@ struct Stat {
 struct MonsterTreasureClass
 {
     std::string MonsterName;
-    std::string TCChecker1;
+    std::string TCChecker1a;
+    std::string TCChecker1b;
+    std::string TCChecker1c;
     std::string Desecrated;
     std::string DesecratedChamp;
     std::string DesecratedUnique;
-    std::string TCChecker2;
+    std::string TCChecker2a;
+    std::string TCChecker2b;
+    std::string TCChecker2c;
     std::string Desecrated_N;
     std::string DesecratedChamp_N;
     std::string DesecratedUnique_N;
-    std::string TCChecker3;
+    std::string TCChecker3a;
+    std::string TCChecker3b;
+    std::string TCChecker3c;
     std::string Desecrated_H;
     std::string DesecratedChamp_H;
     std::string DesecratedUnique_H;
@@ -1326,25 +1329,25 @@ MonsterTreasureResult GetMonsterTreasure(const std::vector<MonsterTreasureClass>
     std::string tcCheck;
 
     LogDebug(std::format("---------------------\nMonster: {}", m.MonsterName));
-    LogDebug(std::format("rowIndex={}, diff={}, monType={}, monsters.size={}, tcexEntries.size={}",rowIndex, diff, monType, monsters.size(), tcexEntries.size()));
+    LogDebug(std::format("Monstats Row: {}, Difficulty: {}",rowIndex, diff));
 
     if (rowIndex >= 410)
         rowIndex++;
 
     if (diff == 0) {
-        if (monType == 0) { tcCheck = m.TCChecker1; treasureClassValue = m.Desecrated; }
-        else if (monType == 1) treasureClassValue = m.DesecratedChamp;
-        else if (monType == 2) treasureClassValue = m.DesecratedUnique;
+        if (monType == 0) { tcCheck = m.TCChecker1a; treasureClassValue = m.Desecrated; }
+        else if (monType == 1) { tcCheck = m.TCChecker1b; treasureClassValue = m.DesecratedChamp; }
+        else if (monType == 2) { tcCheck = m.TCChecker1c; treasureClassValue = m.DesecratedUnique; }
     }
     else if (diff == 1) {
-        if (monType == 0) { tcCheck = m.TCChecker2; treasureClassValue = m.Desecrated_N; }
-        else if (monType == 1) treasureClassValue = m.DesecratedChamp_N;
-        else if (monType == 2) treasureClassValue = m.DesecratedUnique_N;
+        if (monType == 0) { tcCheck = m.TCChecker2a; treasureClassValue = m.Desecrated_N; }
+        else if (monType == 1) { tcCheck = m.TCChecker2b; treasureClassValue = m.DesecratedChamp_N; }
+        else if (monType == 2) { tcCheck = m.TCChecker2c; treasureClassValue = m.DesecratedUnique_N; }
     }
     else if (diff == 2) {
-        if (monType == 0) { tcCheck = m.TCChecker3; treasureClassValue = m.Desecrated_H; }
-        else if (monType == 1) treasureClassValue = m.DesecratedChamp_H;
-        else if (monType == 2) treasureClassValue = m.DesecratedUnique_H;
+        if (monType == 0) { tcCheck = m.TCChecker3a; treasureClassValue = m.Desecrated_H; }
+        else if (monType == 1) { tcCheck = m.TCChecker3b; treasureClassValue = m.DesecratedChamp_H; }
+        else if (monType == 2) { tcCheck = m.TCChecker3c; treasureClassValue = m.DesecratedUnique_H; }
     }
     
     for (size_t i = 0; i < tcexEntries.size(); ++i) {
@@ -1361,8 +1364,9 @@ MonsterTreasureResult GetMonsterTreasure(const std::vector<MonsterTreasureClass>
         }
     }
 
-    LogDebug(std::format("TC: {}, TC for TZ: {}", tcCheck, treasureClassValue));
-    LogDebug(std::format("baseTCIndex: {}, terrorTCIndex: {}", result.tcCheckIndex, result.treasureIndex));
+    LogDebug(std::format("Treasure Class: {}", tcCheck));
+    LogDebug(std::format("TZ Treasure Class: {}", treasureClassValue));
+    LogDebug(std::format("Base TC Row: {}, Terror TC Row: {}", result.tcCheckIndex, result.treasureIndex));
 
     return result;
 }
@@ -1413,8 +1417,9 @@ MonsterTreasureResult GetMonsterTreasureSU(const std::vector<MonsterTreasureClas
         }
     }
 
-    LogDebug(std::format("SU TC: {}, SU TC for TZ: {}", tcCheck, treasureClassValue));
-    LogDebug(std::format("SUbaseTCIndex: {}, SUterrorTCIndex: {}", result.tcCheckIndex, result.treasureIndex));
+    LogDebug(std::format("SU Treasure Class: {}", tcCheck));
+    LogDebug(std::format("SU TZ Treasure Class: {}", treasureClassValue));
+    LogDebug(std::format("SuperUniques Base TC Row: {}, SuperUniques Terror TC Row: {}", result.tcCheckIndex, result.treasureIndex));
 
     return result;
 }
@@ -1433,15 +1438,21 @@ std::vector<MonsterTreasureClass> ReadMonsterTreasureFile(const std::string& fil
     std::string line;
     bool isHeader = true;
     int idxMonsterName = -1;
-    int idxTCChecker1 = -1;
+    int idxTCChecker1a = -1;
+    int idxTCChecker1b = -1;
+    int idxTCChecker1c = -1;
     int idxDesecrated = -1;
     int idxDesecratedChamp = -1;
     int idxDesecratedUnique = -1;
-    int idxTCChecker2 = -1;
+    int idxTCChecker2a = -1;
+    int idxTCChecker2b = -1;
+    int idxTCChecker2c = -1;
     int idxDesecrated_N = -1;
     int idxDesecratedChamp_N = -1;
     int idxDesecratedUnique_N = -1;
-    int idxTCChecker3 = -1;
+    int idxTCChecker3a = -1;
+    int idxTCChecker3b = -1;
+    int idxTCChecker3c = -1;
     int idxDesecrated_H = -1;
     int idxDesecratedChamp_H = -1;
     int idxDesecratedUnique_H = -1;
@@ -1460,15 +1471,21 @@ std::vector<MonsterTreasureClass> ReadMonsterTreasureFile(const std::string& fil
             for (size_t i = 0; i < cols.size(); ++i)
             {
                 if (cols[i] == "Id") idxMonsterName = static_cast<int>(i);
-                else if (cols[i] == "TreasureClass1") idxTCChecker1 = static_cast<int>(i);
+                else if (cols[i] == "TreasureClass1") idxTCChecker1a = static_cast<int>(i);
+                else if (cols[i] == "TreasureClass2") idxTCChecker1b = static_cast<int>(i);
+                else if (cols[i] == "TreasureClass3") idxTCChecker1c = static_cast<int>(i);
                 else if (cols[i] == "TreasureClassDesecrated") idxDesecrated = static_cast<int>(i);
                 else if (cols[i] == "TreasureClassDesecratedChamp") idxDesecratedChamp = static_cast<int>(i);
                 else if (cols[i] == "TreasureClassDesecratedUnique") idxDesecratedUnique = static_cast<int>(i);
-                else if (cols[i] == "TreasureClass1(N)") idxTCChecker2 = static_cast<int>(i);
+                else if (cols[i] == "TreasureClass1(N)") idxTCChecker2a = static_cast<int>(i);
+                else if (cols[i] == "TreasureClass2(N)") idxTCChecker2b = static_cast<int>(i);
+                else if (cols[i] == "TreasureClass3(N)") idxTCChecker2c = static_cast<int>(i);
                 else if (cols[i] == "TreasureClassDesecrated(N)") idxDesecrated_N = static_cast<int>(i);
                 else if (cols[i] == "TreasureClassDesecratedChamp(N)") idxDesecratedChamp_N = static_cast<int>(i);
                 else if (cols[i] == "TreasureClassDesecratedUnique(N)") idxDesecratedUnique_N = static_cast<int>(i);
-                else if (cols[i] == "TreasureClass1(H)") idxTCChecker3 = static_cast<int>(i);
+                else if (cols[i] == "TreasureClass1(H)") idxTCChecker3a = static_cast<int>(i);
+                else if (cols[i] == "TreasureClass2(H)") idxTCChecker3b = static_cast<int>(i);
+                else if (cols[i] == "TreasureClass3(H)") idxTCChecker3c = static_cast<int>(i);
                 else if (cols[i] == "TreasureClassDesecrated(H)") idxDesecrated_H = static_cast<int>(i);
                 else if (cols[i] == "TreasureClassDesecratedChamp(H)") idxDesecratedChamp_H = static_cast<int>(i);
                 else if (cols[i] == "TreasureClassDesecratedUnique(H)") idxDesecratedUnique_H = static_cast<int>(i);
@@ -1482,24 +1499,36 @@ std::vector<MonsterTreasureClass> ReadMonsterTreasureFile(const std::string& fil
 
         if (idxMonsterName >= 0 && idxMonsterName < (int)cols.size())
             entry.MonsterName = cols[idxMonsterName];
-        if (idxTCChecker1 >= 0 && idxTCChecker1 < (int)cols.size())
-            entry.TCChecker1 = cols[idxTCChecker1];
+        if (idxTCChecker1a >= 0 && idxTCChecker1a < (int)cols.size())
+            entry.TCChecker1a = cols[idxTCChecker1a];
+        if (idxTCChecker1b >= 0 && idxTCChecker1b < (int)cols.size())
+            entry.TCChecker1b = cols[idxTCChecker1b];
+        if (idxTCChecker1c >= 0 && idxTCChecker1c < (int)cols.size())
+            entry.TCChecker1c = cols[idxTCChecker1c];
         if (idxDesecrated >= 0 && idxDesecrated < (int)cols.size())
             entry.Desecrated = cols[idxDesecrated];
         if (idxDesecratedChamp >= 0 && idxDesecratedChamp < (int)cols.size())
             entry.DesecratedChamp = cols[idxDesecratedChamp];
         if (idxDesecratedUnique >= 0 && idxDesecratedUnique < (int)cols.size())
             entry.DesecratedUnique = cols[idxDesecratedUnique];
-        if (idxTCChecker2 >= 0 && idxTCChecker2 < (int)cols.size())
-            entry.TCChecker2 = cols[idxTCChecker2];
+        if (idxTCChecker2a >= 0 && idxTCChecker2a < (int)cols.size())
+            entry.TCChecker2a = cols[idxTCChecker2a];
+        if (idxTCChecker2b >= 0 && idxTCChecker2b < (int)cols.size())
+            entry.TCChecker2b = cols[idxTCChecker2b];
+        if (idxTCChecker2c >= 0 && idxTCChecker2c < (int)cols.size())
+            entry.TCChecker2c = cols[idxTCChecker2c];
         if (idxDesecrated_N >= 0 && idxDesecrated_N < (int)cols.size())
             entry.Desecrated_N = cols[idxDesecrated_N];
         if (idxDesecratedChamp_N >= 0 && idxDesecratedChamp_N < (int)cols.size())
             entry.DesecratedChamp_N = cols[idxDesecratedChamp_N];
         if (idxDesecratedUnique_N >= 0 && idxDesecratedUnique_N < (int)cols.size())
             entry.DesecratedUnique_N = cols[idxDesecratedUnique_N];
-        if (idxTCChecker3 >= 0 && idxTCChecker3 < (int)cols.size())
-            entry.TCChecker3 = cols[idxTCChecker3];
+        if (idxTCChecker3a >= 0 && idxTCChecker3a < (int)cols.size())
+            entry.TCChecker3a = cols[idxTCChecker3a];
+        if (idxTCChecker3b >= 0 && idxTCChecker3b < (int)cols.size())
+            entry.TCChecker3b = cols[idxTCChecker3b];
+        if (idxTCChecker3c >= 0 && idxTCChecker3c < (int)cols.size())
+            entry.TCChecker3c = cols[idxTCChecker3c];
         if (idxDesecrated_H >= 0 && idxDesecrated_H < (int)cols.size())
             entry.Desecrated_H = cols[idxDesecrated_H];
         if (idxDesecratedChamp_H >= 0 && idxDesecratedChamp_H < (int)cols.size())
@@ -1675,9 +1704,13 @@ void __fastcall ForceTCDrops(D2GameStrc* pGame, D2UnitStrc* pMonster, D2UnitStrc
     int indexChamp = (champResult.treasureIndex == -1) ? tcCheckChamp : champResult.treasureIndex;
     int indexUnique = (uniqResult.treasureIndex == -1) ? tcCheckUnique : uniqResult.treasureIndex;
     int indexSuperUnique = (superuniqResult.treasureIndex == -1) ? tcCheckSuperUnique : superuniqResult.treasureIndex;
-    int unknownOffset = nTCId - tcCheckRegular;
 
-    LogDebug(std::format("---------------------\nnTCId: {}, indexRegular: {}, unknownOffset: {},  indexUnique: {}, indexSuperUnique: {},", nTCId, indexRegular, unknownOffset, indexUnique, indexSuperUnique));
+    int unknownOffset1 = nTCId - tcCheckRegular;
+    int unknownOffset2 = nTCId - tcCheckChamp;
+    int unknownOffset3 = nTCId - tcCheckUnique;
+    int unknownOffset4 = nTCId - tcCheckRegular;
+
+    LogDebug(std::format("---------------------\nnTCId: {}, indexRegular: {}, unknownOffsets: {},{},{}  indexUnique: {}, indexSuperUnique: {},", nTCId, indexRegular, unknownOffset1, unknownOffset2, unknownOffset3, indexUnique, indexSuperUnique));
 
     if (nTCId == 0)
         oDropTCTest(pGame, pMonster, pPlayer, nTCId, nQuality, nItemLevel, a7, ppItems, pnItemsDropped, nMaxItems);
@@ -1685,7 +1718,7 @@ void __fastcall ForceTCDrops(D2GameStrc* pGame, D2UnitStrc* pMonster, D2UnitStrc
     // Force Boss Drops
     if (pMonStatsTxtRecord->nId == 156 || pMonStatsTxtRecord->nId == 211 || pMonStatsTxtRecord->nId == 242 || pMonStatsTxtRecord->nId == 243 || pMonStatsTxtRecord->nId == 544)
     {
-        nTCId = indexUnique + unknownOffset;
+        nTCId = indexUnique + unknownOffset4;
         oDropTCTest(pGame, pMonster, pPlayer, nTCId, nQuality, nItemLevel, a7, ppItems, pnItemsDropped, nMaxItems);
         LogDebug(std::format("nTCId Applied to Monster: {}\n---------------------\n", nTCId));
     }
@@ -1694,10 +1727,10 @@ void __fastcall ForceTCDrops(D2GameStrc* pGame, D2UnitStrc* pMonster, D2UnitStrc
         if (pMonsterFlag & MONTYPEFLAG_SUPERUNIQUE)
             nTCId = indexSuperUnique + (nTCId - indexSuperUnique);
         else if (pMonsterFlag & (MONTYPEFLAG_CHAMPION | MONTYPEFLAG_POSSESSED | MONTYPEFLAG_GHOSTLY))
-            nTCId = indexChamp + unknownOffset;
+            nTCId = indexChamp + unknownOffset2;
         else if ((pMonsterFlag & MONTYPEFLAG_UNIQUE) || (cachedSettings.minionEquality && (pMonsterFlag & MONTYPEFLAG_MINION)))
-            nTCId = indexUnique + unknownOffset;
-        else nTCId = indexRegular + unknownOffset;
+            nTCId = indexUnique + unknownOffset3;
+        else nTCId = indexRegular + unknownOffset1;
 
         LogDebug(std::format("nTCId Applied to Monster: {}\n---------------------\n", nTCId));
         oDropTCTest(pGame, pMonster, pPlayer, nTCId, nQuality, nItemLevel, a7, ppItems, pnItemsDropped, nMaxItems);
@@ -2523,7 +2556,9 @@ void SetStat(D2UnitStrc* pUnit, D2C_ItemStats nStatId, uint32_t nValue) {
 
 void AddToCurrentStat(D2UnitStrc* pUnit, D2C_ItemStats nStatId, uint32_t nValue) {
     int currentValue = STATLIST_GetUnitStatSigned(pUnit, nStatId, 0);
-    STATLISTEX_SetStatListExStat(pUnit->pStatListEx, nStatId, currentValue + nValue, 0);
+
+    if (STATLIST_GetUnitStatSigned(pUnit, STAT_ALIGNMENT, 0) != 1)
+        STATLISTEX_SetStatListExStat(pUnit->pStatListEx, nStatId, currentValue + nValue, 0);
 }
 
 int GetLevelIdFromRoom(D2ActiveRoomStrc* pRoom)
