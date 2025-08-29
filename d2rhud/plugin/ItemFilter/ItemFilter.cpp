@@ -123,9 +123,9 @@ void __fastcall Hooked_ITEMS_GetName(D2UnitStrc* pUnit, char* pBuffer) {
 	}
 	if (pUnitToUse != nullptr) {
 		auto pUnitCustom = (D2UnitStrcCustom*)pUnit;
-		char cBuffer[0x7F];
-		snprintf(cBuffer, 0x7F, pUnitCustom->pFilterResult->szName.c_str(), pBuffer);
-		strncpy(pBuffer, cBuffer, 0x7F);
+		char cBuffer[0x400];
+		snprintf(cBuffer, 0x400, pUnitCustom->pFilterResult->szName.c_str(), pBuffer);
+		strncpy(pBuffer, cBuffer, 0x400);
 
 		if (pUnitCustom->pFilterResult->cbNameFunction.valid()) {
 			std::string szName = std::string(pBuffer);
@@ -147,6 +147,41 @@ void __fastcall Hooked_ITEMS_GetName(D2UnitStrc* pUnit, char* pBuffer) {
 	}
 }
 
+void __fastcall Hooked_ITEMS_GetNameGold(D2UnitStrc* pUnit, char* pBuffer) {
+	oITEMS_GetName(pUnit, pBuffer);
+	auto pUnitToUse = pUnit;
+	if (gpClientList) {
+		auto pClient = *gpClientList;
+		if (pClient && pClient->pGame) {
+			pUnitToUse = UNITS_GetServerUnitByTypeAndId(pClient->pGame, (D2C_UnitTypes)pUnit->dwUnitType, pUnit->dwUnitId);
+		}
+	}
+	if (pUnitToUse != nullptr) {
+		auto pUnitCustom = (D2UnitStrcCustom*)pUnit;
+		char cBuffer[0x7F];
+		snprintf(cBuffer, 0x7F, pUnitCustom->pFilterResult->szName.c_str(), pBuffer);
+		strncpy(pBuffer, cBuffer, 0x7F);
+
+		if (pUnitCustom->pFilterResult->cbNameFunction.valid()) {
+			std::string szName = std::string(pBuffer);
+			sol::protected_function_result result = pUnitCustom->pFilterResult->cbNameFunction(
+				reinterpret_cast<D2ItemUnitStrc*>(pUnit),
+				szName,
+				GetTickCount()
+			);
+			if (HandleError(result)) {
+				return;
+			}
+			sol::object data = result;
+			if (data.valid() && data.is<std::string>()) {
+				szName = data.as<std::string>();
+			}
+			strncpy(pBuffer, szName.c_str(), 0x400);
+
+		}
+	}
+}
+
 void __fastcall Hooked_UI_BuildGroundItemTooltip(D2UnitStrc* pUnit, char* szTooltipText, int64_t a3, uint32_t* nColorCode) {
 	oUI_BuildGroundItemTooltip(pUnit, szTooltipText, a3, nColorCode);
 	auto pUnitCustom = (D2UnitStrcCustom*)pUnit;
@@ -156,7 +191,7 @@ void __fastcall Hooked_UI_BuildGroundItemTooltip(D2UnitStrc* pUnit, char* szTool
 			|| pUnitCustom->pFilterResult->cbNameFunction != sol::nil);
 	if (oITEMS_CheckItemTypeId(pUnit, ITEMTYPE_GOLD)
 		&& shouldUseItemFilter) {
-		Hooked_ITEMS_GetName(pUnit, szTooltipText);
+		Hooked_ITEMS_GetNameGold(pUnit, szTooltipText);
 	}
 }
 

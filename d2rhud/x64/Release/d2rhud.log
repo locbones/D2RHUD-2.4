@@ -3,9 +3,9 @@ C:\Users\djsch\Github\D2RHUD-2.4\d2rhud\plugin\D2RHUD\D2RHUD.cpp(1037,34): warni
 C:\Users\djsch\Github\D2RHUD-2.4\d2rhud\plugin\D2RHUD\D2RHUD.cpp(1055,61): warning C4244: '*=': conversion from 'float' to 'int32_t', possible loss of data
 LINK : warning LNK4098: defaultlib 'LIBCMT' conflicts with use of other libs; use /NODEFAULTLIB:library
   Generating code
-  5 of 18718 functions (<0.1%) were compiled, the rest were copied from previous compilation.
+  2 of 18719 functions (<0.1%) were compiled, the rest were copied from previous compilation.
     0 functions were new in current compilation
-    12 functions had inline decision re-evaluated but remain unchanged
+    8 functions had inline decision re-evaluated but remain unchanged
   Finished generating code
   d2rhud.vcxproj -> C:\Users\djsch\Github\D2RHUD-2.4\x64\Release\d2rhud.dll
   'pwsh.exe' is not recognized as an internal or external command,
