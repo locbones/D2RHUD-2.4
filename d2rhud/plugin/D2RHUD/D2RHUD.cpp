@@ -40,7 +40,7 @@
 std::string configFilePath = "config.json";
 std::string filename = "../Launcher/D2RLAN_Config.txt";
 std::string lootFile = "../D2R/lootfilter.lua";
-std::string Version = "1.2.8";
+std::string Version = "1.2.9";
 
 using json = nlohmann::json;
 static MonsterStatsDisplaySettings cachedSettings;
@@ -3109,11 +3109,12 @@ void D2RHUD::OnDraw() {
         if (!gMouseHover->IsHovered) break;
         if (gMouseHover->HoveredUnitType > UNIT_MONSTER) break;
 
-        D2UnitStrc* pUnit, * pUnitServer;
+        D2UnitStrc* pUnit, * pUnitServer, * pUnitPlayer;
         if (pGame != nullptr)
         {
             pUnit = UNITS_GetServerUnitByTypeAndId(pGame, gMouseHover->HoveredUnitType, gMouseHover->HoveredUnitId);
             pUnitServer = UNITS_GetServerUnitByTypeAndId(pGame, gMouseHover->HoveredUnitType, gMouseHover->HoveredUnitId);
+            pUnitPlayer = UNITS_GetServerUnitByTypeAndId(pGame, UNIT_PLAYER, 1);
         }
         else
         {
@@ -3170,12 +3171,10 @@ void D2RHUD::OnDraw() {
                     drawList->AddText({ center - (width / 2.0f) + 1, ypercent2 }, IM_COL32(255, 255, 255, 255), hp.c_str());
                 }
 
-                /*
-                std::string ac = std::format("Atk Rating: {}", STATLIST_GetUnitStatSigned(pUnitServer, STAT_ARMORCLASS, 0));
-                drawList->AddText({ 20, 10 }, IM_COL32(170, 50, 50, 255), ac.c_str());
-                std::string xp = std::format("Experience: {}", STATLIST_GetUnitStatSigned(pUnitServer, STAT_EXPERIENCE, 0));
-                drawList->AddText({ 20, 30 }, IM_COL32(170, 50, 50, 255), xp.c_str());
-                */
+                
+                //std::string ac = std::format("Pierce IDX: {}", STATLIST_GetUnitStatSigned(pUnitPlayer, STAT_PIERCE_IDX, 0));
+                //drawList->AddText({ 20, 10 }, IM_COL32(170, 50, 50, 255), ac.c_str());
+                
             }
         }
 

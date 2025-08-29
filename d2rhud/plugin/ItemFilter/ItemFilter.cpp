@@ -74,6 +74,9 @@ static DATATBLS_LoadAllTxts_t oDATATBLS_LoadAllTxts = reinterpret_cast<DATATBLS_
 typedef void(__fastcall* DATATBLS_UnloadAllBins_t)();
 static DATATBLS_UnloadAllBins_t oDATATBLS_UnloadAllBins = reinterpret_cast<DATATBLS_UnloadAllBins_t>(Pattern::Address(0x1dd580));
 
+typedef void(__fastcall* UI_BuildGroundItemTooltip_t)(D2UnitStrc* pUnit, char* szTooltipText, int64_t a3, uint32_t* nColorCode);
+static UI_BuildGroundItemTooltip_t oUI_BuildGroundItemTooltip = reinterpret_cast<UI_BuildGroundItemTooltip_t>(Pattern::Address(0x83F90));
+
 std::string gWelcomeMessage;
 
 D2UnitStrc* GetUnitByIdAndType(D2UnitStrc** ppUnitsList, uint32_t nUnitId, D2C_UnitTypes nUnitType) {
@@ -120,9 +123,9 @@ void __fastcall Hooked_ITEMS_GetName(D2UnitStrc* pUnit, char* pBuffer) {
 	}
 	if (pUnitToUse != nullptr) {
 		auto pUnitCustom = (D2UnitStrcCustom*)pUnit;
-		char cBuffer[0x400];
-		snprintf(cBuffer, 0x400, pUnitCustom->pFilterResult->szName.c_str(), pBuffer);
-		strncpy(pBuffer, cBuffer, 0x400);
+		char cBuffer[0x7F];
+		snprintf(cBuffer, 0x7F, pUnitCustom->pFilterResult->szName.c_str(), pBuffer);
+		strncpy(pBuffer, cBuffer, 0x7F);
 
 		if (pUnitCustom->pFilterResult->cbNameFunction.valid()) {
 			std::string szName = std::string(pBuffer);
@@ -144,6 +147,19 @@ void __fastcall Hooked_ITEMS_GetName(D2UnitStrc* pUnit, char* pBuffer) {
 	}
 }
 
+void __fastcall Hooked_UI_BuildGroundItemTooltip(D2UnitStrc* pUnit, char* szTooltipText, int64_t a3, uint32_t* nColorCode) {
+	oUI_BuildGroundItemTooltip(pUnit, szTooltipText, a3, nColorCode);
+	auto pUnitCustom = (D2UnitStrcCustom*)pUnit;
+	bool shouldUseItemFilter = pUnitCustom
+		&& pUnitCustom->pFilterResult
+		&& (pUnitCustom->pFilterResult->szName != "%s"
+			|| pUnitCustom->pFilterResult->cbNameFunction != sol::nil);
+	if (oITEMS_CheckItemTypeId(pUnit, ITEMTYPE_GOLD)
+		&& shouldUseItemFilter) {
+		Hooked_ITEMS_GetName(pUnit, szTooltipText);
+	}
+}
+
 inline bool IsHovered(float* rgba) {
 	return rgba[0] == 0.f && rgba[1] == 0.25f && rgba[2] == 0.5f && rgba[3] == 1.f;
 }
@@ -160,7 +176,6 @@ void HandleItemBackground(D2UnitStrcCustom* pUnit, D2UnitRectStrc* pRect, float*
 			));
 		}
 		auto& backGroundColor = bIsHovered ? pUnit->pFilterResult->nHoveredBackgroundColorGround : pUnit->pFilterResult->nBackgroundColorGround;
-		std::cout << bIsHovered << std::endl;
 		rgba[0] = backGroundColor[0];
 		rgba[1] = backGroundColor[1];
 		rgba[2] = backGroundColor[2];
@@ -326,8 +341,7 @@ void RegisterD2ItemDataStrc(sol::state& s) {
 		"MagicSuffixes", sol::readonly_property([](D2ItemDataStrc* pThat) -> std::vector<uint16_t> { return { pThat->wMagicSuffix[0], pThat->wMagicSuffix[1], pThat->wMagicSuffix[2] }; }),
 		"Gfx", &D2ItemDataStrc::nInvGfxIdx,
 		"IsIdentified", sol::readonly_property([](D2ItemDataStrc* pThat) -> bool { return (pThat->dwItemFlags & IFLAG_IDENTIFIED) != 0; }),
-		"IsEthereal", sol::readonly_property([](D2ItemDataStrc* pThat) -> bool { return (pThat->dwItemFlags & IFLAG_ETHEREAL) != 0; }),
-		"ItemLevel", &D2ItemDataStrc::dwItemLevel
+		"IsEthereal", sol::readonly_property([](D2ItemDataStrc* pThat) -> bool { return (pThat->dwItemFlags & IFLAG_ETHEREAL) != 0; })
 	);
 }
 
@@ -473,6 +487,7 @@ bool ItemFilter::Install(MonsterStatsDisplaySettings settings) {
 		// Stuff we want to do w/ the filter
 		DetourAttach(&(PVOID&)oITEMS_GetName, Hooked_ITEMS_GetName);
 		DetourAttach(&(PVOID&)oUI_DrawGroundItemBackground, Hooked_UI_DrawGroundItemBackground);
+		DetourAttach(&(PVOID&)oUI_BuildGroundItemTooltip, Hooked_UI_BuildGroundItemTooltip);
 		DetourAttach(&(PVOID&)oTooltipsPanel_DrawTooltip, Hooked_TooltipsPanel_DrawTooltip);
 
 		DWORD oldProtect = 0;
