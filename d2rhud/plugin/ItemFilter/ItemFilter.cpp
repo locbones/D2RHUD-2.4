@@ -376,7 +376,8 @@ void RegisterD2ItemDataStrc(sol::state& s) {
 		"MagicSuffixes", sol::readonly_property([](D2ItemDataStrc* pThat) -> std::vector<uint16_t> { return { pThat->wMagicSuffix[0], pThat->wMagicSuffix[1], pThat->wMagicSuffix[2] }; }),
 		"Gfx", &D2ItemDataStrc::nInvGfxIdx,
 		"IsIdentified", sol::readonly_property([](D2ItemDataStrc* pThat) -> bool { return (pThat->dwItemFlags & IFLAG_IDENTIFIED) != 0; }),
-		"IsEthereal", sol::readonly_property([](D2ItemDataStrc* pThat) -> bool { return (pThat->dwItemFlags & IFLAG_ETHEREAL) != 0; })
+		"IsEthereal", sol::readonly_property([](D2ItemDataStrc* pThat) -> bool { return (pThat->dwItemFlags & IFLAG_ETHEREAL) != 0; }),
+		"ItemLevel", &D2ItemDataStrc::dwItemLevel
 	);
 }
 
