@@ -40,7 +40,7 @@
 std::string configFilePath = "config.json";
 std::string filename = "../Launcher/D2RLAN_Config.txt";
 std::string lootFile = "../D2R/lootfilter.lua";
-std::string Version = "1.3.1";
+std::string Version = "1.3.2";
 
 using json = nlohmann::json;
 static MonsterStatsDisplaySettings cachedSettings;
@@ -1710,26 +1710,32 @@ void __fastcall ForceTCDrops(D2GameStrc* pGame, D2UnitStrc* pMonster, D2UnitStrc
     if (nTCId == 0)
         oDropTCTest(pGame, pMonster, pPlayer, nTCId, nQuality, nItemLevel, a7, ppItems, pnItemsDropped, nMaxItems);
 
-    // Force Boss Drops
-    if (pMonStatsTxtRecord->nId == 156 || pMonStatsTxtRecord->nId == 211 || pMonStatsTxtRecord->nId == 242 || pMonStatsTxtRecord->nId == 243 || pMonStatsTxtRecord->nId == 544)
-    {
-        nTCId = nTCId + (uniqResult.treasureIndex - tcCheckUnique);
+    if (indexRegular == -1 && indexChamp == -1 && indexUnique == -1 && indexSuperUnique == -1)
         oDropTCTest(pGame, pMonster, pPlayer, nTCId, nQuality, nItemLevel, a7, ppItems, pnItemsDropped, nMaxItems);
-        LogDebug(std::format("nTCId Applied to Monster: {}\n---------------------\n", nTCId));
-    }
     else
     {
-        if (pMonsterFlag & MONTYPEFLAG_SUPERUNIQUE)
-            nTCId = nTCId + (superuniqResult.treasureIndex - tcCheckSuperUnique);
-        else if (pMonsterFlag & (MONTYPEFLAG_CHAMPION | MONTYPEFLAG_POSSESSED | MONTYPEFLAG_GHOSTLY))
-            nTCId = nTCId + (champResult.treasureIndex - tcCheckChamp);
-        else if ((pMonsterFlag & MONTYPEFLAG_UNIQUE) || (cachedSettings.minionEquality && (pMonsterFlag & MONTYPEFLAG_MINION)))
+        // Force Boss Drops
+        if (pMonStatsTxtRecord->nId == 156 || pMonStatsTxtRecord->nId == 211 || pMonStatsTxtRecord->nId == 242 || pMonStatsTxtRecord->nId == 243 || pMonStatsTxtRecord->nId == 544)
+        {
             nTCId = nTCId + (uniqResult.treasureIndex - tcCheckUnique);
-        else nTCId = nTCId + (regResult.treasureIndex - tcCheckRegular);
+            oDropTCTest(pGame, pMonster, pPlayer, nTCId, nQuality, nItemLevel, a7, ppItems, pnItemsDropped, nMaxItems);
+            LogDebug(std::format("nTCId Applied to Monster: {}\n---------------------\n", nTCId));
+        }
+        else
+        {
+            if (pMonsterFlag & MONTYPEFLAG_SUPERUNIQUE)
+                nTCId = nTCId + (superuniqResult.treasureIndex - tcCheckSuperUnique);
+            else if (pMonsterFlag & (MONTYPEFLAG_CHAMPION | MONTYPEFLAG_POSSESSED | MONTYPEFLAG_GHOSTLY))
+                nTCId = nTCId + (champResult.treasureIndex - tcCheckChamp);
+            else if ((pMonsterFlag & MONTYPEFLAG_UNIQUE) || (cachedSettings.minionEquality && (pMonsterFlag & MONTYPEFLAG_MINION)))
+                nTCId = nTCId + (uniqResult.treasureIndex - tcCheckUnique);
+            else nTCId = nTCId + (regResult.treasureIndex - tcCheckRegular);
 
-        LogDebug(std::format("nTCId Applied to Monster: {}\n---------------------\n", nTCId));
-        oDropTCTest(pGame, pMonster, pPlayer, nTCId, nQuality, nItemLevel, a7, ppItems, pnItemsDropped, nMaxItems);
+            LogDebug(std::format("nTCId Applied to Monster: {}\n---------------------\n", nTCId));
+            oDropTCTest(pGame, pMonster, pPlayer, nTCId, nQuality, nItemLevel, a7, ppItems, pnItemsDropped, nMaxItems);
+        }
     }
+    
 }
 
 void __fastcall HookedDropTCTest(D2GameStrc* pGame, D2UnitStrc* pMonster, D2UnitStrc* pPlayer, int32_t nTCId, int32_t nQuality, int32_t nItemLevel, int32_t a7, D2UnitStrc** ppItems, int32_t* pnItemsDropped, int32_t nMaxItems)
