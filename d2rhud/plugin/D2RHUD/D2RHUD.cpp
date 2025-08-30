@@ -40,7 +40,7 @@
 std::string configFilePath = "config.json";
 std::string filename = "../Launcher/D2RLAN_Config.txt";
 std::string lootFile = "../D2R/lootfilter.lua";
-std::string Version = "1.3.0";
+std::string Version = "1.3.1";
 
 using json = nlohmann::json;
 static MonsterStatsDisplaySettings cachedSettings;
@@ -1705,12 +1705,7 @@ void __fastcall ForceTCDrops(D2GameStrc* pGame, D2UnitStrc* pMonster, D2UnitStrc
     int indexUnique = (uniqResult.treasureIndex == -1) ? tcCheckUnique : uniqResult.treasureIndex;
     int indexSuperUnique = (superuniqResult.treasureIndex == -1) ? tcCheckSuperUnique : superuniqResult.treasureIndex;
 
-    int unknownOffset1 = nTCId - tcCheckRegular;
-    int unknownOffset2 = nTCId - tcCheckChamp;
-    int unknownOffset3 = nTCId - tcCheckUnique;
-    int unknownOffset4 = nTCId - tcCheckRegular;
-
-    LogDebug(std::format("---------------------\nnTCId: {}, indexRegular: {}, unknownOffsets: {},{},{}  indexUnique: {}, indexSuperUnique: {},", nTCId, indexRegular, unknownOffset1, unknownOffset2, unknownOffset3, indexUnique, indexSuperUnique));
+    LogDebug(std::format("---------------------\nnTCId: {}, indexRegular: {}, indexChamp: {},  indexUnique: {}, indexSuperUnique: {},", nTCId, indexRegular, indexChamp, indexUnique, indexSuperUnique));
 
     if (nTCId == 0)
         oDropTCTest(pGame, pMonster, pPlayer, nTCId, nQuality, nItemLevel, a7, ppItems, pnItemsDropped, nMaxItems);
@@ -1718,19 +1713,19 @@ void __fastcall ForceTCDrops(D2GameStrc* pGame, D2UnitStrc* pMonster, D2UnitStrc
     // Force Boss Drops
     if (pMonStatsTxtRecord->nId == 156 || pMonStatsTxtRecord->nId == 211 || pMonStatsTxtRecord->nId == 242 || pMonStatsTxtRecord->nId == 243 || pMonStatsTxtRecord->nId == 544)
     {
-        nTCId = indexUnique + unknownOffset4;
+        nTCId = nTCId + (uniqResult.treasureIndex - tcCheckUnique);
         oDropTCTest(pGame, pMonster, pPlayer, nTCId, nQuality, nItemLevel, a7, ppItems, pnItemsDropped, nMaxItems);
         LogDebug(std::format("nTCId Applied to Monster: {}\n---------------------\n", nTCId));
     }
     else
     {
         if (pMonsterFlag & MONTYPEFLAG_SUPERUNIQUE)
-            nTCId = indexSuperUnique + (nTCId - indexSuperUnique);
+            nTCId = nTCId + (superuniqResult.treasureIndex - tcCheckSuperUnique);
         else if (pMonsterFlag & (MONTYPEFLAG_CHAMPION | MONTYPEFLAG_POSSESSED | MONTYPEFLAG_GHOSTLY))
-            nTCId = indexChamp + unknownOffset2;
+            nTCId = nTCId + (champResult.treasureIndex - tcCheckChamp);
         else if ((pMonsterFlag & MONTYPEFLAG_UNIQUE) || (cachedSettings.minionEquality && (pMonsterFlag & MONTYPEFLAG_MINION)))
-            nTCId = indexUnique + unknownOffset3;
-        else nTCId = indexRegular + unknownOffset1;
+            nTCId = nTCId + (uniqResult.treasureIndex - tcCheckUnique);
+        else nTCId = nTCId + (regResult.treasureIndex - tcCheckRegular);
 
         LogDebug(std::format("nTCId Applied to Monster: {}\n---------------------\n", nTCId));
         oDropTCTest(pGame, pMonster, pPlayer, nTCId, nQuality, nItemLevel, a7, ppItems, pnItemsDropped, nMaxItems);
