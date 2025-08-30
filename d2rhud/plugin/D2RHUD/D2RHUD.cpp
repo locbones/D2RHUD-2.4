@@ -1710,7 +1710,7 @@ void __fastcall ForceTCDrops(D2GameStrc* pGame, D2UnitStrc* pMonster, D2UnitStrc
     if (nTCId == 0)
         oDropTCTest(pGame, pMonster, pPlayer, nTCId, nQuality, nItemLevel, a7, ppItems, pnItemsDropped, nMaxItems);
 
-    if (indexRegular == -1 && indexChamp == -1 && indexUnique == -1 && indexSuperUnique == -1)
+    if (regResult.treasureIndex == -1 && champResult.treasureIndex == -1 && uniqResult.treasureIndex == -1 && superuniqResult.treasureIndex == -1)
         oDropTCTest(pGame, pMonster, pPlayer, nTCId, nQuality, nItemLevel, a7, ppItems, pnItemsDropped, nMaxItems);
     else
     {
