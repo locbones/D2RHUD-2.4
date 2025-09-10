@@ -40,7 +40,7 @@
 std::string configFilePath = "config.json";
 std::string filename = "../Launcher/D2RLAN_Config.txt";
 std::string lootFile = "../D2R/lootfilter.lua";
-std::string Version = "1.3.2";
+std::string Version = "1.3.3";
 
 using json = nlohmann::json;
 static MonsterStatsDisplaySettings cachedSettings;
@@ -1710,8 +1710,9 @@ void __fastcall ForceTCDrops(D2GameStrc* pGame, D2UnitStrc* pMonster, D2UnitStrc
     if (nTCId == 0)
         oDropTCTest(pGame, pMonster, pPlayer, nTCId, nQuality, nItemLevel, a7, ppItems, pnItemsDropped, nMaxItems);
 
-    if (regResult.treasureIndex == -1 && champResult.treasureIndex == -1 && uniqResult.treasureIndex == -1 && superuniqResult.treasureIndex == -1)
+    if ((regResult.treasureIndex == -1 || champResult.treasureIndex == -1 || uniqResult.treasureIndex == -1) && superuniqResult.treasureIndex == -1)
         oDropTCTest(pGame, pMonster, pPlayer, nTCId, nQuality, nItemLevel, a7, ppItems, pnItemsDropped, nMaxItems);
+
     else
     {
         // Force Boss Drops
