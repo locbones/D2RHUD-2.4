@@ -40,7 +40,7 @@
 std::string configFilePath = "config.json";
 std::string filename = "../Launcher/D2RLAN_Config.txt";
 std::string lootFile = "../D2R/lootfilter.lua";
-std::string Version = "1.3.3";
+std::string Version = "1.3.4";
 
 using json = nlohmann::json;
 static MonsterStatsDisplaySettings cachedSettings;
@@ -3174,7 +3174,7 @@ void D2RHUD::OnDraw() {
                 }
 
                 
-                //std::string ac = std::format("Pierce IDX: {}", STATLIST_GetUnitStatSigned(pUnitPlayer, STAT_PIERCE_IDX, 0));
+                //std::string ac = std::format("Pierce IDX: {}", STATLIST_GetUnitStatSigned(pUnitServer, STAT_ARMORCLASS, 0));
                 //drawList->AddText({ 20, 10 }, IM_COL32(170, 50, 50, 255), ac.c_str());
                 
             }

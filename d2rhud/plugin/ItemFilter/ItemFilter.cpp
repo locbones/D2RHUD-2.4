@@ -77,6 +77,9 @@ static DATATBLS_UnloadAllBins_t oDATATBLS_UnloadAllBins = reinterpret_cast<DATAT
 typedef void(__fastcall* UI_BuildGroundItemTooltip_t)(D2UnitStrc* pUnit, char* szTooltipText, int64_t a3, uint32_t* nColorCode);
 static UI_BuildGroundItemTooltip_t oUI_BuildGroundItemTooltip = reinterpret_cast<UI_BuildGroundItemTooltip_t>(Pattern::Address(0x83F90));
 
+typedef uint8_t(__fastcall* ITEMS_GetMaxSockets_t)(D2UnitStrc* pUnit);
+static ITEMS_GetMaxSockets_t oITEMS_GetMaxSockets = reinterpret_cast<ITEMS_GetMaxSockets_t>(Pattern::Address(0x1FDE00));
+
 std::string gWelcomeMessage;
 
 D2UnitStrc* GetUnitByIdAndType(D2UnitStrc** ppUnitsList, uint32_t nUnitId, D2C_UnitTypes nUnitType) {
@@ -313,6 +316,7 @@ void RegisterD2UnitStrc(sol::state& s) {
 		sol::base_classes, sol::bases<D2UnitStrc>()
 	);
 	itemType["IsType"] = oITEMS_CheckItemTypeId;
+	itemType["MaxSockets"] = oITEMS_GetMaxSockets;
 	itemType["Link"] = [](D2UnitStrc* pThat, char color) -> std::string {
 		char pLinkData[0x558] = {};
 		char pName[0x400] = {};
