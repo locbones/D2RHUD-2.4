@@ -614,12 +614,15 @@ void ItemFilter::CycleFilter()
 	std::ostringstream buffer;
 	std::string line;
 	int currentLevel = 1;
+	bool foundLevel = false;
+	bool foundTitles = false;
 	std::vector<std::string> filterTitles;
 
 	// Read the file to detect current filter_level and titles
 	while (std::getline(inFile, line)) {
 		// Detect filter_level
 		if (line.find("filter_level =") != std::string::npos) {
+			foundLevel = true;
 			size_t eqPos = line.find('=');
 			if (eqPos != std::string::npos) {
 				std::string value = line.substr(eqPos + 1);
@@ -632,6 +635,7 @@ void ItemFilter::CycleFilter()
 
 		// Detect filter_titles
 		if (line.find("filter_titles =") != std::string::npos) {
+			foundTitles = true;
 			size_t braceStart = line.find('{');
 			size_t braceEnd = line.find('}');
 			if (braceStart != std::string::npos && braceEnd != std::string::npos) {
@@ -654,9 +658,13 @@ void ItemFilter::CycleFilter()
 
 	inFile.close();
 
+	// If no filter_level or filter_titles were found, do nothing
+	if (!foundLevel || !foundTitles || filterTitles.empty()) {
+		return;
+	}
+
 	// Adjust currentLevel based on number of titles
 	int maxLevels = static_cast<int>(filterTitles.size());
-	if (maxLevels == 0) maxLevels = 1; // fallback if titles missing
 	currentLevel = (currentLevel % maxLevels) + 1;
 
 	// Rewrite file with updated level
@@ -696,6 +704,7 @@ void ItemFilter::CycleFilter()
 		}
 	}
 }
+
 
 
 
