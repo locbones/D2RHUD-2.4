@@ -40,7 +40,7 @@
 std::string configFilePath = "config.json";
 std::string filename = "../Launcher/D2RLAN_Config.txt";
 std::string lootFile = "../D2R/lootfilter.lua";
-std::string Version = "1.3.4";
+std::string Version = "1.3.5";
 
 using json = nlohmann::json;
 static MonsterStatsDisplaySettings cachedSettings;
@@ -3193,6 +3193,10 @@ void D2RHUD::OnDraw() {
 
 bool D2RHUD::OnKeyPressed(short key)
 {
+    struct BindingMatch { bool matched; int modifierCount; };
+    struct PendingAction { int modifierCount; std::function<void()> action; };
+    std::vector<PendingAction> matches;
+
     std::unordered_map<std::string, const char*> commands = {
         { "Transmute: ", "unused" },
         { "Identify Items: ", "idall 1" },
@@ -3209,129 +3213,136 @@ bool D2RHUD::OnKeyPressed(short key)
         { "Open Cube Panel: ", nullptr },
     };
 
-    auto GetMouseVirtualKey = [](const std::string& str) -> short {
-        if (str == "VK_LBUTTON")   return VK_LBUTTON;
-        if (str == "VK_RBUTTON")  return VK_RBUTTON;
-        if (str == "VK_XBUTTON1") return VK_MBUTTON;
-        if (str == "VK_XBUTTON1")     return VK_XBUTTON1;
-        if (str == "VK_XBUTTON2")     return VK_XBUTTON2;
-        return 0;
+    auto GetVirtualKeyFromName = [&](const std::string& token) -> short {
+        if (token == "VK_CTRL" || token == "VK_CONTROL") return VK_CONTROL;
+        if (token == "VK_SHIFT") return VK_SHIFT;
+        if (token == "VK_MENU" || token == "VK_ALT") return VK_MENU;
+        if (token == "VK_LBUTTON") return VK_LBUTTON;
+        if (token == "VK_RBUTTON") return VK_RBUTTON;
+        if (token == "VK_MBUTTON") return VK_MBUTTON;
+        if (token == "VK_XBUTTON1") return VK_XBUTTON1;
+        if (token == "VK_XBUTTON2") return VK_XBUTTON2;
+        auto it = keyMap.find(token);
+        return it != keyMap.end() ? it->second : 0;
         };
 
-    auto IsBindingPressed = [&](const std::string& binding, short key) -> bool {
-        short mouseVK = GetMouseVirtualKey(binding);
-        if (mouseVK != 0 && key == mouseVK) return true;
-        auto it = keyMap.find(binding);
-        return it != keyMap.end() && key == it->second;
-        };
-
-    // --- Handle standard + custom commands ---
-    for (const auto& [searchString, debugCommand] : commands) {
-        if (debugCommand != nullptr) { // Standard Commands
-            std::string binding = ReadCommandFromFile(filename, searchString);
-            if (!binding.empty() && IsBindingPressed(binding, key) && GetClientStatus() == 1) {
-                if (searchString == "Transmute: ")
-                    D2CLIENT_Transmute();
-                else
-                    ExecuteDebugCheatFunc(debugCommand);
-                return true;
-            }
+    auto GetCurrentlyPressedKeys = [&]() -> std::unordered_set<short> {
+        std::unordered_set<short> pressed;
+        for (auto& [name, vk] : keyMap) {
+            if (GetAsyncKeyState(vk) & 0x8000) pressed.insert(vk);
         }
-        else { // Custom Commands
-            std::string commandKey, commandValue;
-            ReadCommandWithValuesFromFile(filename, searchString, commandKey, commandValue);
-            if (!commandKey.empty() && !commandValue.empty() &&
-                IsBindingPressed(commandKey, key) && GetClientStatus() == 1)
-            {
-                if (commandValue.find("/") != std::string::npos)
-                    CLIENT_playerCommand(commandValue, commandValue);
+        return pressed;
+        };
+
+    auto IsBindingPressed = [&](const std::string& binding, const std::unordered_set<short>& pressed) -> BindingMatch {
+        BindingMatch result{ false, 0 };
+        std::vector<short> keys;
+        size_t start = 0, end;
+        while (start < binding.size()) {
+            end = binding.find('+', start);
+            std::string token = binding.substr(start, end - start);
+            token.erase(0, token.find_first_not_of(" \t"));
+            token.erase(token.find_last_not_of(" \t") + 1);
+            short vk = GetVirtualKeyFromName(token);
+            if (!vk) return result;
+            keys.push_back(vk);
+            if (end == std::string::npos) break;
+            start = end + 1;
+        }
+        for (short vk : keys) if (pressed.find(vk) == pressed.end()) return result;
+        result.matched = true;
+        result.modifierCount = static_cast<int>(keys.size() - 1);
+        return result;
+        };
+
+    auto pressedKeys = GetCurrentlyPressedKeys();
+
+    auto CheckAndAddMatch = [&](const std::string& binding, int modifierExtra, std::function<void()> action, bool ignoreClientStatus = false) {
+        if (binding.empty()) return;
+        auto match = IsBindingPressed(binding, pressedKeys);
+        if (match.matched && (ignoreClientStatus || GetClientStatus() == 1)) {
+            matches.push_back({ match.modifierCount + modifierExtra, action });
+        }
+        };
+
+
+    // --- Standard + Custom commands ---
+    for (const auto& [name, debugCommand] : commands) {
+        if (debugCommand) {
+            CheckAndAddMatch(ReadCommandFromFile(filename, name), 0, [=]() {
+                if (name == "Transmute: ") D2CLIENT_Transmute();
+                else ExecuteDebugCheatFunc(debugCommand);
+                });
+        }
+        else {
+            std::string key, value;
+            ReadCommandWithValuesFromFile(filename, name, key, value);
+            CheckAndAddMatch(key, 0, [=]() {
+                if (value.find("/") != std::string::npos)
+                    CLIENT_playerCommand(value, value);
                 else
-                    ExecuteDebugCheatFunc(commandValue.c_str());
-                return true;
-            }
+                    ExecuteDebugCheatFunc(value.c_str());
+                });
         }
     }
 
     // --- Open Cube Panel ---
-    {
-        std::string binding = ReadCommandFromFile(filename, "Open Cube Panel: ");
-        if (!binding.empty() && IsBindingPressed(binding, key) && GetClientStatus() == 1) {
-            if (gpClientList) {
-                auto pClient = *gpClientList;
-                if (pClient && pClient->pGame) {
-                    reinterpret_cast<int32_t(__fastcall*)(D2GameStrc*, D2UnitStrc*)>(
-                        Pattern::Address(0x34F5A0)
-                        )(pClient->pGame, pClient->pPlayer);
-                }
-            }
-            return true;
-        }
-    }
+    CheckAndAddMatch(ReadCommandFromFile(filename, "Open Cube Panel: "), 0, [=]() {
+        if (!gpClientList) return;
+        auto pClient = *gpClientList;
+        if (!pClient || !pClient->pGame) return;
+        reinterpret_cast<int32_t(__fastcall*)(D2GameStrc*, D2UnitStrc*)>(Pattern::Address(0x34F5A0))(pClient->pGame, pClient->pPlayer);
+        });
 
     // --- Cycle Terror Zones ---
-    {
-        std::string binding = ReadCommandFromFile(filename, "Cycle TZ Forward: ");
-        if (!binding.empty() && IsBindingPressed(binding, key) && GetClientStatus() == 1) {
-            CheckToggleForward();
-            return true;
-        }
+    for (const auto& tz : { "Cycle TZ Forward: ", "Cycle TZ Backward: " }) {
+        CheckAndAddMatch(ReadCommandFromFile(filename, tz), 0, [=]() { if (tz == "Cycle TZ Forward: ") CheckToggleForward(); else CheckToggleBackward(); });
     }
-    {
-        std::string binding = ReadCommandFromFile(filename, "Cycle TZ Backward: ");
-        if (!binding.empty() && IsBindingPressed(binding, key) && GetClientStatus() == 1) {
-            CheckToggleBackward();
-            return true;
-        }
-    }
+
+    // --- Handle reload binding from config ---
+    std::string reloadBinding = ReadCommandFromFile(filename, "Reload Game or Filter: ");
+    CheckAndAddMatch(reloadBinding, 0, [=]() { if (itemFilter) itemFilter->ReloadGameFilter(); }, true);
+
+    // --- Handle filter level binding from config ---
+    std::string cyclefilterBinding = ReadCommandFromFile(filename, "Cycle Filter Level: ");
+    CheckAndAddMatch(cyclefilterBinding, 0, [=]() { if (itemFilter) itemFilter->CycleFilter(); });
 
     // --- Toggle Stat Adjustments Display ---
     {
         std::string raw = ReadCommandFromFile(filename, "Toggle Stat Adjustments Display: ");
         if (!raw.empty()) {
-            std::string boolPart;
-            std::string keyPart;
+            std::string boolPart, keyPart;
             auto commaPos = raw.find(',');
             if (commaPos != std::string::npos) {
                 boolPart = raw.substr(0, commaPos);
                 keyPart = raw.substr(commaPos + 1);
                 keyPart.erase(0, keyPart.find_first_not_of(" \t"));
             }
-            else {
-                keyPart = raw;
-            }
+            else keyPart = raw;
 
             if (!boolPart.empty()) {
-                std::string trimmed = boolPart;
-                trimmed.erase(0, trimmed.find_first_not_of(" \t"));
-                trimmed.erase(trimmed.find_last_not_of(" \t") + 1);
-                showStatAdjusts = (trimmed == "true" || trimmed == "1");
+                boolPart.erase(0, boolPart.find_first_not_of(" \t"));
+                boolPart.erase(boolPart.find_last_not_of(" \t") + 1);
+                showStatAdjusts = (boolPart == "true" || boolPart == "1");
             }
 
-            if (!keyPart.empty() && IsBindingPressed(keyPart, key) && GetClientStatus() == 1) {
+            CheckAndAddMatch(keyPart, 0, [=]() {
                 showStatAdjusts = !showStatAdjusts;
-
-                std::ostringstream updatedLine;
-                updatedLine << "Toggle Stat Adjustments Display: "
-                    << (showStatAdjusts ? "true" : "false")
-                    << ", " << keyPart;
 
                 std::ifstream inFile(filename);
                 std::ostringstream buffer;
                 std::string line;
-                std::string targetPrefix = "Toggle Stat Adjustments Display: ";
+                std::string prefix = "Toggle Stat Adjustments Display: ";
+                std::ostringstream updated;
+                updated << prefix << (showStatAdjusts ? "true" : "false") << ", " << keyPart;
+
                 while (std::getline(inFile, line)) {
-                    if (line.find(targetPrefix) == 0)
-                        buffer << updatedLine.str() << "\n";
-                    else
-                        buffer << line << "\n";
+                    buffer << (line.find(prefix) == 0 ? updated.str() : line) << "\n";
                 }
                 inFile.close();
                 std::ofstream outFile(filename, std::ios::trunc);
                 outFile << buffer.str();
-                outFile.close();
-
-                return true;
-            }
+                });
         }
     }
 
@@ -3340,13 +3351,20 @@ bool D2RHUD::OnKeyPressed(short key)
         (GetAsyncKeyState(VK_MENU) & 0x8000) &&
         (GetAsyncKeyState('V') & 0x8000))
     {
-        ShowVersionMessage();
-        OnStashPageChanged(gSelectedPage + 1);
+        matches.push_back({ 2, [=]() { ShowVersionMessage(); OnStashPageChanged(gSelectedPage + 1); } });
+    }
+
+    // --- Execute the match with the most keys ---
+    if (!matches.empty()) {
+        auto best = std::max_element(matches.begin(), matches.end(),
+            [](const PendingAction& a, const PendingAction& b) { return a.modifierCount < b.modifierCount; });
+        best->action();
         return true;
     }
 
     return itemFilter->OnKeyPressed(key);
 }
+
 
 //Show D2RHUD Version Info as a MessageBox Popup
 void D2RHUD::ShowVersionMessage()

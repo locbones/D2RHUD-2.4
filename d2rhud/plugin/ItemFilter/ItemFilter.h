@@ -7,8 +7,7 @@
 class ItemFilter : public Plugin {
 public:
 	bool bInstalled = false;
-
 	bool Install(MonsterStatsDisplaySettings settings);
-
-	bool OnKeyPressed(short key) override;
+	void ReloadGameFilter();
+	void CycleFilter();
 };

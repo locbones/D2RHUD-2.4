@@ -7,6 +7,9 @@
 #include <set>
 #include <imgui.h>
 #include "../d2rhud/d2rhud.h"
+#include <fstream>
+#include <sstream>
+#include <string>
 
 #pragma pack(1)
 class D2GSPacketSrv0A {
@@ -558,6 +561,146 @@ bool IsPlayerInGame() {
 	return GetClientPlayerUnit() != nullptr;
 }
 
+void ItemFilter::ReloadGameFilter()
+{
+	LoadScript();
+
+	std::string message = "Loot Filter Reloaded";
+
+	if (getWelcomeMessage.valid()) {
+		sol::protected_function_result result = getWelcomeMessage();
+		if (result.valid()) {
+			sol::object obj = result;
+			if (obj.is<std::string>()) {
+				std::string welcome = obj.as<std::string>();
+				if (!welcome.empty()) message = welcome;
+			}
+		}
+	}
+
+	PrintGameMessage(message.c_str());
+
+	auto ppClientItem = &ppClientUnitList[UNIT_ITEM * 0x80];
+	for (int i = 0; i < 128; i++) {
+		auto pItem = ppClientItem[i];
+		while (pItem) {
+			DoFilter(pItem);
+			pItem = pItem->pListNext;
+		}
+	}
+
+	if (!IsPlayerInGame()) {
+		oDATATBLS_UnloadAllBins();
+		oDATATBLS_LoadAllTxts();
+		g_ItemFilterStatusMessage = ".TXT Files have been reloaded!";
+		g_ShouldShowItemFilterMessage = true;
+		g_ItemFilterMessageStartTime = std::chrono::steady_clock::now();
+	}
+	else {
+		g_ShouldShowItemFilterMessage = false;
+	}
+}
+
+void ItemFilter::CycleFilter()
+{
+	std::string filename = "lootfilter_config.lua";
+
+	std::ifstream inFile(filename);
+	if (!inFile.is_open()) {
+		MessageBoxA(nullptr, "Failed to open item filter file.", "Error", MB_OK | MB_ICONERROR);
+		return;
+	}
+
+	std::ostringstream buffer;
+	std::string line;
+	int currentLevel = 1;
+	std::vector<std::string> filterTitles;
+
+	// Read the file to detect current filter_level and titles
+	while (std::getline(inFile, line)) {
+		// Detect filter_level
+		if (line.find("filter_level =") != std::string::npos) {
+			size_t eqPos = line.find('=');
+			if (eqPos != std::string::npos) {
+				std::string value = line.substr(eqPos + 1);
+				value.erase(0, value.find_first_not_of(" \t"));
+				value.erase(value.find_last_not_of(" \t,") + 1);
+				try { currentLevel = std::stoi(value); }
+				catch (...) { currentLevel = 1; }
+			}
+		}
+
+		// Detect filter_titles
+		if (line.find("filter_titles =") != std::string::npos) {
+			size_t braceStart = line.find('{');
+			size_t braceEnd = line.find('}');
+			if (braceStart != std::string::npos && braceEnd != std::string::npos) {
+				std::string titlesStr = line.substr(braceStart + 1, braceEnd - braceStart - 1);
+				filterTitles.clear();
+
+				std::istringstream ss(titlesStr);
+				std::string title;
+				while (std::getline(ss, title, ',')) {
+					title.erase(0, title.find_first_not_of(" \t\""));
+					title.erase(title.find_last_not_of(" \t\"") + 1);
+					if (!title.empty())
+						filterTitles.push_back(title);
+				}
+			}
+		}
+
+		buffer << line << "\n";
+	}
+
+	inFile.close();
+
+	// Adjust currentLevel based on number of titles
+	int maxLevels = static_cast<int>(filterTitles.size());
+	if (maxLevels == 0) maxLevels = 1; // fallback if titles missing
+	currentLevel = (currentLevel % maxLevels) + 1;
+
+	// Rewrite file with updated level
+	std::string fileContent = buffer.str();
+	size_t pos = fileContent.find("filter_level =");
+	if (pos != std::string::npos) {
+		size_t endLine = fileContent.find('\n', pos);
+		std::string newLine = "    filter_level = " + std::to_string(currentLevel) + ",";
+		fileContent.replace(pos, endLine - pos, newLine);
+	}
+
+	std::ofstream outFile(filename, std::ios::trunc);
+	if (!outFile.is_open()) {
+		MessageBoxA(nullptr, "Failed to write item filter file.", "Error", MB_OK | MB_ICONERROR);
+		return;
+	}
+	outFile << fileContent;
+	outFile.close();
+
+	// Build message using filter level description
+	std::string description = "Unknown";
+	if (currentLevel >= 1 && currentLevel <= maxLevels)
+		description = filterTitles[currentLevel - 1];
+
+	std::string message = "ÿcNFilter Level Applied: ÿc4" + description;
+	PrintGameMessage(message.c_str());
+
+	// Reload the updated script and apply the filter immediately
+	LoadScript();
+
+	auto ppClientItem = &ppClientUnitList[UNIT_ITEM * 0x80];
+	for (int i = 0; i < 128; i++) {
+		auto pItem = ppClientItem[i];
+		while (pItem) {
+			DoFilter(pItem);
+			pItem = pItem->pListNext;
+		}
+	}
+}
+
+
+
+
+/*
 bool ItemFilter::OnKeyPressed(short key) {
 	if (key == 'R' && (GetKeyState(VK_CONTROL) & 0x8000)) {
 		LoadScript();
@@ -605,3 +748,4 @@ bool ItemFilter::OnKeyPressed(short key) {
 
 	return false;
 }
+*/
