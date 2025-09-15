@@ -83,6 +83,11 @@ static UI_BuildGroundItemTooltip_t oUI_BuildGroundItemTooltip = reinterpret_cast
 typedef uint8_t(__fastcall* ITEMS_GetMaxSockets_t)(D2UnitStrc* pUnit);
 static ITEMS_GetMaxSockets_t oITEMS_GetMaxSockets = reinterpret_cast<ITEMS_GetMaxSockets_t>(Pattern::Address(0x1FDE00));
 
+typedef void(__fastcall* ITEMS_GetStatsDescription_t)(D2UnitStrc* pUnit, char* pBuffer, uint64_t nBufferSize, int a4, int a5, int a6, unsigned int a7, int a8);
+ITEMS_GetStatsDescription_t oITEMS_GetStatsDescription = reinterpret_cast<ITEMS_GetStatsDescription_t>(Pattern::Address(0x1c72d0));
+
+
+
 std::string gWelcomeMessage;
 
 D2UnitStrc* GetUnitByIdAndType(D2UnitStrc** ppUnitsList, uint32_t nUnitId, D2C_UnitTypes nUnitType) {
@@ -237,6 +242,41 @@ void HandleItemBackground(D2UnitStrcCustom* pUnit, D2UnitRectStrc* pRect, float*
 	}
 }
 
+void Hooked_ITEMS_GetStatsDescription(D2UnitStrc* pUnit, char* pBuffer, uint64_t nBufferSize, int a4, int a5, int a6, unsigned int a7, int a8) {
+	oITEMS_GetStatsDescription(pUnit, pBuffer, nBufferSize, a4, a5, a6, a7, a8);
+	auto pUnitToUse = pUnit;
+	if (gpClientList) {
+		auto pClient = *gpClientList;
+		if (pClient && pClient->pGame) {
+			pUnitToUse = UNITS_GetServerUnitByTypeAndId(pClient->pGame, (D2C_UnitTypes)pUnit->dwUnitType, pUnit->dwUnitId);
+		}
+	}
+	if (pUnitToUse != nullptr) {
+		auto pUnitCustom = (D2UnitStrcCustom*)pUnit;
+		char cBuffer[0x400];
+		snprintf(cBuffer, 0x400, pUnitCustom->pFilterResult->szDescription.c_str(), pBuffer);
+		strncpy(pBuffer, cBuffer, 0x400);
+
+		if (pUnitCustom->pFilterResult->cbDescFunction.valid()) {
+			std::string szName = std::string(pBuffer);
+			sol::protected_function_result result = pUnitCustom->pFilterResult->cbDescFunction(
+				reinterpret_cast<D2ItemUnitStrc*>(pUnit),
+				szName,
+				GetTickCount()
+			);
+			if (HandleError(result)) {
+				return;
+			}
+			sol::object data = result;
+			if (data.valid() && data.is<std::string>()) {
+				szName = data.as<std::string>();
+			}
+			strncpy(pBuffer, szName.c_str(), 0x400);
+
+		}
+	}
+}
+
 int64_t* __fastcall Hooked_TooltipsPanel_DrawTooltip(int64_t* a1) {
 	auto pUnit = reinterpret_cast<D2UnitStrcCustom*>(oUNITS_GetHoveredUnit(*gpClientPlayerListIndex));
 	HandleItemBackground(pUnit, reinterpret_cast<D2UnitRectStrc*>((uint32_t*)a1 + 0x18), (float*)a1 + 0x5A);
@@ -253,9 +293,12 @@ void RegisterD2ItemFilterResultStrc(sol::state& s) {
 		"HoveredBorder", &D2ItemFilterResultStrc::nHoveredBorderColorGround,
 		"BackgroundFunction", &D2ItemFilterResultStrc::cbBackgroundFunction,
 		"HoveredBackgroundFunction", &D2ItemFilterResultStrc::cbHoveredBackgroundFunction,
-		"NameFunction", &D2ItemFilterResultStrc::cbNameFunction
+		"NameFunction", &D2ItemFilterResultStrc::cbNameFunction,
+		"Description", &D2ItemFilterResultStrc::szDescription,
+		"DescriptionFunction", &D2ItemFilterResultStrc::cbDescFunction
 	);
 }
+
 
 int64_t* __fastcall Hooked_UI_DrawGroundItemBackground(D2UnitRectStrc* pRect, const char* szText, float* rgba) {
 	auto pUnit = reinterpret_cast<D2UnitStrcCustom*>(GetUnitByIdAndType(ppClientUnitList, pRect->dwUnitId, UNIT_ITEM));
@@ -532,6 +575,7 @@ bool ItemFilter::Install(MonsterStatsDisplaySettings settings) {
 		DetourAttach(&(PVOID&)oUI_DrawGroundItemBackground, Hooked_UI_DrawGroundItemBackground);
 		DetourAttach(&(PVOID&)oUI_BuildGroundItemTooltip, Hooked_UI_BuildGroundItemTooltip);
 		DetourAttach(&(PVOID&)oTooltipsPanel_DrawTooltip, Hooked_TooltipsPanel_DrawTooltip);
+		DetourAttach(&(PVOID&)oITEMS_GetStatsDescription, Hooked_ITEMS_GetStatsDescription);
 
 		DWORD oldProtect = 0;
 		auto UnitSize = (int32_t*)Pattern::Address(0x2086ca);

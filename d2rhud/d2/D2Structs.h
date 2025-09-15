@@ -86,9 +86,12 @@ public:
 	sol::protected_function cbBackgroundFunction = sol::nil;
 	sol::protected_function cbNameFunction = sol::nil;
 
+	sol::protected_function cbDescFunction = sol::nil;
+
 	~D2ItemFilterResultStrc() {
 		cbBackgroundFunction = sol::nil;
 		cbNameFunction = sol::nil;
+		cbDescFunction = sol::nil;
 	}
 };
 
