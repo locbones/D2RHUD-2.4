@@ -716,7 +716,7 @@ void ItemFilter::CycleFilter()
 	size_t pos = fileContent.find("filter_level =");
 	if (pos != std::string::npos) {
 		size_t endLine = fileContent.find('\n', pos);
-		std::string newLine = "    filter_level = " + std::to_string(currentLevel) + ",";
+		std::string newLine = "filter_level = " + std::to_string(currentLevel) + ",";
 		fileContent.replace(pos, endLine - pos, newLine);
 	}
 
