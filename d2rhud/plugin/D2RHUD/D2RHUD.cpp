@@ -40,7 +40,7 @@
 std::string configFilePath = "config.json";
 std::string filename = "../Launcher/D2RLAN_Config.txt";
 std::string lootFile = "../D2R/lootfilter.lua";
-std::string Version = "1.3.6";
+std::string Version = "1.3.7";
 
 using json = nlohmann::json;
 static MonsterStatsDisplaySettings cachedSettings;
@@ -1188,6 +1188,7 @@ struct DesecratedZone {
     std::time_t end_time_utc = 0;
     int terror_duration_min = 0;
     int terror_break_min = 0;
+    uint64_t seed = 0;
     DifficultySettings default_normal;
     DifficultySettings default_nightmare;
     DifficultySettings default_hell;
@@ -1949,7 +1950,18 @@ void from_json(const json& j, DesecratedZone& dz) {
     dz.default_hell = j.at("default_hell").get<DifficultySettings>();
     dz.warnings = j.at("warnings").get<std::vector<WarningInfo>>();
     dz.zones = j.at("zones").get<std::vector<ZoneGroup>>();
+    // Optional: seed
+    if (j.contains("seed")) {
+        dz.seed = j.at("seed").get<uint64_t>();
 
+        if (dz.seed != 0) {
+            std::mt19937_64 rng(dz.seed);
+            std::shuffle(dz.zones.begin(), dz.zones.end(), rng);
+        }
+    }
+    else {
+        dz.seed = 0;
+    }
 }
 
 std::string StripComments(const std::string& jsonWithComments) {
@@ -2169,91 +2181,8 @@ bool GetBaalQuest(D2UnitStrc* pPlayer, D2GameStrc* pGame) {
 
 bool initialized = false;
 
-std::string BuildTerrorZoneStatAdjustmentsText()
-{
-    if (initialized == false)
-    {
-        InitRandomStatsForAllMonsters(true);
-        initialized = true;
-    }
-
-    if (gRandomStatsForMonsters.empty() || showStatAdjusts == false)
-        return "";
-
-    std::string finalText = "Stat Adjustments:\n";
-
-    for (const auto& [statID, value] : gRandomStatsForMonsters)
-    {
-        std::string statFormat;
-        auto it = gStatNames.find(statID);
-
-        if (it != gStatNames.end())
-            statFormat = it->second;
-        else
-            statFormat = "Unknown Stat (%d)";
-
-        if (value < 0) {
-            for (char& c : statFormat) {
-                if (c == '+') { c = '-'; break; }
-                if (c == '-') { c = '+'; break; }
-            }
-        }
-
-        size_t pos = statFormat.find("%d");
-        if (pos != std::string::npos)
-        {
-            statFormat.replace(pos, 2, std::to_string(std::abs(value)));
-        }
-
-        finalText += statFormat + "\n";
-    }
-
-    return finalText;
-}
-
-std::string BuildTerrorZoneInfoText()
-{
-    if (g_ActiveZoneInfoText.empty())
-        return "";
-
-    time_t currentUtc = std::time(nullptr);
-    int remainingMinutes = 0;
-    int remainingSeconds = 0;
-
-    if (g_TerrorZoneData.cycleLengthMin > 0 &&
-        g_TerrorZoneData.groupCount > 0 &&
-        g_TerrorZoneData.activeGroupIndex >= 0)
-    {
-        int totalCycleMinutes = g_TerrorZoneData.cycleLengthMin * g_TerrorZoneData.groupCount;
-        int minutesSinceStart = static_cast<int>((currentUtc - g_TerrorZoneData.zoneStartUtc) / 60);
-        int cyclePos = minutesSinceStart % totalCycleMinutes;
-        int positionInCycle = cyclePos % g_TerrorZoneData.cycleLengthMin;
-
-        if (positionInCycle < g_TerrorZoneData.terrorDurationMin)
-        {
-            // In terror phase
-            int totalSecondsInPhase = g_TerrorZoneData.terrorDurationMin * 60;
-            int secondsIntoPhase = (currentUtc - g_TerrorZoneData.zoneStartUtc) % (g_TerrorZoneData.cycleLengthMin * 60) % totalSecondsInPhase;
-            int secondsRemaining = totalSecondsInPhase - secondsIntoPhase;
-            remainingMinutes = secondsRemaining / 60;
-            remainingSeconds = secondsRemaining % 60;
-        }
-        else
-        {
-            // In break phase
-            int totalSecondsInCycle = g_TerrorZoneData.cycleLengthMin * 60;
-            int secondsIntoCycle = (currentUtc - g_TerrorZoneData.zoneStartUtc) % totalSecondsInCycle;
-            int secondsRemaining = totalSecondsInCycle - secondsIntoCycle;
-            remainingMinutes = secondsRemaining / 60;
-            remainingSeconds = secondsRemaining % 60;
-        }
-    }
-
-    std::string finalText = g_ActiveZoneInfoText +
-        "Next Rotation In: " + std::to_string(remainingMinutes) + "m " +
-        std::to_string(remainingSeconds) + "s\n";
-
-    return finalText;
+namespace {
+    static double gLastManualToggleTime = 0;
 }
 
 void UpdateActiveZoneInfoText(time_t currentUtc)
@@ -2389,10 +2318,6 @@ void UpdateActiveZoneInfoText(time_t currentUtc)
     g_ActiveZoneInfoText = ss.str();
 }
 
-namespace {
-    static double gLastManualToggleTime = 0;
-}
-
 static void ToggleManualZoneGroupInternal(bool forward)
 {
     std::string path = std::format("{0}/Mods/{1}/{1}.mpq/data/hd/global/excel/desecratedzones.json", GetExecutableDir(), GetModName());
@@ -2448,6 +2373,97 @@ void CheckToggleForward()
 void CheckToggleBackward()
 {
     ToggleManualZoneGroupInternal(false);
+}
+
+std::string BuildTerrorZoneStatAdjustmentsText()
+{
+    if (initialized == false)
+    {
+        InitRandomStatsForAllMonsters(true);
+        initialized = true;
+    }
+
+    if (gRandomStatsForMonsters.empty() || showStatAdjusts == false)
+        return "";
+
+    std::string finalText = "Stat Adjustments:\n";
+
+    for (const auto& [statID, value] : gRandomStatsForMonsters)
+    {
+        std::string statFormat;
+        auto it = gStatNames.find(statID);
+
+        if (it != gStatNames.end())
+            statFormat = it->second;
+        else
+            statFormat = "Unknown Stat (%d)";
+
+        if (value < 0) {
+            for (char& c : statFormat) {
+                if (c == '+') { c = '-'; break; }
+                if (c == '-') { c = '+'; break; }
+            }
+        }
+
+        size_t pos = statFormat.find("%d");
+        if (pos != std::string::npos)
+        {
+            statFormat.replace(pos, 2, std::to_string(std::abs(value)));
+        }
+
+        finalText += statFormat + "\n";
+    }
+
+    return finalText;
+}
+
+std::string BuildTerrorZoneInfoText()
+{
+    if (g_ActiveZoneInfoText.empty())
+        return "";
+
+    time_t currentUtc = std::time(nullptr);
+    int remainingMinutes = 0;
+    int remainingSeconds = 0;
+
+    if (g_TerrorZoneData.cycleLengthMin > 0 &&
+        g_TerrorZoneData.groupCount > 0 &&
+        g_TerrorZoneData.activeGroupIndex >= 0)
+    {
+        int totalCycleMinutes = g_TerrorZoneData.cycleLengthMin * g_TerrorZoneData.groupCount;
+        int minutesSinceStart = static_cast<int>((currentUtc - g_TerrorZoneData.zoneStartUtc) / 60);
+        int cyclePos = minutesSinceStart % totalCycleMinutes;
+        int positionInCycle = cyclePos % g_TerrorZoneData.cycleLengthMin;
+
+        if (positionInCycle < g_TerrorZoneData.terrorDurationMin)
+        {
+            // In terror phase
+            int totalSecondsInPhase = g_TerrorZoneData.terrorDurationMin * 60;
+            int secondsIntoPhase = (currentUtc - g_TerrorZoneData.zoneStartUtc) % (g_TerrorZoneData.cycleLengthMin * 60) % totalSecondsInPhase;
+            int secondsRemaining = totalSecondsInPhase - secondsIntoPhase;
+            remainingMinutes = secondsRemaining / 60;
+            remainingSeconds = secondsRemaining % 60;
+
+            if (remainingSeconds == 0 && remainingMinutes == 60)
+                ToggleManualZoneGroupInternal(true);
+        }
+        else
+        {
+            // In break phase
+            int totalSecondsInCycle = g_TerrorZoneData.cycleLengthMin * 60;
+            int secondsIntoCycle = (currentUtc - g_TerrorZoneData.zoneStartUtc) % totalSecondsInCycle;
+            int secondsRemaining = totalSecondsInCycle - secondsIntoCycle;
+            remainingMinutes = secondsRemaining / 60;
+            remainingSeconds = secondsRemaining % 60;
+            
+        }
+    }
+
+    std::string finalText = g_ActiveZoneInfoText +
+        "Next Rotation In: " + std::to_string(remainingMinutes) + "m " +
+        std::to_string(remainingSeconds) + "s\n";
+
+    return finalText;
 }
 
 static char gTZInfoText[256] = { 0 };
@@ -2781,7 +2797,7 @@ void __fastcall ApplyGhettoTerrorZone(D2GameStrc* pGame, D2ActiveRoomStrc* pRoom
         return;
     }
 
-    //Loop through zones
+    // Loop through desecrated zones
     for (const auto& zone : gDesecratedZones)
     {
         if (currentUtc < zone.start_time_utc || currentUtc > zone.end_time_utc)
@@ -2796,11 +2812,22 @@ void __fastcall ApplyGhettoTerrorZone(D2GameStrc* pGame, D2ActiveRoomStrc* pRoom
             continue;
 
         int minutesSinceStart = static_cast<int>((currentUtc - zone.start_time_utc) / 60);
-        int cyclePos = minutesSinceStart % (cycleLengthMin * groupCount);
+        int totalCycle = cycleLengthMin * groupCount;
+        int cyclePos = minutesSinceStart % totalCycle;
+
         int activeGroupIndex = (g_ManualZoneGroupOverride == -1) ? (cyclePos / cycleLengthMin) : g_ManualZoneGroupOverride;
 
+        int posWithinGroup = cyclePos % cycleLengthMin;
         if (activeGroupIndex < 0 || activeGroupIndex >= groupCount)
             continue;
+
+        // Only active during terror duration, not break
+        bool isInActivePhase = (posWithinGroup < zone.terror_duration_min);
+        if (!isInActivePhase)
+        {
+            isTerrorized = false;
+            continue;
+        }
 
         const ZoneGroup& activeGroup = zone.zones[activeGroupIndex];
 
@@ -2810,12 +2837,17 @@ void __fastcall ApplyGhettoTerrorZone(D2GameStrc* pGame, D2ActiveRoomStrc* pRoom
         g_TerrorZoneData.groupCount = groupCount;
         g_TerrorZoneData.activeGroupIndex = activeGroupIndex;
         g_TerrorZoneData.zoneStartUtc = zone.start_time_utc;
+        int totalSecondsInPhase = g_TerrorZoneData.terrorDurationMin * 60;
+        int secondsIntoPhase = (currentUtc - g_TerrorZoneData.zoneStartUtc) % (g_TerrorZoneData.cycleLengthMin * 60) % totalSecondsInPhase;
+        int secondsRemaining = totalSecondsInPhase - secondsIntoPhase;
+        int remainingMinutes = secondsRemaining / 60;
+        int remainingSeconds = secondsRemaining % 60;
 
         double now = static_cast<double>(std::time(nullptr));
         UpdateActiveZoneInfoText(static_cast<time_t>(now));
         InitRandomStatsForAllMonsters(false);
-
-        // Try to find a ZoneLevel override for the current level
+        
+        // Match level overrides
         const ZoneLevel* matchingZoneLevel = nullptr;
         for (const auto& zl : activeGroup.levels)
         {
@@ -2830,16 +2862,16 @@ void __fastcall ApplyGhettoTerrorZone(D2GameStrc* pGame, D2ActiveRoomStrc* pRoom
             }
         }
 
-        // If no matching ZoneLevel was found, skip this monster
         if (!matchingZoneLevel)
         {
             isTerrorized = false;
             continue;
         }
 
-        return;
+        return; // success
     }
 }
+
 
 void __fastcall HookedMONSTER_InitializeStatsAndSkills(D2GameStrc* pGame, D2ActiveRoomStrc* pRoom, D2UnitStrc* pUnit, int64_t* pMonRegData) {
 oMONSTER_InitializeStatsAndSkills(pGame, pRoom, pUnit, pMonRegData);

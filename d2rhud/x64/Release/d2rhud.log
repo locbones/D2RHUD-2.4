@@ -1,12 +1,9 @@
-﻿  ItemFilter.cpp
-C:\Users\djsch\Github\D2RHUD-2.4\d2rhud\plugin\ItemFilter\ItemFilter.cpp(238,27): warning C4244: 'argument': conversion from 'float' to 'int', possible loss of data
-C:\Users\djsch\Github\D2RHUD-2.4\d2rhud\plugin\ItemFilter\ItemFilter.cpp(237,27): warning C4244: 'argument': conversion from 'float' to 'int', possible loss of data
-C:\Users\djsch\Github\D2RHUD-2.4\d2rhud\plugin\ItemFilter\ItemFilter.cpp(236,15): warning C4244: 'argument': conversion from 'float' to 'int', possible loss of data
-C:\Users\djsch\Github\D2RHUD-2.4\d2rhud\plugin\ItemFilter\ItemFilter.cpp(235,15): warning C4244: 'argument': conversion from 'float' to 'int', possible loss of data
-C:\Users\djsch\Github\D2RHUD-2.4\d2rhud\plugin\ItemFilter\ItemFilter.cpp(393,19): warning C4267: 'initializing': conversion from 'size_t' to 'int32_t', possible loss of data
+﻿  D2RHUD.cpp
+C:\Users\djsch\Github\D2RHUD-2.4\d2rhud\plugin\D2RHUD\D2RHUD.cpp(1038,34): warning C4244: 'initializing': conversion from 'int32_t' to 'float', possible loss of data
+C:\Users\djsch\Github\D2RHUD-2.4\d2rhud\plugin\D2RHUD\D2RHUD.cpp(1056,61): warning C4244: '*=': conversion from 'float' to 'int32_t', possible loss of data
 LINK : warning LNK4098: defaultlib 'LIBCMT' conflicts with use of other libs; use /NODEFAULTLIB:library
   Generating code
-  5 of 19388 functions (<0.1%) were compiled, the rest were copied from previous compilation.
+  6 of 19413 functions (<0.1%) were compiled, the rest were copied from previous compilation.
     0 functions were new in current compilation
     11 functions had inline decision re-evaluated but remain unchanged
   Finished generating code

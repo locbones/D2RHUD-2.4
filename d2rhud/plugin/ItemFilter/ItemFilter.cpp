@@ -251,6 +251,7 @@ void Hooked_ITEMS_GetStatsDescription(D2UnitStrc* pUnit, char* pBuffer, uint64_t
 			pUnitToUse = UNITS_GetServerUnitByTypeAndId(pClient->pGame, (D2C_UnitTypes)pUnit->dwUnitType, pUnit->dwUnitId);
 		}
 	}
+
 	if (pUnitToUse != nullptr) {
 		auto pUnitCustom = (D2UnitStrcCustom*)pUnit;
 		char cBuffer[0x400];
@@ -272,7 +273,6 @@ void Hooked_ITEMS_GetStatsDescription(D2UnitStrc* pUnit, char* pBuffer, uint64_t
 				szName = data.as<std::string>();
 			}
 			strncpy(pBuffer, szName.c_str(), 0x400);
-
 		}
 	}
 }
