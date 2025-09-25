@@ -40,7 +40,7 @@
 std::string configFilePath = "config.json";
 std::string filename = "../Launcher/D2RLAN_Config.txt";
 std::string lootFile = "../D2R/lootfilter.lua";
-std::string Version = "1.3.7";
+std::string Version = "1.3.8";
 
 using json = nlohmann::json;
 static MonsterStatsDisplaySettings cachedSettings;
@@ -2937,32 +2937,6 @@ void D2RHUD::OnDraw() {
     if (pGameClient != nullptr)
         pGame = (D2GameStrc*)pGameClient->pGame;
 
-    if (g_ShouldShowItemFilterMessage)
-    {
-        auto now = std::chrono::steady_clock::now();
-        auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - g_ItemFilterMessageStartTime);
-
-        if (elapsed.count() < 3)
-        {
-            ImGuiIO& io = ImGui::GetIO();
-            ImFont* largeFont = io.Fonts->Fonts[4];
-            if (largeFont)
-                ImGui::PushFont(largeFont);
-
-            auto drawList = ImGui::GetBackgroundDrawList();
-            ImVec2 screenSize = ImGui::GetIO().DisplaySize;
-            ImVec2 textSize = ImGui::CalcTextSize(g_ItemFilterStatusMessage.c_str());
-            ImVec2 textPos = ImVec2((screenSize.x - textSize.x) * 0.5f, (screenSize.y - textSize.y) * 0.1f);
-
-            drawList->AddText(textPos, IM_COL32(199, 179, 119, 255), g_ItemFilterStatusMessage.c_str());
-
-            if (largeFont)
-                ImGui::PopFont();
-        }
-        else
-            g_ShouldShowItemFilterMessage = false;
-    }
-
     if (!menuClickHookInstalled)
     {
         mainMenuClickHandlerOrig = reinterpret_cast<GameMenuOnClickHandler>(Pattern::Address(mainMenuClickHandlerOffset));
@@ -2982,6 +2956,49 @@ void D2RHUD::OnDraw() {
         DetourTransactionCommit();
         menuClickHookInstalled = true;
 
+        g_ItemFilterStatusMessage = "D2RHUD Loaded Successfully!";
+        g_ShouldShowItemFilterMessage = true;
+        g_ItemFilterMessageStartTime = std::chrono::steady_clock::now();
+    }
+
+    if (g_ShouldShowItemFilterMessage)
+    {
+        auto now = std::chrono::steady_clock::now();
+        auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - g_ItemFilterMessageStartTime);
+        int timeoutSeconds = 3; //default time
+        ImU32 color = IM_COL32(199, 179, 119, 255); //default gold
+        int fontIndex = 4; //default font size
+
+        if (g_ItemFilterStatusMessage.find("D2RHUD") != std::string::npos)
+        {
+            color = IM_COL32(3, 110, 32, 255); // green
+            timeoutSeconds = 5;
+            fontIndex = 3;
+        }
+
+        if (elapsed.count() < timeoutSeconds)
+        {
+            ImGuiIO& io = ImGui::GetIO();
+            ImFont* chosenFont = (fontIndex >= 0 && fontIndex < io.Fonts->Fonts.Size)
+                ? io.Fonts->Fonts[fontIndex]
+                : nullptr;
+
+                if (chosenFont)
+                    ImGui::PushFont(chosenFont);
+
+                auto drawList = ImGui::GetBackgroundDrawList();
+                ImVec2 screenSize = io.DisplaySize;
+                ImVec2 textSize = ImGui::CalcTextSize(g_ItemFilterStatusMessage.c_str());
+                ImVec2 textPos = ImVec2((screenSize.x - textSize.x) * 0.5f,
+                    (screenSize.y - textSize.y) * 0.1f);
+
+                drawList->AddText(textPos, color, g_ItemFilterStatusMessage.c_str());
+
+                if (chosenFont)
+                    ImGui::PopFont();
+        }
+        else
+            g_ShouldShowItemFilterMessage = false;
     }
 
     if (!oBankPanelDraw) {
