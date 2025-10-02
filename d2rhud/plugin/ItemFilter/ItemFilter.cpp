@@ -476,6 +476,110 @@ void LoadScript() {
 	sol::set_environment(env, applyFilter);
 }
 
+static std::string GetModsName() {
+	uint64_t pModNameAddr = Pattern::Address(0x1BF084F);
+	if (pModNameAddr == 0) {
+		return "";
+	}
+
+	const char* pModName = reinterpret_cast<const char*>(pModNameAddr);
+	if (!pModName) {
+		return "";
+	}
+
+	return std::string(pModName);
+}
+
+std::string GetExeDir()
+{
+	char buffer[MAX_PATH];
+	GetModuleFileNameA(nullptr, buffer, MAX_PATH);
+	std::filesystem::path exePath(buffer);
+	return exePath.parent_path().string();
+}
+
+static auto (*gpPaletteDataTable)[9][21][256] = reinterpret_cast<uint8_t(*)[9][21][256]>(Pattern::Address(0x1ddf7c0));
+static auto ITEMS_GetColor = reinterpret_cast<uint8_t * (__fastcall*)(D2UnitStrc * pPlayer, D2UnitStrc * pItem, int32_t * pColorIndex, int nTransType)>(Pattern::Address(0x1FEF30));
+
+uint8_t* Hooked_ITEMS_GetColor(D2UnitStrc* pPlayer, D2UnitStrc* pItem, int32_t* pColorIndex, int nTransType) {
+	auto result = ITEMS_GetColor(pPlayer, pItem, pColorIndex, nTransType);
+	if (!pItem) {
+		return result;
+	}
+
+	std::string basePath = std::format("{}/Mods/{}/{}.mpq/data/global/excel/", GetExeDir(), GetModsName(), GetModsName());
+	std::string statFile = basePath + "itemstatcost.txt";
+	static int32_t colorDyeStatIndex = -1;
+
+	if (colorDyeStatIndex == -1) {
+		std::ifstream file(statFile);
+		if (!file.is_open()) {
+			return result;
+		}
+
+		std::string line;
+		std::vector<std::string> headers;
+
+		if (std::getline(file, line)) {
+			std::stringstream ss(line);
+			std::string col;
+			while (std::getline(ss, col, '\t')) {
+				headers.push_back(col);
+			}
+		}
+
+		int statColIndex = -1;
+		for (size_t i = 0; i < headers.size(); i++) {
+			if (_stricmp(headers[i].c_str(), "Stat") == 0) {
+				statColIndex = static_cast<int>(i);
+				break;
+			}
+		}
+
+		if (statColIndex == -1) {
+			return result;
+		}
+
+		// Parse rows to find "color_dye"
+		int rowIndex = 0;
+		while (std::getline(file, line)) {
+			std::stringstream ss(line);
+			std::string col;
+			int colIndex = 0;
+			std::string statName;
+
+			while (std::getline(ss, col, '\t')) {
+				if (colIndex == statColIndex) {
+					statName = col;
+					break;
+				}
+				colIndex++;
+			}
+
+			if (_stricmp(statName.c_str(), "color_dye") == 0) {
+				colorDyeStatIndex = rowIndex; 
+				break;
+			}
+
+			rowIndex++;
+		}
+	}
+
+	if (colorDyeStatIndex == -1) {
+		return result;
+	}
+
+	// Apply color_dye transform
+	int32_t nColor = (STATLIST_GetUnitStatSigned(pItem, colorDyeStatIndex, 0) - 1);
+	if (nColor > 0 && nColor < 22) {
+		auto pItemsTxtRecord = sgptDataTables->pItemsTxt[pItem->dwClassId];
+		return (*gpPaletteDataTable)[5][nColor];
+	}
+
+	return result;
+}
+
+
 
 void InitializeLUA() {
 	lua.open_libraries(sol::lib::base, sol::lib::package,
@@ -576,6 +680,8 @@ bool ItemFilter::Install(MonsterStatsDisplaySettings settings) {
 		DetourAttach(&(PVOID&)oUI_BuildGroundItemTooltip, Hooked_UI_BuildGroundItemTooltip);
 		DetourAttach(&(PVOID&)oTooltipsPanel_DrawTooltip, Hooked_TooltipsPanel_DrawTooltip);
 		DetourAttach(&(PVOID&)oITEMS_GetStatsDescription, Hooked_ITEMS_GetStatsDescription);
+
+		DetourAttach(&(PVOID&)ITEMS_GetColor, Hooked_ITEMS_GetColor);
 
 		DWORD oldProtect = 0;
 		auto UnitSize = (int32_t*)Pattern::Address(0x2086ca);

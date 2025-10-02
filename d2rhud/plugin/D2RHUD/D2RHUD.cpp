@@ -40,7 +40,7 @@
 std::string configFilePath = "config.json";
 std::string filename = "../Launcher/D2RLAN_Config.txt";
 std::string lootFile = "../D2R/lootfilter.lua";
-std::string Version = "1.3.8";
+std::string Version = "1.3.9";
 
 using json = nlohmann::json;
 static MonsterStatsDisplaySettings cachedSettings;
