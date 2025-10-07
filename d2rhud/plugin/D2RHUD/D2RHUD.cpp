@@ -27,6 +27,7 @@
 #include "../../D2/json.hpp"
 #include <random>
 #include <unordered_set>
+#include <mutex>
 
 /*
 - Chat Detours/Structures by Killshot
@@ -40,7 +41,7 @@
 std::string configFilePath = "config.json";
 std::string filename = "../Launcher/D2RLAN_Config.txt";
 std::string lootFile = "../D2R/lootfilter.lua";
-std::string Version = "1.3.9";
+std::string Version = "1.4.0";
 
 using json = nlohmann::json;
 static MonsterStatsDisplaySettings cachedSettings;
@@ -2761,7 +2762,9 @@ void ApplyMonsterDifficultyScaling(D2UnitStrc* pUnit, const DesecratedZone& zone
     SetStat(pUnit, STAT_HITPOINTS, nShiftedHp);
     SetStat(pUnit, STAT_ARMORCLASS, monStatsInit.nAC);
     SetStat(pUnit, STAT_EXPERIENCE, D2_ComputePercentage(monStatsInit.nExp, ((playerCountGlobal - 8) * 100) / 5));
-    SetStat(pUnit, STAT_HPREGEN, (nShiftedHp * 2) >> 12);
+
+    if (pUnit->dwClassId != 156 && pUnit->dwClassId != 211 && pUnit->dwClassId != 242 && pUnit->dwClassId != 243 && pUnit->dwClassId != 544) //Ignore Act Bosses
+        SetStat(pUnit, STAT_HPREGEN, (nShiftedHp * 2) >> 12);
 }
 
 void __fastcall ApplyGhettoTerrorZone(D2GameStrc* pGame, D2ActiveRoomStrc* pRoom, D2UnitStrc* pUnit, int64_t* pMonRegData, D2MonStatsInitStrc* monStatsInit)
@@ -2956,7 +2959,7 @@ void D2RHUD::OnDraw() {
         DetourTransactionCommit();
         menuClickHookInstalled = true;
 
-        g_ItemFilterStatusMessage = "D2RHUD Loaded Successfully!";
+        g_ItemFilterStatusMessage = std::format("D2RHUD {} Loaded Successfully!", Version);
         g_ShouldShowItemFilterMessage = true;
         g_ItemFilterMessageStartTime = std::chrono::steady_clock::now();
     }
@@ -3085,7 +3088,6 @@ void D2RHUD::OnDraw() {
         */
 
     }
-
 
     if (!oMONSTER_InitializeStatsAndSkills) {
         DetourTransactionBegin();

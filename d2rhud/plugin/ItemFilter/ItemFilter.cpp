@@ -501,78 +501,61 @@ std::string GetExeDir()
 static auto (*gpPaletteDataTable)[9][21][256] = reinterpret_cast<uint8_t(*)[9][21][256]>(Pattern::Address(0x1ddf7c0));
 static auto ITEMS_GetColor = reinterpret_cast<uint8_t * (__fastcall*)(D2UnitStrc * pPlayer, D2UnitStrc * pItem, int32_t * pColorIndex, int nTransType)>(Pattern::Address(0x1FEF30));
 
-uint8_t* Hooked_ITEMS_GetColor(D2UnitStrc* pPlayer, D2UnitStrc* pItem, int32_t* pColorIndex, int nTransType) {
+uint8_t* Hooked_ITEMS_GetColor(D2UnitStrc* pPlayer, D2UnitStrc* pItem, int32_t* pColorIndex, int nTransType)
+{
 	auto result = ITEMS_GetColor(pPlayer, pItem, pColorIndex, nTransType);
-	if (!pItem) {
+	if (!pItem)
 		return result;
-	}
 
-	std::string basePath = std::format("{}/Mods/{}/{}.mpq/data/global/excel/", GetExeDir(), GetModsName(), GetModsName());
-	std::string statFile = basePath + "itemstatcost.txt";
 	static int32_t colorDyeStatIndex = -1;
+	static std::once_flag colorDyeInitFlag;
 
-	if (colorDyeStatIndex == -1) {
+	std::call_once(colorDyeInitFlag, [&]() {
+		std::string basePath = std::format("{}/Mods/{}/{}.mpq/data/global/excel/",
+			GetExeDir(), GetModsName(), GetModsName());
+		std::string statFile = basePath + "itemstatcost.txt";
 		std::ifstream file(statFile);
-		if (!file.is_open()) {
-			return result;
-		}
+		if (!file.is_open()) return;
 
 		std::string line;
 		std::vector<std::string> headers;
-
 		if (std::getline(file, line)) {
 			std::stringstream ss(line);
 			std::string col;
-			while (std::getline(ss, col, '\t')) {
-				headers.push_back(col);
-			}
+			while (std::getline(ss, col, '\t')) headers.push_back(col);
 		}
 
 		int statColIndex = -1;
-		for (size_t i = 0; i < headers.size(); i++) {
+		for (size_t i = 0; i < headers.size(); ++i) {
 			if (_stricmp(headers[i].c_str(), "Stat") == 0) {
 				statColIndex = static_cast<int>(i);
 				break;
 			}
 		}
+		if (statColIndex == -1) return;
 
-		if (statColIndex == -1) {
-			return result;
-		}
-
-		// Parse rows to find "color_dye"
 		int rowIndex = 0;
 		while (std::getline(file, line)) {
 			std::stringstream ss(line);
 			std::string col;
 			int colIndex = 0;
 			std::string statName;
-
 			while (std::getline(ss, col, '\t')) {
-				if (colIndex == statColIndex) {
-					statName = col;
-					break;
-				}
-				colIndex++;
+				if (colIndex == statColIndex) { statName = col; break; }
+				++colIndex;
 			}
-
 			if (_stricmp(statName.c_str(), "color_dye") == 0) {
-				colorDyeStatIndex = rowIndex; 
+				colorDyeStatIndex = rowIndex;
 				break;
 			}
-
-			rowIndex++;
+			++rowIndex;
 		}
-	}
+		});
 
-	if (colorDyeStatIndex == -1) {
-		return result;
-	}
+	if (colorDyeStatIndex == -1) return result;
 
-	// Apply color_dye transform
-	int32_t nColor = (STATLIST_GetUnitStatSigned(pItem, colorDyeStatIndex, 0) - 1);
+	int32_t nColor = STATLIST_GetUnitStatSigned(pItem, colorDyeStatIndex, 0) - 1;
 	if (nColor > 0 && nColor < 22) {
-		auto pItemsTxtRecord = sgptDataTables->pItemsTxt[pItem->dwClassId];
 		return (*gpPaletteDataTable)[5][nColor];
 	}
 
