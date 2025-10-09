@@ -13,6 +13,7 @@ struct MonsterStatsDisplaySettings {
     std::int32_t HPRolloverDiff;
     bool sunderedMonUMods;
     bool minionEquality;
+    bool gambleForce;
 };
 
 class D2RHUD : public Plugin {

@@ -41,7 +41,7 @@
 std::string configFilePath = "config.json";
 std::string filename = "../Launcher/D2RLAN_Config.txt";
 std::string lootFile = "../D2R/lootfilter.lua";
-std::string Version = "1.4.0";
+std::string Version = "1.4.1";
 
 using json = nlohmann::json;
 static MonsterStatsDisplaySettings cachedSettings;
@@ -876,6 +876,7 @@ MonsterStatsDisplaySettings getMonsterStatsDisplaySetting(const std::string& con
     }
     cachedSettings.sunderedMonUMods = settings["SunderedMonUMods"] == "true";
     cachedSettings.minionEquality = settings["MinionEquality"] == "true";
+    cachedSettings.gambleForce = settings["GambleCostControl"] == "false";
 
     isCached = true;
     return cachedSettings;
@@ -1231,6 +1232,8 @@ typedef BOOL(__stdcall* DATATBLS_CalculateMonsterStatsByLevel_t)(int nMonsterId,
 static DATATBLS_CalculateMonsterStatsByLevel_t oAdjustMonsterStats = reinterpret_cast<DATATBLS_CalculateMonsterStatsByLevel_t>(Pattern::Address(0x2356B0));
 typedef void(__fastcall* DropTCTest_t)(D2GameStrc* pGame, D2UnitStrc* pMonster, D2UnitStrc* pPlayer, int32_t nTCId, int32_t nQuality, int32_t nItemLevel, int32_t a7, D2UnitStrc** ppItems, int32_t* pnItemsDropped, int32_t nMaxItems);
 static DropTCTest_t oDropTCTest = nullptr;
+typedef uint32_t(__fastcall* GambleForce_t)(D2UnitStrc* pItem, int nPlayerLevel);
+static GambleForce_t oGambleForce = nullptr;
 bool isTerrorized = false;
 std::vector<StatAdjustment> gStatAdjustments;
 std::unordered_map<int, std::string> gStatNames;
@@ -2930,6 +2933,24 @@ oMONSTER_InitializeStatsAndSkills(pGame, pRoom, pUnit, pMonRegData);
     }
 }
 
+uint32_t __fastcall Hooked_ITEMS_CalculateGambleCost(D2UnitStrc* pItem, int nPlayerLevel)
+{
+    if (!pItem || !pItem->pItemData || !sgptDataTables || !sgptDataTables->pItemsTxt)
+        return oGambleForce(pItem, nPlayerLevel);
+
+    if (cachedSettings.gambleForce)
+    {
+        D2ItemsTxt* itemTxt = &sgptDataTables->pItemsTxt[pItem->dwClassId];
+
+        if (itemTxt->dwGambleCost == -1)
+            return oGambleForce(pItem, nPlayerLevel);
+        else
+            return itemTxt->dwGambleCost;
+    }
+    else
+        return oGambleForce(pItem, nPlayerLevel);
+}
+
 #pragma endregion
 
 #pragma region Draw Loop for Detours and Stats Display
@@ -3117,6 +3138,14 @@ void D2RHUD::OnDraw() {
         DetourUpdateThread(GetCurrentThread());
         oDropTCTest = reinterpret_cast<DropTCTest_t>(Pattern::Address(0x2f9d50));
         DetourAttach(&(PVOID&)oDropTCTest, HookedDropTCTest);
+        DetourTransactionCommit();
+    }
+
+    if (!oGambleForce) {
+        DetourTransactionBegin();
+        DetourUpdateThread(GetCurrentThread());
+        oGambleForce = reinterpret_cast<GambleForce_t>(Pattern::Address(0x1FC0B0));
+        DetourAttach(&(PVOID&)oGambleForce, Hooked_ITEMS_CalculateGambleCost);
         DetourTransactionCommit();
     }
 
