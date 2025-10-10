@@ -41,7 +41,7 @@
 std::string configFilePath = "config.json";
 std::string filename = "../Launcher/D2RLAN_Config.txt";
 std::string lootFile = "../D2R/lootfilter.lua";
-std::string Version = "1.4.1";
+std::string Version = "1.4.2";
 
 using json = nlohmann::json;
 static MonsterStatsDisplaySettings cachedSettings;
@@ -2878,43 +2878,58 @@ void __fastcall ApplyGhettoTerrorZone(D2GameStrc* pGame, D2ActiveRoomStrc* pRoom
     }
 }
 
+static std::once_flag gZonesLoadedFlag;
+static std::atomic<bool> gZonesLoaded = false;
+static std::string gZonesFilePath;
 
-void __fastcall HookedMONSTER_InitializeStatsAndSkills(D2GameStrc* pGame, D2ActiveRoomStrc* pRoom, D2UnitStrc* pUnit, int64_t* pMonRegData) {
-oMONSTER_InitializeStatsAndSkills(pGame, pRoom, pUnit, pMonRegData);
+void __fastcall HookedMONSTER_InitializeStatsAndSkills(D2GameStrc* pGame, D2ActiveRoomStrc* pRoom, D2UnitStrc* pUnit, int64_t* pMonRegData)
+{
+    oMONSTER_InitializeStatsAndSkills(pGame, pRoom, pUnit, pMonRegData);
 
-    if (!pUnit || pUnit->dwUnitType != UNIT_MONSTER || !pUnit->pMonsterData || !pUnit->pMonsterData->pMonstatsTxt) {
+    if (!pUnit || pUnit->dwUnitType != UNIT_MONSTER || !pUnit->pMonsterData || !pUnit->pMonsterData->pMonstatsTxt)
         return;
-    }
 
     int32_t nClassId = pUnit->dwClassId;
     auto pMonStatsTxtRecord = pUnit->pMonsterData->pMonstatsTxt;
     auto wMonStatsEx = sgptDataTables->pMonStatsTxt[nClassId].wMonStatsEx;
 
-    if (wMonStatsEx >= sgptDataTables->nMonStats2TxtRecordCount) {
+    if (wMonStatsEx >= sgptDataTables->nMonStats2TxtRecordCount)
         return;
-    }
 
     D2UnitStrc* pUnitPlayer = UNITS_GetServerUnitByTypeAndId(pGame, UNIT_PLAYER, 1);
     if (!pUnitPlayer)
         return;
 
-    
     int difficulty = GetPlayerDifficulty(pUnitPlayer);
     if (difficulty < 0 || difficulty > 2)
         return;
 
-    auto pMonStats2TxtRecord = sgptDataTables->pMonStats2Txt[wMonStatsEx];
     D2MonStatsInitStrc monStatsInit = {};
-    std::string path = std::format("{0}/Mods/{1}/{1}.mpq/data/hd/global/excel/desecratedzones.json", GetExecutableDir(), GetModName());
-    ApplyGhettoSunder(pGame, pRoom, pUnit, pMonRegData, &monStatsInit);
 
-    if (!GetBaalQuest(pUnitPlayer, pGame)) {
-        return;
+    // Build the file path ONCE (outside the lambda)
+    if (gZonesFilePath.empty())
+    {
+        gZonesFilePath = GetExecutableDir();
+        gZonesFilePath += "/Mods/";
+        gZonesFilePath += GetModName();
+        gZonesFilePath += "/";
+        gZonesFilePath += GetModName();
+        gZonesFilePath += ".mpq/data/hd/global/excel/desecratedzones.json";
     }
 
-    LoadDesecratedZones(path);
-    ApplyGhettoTerrorZone(pGame, pRoom, pUnit, pMonRegData, &monStatsInit);
-    
+    std::call_once(gZonesLoadedFlag, []() {
+        if (LoadDesecratedZones(gZonesFilePath))
+            gZonesLoaded = true;
+        });
+
+    ApplyGhettoSunder(pGame, pRoom, pUnit, pMonRegData, &monStatsInit);
+
+    if (!GetBaalQuest(pUnitPlayer, pGame))
+        return;
+
+    if (gZonesLoaded)
+        ApplyGhettoTerrorZone(pGame, pRoom, pUnit, pMonRegData, &monStatsInit);
+
     time_t currentUtc = std::time(nullptr);
 
     for (const auto& zone : gDesecratedZones)
@@ -2932,6 +2947,7 @@ oMONSTER_InitializeStatsAndSkills(pGame, pRoom, pUnit, pMonRegData);
         //ApplyStatAdjustments(pGame, pRoom, pUnit, pMonRegData, &monStatsInit, *difficultySettings);
     }
 }
+
 
 uint32_t __fastcall Hooked_ITEMS_CalculateGambleCost(D2UnitStrc* pItem, int nPlayerLevel)
 {
