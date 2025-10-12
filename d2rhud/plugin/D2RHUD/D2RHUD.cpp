@@ -876,7 +876,7 @@ MonsterStatsDisplaySettings getMonsterStatsDisplaySetting(const std::string& con
     }
     cachedSettings.sunderedMonUMods = settings["SunderedMonUMods"] == "true";
     cachedSettings.minionEquality = settings["MinionEquality"] == "true";
-    cachedSettings.gambleForce = settings["GambleCostControl"] == "false";
+    cachedSettings.gambleForce = settings["GambleCostControl"] == "true";
 
     isCached = true;
     return cachedSettings;
