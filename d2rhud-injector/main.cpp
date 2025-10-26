@@ -127,46 +127,102 @@ void EjectDLL(const int& pid, const std::wstring& path) {
 
 void InjectDLL(const int& pid, const std::wstring& path) {
 	if (!std::filesystem::exists(path)) {
-		std::wcerr << L"[!]Couldn't find DLL!" << std::endl;
-		exit(-1);
+		std::wcerr << L"[!] Couldn't find DLL: " << path << std::endl;
+		return;
 	}
 
-	long dll_size = path.length() * sizeof(wchar_t) + 1;
+	// Size Correction: Multiply by wchar_t
+	SIZE_T dll_size = (path.length() + 1) * sizeof(wchar_t);
+
 	HANDLE hProc = OpenProcess(PROCESS_ALL_ACCESS, FALSE, pid);
-
 	if (hProc == NULL) {
-		std::wcerr << L"[!]Fail to open target process!" << std::endl;
-		exit(-1);
+		DWORD err = GetLastError();
+		std::wcerr << L"[!] Fail to open target process! GLE=" << err << std::endl;
+		return;
 	}
-	std::wcout << L"[+]Opening Target Process..." << std::endl;
+	std::wcout << L"[+] Opening target process (PID " << pid << L")..." << std::endl;
 
-	LPVOID lpAlloc = VirtualAllocEx(hProc, NULL, dll_size, MEM_COMMIT, PAGE_EXECUTE_READWRITE);
+	LPVOID lpAlloc = VirtualAllocEx(hProc, NULL, dll_size, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
 	if (lpAlloc == NULL) {
-		std::wcerr << L"[!]Fail to allocate memory in Target Process." << std::endl;
-		exit(-1);
+		DWORD err = GetLastError();
+		std::wcerr << L"[!] Fail to allocate memory in target process. GLE=" << err << std::endl;
+		CloseHandle(hProc);
+		return;
+	}
+	std::wcout << L"[+] Allocated " << dll_size << L" bytes at remote address " << lpAlloc << std::endl;
+
+	SIZE_T bytesWritten = 0;
+	BOOL wpm = WriteProcessMemory(hProc, lpAlloc, path.c_str(), dll_size, &bytesWritten);
+	if (!wpm || bytesWritten != dll_size) {
+		DWORD err = GetLastError();
+		std::wcerr << L"[!] Fail to write in target process memory. Written=" << bytesWritten << L" GLE=" << err << std::endl;
+		VirtualFreeEx(hProc, lpAlloc, 0, MEM_RELEASE);
+		CloseHandle(hProc);
+		return;
+	}
+	std::wcout << L"[+] Wrote DLL path into remote process memory." << std::endl;
+
+	// Use GetModuleHandle instead of LoadLibrary to avoid incrementing kernel32 refcount
+	HMODULE hKernel32 = GetModuleHandle(L"kernel32.dll");
+	if (hKernel32 == NULL) {
+		DWORD err = GetLastError();
+		std::wcerr << L"[!] GetModuleHandle(kernel32.dll) failed. GLE=" << err << std::endl;
+		VirtualFreeEx(hProc, lpAlloc, 0, MEM_RELEASE);
+		CloseHandle(hProc);
+		return;
 	}
 
-	std::wcout << L"[+]Allocating memory in Target Process." << std::endl;
-	if (WriteProcessMemory(hProc, lpAlloc, path.c_str(), dll_size, 0) == 0) {
-		std::wcerr << L"[!]Fail to write in Target Process memory." << std::endl;
-		exit(-1);
+	LPVOID lpStartAddress = reinterpret_cast<LPVOID>(GetProcAddress(hKernel32, "LoadLibraryW"));
+	if (lpStartAddress == NULL) {
+		DWORD err = GetLastError();
+		std::wcerr << L"[!] GetProcAddress(LoadLibraryW) failed. GLE=" << err << std::endl;
+		VirtualFreeEx(hProc, lpAlloc, 0, MEM_RELEASE);
+		CloseHandle(hProc);
+		return;
 	}
-	std::wcout << L"[+]Creating Remote Thread in Target Process" << std::endl;
 
-	HMODULE hKernel32 = LoadLibrary(L"kernel32");
-	LPVOID lpStartAddress = GetProcAddress(hKernel32, "LoadLibraryW");
+	std::wcout << L"[+] Creating remote thread to call LoadLibraryW..." << std::endl;
 	HANDLE hThread = CreateRemoteThread(hProc, NULL, 0, reinterpret_cast<LPTHREAD_START_ROUTINE>(lpStartAddress), lpAlloc, 0, NULL);
 	if (hThread == NULL) {
-		std::wcerr << L"[!]Fail to create Remote Thread" << std::endl;
-		exit(-1);
+		DWORD err = GetLastError();
+		std::wcerr << L"[!] Fail to create remote thread. GLE=" << err << std::endl;
+		VirtualFreeEx(hProc, lpAlloc, 0, MEM_RELEASE);
+		CloseHandle(hProc);
+		return;
 	}
-	WaitForSingleObject(hThread, INFINITE);
 
-	CloseHandle(hProc);
+	// Wait for the remote thread to finish, but bound it so the injector doesn't hang
+	const DWORD waitMs = 10 * 1000; // 10 seconds
+	DWORD waitRes = WaitForSingleObject(hThread, waitMs);
+	if (waitRes == WAIT_TIMEOUT) {
+		std::wcerr << L"[!] Remote thread timed out after " << waitMs << L" ms." << std::endl;
+	}
+
+	DWORD exitCode = 0;
+	if (!GetExitCodeThread(hThread, &exitCode)) {
+		DWORD err = GetLastError();
+		std::wcerr << L"[!] GetExitCodeThread failed. GLE=" << err << std::endl;
+	}
+	else {
+		if (exitCode == 0) {
+			std::wcerr << L"[!] LoadLibraryW returned NULL in remote process — load failed." << std::endl;
+		}
+		else {
+			std::wcout << L"[+] DLL loaded successfully in remote process at 0x" << std::hex << exitCode << std::dec << std::endl;
+		}
+	}
+
+	// Cleanup: Free Memory and Close Handles
+	if (!VirtualFreeEx(hProc, lpAlloc, 0, MEM_RELEASE)) {
+		DWORD err = GetLastError();
+		std::wcerr << L"[!] VirtualFreeEx failed. GLE=" << err << std::endl;
+	}
+
 	CloseHandle(hThread);
+	CloseHandle(hProc);
 
-	std::wcout << L"Press any key to exit..." << std::endl;
-	std::cin.get();
-
+	// Exit
+	std::wcout << L"[+] Injection finished; injector will now exit." << std::endl;
 }
+
 

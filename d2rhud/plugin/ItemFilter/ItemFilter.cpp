@@ -311,16 +311,19 @@ int32_t STATLIST_GetUnitStatSignedLayer0(D2UnitStrc* pThat, uint32_t nStatId) {
 }
 
 void RegisterD2UnitStrc(sol::state& s) {
+	// Base D2UnitStrc
 	auto unitType = s.new_usertype<D2UnitStrc>("D2UnitStrc", sol::no_constructor,
 		"Address", sol::readonly_property([](D2UnitStrc* pThat) -> std::string { std::stringstream ss; ss << std::hex << pThat; return ss.str(); }),
 		"ID", &D2UnitStrc::dwUnitId,
 		"Mode", &D2UnitStrc::dwAnimMode
 	);
+
 	unitType["Stat"] = sol::overload(
 		sol::resolve<int32_t(D2UnitStrc*, uint32_t)>(STATLIST_GetUnitStatSignedLayer0),
 		sol::resolve<int32_t(D2UnitStrc*, uint32_t, uint16_t)>(STATLIST_GetUnitStatSigned)
 	);
 
+	// Player unit
 	auto playerType = s.new_usertype<D2PlayerUnitStrc>("D2PlayerUnitStrc", sol::no_constructor,
 		"Class", &D2UnitStrc::dwClassId,
 		"Name", sol::readonly_property([](D2UnitStrc* pThat) -> const char* { return pThat->pPlayerData->szName; }),
@@ -329,12 +332,50 @@ void RegisterD2UnitStrc(sol::state& s) {
 		sol::base_classes, sol::bases<D2UnitStrc>()
 	);
 
+	// Item unit
 	auto itemType = s.new_usertype<D2ItemUnitStrc>("D2ItemUnitStrc", sol::no_constructor,
 		"Name", sol::readonly_property([](D2UnitStrc* pThat) -> std::string {
 			char pBuffer[0x400] = {};
 			Hooked_ITEMS_GetName(pThat, pBuffer);
 			return std::string(pBuffer);
 			}),
+		/*
+		"DescriptionString", sol::readonly_property([](D2UnitStrc* pThat) -> std::string {
+			char pBuffer[0x400] = {};
+			Hooked_ITEMS_GetStatsDescription(pThat, pBuffer, 0x400, 0, 0, 0, 0, 0);
+			std::string desc = pBuffer;
+
+			// --- Debug output to file ---
+			{
+				std::ofstream outFile("Description_Debug.txt", std::ios::out | std::ios::trunc);
+				if (outFile.is_open()) {
+					outFile << desc;
+					outFile.close();
+				}
+			}
+
+			// --- Secondary output with "Attack Rating" -> "Attack Rate" ---
+			std::string modifiedDesc = desc;
+			size_t pos = 0;
+			const std::string search = "Attack Rating";
+			const std::string replace = "Attack Rate";
+			while ((pos = modifiedDesc.find(search, pos)) != std::string::npos) {
+				modifiedDesc.replace(pos, search.length(), replace);
+				pos += replace.length();
+			}
+
+			// Optional: also output this modified version to a separate file
+			{
+				std::ofstream outFile2("Description_Modified_Debug.txt", std::ios::out | std::ios::trunc);
+				if (outFile2.is_open()) {
+					outFile2 << modifiedDesc;
+					outFile2.close();
+				}
+			}
+
+			return desc; // Keep original DescriptionString as the property value
+			}),
+			*/
 		"Data", sol::readonly_property([](D2UnitStrc* pThat) -> D2ItemDataStrc* { return pThat->pItemData; }),
 		"Txt", sol::readonly_property([](D2UnitStrc* pThat) -> D2ItemsTxt { return sgptDataTables->pItemsTxt[pThat->dwClassId]; }),
 		"IsOnGround", sol::readonly_property([](D2UnitStrc* pThat) -> bool { return pThat->dwAnimMode == IMODE_ONGROUND; }),
@@ -344,23 +385,18 @@ void RegisterD2UnitStrc(sol::state& s) {
 			case UNIT_ITEM:
 			{
 				auto pItemTxt = sgptDataTables->pItemsTxt[pThat->dwClassId];
-				if (strncmp(pItemTxt.szCode, pItemTxt.dwUltraCode, 4) == 0) {
-					return 2;
-				}
-				else if (strncmp(pItemTxt.szCode, pItemTxt.dwUberCode, 4) == 0) {
-					return 1;
-				}
-				else if (strncmp(pItemTxt.szCode, pItemTxt.dwNormCode, 4) == 0) {
-					return 0;
-				}
+				if (strncmp(pItemTxt.szCode, pItemTxt.dwUltraCode, 4) == 0) return 2;
+				else if (strncmp(pItemTxt.szCode, pItemTxt.dwUberCode, 4) == 0) return 1;
+				else if (strncmp(pItemTxt.szCode, pItemTxt.dwNormCode, 4) == 0) return 0;
 				return -1;
 			}
 			default: return -1;
 			}
-		}),
+			}),
 		"Area", sol::readonly_property([](D2UnitStrc* pThat) -> int32_t { return pThat->pStaticPath && pThat->pStaticPath->pRoom && pThat->pStaticPath->pRoom->pDrlgRoom && pThat->pStaticPath->pRoom->pDrlgRoom->pLevel ? pThat->pStaticPath->pRoom->pDrlgRoom->pLevel->nLevelId : 0; }),
 		sol::base_classes, sol::bases<D2UnitStrc>()
 	);
+
 	itemType["IsType"] = oITEMS_CheckItemTypeId;
 	itemType["MaxSockets"] = oITEMS_GetMaxSockets;
 	itemType["Link"] = [](D2UnitStrc* pThat, char color) -> std::string {
@@ -369,33 +405,25 @@ void RegisterD2UnitStrc(sol::state& s) {
 		char pOutput[0x400] = {};
 		int64_t nLinkDataSize = 0x558;
 		uint8_t pSerialized[0x400] = {};
-		D2BufferStrc pBuffer = {
-			pSerialized,
-			0x400
-		};
-		//Serialize item data
+		D2BufferStrc pBuffer = { pSerialized, pThat->dwUnitType }; // example serialization
 		uint32_t nOldAnimMode = pThat->dwAnimMode;
 		pThat->dwAnimMode = IMODE_STORED;
 		oITEMS_Serialize(pThat, &pBuffer, 1, 1, 0);
 		pThat->dwAnimMode = nOldAnimMode;
-		// b64 encode it
+
 		oBASE64_Encode(pLinkData, &nLinkDataSize, pSerialized, pBuffer.nUnk0x18 ? pBuffer.nUnk0x10 + 1 : pBuffer.nUnk0x10);
-		std::string szBase64ItemData = std::string(pLinkData, nLinkDataSize);
-		// get end of name. single line.
+
 		Hooked_ITEMS_GetName(pThat, pName);
 		std::string szName = std::string(pName);
 		size_t pos = szName.rfind('\n');
-		if (pos != std::string::npos) {
-			szName.erase(0, pos + 1);
-		}
-		// format it [{name}]
+		if (pos != std::string::npos) szName.erase(0, pos + 1);
+
 		std::string szNameFormatted = std::format("ÿc0ÿc{}[{}ÿc{}]ÿc0", color, szName, color);
-		int32_t nStrLen = szNameFormatted.length() - 4; //why - 4?
-		// build ÿi item link
-		snprintf(pOutput, 0x400, "%sÿi%d.%d.%s", szNameFormatted.c_str(), 0, nStrLen, szBase64ItemData.c_str());
+		snprintf(pOutput, 0x400, "%sÿi%d.%d.%s", szNameFormatted.c_str(), 0, static_cast<int>(szNameFormatted.length() - 4), pLinkData);
 		return std::string(pOutput);
 		};
 }
+
 
 int32_t ReadLocationFromExternalProcess(HANDLE hProcess)
 {
@@ -567,7 +595,7 @@ uint8_t* Hooked_ITEMS_GetColor(D2UnitStrc* pPlayer, D2UnitStrc* pItem, int32_t* 
 void InitializeLUA() {
 	lua.open_libraries(sol::lib::base, sol::lib::package,
 		sol::lib::table, sol::lib::coroutine, sol::lib::string,
-		sol::lib::math);
+		sol::lib::math, sol::lib::io);
 	RegisterBasicTypes(lua);
 	RegisterD2ItemFilterResultStrc(lua);
 	RegisterD2ItemDataStrc(lua);

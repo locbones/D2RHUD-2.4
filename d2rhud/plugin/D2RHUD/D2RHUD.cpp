@@ -41,7 +41,7 @@
 std::string configFilePath = "config.json";
 std::string filename = "../Launcher/D2RLAN_Config.txt";
 std::string lootFile = "../D2R/lootfilter.lua";
-std::string Version = "1.4.2";
+std::string Version = "1.4.3";
 
 using json = nlohmann::json;
 static MonsterStatsDisplaySettings cachedSettings;
@@ -507,7 +507,6 @@ void __fastcall HookedBankPanelDraw(D2BankPanelWidget* pBankPanel) {
 }
 
 #pragma endregion
-
 
 #pragma region Window/Detour Handlers
 BOOL is_main_window(HWND handle)
@@ -1026,14 +1025,17 @@ D2MonStatsTxt* __fastcall MONSTERMODE_GetMonStatsTxtRecord(int32_t nMonsterId)
     return nullptr;
 }
 
+
 void __fastcall HookedMONSTER_GetPlayerCountBonus(D2GameStrc* pGame, D2PlayerCountBonusStrc* pPlayerCountBonus, D2ActiveRoomStrc* pRoom, D2UnitStrc* pMonster) {
     oMONSTER_GetPlayerCountBonus(pGame, pPlayerCountBonus, pRoom, pMonster);
     playerCountGlobal = pPlayerCountBonus->nPlayerCount;
 
-    // cap max hp bonus at 300%. once it gets to 500% + it can rollover quickly causing monsters to have negative hp.
-    if (pPlayerCountBonus->nPlayerCount > 8 && pGame->nDifficulty > cachedSettings.HPRolloverDiff) {
-        pPlayerCountBonus->nHP = 300;
-    }
+    if (GetModName() != "RMD-MP")
+    {
+        // cap max hp bonus at 300%. once it gets to 500% + it can rollover quickly causing monsters to have negative hp.
+        if (pPlayerCountBonus->nPlayerCount > 8 && pGame->nDifficulty > cachedSettings.HPRolloverDiff)
+            pPlayerCountBonus->nHP = 300;
+    }   
 }
 
 const int32_t nMaxPlayerCount = 65535;
@@ -1104,8 +1106,6 @@ struct LevelGroup {
     std::string name;
     std::vector<int> levels;
 };
-
-
 
 struct Stat {
     D2C_ItemStats id;
@@ -2770,6 +2770,65 @@ void ApplyMonsterDifficultyScaling(D2UnitStrc* pUnit, const DesecratedZone& zone
         SetStat(pUnit, STAT_HPREGEN, (nShiftedHp * 2) >> 12);
 }
 
+void ApplyMonsterDifficultyScalingNonTZ(D2UnitStrc* pUnit, int difficulty, int playerLevel, int playerCountGlobal, D2GameStrc* pGame)
+{
+    int32_t playerCountModifier = (playerCountGlobal >= 9) ? (playerCountGlobal - 2) * 50 : (playerCountGlobal - 1) * 50;
+
+    // Calculate base monster stats
+    D2MonStatsInitStrc monStatsInit = {};
+    CalculateMonsterStats(pUnit->dwClassId, 1, pGame->nDifficulty, STATLIST_GetUnitStatSigned(pUnit, STAT_LEVEL, 0), 7, monStatsInit);
+    int32_t nBaseHp = 0;
+
+    D2UnitStrc* pUnitPlayer = UNITS_GetServerUnitByTypeAndId(pGame, UNIT_PLAYER, 1);
+
+    if (difficulty == 0)
+    {
+        if (pUnit->pMonsterData->nTypeFlag == MONTYPEFLAG_UNIQUE)
+            nBaseHp = monStatsInit.nMinHP + ITEMS_RollLimitedRandomNumber(&pUnit->pSeed, monStatsInit.nMaxHP - monStatsInit.nMinHP + 1) * 4;
+        else if (pUnit->pMonsterData->nTypeFlag == MONTYPEFLAG_CHAMPION)
+            nBaseHp = monStatsInit.nMinHP + ITEMS_RollLimitedRandomNumber(&pUnit->pSeed, monStatsInit.nMaxHP - monStatsInit.nMinHP + 1) * 3;
+        else if (pUnit->pMonsterData->nTypeFlag == MONTYPEFLAG_MINION)
+            nBaseHp = monStatsInit.nMinHP + ITEMS_RollLimitedRandomNumber(&pUnit->pSeed, monStatsInit.nMaxHP - monStatsInit.nMinHP + 1) * 2;
+        else
+            nBaseHp = monStatsInit.nMinHP + ITEMS_RollLimitedRandomNumber(&pUnit->pSeed, monStatsInit.nMaxHP - monStatsInit.nMinHP + 1);
+    }
+    if (difficulty == 1)
+    {
+        if (pUnit->pMonsterData->nTypeFlag == MONTYPEFLAG_UNIQUE)
+            nBaseHp = monStatsInit.nMinHP + ITEMS_RollLimitedRandomNumber(&pUnit->pSeed, monStatsInit.nMaxHP - monStatsInit.nMinHP + 1) * 3;
+        else if (pUnit->pMonsterData->nTypeFlag == MONTYPEFLAG_CHAMPION)
+            nBaseHp = monStatsInit.nMinHP + ITEMS_RollLimitedRandomNumber(&pUnit->pSeed, monStatsInit.nMaxHP - monStatsInit.nMinHP + 1) * 2.5;
+        else if (pUnit->pMonsterData->nTypeFlag == MONTYPEFLAG_MINION)
+            nBaseHp = monStatsInit.nMinHP + ITEMS_RollLimitedRandomNumber(&pUnit->pSeed, monStatsInit.nMaxHP - monStatsInit.nMinHP + 1) * 1.75;
+        else
+            nBaseHp = monStatsInit.nMinHP + ITEMS_RollLimitedRandomNumber(&pUnit->pSeed, monStatsInit.nMaxHP - monStatsInit.nMinHP + 1);
+    }
+    if (difficulty == 2)
+    {
+        if (pUnit->pMonsterData->nTypeFlag == MONTYPEFLAG_UNIQUE)
+            nBaseHp = monStatsInit.nMinHP + ITEMS_RollLimitedRandomNumber(&pUnit->pSeed, monStatsInit.nMaxHP - monStatsInit.nMinHP + 1) * 1;
+        else if (pUnit->pMonsterData->nTypeFlag == MONTYPEFLAG_CHAMPION)
+            nBaseHp = monStatsInit.nMinHP + ITEMS_RollLimitedRandomNumber(&pUnit->pSeed, monStatsInit.nMaxHP - monStatsInit.nMinHP + 1) * 1;
+        else if (pUnit->pMonsterData->nTypeFlag == MONTYPEFLAG_MINION)
+            nBaseHp = monStatsInit.nMinHP + ITEMS_RollLimitedRandomNumber(&pUnit->pSeed, monStatsInit.nMaxHP - monStatsInit.nMinHP + 1) * 1;
+        else
+            nBaseHp = monStatsInit.nMinHP + ITEMS_RollLimitedRandomNumber(&pUnit->pSeed, monStatsInit.nMaxHP - monStatsInit.nMinHP + 1);
+    }
+    
+
+    const int32_t nHp = nBaseHp + D2_ComputePercentage(nBaseHp, playerCountModifier);
+    const int32_t nShiftedHp = nHp << 8;
+
+    // Apply core stats
+    SetStat(pUnit, STAT_MAXHP, nShiftedHp);
+    SetStat(pUnit, STAT_HITPOINTS, nShiftedHp);
+    SetStat(pUnit, STAT_ARMORCLASS, monStatsInit.nAC);
+    SetStat(pUnit, STAT_EXPERIENCE, D2_ComputePercentage(monStatsInit.nExp, ((playerCountGlobal - 8) * 100) / 5));
+
+    if (pUnit->dwClassId != 156 && pUnit->dwClassId != 211 && pUnit->dwClassId != 242 && pUnit->dwClassId != 243 && pUnit->dwClassId != 544) //Ignore Act Bosses
+        SetStat(pUnit, STAT_HPREGEN, (nShiftedHp * 2) >> 12);
+}
+
 void __fastcall ApplyGhettoTerrorZone(D2GameStrc* pGame, D2ActiveRoomStrc* pRoom, D2UnitStrc* pUnit, int64_t* pMonRegData, D2MonStatsInitStrc* monStatsInit)
 {
     time_t currentUtc = std::time(nullptr);
@@ -2853,6 +2912,7 @@ void __fastcall ApplyGhettoTerrorZone(D2GameStrc* pGame, D2ActiveRoomStrc* pRoom
         UpdateActiveZoneInfoText(static_cast<time_t>(now));
         InitRandomStatsForAllMonsters(false);
         
+        
         // Match level overrides
         const ZoneLevel* matchingZoneLevel = nullptr;
         for (const auto& zl : activeGroup.levels)
@@ -2929,6 +2989,8 @@ void __fastcall HookedMONSTER_InitializeStatsAndSkills(D2GameStrc* pGame, D2Acti
 
     if (gZonesLoaded)
         ApplyGhettoTerrorZone(pGame, pRoom, pUnit, pMonRegData, &monStatsInit);
+
+    ApplyMonsterDifficultyScalingNonTZ(pUnit, difficulty, playerLevel, playerCountGlobal, pGame);
 
     time_t currentUtc = std::time(nullptr);
 
@@ -3198,12 +3260,14 @@ void D2RHUD::OnDraw() {
 
     do
     {
+        /*
         if (!settings.monsterStatsDisplay)
         {
             if (fontPushed)
                 ImGui::PopFont();
             return;
         }
+        */
 
         if (!gMouseHover->IsHovered) break;
         if (gMouseHover->HoveredUnitType > UNIT_MONSTER) break;
@@ -3222,8 +3286,9 @@ void D2RHUD::OnDraw() {
         }
 
         if (!pUnit || !pUnitServer) break;
-
         if (STATLIST_GetUnitStatSigned(pUnitServer, STAT_HITPOINTS, 0) == 0) break;
+
+        
 
         if (pUnitServer)
         {
@@ -3263,13 +3328,12 @@ void D2RHUD::OnDraw() {
                 }
                 else
                 {
-                    auto hp = std::format("{} / {}",
-                        STATLIST_GetUnitStatSigned(pUnitServer, STAT_HITPOINTS, 0) >> 8,
-                        STATLIST_GetUnitStatSigned(pUnitServer, STAT_MAXHP, 0) >> 8);
+                    auto hp = std::format("{} / {}", STATLIST_GetUnitStatSigned(pUnitServer, STAT_HITPOINTS, 0) >> 8, STATLIST_GetUnitStatSigned(pUnitServer, STAT_MAXHP, 0) >> 8);
                     auto width = ImGui::CalcTextSize(hp.c_str()).x;
                     drawList->AddText({ center - (width / 2.0f) + 1, ypercent2 }, IM_COL32(255, 255, 255, 255), hp.c_str());
                 }
 
+                
                 
                 //std::string ac = std::format("Pierce IDX: {}", STATLIST_GetUnitStatSigned(pUnitServer, STAT_ARMORCLASS, 0));
                 //drawList->AddText({ 20, 10 }, IM_COL32(170, 50, 50, 255), ac.c_str());
