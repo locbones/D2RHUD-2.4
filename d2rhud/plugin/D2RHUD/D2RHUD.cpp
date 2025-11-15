@@ -41,7 +41,7 @@
 std::string configFilePath = "config.json";
 std::string filename = "../Launcher/D2RLAN_Config.txt";
 std::string lootFile = "../D2R/lootfilter.lua";
-std::string Version = "1.4.3";
+std::string Version = "1.4.4";
 
 using json = nlohmann::json;
 static MonsterStatsDisplaySettings cachedSettings;
@@ -876,6 +876,7 @@ MonsterStatsDisplaySettings getMonsterStatsDisplaySetting(const std::string& con
     cachedSettings.sunderedMonUMods = settings["SunderedMonUMods"] == "true";
     cachedSettings.minionEquality = settings["MinionEquality"] == "true";
     cachedSettings.gambleForce = settings["GambleCostControl"] == "true";
+    cachedSettings.SunderValue = std::stoi(settings["SunderValue"]);
 
     isCached = true;
     return cachedSettings;
@@ -2551,9 +2552,9 @@ uint32_t SubtractResistances(D2UnitStrc* pUnit, D2C_ItemStats nStatId, uint32_t 
 
         //Calculate overshoot
         uint32_t remainder = 0;
-        if (newValue < 99) {
-            remainder = 99 - newValue;
-            newValue = 99;
+        if (newValue < cachedSettings.SunderValue) {
+            remainder = cachedSettings.SunderValue - newValue;
+            newValue = cachedSettings.SunderValue;
         }
 
         STATLISTEX_SetStatListExStat(pUnit->pStatListEx, nStatId, newValue, nLayer);
@@ -3287,8 +3288,6 @@ void D2RHUD::OnDraw() {
 
         if (!pUnit || !pUnitServer) break;
         if (STATLIST_GetUnitStatSigned(pUnitServer, STAT_HITPOINTS, 0) == 0) break;
-
-        
 
         if (pUnitServer)
         {
