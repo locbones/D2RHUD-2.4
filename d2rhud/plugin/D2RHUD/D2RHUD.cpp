@@ -3289,7 +3289,7 @@ void D2RHUD::OnDraw() {
         if (!pUnit || !pUnitServer) break;
         if (STATLIST_GetUnitStatSigned(pUnitServer, STAT_HITPOINTS, 0) == 0) break;
 
-        if (pUnitServer)
+        if (pUnitServer && cachedSettings.monsterStatsDisplay == true)
         {
             float totalWidth = 0.f;
             float spaceWidth = ImGui::CalcTextSize(Seperator).x;
