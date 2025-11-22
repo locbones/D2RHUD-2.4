@@ -15,6 +15,7 @@ struct MonsterStatsDisplaySettings {
     bool minionEquality;
     bool gambleForce;
     std::int32_t SunderValue;
+    bool CombatLog;
 };
 
 class D2RHUD : public Plugin {

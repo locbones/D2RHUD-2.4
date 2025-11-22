@@ -590,12 +590,10 @@ uint8_t* Hooked_ITEMS_GetColor(D2UnitStrc* pPlayer, D2UnitStrc* pItem, int32_t* 
 	return result;
 }
 
-
-
 void InitializeLUA() {
 	lua.open_libraries(sol::lib::base, sol::lib::package,
 		sol::lib::table, sol::lib::coroutine, sol::lib::string,
-		sol::lib::math, sol::lib::io);
+		sol::lib::math, sol::lib::io, sol::lib::os);
 	RegisterBasicTypes(lua);
 	RegisterD2ItemFilterResultStrc(lua);
 	RegisterD2ItemDataStrc(lua);
@@ -611,7 +609,6 @@ void InitializeLUA() {
 	};
 	LoadScript();
 }
-
 
 void DoFilter(D2UnitStrc* pItem) {
 	auto pItemToApplyFilterOn = pItem;

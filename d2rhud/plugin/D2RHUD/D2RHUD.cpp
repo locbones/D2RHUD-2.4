@@ -41,7 +41,7 @@
 std::string configFilePath = "config.json";
 std::string filename = "../Launcher/D2RLAN_Config.txt";
 std::string lootFile = "../D2R/lootfilter.lua";
-std::string Version = "1.4.4";
+std::string Version = "1.4.5";
 
 using json = nlohmann::json;
 static MonsterStatsDisplaySettings cachedSettings;
@@ -877,6 +877,7 @@ MonsterStatsDisplaySettings getMonsterStatsDisplaySetting(const std::string& con
     cachedSettings.minionEquality = settings["MinionEquality"] == "true";
     cachedSettings.gambleForce = settings["GambleCostControl"] == "true";
     cachedSettings.SunderValue = std::stoi(settings["SunderValue"]);
+    cachedSettings.CombatLog = settings["CombatLog"] == "true";
 
     isCached = true;
     return cachedSettings;
@@ -3210,6 +3211,9 @@ void D2RHUD::OnDraw() {
         DetourAttach(&(PVOID&)oWidget__OnClose, Hooked__Widget__OnClose);
         DetourTransactionCommit();
         CheckToggleForward();
+
+        if (cachedSettings.CombatLog = true)
+            ExecuteDebugCheatFunc("attackinfo 1");
     }
 
     if (!oDropTCTest) {

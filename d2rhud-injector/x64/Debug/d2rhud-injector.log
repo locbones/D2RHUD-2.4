@@ -1,1 +1,5 @@
-﻿  d2rhud-injector.vcxproj -> C:\Users\djsch\Github\D2RHUD-2.4\x64\Debug\d2rhud-injector.exe
+﻿C:\Program Files\Microsoft Visual Studio\2022\Community\MSBuild\Microsoft\VC\v170\Microsoft.CppBuild.targets(534,5): warning MSB8028: The intermediate directory (x64\Debug\) contains files shared from another project (d2rhud-injector.vcxproj).  This can lead to incorrect clean and rebuild behavior.
+  main.cpp
+  d2rhud-injector.vcxproj -> C:\Users\djsch\Github\D2RHUD-2.4\x64\Debug\D2RHUD-Loader.exe
+  'pwsh.exe' is not recognized as an internal or external command,
+  operable program or batch file.
