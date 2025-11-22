@@ -3212,7 +3212,7 @@ void D2RHUD::OnDraw() {
         DetourTransactionCommit();
         CheckToggleForward();
 
-        if (cachedSettings.CombatLog = true)
+        if (cachedSettings.CombatLog == true)
             ExecuteDebugCheatFunc("attackinfo 1");
     }
 
