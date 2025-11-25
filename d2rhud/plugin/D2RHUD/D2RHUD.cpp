@@ -2450,7 +2450,7 @@ std::string BuildTerrorZoneInfoText()
             remainingMinutes = secondsRemaining / 60;
             remainingSeconds = secondsRemaining % 60;
 
-            if (remainingSeconds == 0 && remainingMinutes == 60)
+            if (remainingSeconds == 0 && remainingMinutes == g_TerrorZoneData.terrorDurationMin)
                 ToggleManualZoneGroupInternal(true);
         }
         else
