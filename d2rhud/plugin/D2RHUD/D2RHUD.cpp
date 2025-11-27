@@ -41,7 +41,7 @@
 std::string configFilePath = "config.json";
 std::string filename = "../Launcher/D2RLAN_Config.txt";
 std::string lootFile = "../D2R/lootfilter.lua";
-std::string Version = "1.4.5";
+std::string Version = "1.4.6";
 
 using json = nlohmann::json;
 static MonsterStatsDisplaySettings cachedSettings;
@@ -3012,7 +3012,6 @@ void __fastcall HookedMONSTER_InitializeStatsAndSkills(D2GameStrc* pGame, D2Acti
     }
 }
 
-
 uint32_t __fastcall Hooked_ITEMS_CalculateGambleCost(D2UnitStrc* pItem, int nPlayerLevel)
 {
     if (!pItem || !pItem->pItemData || !sgptDataTables || !sgptDataTables->pItemsTxt)
@@ -3030,6 +3029,1578 @@ uint32_t __fastcall Hooked_ITEMS_CalculateGambleCost(D2UnitStrc* pItem, int nPla
     else
         return oGambleForce(pItem, nPlayerLevel);
 }
+
+#pragma region Menu System
+
+#pragma region Static/Structs
+
+//D2RHUD Options Struct
+struct D2RHUDConfig
+{
+    bool MonsterStatsDisplay = true;
+    std::string ChannelColor = "ÿc5";
+    std::string PlayerNameColor = "ÿc8";
+    std::string MessageColor = "ÿc0";
+    bool HPRolloverMods = true;
+    int HPRolloverPercent = 99;
+    int HPRolloverDifficulty = -1;
+    bool SunderedMonUMods = true;
+    int SunderValue = 99;
+    bool MinionEquality = true;
+    bool GambleCostControl = true;
+    bool CombatLog = true;
+    std::vector<std::string> DLLsToLoad = { "D2RHUD.dll" };
+};
+
+std::vector<std::string> priorityOrder = {
+        "reload", "Debug", "allowOverrides", "audioPlayback", "modTips",
+        "audioVoice", "filter_titles", "filter_level", "language"
+};
+std::unordered_map<std::string, std::string> displayNames = {
+    { "reload", "Reload Message" }, { "allowOverrides", "Allow Overrides" },
+    { "modTips", "Mod Tips" }, { "Debug", "Debug Mode" },
+    { "audioPlayback", "Audio Playback" }, { "audioVoice", "Audio Voice" },
+    { "filter_titles", "Filter Titles" }, { "filter_level", "Filter Level" },
+    { "language", "Language" }
+};
+
+std::unordered_map<std::string, std::string> g_LuaDescriptions = {
+    { "reload", "Displays an in-game chat message whenever the filter is reloaded" },
+    { "Debug", "Outputs details of matched/failed filter rules using in-game chat" },
+    { "allowOverrides", "Allows the override_rules.lua to be loaded in addition to your own filter\nUsually used by mod authors to add 'default' content as a baseload" },
+    { "audioPlayback", "Enables or disables both the Audio Playback and TTS options\nRequires Win10+ and Windows Media framework installed" },
+    { "modTips", "Displays helpful mod-related tips at the bottom of item tooltips\nThese tips must be defined by the filter or mod author" },
+    { "audioVoice", "Selects which TTS voice is used for audio playback (numeric ID)\nThis entry uses your own Windows TTS voices, they will differ between players" },
+    { "filter_titles", "Define what the varying filter_levels should be displayed as in-game\nEntries such as 1,2,3 or Early-Game, Mid-Game, End-Game, etc are accepted" },
+    { "filter_level", "Define your currently selected filter_level\nThis controls what filter rules will apply to your session (on supported filters)" },
+    { "language", "Sets the filter language, such as 'enUS' or 'frFR'. Defaults to enUS if not defined\nLanguage support must be added by the filter author for proper functionality" }
+};
+
+//D2RLoot Struct
+struct LootFilterHeader
+{
+    std::string Title;
+    std::string Version;
+};
+
+//MemoryEdit Struct
+struct MemoryConfigEntry
+{
+    std::string Description;
+    std::string Address;
+    std::vector<std::string> Addresses;
+    int Length = 1;
+    std::string Type = "Hex";
+    std::string Values;
+};
+
+// Global Menu States
+static bool showMainMenu = false;
+static bool showD2RHUDMenu = false;
+static bool showMemoryMenu = false;
+static bool showLootMenu = false;
+static bool showHotkeyMenu = false;
+
+// Static References
+LootFilterHeader g_LootFilterHeader;
+std::unordered_map<std::string, std::string> g_LuaVariables;
+std::unordered_map<std::string, std::pair<std::string, std::string>> g_Hotkeys;
+std::vector<MemoryConfigEntry> g_MemoryConfigs;
+static D2RHUDConfig d2rHUDConfig;
+bool lootConfigLoaded = false;
+bool lootLogicLoaded = false;
+
+#pragma endregion
+
+#pragma region Helper Funcs
+
+// Center Text
+void ImGuiTextCentered(const char* text, ImFont* font = nullptr, ImVec4 color = ImVec4(1, 1, 1, 1))
+{
+    ImGuiIO& io = ImGui::GetIO();
+    float windowWidth = ImGui::GetWindowWidth();
+    if (font) ImGui::PushFont(font);
+    ImVec2 textSize = font ? font->CalcTextSizeA(font->FontSize, FLT_MAX, 0.0f, text) : ImGui::CalcTextSize(text);
+    ImGui::SetCursorPosX((windowWidth - textSize.x) * 0.5f);
+    ImGui::TextColored(color, "%s", text);
+    if (font) ImGui::PopFont();
+}
+
+std::string RemoveComments(const std::string& input)
+{
+    std::string output;
+    size_t i = 0;
+    while (i < input.size())
+    {
+        // Handle single-line comments //
+        if (i + 1 < input.size() && input[i] == '/' && input[i + 1] == '/')
+        {
+            i += 2;
+            while (i < input.size() && input[i] != '\n') i++;
+        }
+        // Handle multi-line comments
+        else if (i + 1 < input.size() && input[i] == '/' && input[i + 1] == '*')
+        {
+            i += 2;
+            while (i + 1 < input.size() && !(input[i] == '*' && input[i + 1] == '/')) i++;
+            i += 2;
+        }
+        else
+        {
+            output += input[i];
+            i++;
+        }
+    }
+
+    return output;
+}
+
+std::string CleanJsonFile(const std::string& path)
+{
+    std::ifstream file(path);
+    if (!file.is_open()) return "";
+    std::string text((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    text = RemoveComments(text);
+    text = std::regex_replace(text, std::regex(R"(,\s*([}\]]))"), "$1");
+
+    return text;
+}
+
+ImVec2 CenterWindow(ImVec2 size)
+{
+    ImGuiIO& io = ImGui::GetIO();
+    ImVec2 centerPos = ImVec2((io.DisplaySize.x - size.x) * 0.5f,
+        (io.DisplaySize.y - size.y) * 0.5f);
+    ImGui::SetNextWindowPos(centerPos, ImGuiCond_Once);
+    ImGui::SetNextWindowSize(size, ImGuiCond_Once);
+    return centerPos;
+}
+
+void EnableAllInput()
+{
+    ImGuiIO& io = ImGui::GetIO();
+    auto oldFlags = io.ConfigFlags;
+    io.ConfigFlags &= ~ImGuiConfigFlags_NoKeyboard;
+    io.ConfigFlags &= ~ImGuiConfigFlags_NoMouse;
+    io.ConfigFlags &= ~ImGuiConfigFlags_NoMouseCursorChange;
+    io.ConfigFlags &= ~ImGuiConfigFlags_NavEnableGamepad;
+    io.ConfigFlags &= ~ImGuiConfigFlags_NavEnableSetMousePos;
+}
+
+ImFont* GetFont(int index)
+{
+    ImGuiIO& io = ImGui::GetIO();
+    return (index >= 0 && index < io.Fonts->Fonts.Size) ? io.Fonts->Fonts[index] : nullptr;
+}
+
+void PushFontSafe(int index)
+{
+    if (ImFont* f = GetFont(index))
+        ImGui::PushFont(f);
+}
+
+void PopFontSafe(int index)
+{
+    if (GetFont(index))
+        ImGui::PopFont();
+}
+
+bool DrawWindowTitleAndClose(const char* title, bool* open)
+{
+    float closeBtnSize = 20.0f;
+    float padding = 5.0f;
+    ImVec2 contentSize = ImGui::GetContentRegionAvail();
+
+    float titleWidth = ImGui::CalcTextSize(title).x;
+    ImGui::SetCursorPosX((contentSize.x - titleWidth) * 0.5f);
+    ImGui::TextColored(ImVec4(0.95f, 0.85f, 0.5f, 1.0f), "%s", title);
+
+    ImGui::SameLine(contentSize.x - closeBtnSize - padding);
+    ImVec2 btnPos = ImGui::GetCursorScreenPos();
+    ImGui::InvisibleButton("CloseBtn", ImVec2(closeBtnSize, closeBtnSize));
+    if (ImGui::IsItemClicked() && open) *open = false;
+
+    ImDrawList* drawList = ImGui::GetWindowDrawList();
+    ImVec2 textSize = ImGui::CalcTextSize("X");
+    ImVec2 textPos = ImVec2(btnPos.x + (closeBtnSize - textSize.x) * 0.5f,
+        btnPos.y + (closeBtnSize - textSize.y) * 0.5f);
+    drawList->AddText(textPos, IM_COL32(255, 80, 80, 255), "X");
+
+    return true;
+}
+
+void DrawBottomDescription(const std::string& desc)
+{
+    ImGui::Dummy(ImVec2(0.0f, 5.0f));
+    ImGui::Separator();
+    ImGui::Dummy(ImVec2(0.0f, 3.0f));
+    ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(255, 165, 0, 255));
+    float textWidth = ImGui::CalcTextSize(desc.c_str()).x;
+    float availWidth = ImGui::GetContentRegionAvail().x;
+    ImGui::SetCursorPosX((availWidth - textWidth) * 0.5f);
+    ImGui::TextWrapped("%s", desc.c_str());
+    ImGui::PopStyleColor();
+}
+
+std::string DisplayKey(const std::string& key)
+{
+    std::string temp = key;
+    size_t pos = 0;
+    while ((pos = temp.find("VK_", pos)) != std::string::npos)
+        temp.erase(pos, 3);
+    return temp;
+}
+
+
+#pragma endregion
+
+#pragma region File Load/Save
+
+void LoadHotkeys(const std::string& filename)
+{
+    g_Hotkeys.clear();
+    std::ifstream file(filename);
+    if (!file.is_open()) return;
+    std::string line;
+    std::regex multiRegex(R"delim(^\s*([^:]+):\s*(.+?),\s*"([^"]*)")delim"); // Name: Key combo, "string"
+    std::regex singleRegex(R"(^\s*([^:]+):\s*(.+))"); // Name: Key combo
+
+    while (std::getline(file, line))
+    {
+        std::smatch match;
+        if (std::regex_match(line, match, multiRegex))
+        {
+            std::string name = match[1].str();
+            std::string key = match[2].str();
+            std::string extra = match[3].str();
+            g_Hotkeys[name] = { key, extra };
+        }
+        else if (std::regex_match(line, match, singleRegex))
+        {
+            std::string name = match[1].str();
+            std::string key = match[2].str();
+            g_Hotkeys[name] = { key, "" };
+        }
+    }
+
+    file.close();
+}
+
+void LoadLootFilterConfig(const std::string& path)
+{
+    g_LuaVariables.clear();
+    g_LootFilterHeader = {}; // reset
+
+    std::ifstream file(path);
+    if (!file.is_open())
+        return;
+
+    std::string line;
+    std::regex assignRegex(R"(^\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*(.+?),\s*$)");
+    int nestingLevel = 0; // track { } nesting
+
+    while (std::getline(file, line))
+    {
+        // --- Parse top comment header ---
+        if (line.rfind("---", 0) == 0)
+        {
+            if (line.find("Filter Title:") != std::string::npos)
+                g_LootFilterHeader.Title = line.substr(line.find(":") + 1);
+
+            // Trim leading spaces
+            for (auto* str : { &g_LootFilterHeader.Title })
+            {
+                if (!str->empty() && (*str)[0] == ' ') *str = str->substr(1);
+            }
+            continue;
+        }
+
+        // --- Track nesting for Lua table ---
+        for (char c : line)
+        {
+            if (c == '{') nestingLevel++;
+            if (c == '}') nestingLevel--;
+        }
+
+        // Only parse top-level assignments
+        if (nestingLevel == 1)
+        {
+            std::smatch match;
+            if (std::regex_match(line, match, assignRegex))
+            {
+                std::string key = match[1].str();
+                std::string value = match[2].str();
+
+                // Strip surrounding quotes for strings
+                if (!value.empty() && value.front() == '"' && value.back() == '"')
+                    value = value.substr(1, value.size() - 2);
+
+                g_LuaVariables[key] = value;
+            }
+        }
+    }
+}
+
+void LoadLootFilterLogic(const std::string& path)
+{
+    std::ifstream file(path);
+    if (!file.is_open())
+    {
+        g_LootFilterHeader.Version.clear();
+        return;
+    }
+
+    std::string line;
+    std::regex versionRegex(R"delim(local\s+version\s*=\s*"([^"]*)")delim");
+
+    while (std::getline(file, line))
+    {
+        std::smatch match;
+        if (std::regex_search(line, match, versionRegex))
+        {
+            g_LootFilterHeader.Version = match[1].str();
+            break; // found
+        }
+    }
+}
+
+void LoadMemoryConfigs(const std::string& path)
+{
+    // Clear log
+    std::ofstream("debug_memoryedits.log", std::ios::trunc);
+
+    std::ifstream file(path);
+    if (!file.is_open())
+        return;
+
+    // Parse JSON
+    json j;
+    try
+    {
+        std::string cleanJson = CleanJsonFile(path);
+        if (cleanJson.empty())
+            return;
+
+        j = json::parse(cleanJson);
+    }
+    catch (const std::exception& e)
+    {
+        return;
+    }
+
+    g_MemoryConfigs.clear();
+
+    if (!j.contains("MemoryConfigs") || !j["MemoryConfigs"].is_array())
+    {
+        return;
+    }
+
+    int index = 0;
+
+    for (auto& entry : j["MemoryConfigs"])
+    {
+        MemoryConfigEntry m;
+        m.Description = entry.value("Description", "");
+        m.Address = entry.value("Address", "");
+
+        if (entry.contains("Addresses") && entry["Addresses"].is_array())
+        {
+            for (auto& a : entry["Addresses"])
+                m.Addresses.push_back(a.get<std::string>());
+        }
+
+        m.Length = entry.value("Length", 1);
+        m.Type = entry.value("Type", "Hex");
+        m.Values = entry.value("Values", "");
+
+        g_MemoryConfigs.push_back(m);
+        index++;
+    }
+
+    // --- Process entries (like C#) ---
+    int totalOperations = 0;
+    int successfulOperations = 0;
+
+    for (auto& entry : g_MemoryConfigs)
+    {
+        totalOperations++;
+        bool allSucceeded = true;
+
+        try
+        {
+            if (!entry.Addresses.empty())
+            {
+                for (auto& addr : entry.Addresses)
+                    allSucceeded = false;
+            }
+            else if (!entry.Address.empty())
+            {
+                allSucceeded = false;
+            }
+        }
+        catch (const std::exception& ex)
+        {
+            allSucceeded = false;
+        }
+
+        if (allSucceeded)
+            successfulOperations++;
+    }
+}
+
+void LoadD2RHUDConfig(const std::string& path)
+{
+    std::ifstream file(path);
+    if (!file.is_open()) return;
+
+    nlohmann::json j;
+    file >> j;
+
+    d2rHUDConfig.MonsterStatsDisplay = j.value("MonsterStatsDisplay", d2rHUDConfig.MonsterStatsDisplay);
+    d2rHUDConfig.ChannelColor = j.value("ChannelColor", d2rHUDConfig.ChannelColor);
+    d2rHUDConfig.PlayerNameColor = j.value("PlayerNameColor", d2rHUDConfig.PlayerNameColor);
+    d2rHUDConfig.MessageColor = j.value("MessageColor", d2rHUDConfig.MessageColor);
+    d2rHUDConfig.HPRolloverMods = j.value("HPRolloverMods", d2rHUDConfig.HPRolloverMods);
+    d2rHUDConfig.HPRolloverPercent = j.value("HPRolloverPercent", d2rHUDConfig.HPRolloverPercent);
+    d2rHUDConfig.HPRolloverDifficulty = j.value("HPRolloverDifficulty", d2rHUDConfig.HPRolloverDifficulty);
+    d2rHUDConfig.SunderedMonUMods = j.value("SunderedMonUMods", d2rHUDConfig.SunderedMonUMods);
+    d2rHUDConfig.SunderValue = j.value("SunderValue", d2rHUDConfig.SunderValue);
+    d2rHUDConfig.MinionEquality = j.value("MinionEquality", d2rHUDConfig.MinionEquality);
+    d2rHUDConfig.GambleCostControl = j.value("GambleCostControl", d2rHUDConfig.GambleCostControl);
+    d2rHUDConfig.CombatLog = j.value("CombatLog", d2rHUDConfig.CombatLog);
+
+    if (j.contains("DLLsToLoad"))
+        d2rHUDConfig.DLLsToLoad = j["DLLsToLoad"].get<std::vector<std::string>>();
+}
+
+bool SaveD2RHUDConfig(const std::string& path)
+{
+    std::ifstream inFile(path, std::ios::binary);
+    if (!inFile.is_open())
+    {
+        MessageBoxA(nullptr, ("Failed to open config file: " + path).c_str(), "Error", MB_OK | MB_ICONERROR);
+        return false;
+    }
+
+    std::ostringstream oss;
+    oss << inFile.rdbuf();
+    std::string raw = oss.str();
+    inFile.close();
+
+    // Helper lambdas...
+    auto replaceValue = [&](const std::string& key, const std::string& newValue)
+        {
+            size_t pos = raw.find("\"" + key + "\"");
+            if (pos != std::string::npos)
+            {
+                size_t colon = raw.find(":", pos);
+                if (colon != std::string::npos)
+                {
+                    size_t end = raw.find_first_of(",\n", colon);
+                    if (end != std::string::npos)
+                    {
+                        raw.replace(colon + 1, end - colon - 1, " " + newValue);
+                    }
+                }
+            }
+        };
+
+    auto replaceStringValue = [&](const std::string& key, const std::string& newValue)
+        {
+            size_t pos = raw.find("\"" + key + "\"");
+            if (pos != std::string::npos)
+            {
+                size_t colon = raw.find(":", pos);
+                size_t quoteStart = raw.find("\"", colon);
+                size_t quoteEnd = raw.find("\"", quoteStart + 1);
+                if (quoteStart != std::string::npos && quoteEnd != std::string::npos)
+                {
+                    raw.replace(quoteStart + 1, quoteEnd - quoteStart - 1, newValue);
+                }
+            }
+        };
+
+    // Replace all configurable values
+    replaceValue("MonsterStatsDisplay", d2rHUDConfig.MonsterStatsDisplay ? "true" : "false");
+    replaceStringValue("Channel Color", d2rHUDConfig.ChannelColor);
+    replaceStringValue("Player Name Color", d2rHUDConfig.PlayerNameColor);
+    replaceStringValue("Message Color", d2rHUDConfig.MessageColor);
+    replaceValue("HPRolloverMods", d2rHUDConfig.HPRolloverMods ? "true" : "false");
+    replaceValue("HPRollover%", std::to_string(d2rHUDConfig.HPRolloverPercent));
+    replaceValue("HPRolloverDifficulty", std::to_string(d2rHUDConfig.HPRolloverDifficulty));
+    replaceValue("SunderedMonUMods", d2rHUDConfig.SunderedMonUMods ? "true" : "false");
+    replaceValue("SunderValue", std::to_string(d2rHUDConfig.SunderValue));
+    replaceValue("MinionEquality", d2rHUDConfig.MinionEquality ? "true" : "false");
+    replaceValue("GambleCostControl", d2rHUDConfig.GambleCostControl ? "true" : "false");
+    replaceValue("CombatLog", d2rHUDConfig.CombatLog ? "true" : "false");
+
+    // Write back to file
+    std::ofstream outFile(path, std::ios::binary);
+    if (!outFile.is_open())
+        return false;
+
+    outFile << raw;
+    outFile.close();
+
+    return true;
+}
+
+void SaveHotkeys(const std::string& filename)
+{
+    std::ofstream file(filename);
+    if (!file.is_open()) return;
+
+    for (auto& [name, pair] : g_Hotkeys)
+    {
+        if (pair.second.empty())
+            file << name << ": " << pair.first << "\n"; // Name: Key combo
+        else
+            file << name << ": " << pair.first << ", \"" << pair.second << "\"\n"; // Name: Key combo, "string"
+    }
+
+    file.close();
+}
+
+#pragma endregion
+
+#pragma region Menu Displays
+
+void ShowHotkeyMenu()
+{
+    if (!showHotkeyMenu)
+        return;
+
+    static bool hotkeysLoaded = false;
+    if (!hotkeysLoaded)
+    {
+        LoadHotkeys("../Launcher/D2RLAN_Config.txt");
+        hotkeysLoaded = true;
+    }
+
+    EnableAllInput();
+    ImGuiIO& io = ImGui::GetIO();
+    ImVec2 windowSize = ImVec2(800, 450);
+    CenterWindow(windowSize);
+    PushFontSafe(3);
+    ImGui::Begin("D2R Hotkeys", &showHotkeyMenu, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoTitleBar);
+    DrawWindowTitleAndClose("D2R Hotkeys", &showHotkeyMenu);
+    if (GetFont(3)) ImGui::PopFont();
+    ImGui::Separator();
+    ImGui::Dummy(ImVec2(0.0f, 5.0f));
+
+    // --- Split hotkeys ---
+    std::vector<std::pair<std::string, std::pair<std::string, std::string>>> singleKeys;
+    std::vector<std::pair<std::string, std::pair<std::string, std::string>>> customKeys;
+    std::pair<std::string, std::pair<std::string, std::string>> startupCommandEntry;
+    bool hasStartupCommand = false;
+
+    for (auto& [name, pair] : g_Hotkeys)
+    {
+        if (name == "Startup Commands")
+        {
+            startupCommandEntry = { name, pair };
+            hasStartupCommand = true;
+        }
+        else if (pair.second.empty())
+            singleKeys.push_back({ name, pair });
+        else
+            customKeys.push_back({ name, pair });
+    }
+
+    static std::string hoveredHotkey;
+    hoveredHotkey.clear();
+
+    // --- 2-column layout ---
+    ImGui::Columns(2, nullptr, true);
+    ImGui::SetColumnWidth(0, 350);
+    ImGui::SetColumnWidth(1, 450);
+
+    ImFont* inputFont = GetFont(1);
+
+    // --- LEFT COLUMN: Single Hotkeys ---
+    float leftColumnStartY = ImGui::GetCursorPosY();
+    {
+        PushFontSafe(2);
+        const char* colTitle = "Standard Hotkeys";
+        float colWidth = ImGui::GetColumnWidth();
+
+        float textW = ImGui::CalcTextSize(colTitle).x;
+        ImGui::SetCursorPosX((colWidth - textW) * 0.5f);
+        ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.3f, 1.0f), "%s", colTitle);
+        ImGui::Dummy(ImVec2(0.0f, 3.0f));
+        ImGui::Separator();
+        ImGui::Dummy(ImVec2(0.0f, 3.0f));
+        PopFontSafe(2);
+
+        for (auto& [name, pair] : singleKeys)
+        {
+            std::string displayName = (name == "Toggle Stat Adjustments Display") ? "TZ Stat Display" : name;
+
+            ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(2, 130, 199, 255));
+            ImGui::Text("%s:", displayName.c_str());
+            ImGui::PopStyleColor();
+            ImGui::SameLine();
+
+            std::string hotkeyDisplay = pair.first;
+            std::string boolPart;
+            if (name == "Toggle Stat Adjustments Display")
+            {
+                size_t commaPos = hotkeyDisplay.find(',');
+                if (commaPos != std::string::npos)
+                {
+                    boolPart = hotkeyDisplay.substr(0, commaPos);
+                    hotkeyDisplay = hotkeyDisplay.substr(commaPos + 1);
+                }
+                hotkeyDisplay.erase(0, hotkeyDisplay.find_first_not_of(" \t"));
+            }
+
+            char keyBuffer[128];
+            strncpy(keyBuffer, DisplayKey(hotkeyDisplay).c_str(), sizeof(keyBuffer));
+            keyBuffer[sizeof(keyBuffer) - 1] = '\0';
+
+            ImGui::PushItemWidth(120);
+            if (inputFont) ImGui::PushFont(inputFont);
+            if (ImGui::InputText(("##key_" + name).c_str(), keyBuffer, sizeof(keyBuffer)))
+            {
+                std::string edited = keyBuffer;
+                std::string restored;
+                size_t start = 0;
+                while (start < edited.length())
+                {
+                    size_t plusPos = edited.find('+', start);
+                    std::string part = (plusPos == std::string::npos) ? edited.substr(start) : edited.substr(start, plusPos - start);
+                    part.erase(0, part.find_first_not_of(" "));
+                    part.erase(part.find_last_not_of(" ") + 1);
+                    if (part.find("VK_") != 0) part = "VK_" + part;
+                    restored += part;
+                    if (plusPos != std::string::npos) restored += " + ";
+                    start = (plusPos == std::string::npos) ? edited.length() : plusPos + 1;
+                }
+                pair.first = (name == "Toggle Stat Adjustments Display") ? boolPart + ", " + restored : restored;
+            }
+            if (inputFont) ImGui::PopFont();
+            ImGui::PopItemWidth();
+
+            if (name == "Toggle Stat Adjustments Display")
+            {
+                ImGui::SameLine();
+                bool enabled = (boolPart.find("true") != std::string::npos);
+                if (ImGui::Checkbox(("##toggle_" + name).c_str(), &enabled))
+                    pair.first = (enabled ? "true" : "false") + std::string(", ") + hotkeyDisplay;
+            }
+
+            ImVec2 min = ImGui::GetItemRectMin();
+            ImVec2 max = ImGui::GetItemRectMax();
+            max.x += ImGui::CalcTextSize(displayName.c_str()).x + 5.0f;
+            if (ImGui::IsMouseHoveringRect(min, max)) hoveredHotkey = displayName;
+        }
+    }
+
+    // --- RIGHT COLUMN: Custom Commands ---
+    ImGui::NextColumn();
+    ImGui::SetCursorPosY(leftColumnStartY);
+    {
+        const char* colTitle = "Command Hotkeys";
+        float colWidth = ImGui::GetColumnWidth();
+        float colStartX = ImGui::GetCursorPosX();
+
+        float textW = ImGui::CalcTextSize(colTitle).x;
+        ImGui::SetCursorPosX(colStartX + (colWidth - textW) * 0.5f);
+        ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.3f, 1.0f), "%s", colTitle);
+        ImGui::Dummy(ImVec2(0.0f, 15.0f));
+
+        int cmdIndex = 1;
+        for (auto& [name, pair] : customKeys)
+        {
+            std::string displayName = "Command " + std::to_string(cmdIndex++);
+            ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(2, 130, 199, 255));
+            ImGui::Text("%s:", displayName.c_str());
+            ImGui::PopStyleColor();
+            ImGui::SameLine();
+
+            char keyBuffer[128];
+            strncpy(keyBuffer, DisplayKey(pair.first).c_str(), sizeof(keyBuffer));
+            keyBuffer[sizeof(keyBuffer) - 1] = '\0';
+
+            ImGui::PushItemWidth(120);
+            if (inputFont) ImGui::PushFont(inputFont);
+            if (ImGui::InputText(("##key_" + name).c_str(), keyBuffer, sizeof(keyBuffer)))
+                pair.first = keyBuffer;
+            if (inputFont) ImGui::PopFont();
+            ImGui::PopItemWidth();
+
+            ImGui::SameLine();
+
+            char extraBuffer[256];
+            strncpy(extraBuffer, pair.second.c_str(), sizeof(extraBuffer));
+            extraBuffer[sizeof(extraBuffer) - 1] = '\0';
+
+            ImGui::PushItemWidth(180);
+            if (inputFont) ImGui::PushFont(inputFont);
+            if (ImGui::InputText(("##extra_" + name).c_str(), extraBuffer, sizeof(extraBuffer)))
+                pair.second = extraBuffer;
+            if (inputFont) ImGui::PopFont();
+            ImGui::PopItemWidth();
+
+            ImVec2 min = ImGui::GetItemRectMin();
+            ImVec2 max = ImGui::GetItemRectMax();
+            max.x += 60 + 180;
+            if (ImGui::IsMouseHoveringRect(min, max)) hoveredHotkey = displayName;
+        }
+
+        if (hasStartupCommand)
+        {
+            ImGui::Dummy(ImVec2(0.0f, 10.0f));
+            ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(2, 130, 199, 255));
+            ImGui::Text("Startup Commands");
+            ImGui::PopStyleColor();
+
+            ImGui::PushItemWidth(-1);
+            if (inputFont) ImGui::PushFont(inputFont);
+
+            char cmdBuffer[512];
+            strncpy(cmdBuffer, startupCommandEntry.second.first.c_str(), sizeof(cmdBuffer));
+            cmdBuffer[sizeof(cmdBuffer) - 1] = '\0';
+
+            if (ImGui::InputTextMultiline("##startup_commands", cmdBuffer, sizeof(cmdBuffer),
+                ImVec2(-1, 80)))
+            {
+                startupCommandEntry.second.first = cmdBuffer;
+                g_Hotkeys["Startup Commands"] = startupCommandEntry.second;
+            }
+
+            if (inputFont) ImGui::PopFont();
+            ImGui::PopItemWidth();
+        }
+    }
+
+    ImGui::Columns(1);
+
+    std::string desc = hoveredHotkey.empty() ? "Hover over a hotkey to see details."
+        : "Set the hotkey for " + hoveredHotkey + ".";
+    DrawBottomDescription(desc);
+
+    ImGui::End();
+    io.ConfigFlags = ImGui::GetIO().ConfigFlags;
+}
+
+void ShowLootMenu()
+{
+    if (!showLootMenu)
+    {
+        lootConfigLoaded = false;
+        lootLogicLoaded = false;
+        return;
+    }
+
+    if (!lootConfigLoaded)
+    {
+        LoadLootFilterConfig("lootfilter_config.lua");
+        LoadLootFilterLogic("lootfilter.lua");
+        lootConfigLoaded = true;
+        lootLogicLoaded = true;
+    }
+
+    EnableAllInput();
+    CenterWindow(ImVec2(800, 400));
+    static std::string hoveredKey;
+    hoveredKey.clear();
+    PushFontSafe(3);
+    ImGui::Begin("D2RLoot Settings", &showLootMenu, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoTitleBar);
+    DrawWindowTitleAndClose("D2RLoot Settings", &showLootMenu);
+    PopFontSafe(3);
+    ImGui::Separator();
+    ImGui::Dummy(ImVec2(0.0f, 5.0f));
+
+    // --- Centered Wrapped Text Helper ---
+    auto CenteredWrappedText = [&](const std::string& prefix, const std::string& text,
+        const ImVec4& prefixColor = ImVec4(1, 0.7f, 0.3f, 1.0f),
+        const ImVec4& valueColor = ImVec4(1, 1, 1, 1))
+        {
+            ImVec2 avail = ImGui::GetContentRegionAvail();
+            float leftOffset = 10.0f;
+            float wrapWidth = avail.x - leftOffset;
+
+            ImVec2 prefixSize = ImGui::CalcTextSize(prefix.c_str(), nullptr, false, wrapWidth);
+            ImVec2 valueSize = ImGui::CalcTextSize(text.c_str(), nullptr, false, wrapWidth);
+            float totalWidth = prefixSize.x + valueSize.x;
+            float cursorX = leftOffset + (wrapWidth - totalWidth) * 0.5f;
+            if (cursorX < leftOffset) cursorX = leftOffset;
+
+            ImGui::SetCursorPosX(cursorX);
+            ImGui::TextColored(prefixColor, "%s", prefix.c_str());
+            ImGui::SameLine(0, 0);
+            ImGui::TextColored(valueColor, "%s", text.c_str());
+        };
+
+    if (!g_LootFilterHeader.Version.empty())
+        CenteredWrappedText("My D2RLoot Version: ", g_LootFilterHeader.Version);
+    CenteredWrappedText("My Selected Filter: ", g_LootFilterHeader.Title);
+
+    ImGui::Dummy(ImVec2(0.0f, 3.0f));
+    ImGui::Separator();
+    ImGui::Dummy(ImVec2(0.0f, 5.0f));
+
+    // --- Boolean Checkboxes ---
+    auto RenderCheckboxLine = [&](const std::vector<std::pair<std::string, std::string>>& items)
+        {
+            ImVec2 avail = ImGui::GetContentRegionAvail();
+            float spacing = 10.0f;
+            float totalWidth = 0.0f;
+
+            for (auto& item : items)
+            {
+                totalWidth += ImGui::CalcTextSize(item.first.c_str()).x + ImGui::GetStyle().FramePadding.x * 2 + ImGui::GetFrameHeight();
+            }
+            totalWidth += spacing * (items.size() - 1);
+
+            float startX = (avail.x - totalWidth) * 0.5f;
+            if (startX < 0.0f) startX = 0.0f;
+            ImGui::SetCursorPosX(startX);
+
+            for (size_t i = 0; i < items.size(); ++i)
+            {
+                if (i > 0) ImGui::SameLine(0.0f, spacing);
+
+                std::string key = items[i].second;
+                std::string val = "";
+                auto it = g_LuaVariables.find(key);
+                if (it != g_LuaVariables.end()) val = it->second;
+
+                bool boolValue = (val == "true");
+
+                if (ImGui::Checkbox(items[i].first.c_str(), &boolValue))
+                {
+                    auto it2 = g_LuaVariables.find(key);
+                    if (it2 != g_LuaVariables.end()) it2->second = boolValue ? "true" : "false";
+                    else g_LuaVariables.insert({ key, boolValue ? "true" : "false" });
+                }
+
+                ImVec2 itemMin = ImGui::GetItemRectMin();
+                ImVec2 itemMax = ImGui::GetItemRectMax();
+                float textWidth = ImGui::CalcTextSize(items[i].first.c_str()).x;
+                itemMax.x += textWidth;
+                if (ImGui::IsMouseHoveringRect(itemMin, itemMax)) hoveredKey = key;
+            }
+
+            ImGui::Dummy(ImVec2(0.0f, 3.0f));
+            ImGui::Separator();
+            ImGui::Dummy(ImVec2(0.0f, 3.0f));
+        };
+
+    std::vector<std::pair<std::string, std::string>> bools = {
+        { "Allow Overrides", "allowOverrides" },
+        { "Mod Tips", "modTips" },
+        { "Debug Mode", "Debug" },
+        { "Audio Playback", "audioPlayback" }
+    };
+    RenderCheckboxLine(bools);
+
+    // --- Input Text Helper ---
+    auto RenderInputText = [&](const std::string& key, const std::string& label, const std::string& defaultVal = "Not Defined")
+        {
+            std::string value = defaultVal;
+            auto it = g_LuaVariables.find(key);
+            if (it != g_LuaVariables.end()) value = it->second;
+            if (!value.empty() && value.front() == '"' && value.back() == '"') value = value.substr(1, value.size() - 2);
+
+            std::string fullLabel = label + " = ";
+            float labelWidth = ImGui::CalcTextSize(fullLabel.c_str()).x;
+            float valueWidth = ImGui::CalcTextSize(value.c_str()).x + 8.0f;
+
+            ImVec2 cursorPos = ImGui::GetCursorPos();
+            ImGui::SetCursorPosY(cursorPos.y - 2.0f);
+
+            ImGui::Text("%s", fullLabel.c_str());
+            ImGui::SameLine(labelWidth + 10.0f, -3.0f);
+
+            char buffer[256];
+            strncpy(buffer, value.c_str(), sizeof(buffer));
+            buffer[sizeof(buffer) - 1] = '\0';
+
+            std::string inputID = "##val_" + key;
+            ImGui::PushItemWidth(valueWidth);
+            bool changed = ImGui::InputText(inputID.c_str(), buffer, sizeof(buffer));
+            if (ImGui::IsItemActivated()) ImGui::SetKeyboardFocusHere(-1);
+            if (changed)
+            {
+                auto it2 = g_LuaVariables.find(key);
+                if (it2 != g_LuaVariables.end()) it2->second = buffer;
+                else g_LuaVariables.insert({ key, buffer });
+            }
+            ImGui::PopItemWidth();
+
+            ImVec2 itemMin = ImGui::GetItemRectMin();
+            ImVec2 itemMax = ImGui::GetItemRectMax();
+            itemMin.x -= labelWidth;
+            if (ImGui::IsMouseHoveringRect(itemMin, itemMax)) hoveredKey = key;
+        };
+
+    RenderInputText("reload", "Reload Message");
+    RenderInputText("audioVoice", "Audio Voice");
+    RenderInputText("filter_level", "Filter Level");
+    RenderInputText("language", "Language");
+
+    // --- Filter Titles ---
+    auto RenderFilterTitles = [&]()
+        {
+            std::string key = "filter_titles";
+            std::string value = "";
+            auto it = g_LuaVariables.find(key);
+            if (it != g_LuaVariables.end()) value = it->second;
+
+            std::vector<std::string> titles;
+            if (!value.empty())
+            {
+                std::regex titleRegex(R"delim("([^"]*)")delim");
+                for (auto i = std::sregex_iterator(value.begin(), value.end(), titleRegex);
+                    i != std::sregex_iterator(); ++i)
+                    titles.push_back((*i)[1].str());
+            }
+            if (titles.empty()) titles.push_back("Not Defined");
+
+            std::string ftLabel = "Filter Titles = ";
+            float labelWidth = ImGui::CalcTextSize(ftLabel.c_str()).x;
+            ImGui::Text("%s", ftLabel.c_str());
+            ImGui::SameLine(labelWidth + 10.0f);
+
+            for (size_t idx = 0; idx < titles.size(); ++idx)
+            {
+                char buffer[256];
+                strncpy(buffer, titles[idx].c_str(), sizeof(buffer));
+                buffer[sizeof(buffer) - 1] = '\0';
+
+                float textWidth = ImGui::CalcTextSize(buffer).x;
+                ImGui::PushItemWidth(textWidth + 8.0f);
+
+                std::string inputID = "##filter_title_" + std::to_string(idx);
+                bool changed = ImGui::InputText(inputID.c_str(), buffer, sizeof(buffer));
+                ImGui::PopItemWidth();
+
+                if (changed) titles[idx] = buffer;
+                if (idx + 1 < titles.size()) { ImGui::SameLine(0, 2); ImGui::Text(", "); ImGui::SameLine(0, 0); }
+
+                ImVec2 itemMin = ImGui::GetItemRectMin();
+                ImVec2 itemMax = ImGui::GetItemRectMax();
+                itemMin.x -= labelWidth;
+                if (ImGui::IsMouseHoveringRect(itemMin, itemMax)) hoveredKey = key;
+            }
+
+            std::string newValue = "{ ";
+            for (size_t i = 0; i < titles.size(); ++i)
+            {
+                newValue += "\"" + titles[i] + "\"";
+                if (i + 1 < titles.size()) newValue += ", ";
+            }
+            newValue += " }";
+
+            auto it2 = g_LuaVariables.find(key);
+            if (it2 != g_LuaVariables.end()) it2->second = newValue;
+            else g_LuaVariables.insert({ key, newValue });
+        };
+    RenderFilterTitles();
+
+    // --- Bottom Description ---
+    std::string desc = "Hover over an option to see its description.";
+    if (!hoveredKey.empty() && g_LuaDescriptions.count(hoveredKey))
+        desc = g_LuaDescriptions.at(hoveredKey);
+
+    DrawBottomDescription(desc);
+
+    ImGui::End();
+}
+
+void ShowMemoryMenu()
+{
+    if (!showMemoryMenu) return;
+
+    LoadMemoryConfigs("../Launcher/config.json");
+
+    EnableAllInput();
+    CenterWindow(ImVec2(850, 420));
+
+    PushFontSafe(3);
+    ImGui::Begin("Memory Edit Info", &showMemoryMenu, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoTitleBar);
+
+    DrawWindowTitleAndClose("Memory Edit Info", &showMemoryMenu);
+
+    // --- Window Description ---
+    PushFontSafe(2);
+    std::string desc = "Shows the currently enabled memory edits being applied\nThis panel is read-only at this time - Editing supported later";
+    DrawBottomDescription(desc);
+    PopFontSafe(2);
+
+    ImGuiIO& io = ImGui::GetIO();
+    ImVec2 contentSize = ImGui::GetContentRegionAvail();
+
+    // --- Display Memory Config Entries ---
+    static std::unordered_map<std::string, int> selectedIndexMap;
+
+    for (auto& entry : g_MemoryConfigs)
+    {
+        ImGui::Dummy(ImVec2(0.0f, 5.0f));
+        ImGui::Separator();
+        ImGui::Dummy(ImVec2(0.0f, 5.0f));
+
+        // Centered Description
+        float descWidth = ImGui::CalcTextSize(entry.Description.c_str()).x;
+        ImGui::SetCursorPosX((contentSize.x - descWidth) * 0.5f);
+        ImGui::TextColored(ImVec4(1.0f, 0.65f, 0.0f, 1.0f), "%s", entry.Description.c_str());
+
+        // Type / Length
+        PushFontSafe(1);
+        std::string typeLen = "Type: " + entry.Type + ", Length: " + std::to_string(entry.Length);
+        float typeLenWidth = ImGui::CalcTextSize(typeLen.c_str()).x;
+        ImGui::SetCursorPosX((contentSize.x - typeLenWidth) * 0.5f);
+        ImGui::Text("%s", typeLen.c_str());
+
+        // --- Address Combo ---
+        std::vector<std::string> addressList;
+        if (!entry.Address.empty()) addressList.push_back(entry.Address);
+        if (!entry.Addresses.empty()) addressList.insert(addressList.end(), entry.Addresses.begin(), entry.Addresses.end());
+
+        if (!addressList.empty())
+        {
+            int& selectedIndex = selectedIndexMap[entry.Description];
+            if (selectedIndex >= addressList.size()) selectedIndex = 0;
+
+            std::string current = addressList[selectedIndex];
+            std::string label = "Address: ";
+            float labelWidth = ImGui::CalcTextSize(label.c_str()).x;
+            float comboWidth = 150.0f;
+            float totalWidth = labelWidth + comboWidth + 5.0f;
+            ImGui::SetCursorPosX((contentSize.x - totalWidth) * 0.5f);
+
+            ImGui::Text("%s", label.c_str());
+            ImGui::SameLine();
+            ImGui::PushItemWidth(comboWidth);
+            std::string comboID = "##addr_" + entry.Description;
+            if (ImGui::BeginCombo(comboID.c_str(), current.c_str(), ImGuiComboFlags_HeightLarge))
+            {
+                for (int i = 0; i < addressList.size(); ++i)
+                {
+                    bool isSelected = (selectedIndex == i);
+                    if (ImGui::Selectable(addressList[i].c_str(), isSelected))
+                        selectedIndex = i;
+                    if (isSelected) ImGui::SetItemDefaultFocus();
+                }
+                ImGui::EndCombo();
+            }
+            ImGui::PopItemWidth();
+        }
+
+        // --- Value Input ---
+        char valueBuffer[64];
+        strncpy(valueBuffer, entry.Values.c_str(), sizeof(valueBuffer));
+        valueBuffer[sizeof(valueBuffer) - 1] = '\0';
+
+        std::string label = "Value: ";
+        float textWidth = ImGui::CalcTextSize(label.c_str()).x;
+        float inputWidth = ImGui::CalcTextSize(valueBuffer).x + 10.0f;
+        float totalWidth = textWidth + inputWidth + 5.0f;
+        ImGui::SetCursorPosX((contentSize.x - totalWidth) * 0.5f);
+
+        ImVec2 cursorPos = ImGui::GetCursorPos();
+        ImGui::SetCursorPosY(cursorPos.y + 3.0f);
+        ImGui::Text("%s", label.c_str());
+        ImGui::SameLine();
+        ImGui::SetCursorPosY(cursorPos.y);
+
+        ImGui::PushItemWidth(inputWidth);
+        std::string inputID = "##val" + entry.Description;
+        if (ImGui::InputText(inputID.c_str(), valueBuffer, sizeof(valueBuffer)))
+            entry.Values = valueBuffer;
+        ImGui::PopItemWidth();
+
+        PopFontSafe(1);
+    }
+
+    PopFontSafe(3);
+    ImGui::End();
+}
+
+void ShowD2RHUDMenu()
+{
+    if (!showD2RHUDMenu) return;
+
+    static std::string saveStatusMessage = "";
+    static ImVec4 saveStatusColor = ImVec4(0, 1, 0, 1); // default green
+    static bool initialized = false;
+    if (!initialized)
+    {
+        // Initialize from cachedSettings
+        d2rHUDConfig.MonsterStatsDisplay = cachedSettings.monsterStatsDisplay;
+        d2rHUDConfig.HPRolloverMods = cachedSettings.HPRollover;
+        d2rHUDConfig.HPRolloverPercent = cachedSettings.HPRolloverAmt;
+        d2rHUDConfig.SunderedMonUMods = cachedSettings.sunderedMonUMods;
+        d2rHUDConfig.SunderValue = cachedSettings.SunderValue;
+        d2rHUDConfig.MinionEquality = cachedSettings.minionEquality;
+        d2rHUDConfig.GambleCostControl = cachedSettings.gambleForce;
+        d2rHUDConfig.CombatLog = cachedSettings.CombatLog;
+
+        initialized = true;
+    }
+
+    ImVec2 windowSize = ImVec2(850, 420);
+    ImVec2 centerPos = ImVec2((ImGui::GetIO().DisplaySize.x - windowSize.x) * 0.5f, (ImGui::GetIO().DisplaySize.y - windowSize.y) * 0.5f);
+    ImGui::SetNextWindowPos(centerPos, ImGuiCond_Once);
+    ImGui::SetNextWindowSize(windowSize, ImGuiCond_Once);
+
+    ImGuiIO& io = ImGui::GetIO();
+    io.ConfigFlags &= ~ImGuiConfigFlags_NoKeyboard;
+
+    int fontIndex = 3;
+    ImFont* fontSize = (fontIndex >= 0 && fontIndex < io.Fonts->Fonts.Size) ? io.Fonts->Fonts[fontIndex] : nullptr;
+    if (fontSize) ImGui::PushFont(fontSize);
+
+    if (ImGui::Begin("D2RHUD Options", &showD2RHUDMenu, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoTitleBar))
+    {
+        // --- CENTERED WINDOW TITLE WITH TOP-RIGHT CLOSE BUTTON ---
+        ImGuiIO& io = ImGui::GetIO();
+        int fontIndex = 3;
+        ImFont* fontSize = (fontIndex >= 0 && fontIndex < io.Fonts->Fonts.Size) ? io.Fonts->Fonts[fontIndex] : nullptr;
+        const char* windowTitle = "D2RHUD Options";
+        float closeBtnSize = 20.0f;
+        float padding = -10.0f;
+
+        // Compute window content size
+        ImVec2 contentSize = ImGui::GetContentRegionAvail();
+        float titleWidth = ImGui::CalcTextSize(windowTitle).x;
+        ImGui::SetCursorPosX((contentSize.x - titleWidth) * 0.5f);
+        ImGui::TextColored(ImVec4(0.95f, 0.85f, 0.5f, 1.0f), "%s", windowTitle);
+
+        // --- Same line: position close button at top-right ---
+        ImGui::SameLine(contentSize.x - closeBtnSize - padding);
+        ImVec2 btnPos = ImGui::GetCursorScreenPos();
+
+        // Invisible button to capture clicks
+        ImGui::InvisibleButton("CloseBtn", ImVec2(closeBtnSize, closeBtnSize));
+        if (ImGui::IsItemClicked())
+        {
+            showD2RHUDMenu = false;
+        }
+
+        // Draw centered "X" in button
+        ImDrawList* drawList = ImGui::GetWindowDrawList();
+        ImVec2 textSize = ImGui::CalcTextSize("X");
+        ImVec2 textPos = ImVec2(
+            btnPos.x + (closeBtnSize - textSize.x) * 0.5f,
+            btnPos.y + (closeBtnSize - textSize.y) * 0.5f
+        );
+        drawList->AddText(textPos, IM_COL32(255, 80, 80, 255), "X");
+        if (fontSize) ImGui::PopFont();
+        ImGui::Separator();
+
+        // --- two columns: left = controls, right = descriptions ---
+        ImGui::Columns(2, nullptr, true);
+        ImGui::SetColumnWidth(0, 280.0f); // width of control column
+
+        static std::string descriptionTitle = "";
+        static std::string descriptionText = "";
+        static std::string descriptionNote = "";
+
+        // --- SUBHEADER (centered in first column) ---
+        ImVec2 columnStartPos = ImGui::GetCursorPos();
+        float columnWidth = ImGui::GetColumnWidth();
+        float headerWidth = ImGui::CalcTextSize("Current Options").x;
+        ImGui::SetCursorPosX(columnStartPos.x + (columnWidth - headerWidth) * 0.5f);
+        ImGui::TextColored(ImVec4(0.0157f, 0.380f, 0.8f, 1.0f), "Current Options");
+        ImGui::Separator();
+
+        // --- MENU CONTROLS (LEFT COLUMN) ---
+        // helper lambda for checkboxes (keeps your original behavior)
+        auto drawCheckbox = [&](const char* label, bool* value, const char* title, const char* desc, const char* descnote)
+            {
+                if (ImGui::Checkbox(label, value)) {}
+                if (ImGui::IsItemHovered()) { descriptionTitle = title; descriptionText = desc; descriptionNote = descnote; }
+            };
+
+        auto drawLabeledInput = [&](const char* label, auto widgetFunc, const char* title, const char* desc, const char* descnote, bool sameLine = true, int slValue = 35)
+            {
+                ImGui::BeginGroup();
+                ImGui::Text("%s", label);
+
+                if (sameLine)
+                    ImGui::SameLine(0.0f, slValue);
+
+                widgetFunc();
+                ImGui::EndGroup();
+
+                // only store hover info — actual drawing happens in the description panel
+                if (ImGui::IsItemHovered())
+                {
+                    descriptionTitle = title;
+                    descriptionText = desc;
+                    descriptionNote = descnote;
+                }
+            };
+
+        drawCheckbox("Monster Stats Display", &d2rHUDConfig.MonsterStatsDisplay, "Monster Stats Display", "- Displays HP and Resistances of Monsters in real-time\n- Uses data retrieved directly from the game for accuracy\n- Values for -Enemy Resistance% (when applied by items) are not shown, they don't actually affect monsters\n\n", "This setting is best displayed using either of the Advanced Display Modes in D2RLAN");
+        drawCheckbox("Sundered Monster UMods", &d2rHUDConfig.SunderedMonUMods, "Sundered Monster UMods", "- Allows Sundering mechanic to reduce MonUMod bonuses\n(Bonuses such as Cold Enchanted, Stone Skin, etc)\n- This edit applies when the monster is spawned\n\n", "If the monster is under 100 resistance (sunder threshold), then this edit will not apply");
+        drawCheckbox("Minion Equality", &d2rHUDConfig.MinionEquality, "Minion Equality", "- Champ/Uniques minions assume their master's drops\n(Determined by your TreasureClassEx.txt entries)\n\n", "Requires TreasureClassEx.txt, Levels.txt, Monstats.txt and SuperUniques.txt to correctly map the drops between types");
+        drawCheckbox("Gamble Cost Control", &d2rHUDConfig.GambleCostControl, "Gamble Cost Control", "- Allows the gamble cost column to be used by AMW.txt\n- If a value of -1 is specified, it will use retail cost logic\n- If Disabled, only ring and amulet costs may be changed\n\n", "The maximum gamble cost will be determined by your in-game gold limits (defined in Memory Edits)");
+        drawCheckbox("Combat Log", &d2rHUDConfig.CombatLog, "Combat Log", "- Displays real-time combat logs in system chat\n    - RNG rolls for Hit, Block and Dodge results\n    - Elemental Type, +DMG%, Length and Final Damage\n    - Remaining Monster Health\n- Uses data retrieved directly from the game for accuracy\n\n", "This feature is also utilized by the 'attackinfo 1' cheat\nExpect formatting and usage to adapt over time");
+        drawCheckbox("HP Rollover Mods", &d2rHUDConfig.HPRolloverMods, "HP Rollover Mods", "- Prevents HP rollovers on high player counts by:\n- Capping the maximum health bonus % applied to monsters\n- Applying damage reduction logic to the Player\n- Scales Reduction % by the calculated rollover amount\n\n", "This feature cannot guarantee no rollovers\nHowever, it should work for mods with retail-ish values");
+
+        // --- HPRolloverDifficulty ---
+        const char* difficultyItems[] = { "Normal or Higher", "Nightmare or Higher", "Hell Only" };
+        int difficultyIndex = d2rHUDConfig.HPRolloverDifficulty + 1;
+
+        // label hover detection:
+        drawLabeledInput(
+            "HP Rollover Difficulty",
+            [&]() {
+                ImGui::PushItemWidth(250);
+                if (ImGui::Combo("##HPRolloverDifficulty", &difficultyIndex,
+                    difficultyItems, IM_ARRAYSIZE(difficultyItems)))
+                {
+                    d2rHUDConfig.HPRolloverDifficulty = difficultyIndex - 1;
+                }
+                ImGui::PopItemWidth();
+            },
+            "HP Rollover Difficulty", "- Control the applied Difficulty of HP Rollover Mods\n\n", "Only valid if HP Rollover Mods are enabled", false, 35.0f
+        );
+
+        ImGui::Dummy(ImVec2(0.0f, 3.0f));
+
+        drawLabeledInput(
+            "HP Rollover %",
+            [&]() {
+                ImGui::PushItemWidth(100);
+                if (ImGui::InputInt("##HPRolloverPercent", &d2rHUDConfig.HPRolloverPercent, 1, 10))
+                {
+                    d2rHUDConfig.HPRolloverPercent =
+                        std::clamp(d2rHUDConfig.HPRolloverPercent, 0, 100);
+                }
+                ImGui::PopItemWidth();
+            },
+            "HP Rollover %", "- Controls the maximum amount of Damage reduction\n\n", "Only valid if HP Rollover Mods are enabled", true, 35.0f
+        );
+
+        drawLabeledInput(
+            "Sunder Value",
+            [&]() {
+                ImGui::PushItemWidth(100);
+                if (ImGui::InputInt("##SunderValue", &d2rHUDConfig.SunderValue, 1, 10))
+                {
+                    d2rHUDConfig.SunderValue =
+                        std::clamp(d2rHUDConfig.SunderValue, 0, 100);
+                }
+                ImGui::PopItemWidth();
+            },
+            "Sunder Value", "- Controls the Sundered monster value\n(When specified value is reached, reduction stops)\n- Only applies when monster is above 100 resistance\n- Applies edit at the time of monster spawn\n- States like Conviction will apply at full effect\n(Instead of by 1/5 if the monster is immune)\n- For TCPIP, the highest sunder value for each element\nFound among all players will be applied\n\n", "Requires compatible sunder-edited mod files to use\nMore info available at D2RModding Discord", true, 42.0f
+        );
+
+        // --- END LEFT COLUMN ---
+        ImGui::NextColumn();
+
+        // --- DESCRIPTION PANEL (RIGHT COLUMN) ---
+        float colX = ImGui::GetColumnOffset(1);
+        float colW = ImGui::GetColumnWidth(1);
+        fontIndex = 3;
+        fontSize = (fontIndex >= 0 && fontIndex < io.Fonts->Fonts.Size) ? io.Fonts->Fonts[fontIndex] : nullptr;
+        if (fontSize) ImGui::PushFont(fontSize);
+
+        // get column-local cursor X and width
+        float colLocalX = ImGui::GetCursorPosX();
+        float colWidthLocal = ImGui::GetColumnWidth(1);
+
+        // measure title and center it (use local coords)
+        float titleW = ImGui::CalcTextSize(descriptionTitle.c_str()).x;
+        ImGui::SetCursorPosX((colLocalX + (colWidthLocal - titleW) * 0.5f) - 10.0f);
+        ImGui::TextColored(ImVec4(0.0157f, 0.380f, 0.8f, 1.0f), "%s", descriptionTitle.c_str());
+        if (fontSize) ImGui::PopFont();
+
+        // --- Description (right column, fixed width 570px) ---
+        if (!descriptionText.empty())
+        {
+            const float colWidth = 550.0f;
+            const float paddingRight = 10.0f;
+            const float wrapPos = ImGui::GetCursorPosX() + colWidth - paddingRight;
+            ImGui::PushTextWrapPos(wrapPos);
+
+            // Center the wrapped main description text
+            ImVec2 textSize = ImGui::CalcTextSize(descriptionText.c_str(), nullptr, false, colWidth);
+            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (colWidth - textSize.x) * 0.5f);
+            ImGui::TextWrapped("%s", descriptionText.c_str());
+
+            // Center the wrapped description note in orangish-yellow
+            ImVec2 noteSize = ImGui::CalcTextSize(descriptionNote.c_str(), nullptr, false, colWidth);
+            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (colWidth - noteSize.x) * 0.5f);
+            ImGui::TextColored(ImVec4(1.0f, 0.65f, 0.0f, 1.0f), "%s", descriptionNote.c_str());
+
+            ImGui::PopTextWrapPos();
+        }
+
+        ImGui::Columns(1);
+        ImGui::Separator();
+        ImGui::Dummy(ImVec2(0.0f, 3.0f));
+
+        // --- Centered buttons on the same line ---
+        float windowWidth = ImGui::GetWindowSize().x;
+        float buttonWidth = 150.0f;
+        float spacing = 20.0f;
+        float totalWidth = buttonWidth * 2 + spacing;
+        ImGui::SetCursorPosX((windowWidth - totalWidth) * 0.5f);
+
+        // --- Test Settings Button ---
+        ImGui::PushID("TestSettings");
+        if (ImGui::Button("Test Settings", ImVec2(buttonWidth, 0)))
+        {
+            // Update cachedSettings with the latest values
+            cachedSettings.HPRollover = d2rHUDConfig.HPRolloverMods;
+            cachedSettings.SunderValue = d2rHUDConfig.SunderValue;
+            cachedSettings.monsterStatsDisplay = d2rHUDConfig.MonsterStatsDisplay;
+            cachedSettings.HPRolloverAmt = d2rHUDConfig.HPRolloverPercent;
+            cachedSettings.sunderedMonUMods = d2rHUDConfig.SunderedMonUMods;
+            cachedSettings.minionEquality = d2rHUDConfig.MinionEquality;
+            cachedSettings.gambleForce = d2rHUDConfig.GambleCostControl;
+            cachedSettings.CombatLog = d2rHUDConfig.CombatLog;
+
+            saveStatusMessage = "New Settings Applied!";
+            saveStatusColor = ImVec4(0.0f, 1.0f, 0.0f, 1.0f); // green
+        }
+
+        if (ImGui::IsItemHovered())
+        {
+            descriptionTitle = "Test Settings";
+            descriptionText = "- Applies your current settings to the active game session\n- These settings will not persist for future game launches\n\n";
+            descriptionNote = "This applies only to the options in this panel";
+        }
+        ImGui::PopID();
+        ImGui::SameLine(0.0f, spacing);
+        ImGui::PushID("SaveConfig");
+
+        // Make the button green
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.0f, 0.3f, 0.0f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.0f, 0.5f, 0.0f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.1f, 0.6f, 0.1f, 1.0f));
+
+        if (ImGui::Button("Save Config", ImVec2(buttonWidth, 0)))
+        {
+            namespace fs = std::filesystem;
+            std::string modName = GetModName();
+            fs::path relativePath = fs::path("Mods") / modName / (modName + ".mpq") / "data" / "D2RLAN" / "config_override.json";
+            fs::path configPath = fs::absolute(relativePath);
+
+            if (fs::exists(configPath)) {
+                bool result = SaveD2RHUDConfig(configPath.string());
+
+                if (result)
+                {
+                    saveStatusMessage = "Config saved successfully!";
+                    saveStatusColor = ImVec4(0.0f, 1.0f, 0.0f, 1.0f); // green
+                }
+                else
+                {
+                    saveStatusMessage = "Failed to save config!";
+                    saveStatusColor = ImVec4(0.8f, 0.3f, 0.0f, 1.0f); // dark orange/red
+                }
+            }
+            else {
+                bool result = SaveD2RHUDConfig("../Launcher/config.json");
+
+                if (result)
+                {
+                    saveStatusMessage = "Config saved successfully!";
+                    saveStatusColor = ImVec4(0.0f, 1.0f, 0.0f, 1.0f); // green
+                }
+                else
+                {
+                    saveStatusMessage = "Failed to save config!";
+                    saveStatusColor = ImVec4(0.8f, 0.3f, 0.0f, 1.0f); // dark orange/red
+                }
+            }
+
+            // Update cached settings as before...
+            cachedSettings.HPRollover = d2rHUDConfig.HPRolloverMods;
+            cachedSettings.SunderValue = d2rHUDConfig.SunderValue;
+            cachedSettings.monsterStatsDisplay = d2rHUDConfig.MonsterStatsDisplay;
+            cachedSettings.HPRolloverAmt = d2rHUDConfig.HPRolloverPercent;
+            cachedSettings.sunderedMonUMods = d2rHUDConfig.SunderedMonUMods;
+            cachedSettings.minionEquality = d2rHUDConfig.MinionEquality;
+            cachedSettings.gambleForce = d2rHUDConfig.GambleCostControl;
+            cachedSettings.CombatLog = d2rHUDConfig.CombatLog;
+
+            // Reload HUD config
+            d2rHUDConfig.HPRolloverPercent = cachedSettings.HPRolloverAmt;
+            d2rHUDConfig.SunderValue = cachedSettings.SunderValue;
+            d2rHUDConfig.MonsterStatsDisplay = cachedSettings.monsterStatsDisplay;
+            d2rHUDConfig.HPRolloverMods = cachedSettings.HPRollover;
+            d2rHUDConfig.SunderedMonUMods = cachedSettings.sunderedMonUMods;
+            d2rHUDConfig.MinionEquality = cachedSettings.minionEquality;
+            d2rHUDConfig.GambleCostControl = cachedSettings.gambleForce;
+            d2rHUDConfig.CombatLog = cachedSettings.CombatLog;
+        }
+        // Assign hover description
+        if (ImGui::IsItemHovered())
+        {
+            descriptionTitle = "Save Config";
+            descriptionText = "- Applies your current settings and updates the config file\n- This ensures your settings are kept for future launches\n\n";
+            descriptionNote = "This applies only to the options in this panel";
+        }
+
+        ImGui::PopStyleColor(3);
+        ImGui::PopID();
+
+        // --- Status message below buttons ---
+        if (!saveStatusMessage.empty())
+        {
+            ImGui::Spacing();
+            ImGui::SetCursorPosX((windowWidth - ImGui::CalcTextSize(saveStatusMessage.c_str()).x) * 0.5f);
+            ImGui::TextColored(saveStatusColor, "%s", saveStatusMessage.c_str());
+        }
+
+        ImGui::End();
+    }
+}
+
+void ShowMainMenu()
+{
+    if (!showMainMenu)
+        return;
+
+    ImGuiIO& io = ImGui::GetIO();
+    ImVec2 windowSize = ImVec2(640, 320);
+
+    // Center the window only on the first run
+    static bool firstRun = true;
+    if (firstRun)
+    {
+        ImVec2 centerPos = ImVec2((io.DisplaySize.x - windowSize.x) * 0.5f, (io.DisplaySize.y - windowSize.y) * 0.5f);
+        ImGui::SetNextWindowPos(centerPos, ImGuiCond_Once);
+        firstRun = false;
+    }
+
+    ImGui::SetNextWindowSize(windowSize, ImGuiCond_Always);
+    ImGui::Begin("D2RHUD Control Center", &showMainMenu, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoTitleBar);
+
+    // --- HEADER ---
+    int fontIndex = 3;
+    ImFont* fontSize = (fontIndex >= 0 && fontIndex < io.Fonts->Fonts.Size) ? io.Fonts->Fonts[fontIndex] : nullptr;
+    if (fontSize) ImGui::PushFont(fontSize);
+
+    // --- TITLE AND CLOSE BUTTON ---
+    const char* windowTitle = "D2RHUD Control Center";
+    float closeBtnSize = 20.0f;
+    float padding = 5.0f;
+    ImVec2 contentSize = ImGui::GetContentRegionAvail();
+
+    float titleWidth = ImGui::CalcTextSize(windowTitle).x;
+    ImGui::SetCursorPosX((contentSize.x - titleWidth) * 0.5f);
+    ImGui::TextColored(ImVec4(0.95f, 0.85f, 0.5f, 1.0f), "%s", windowTitle);
+
+    ImGui::SameLine(contentSize.x - closeBtnSize - padding);
+    ImVec2 btnPos = ImGui::GetCursorScreenPos();
+    ImGui::InvisibleButton("CloseBtn", ImVec2(closeBtnSize, closeBtnSize));
+    if (ImGui::IsItemClicked()) showMainMenu = false;
+
+    ImDrawList* drawList = ImGui::GetWindowDrawList();
+    ImVec2 textSize = ImGui::CalcTextSize("X");
+    ImVec2 textPos = ImVec2(btnPos.x + (closeBtnSize - textSize.x) * 0.5f,
+        btnPos.y + (closeBtnSize - textSize.y) * 0.5f);
+    drawList->AddText(textPos, IM_COL32(255, 80, 80, 255), "X");
+    if (fontSize) ImGui::PopFont();
+
+    fontIndex = 1;
+    fontSize = (fontIndex >= 0 && fontIndex < io.Fonts->Fonts.Size) ? io.Fonts->Fonts[fontIndex] : nullptr;
+    if (fontSize) ImGui::PushFont(fontSize);
+    ImGuiTextCentered("Quickly view or command custom options offered by D2RHUD");
+    ImGuiTextCentered("This menu can be toggled using the hotkey set in D2RLAN");
+    if (fontSize) ImGui::PopFont();
+
+    fontIndex = 2;
+    fontSize = (fontIndex >= 0 && fontIndex < io.Fonts->Fonts.Size) ? io.Fonts->Fonts[fontIndex] : nullptr;
+    if (fontSize) ImGui::PushFont(fontSize);
+
+    // Prepare version line
+    std::string label = "Version:";
+    std::string number = Version;
+    ImVec2 labelSize = ImGui::CalcTextSize(label.c_str());
+    ImVec2 numberSize = ImGui::CalcTextSize(number.c_str());
+    float totalWidth = labelSize.x + numberSize.x;
+    float contentWidth = ImGui::GetWindowContentRegionMax().x - ImGui::GetWindowContentRegionMin().x;
+    ImGui::SetCursorPosX((contentWidth - totalWidth) * 0.5f);
+
+    // Draw the two colored segments
+    ImGui::TextColored(ImVec4(0.95f, 0.85f, 0.5f, 1.0f), "%s", label.c_str());
+    ImGui::SameLine();
+    ImGui::TextColored(ImVec4(0.0157f, 0.380f, 0.8f, 1.0f), "%s", number.c_str());
+
+    if (fontSize) ImGui::PopFont();
+    ImGui::Separator();
+
+    // --- MENU BUTTONS AND DESCRIPTION AREA ---
+    float buttonWidth = 200.0f;
+    float buttonHeight = 50.0f;
+    float separatorX = buttonWidth + 20.0f;
+    float descriptionWidth = windowSize.x - separatorX - 15.0f;
+    const char* descriptionTitle = "";
+    const char* descriptionText = "";
+    const char* descriptionNote = "";
+
+    fontIndex = 2;
+    fontSize = (fontIndex >= 0 && fontIndex < io.Fonts->Fonts.Size) ? io.Fonts->Fonts[fontIndex] : nullptr;
+    if (fontSize) ImGui::PushFont(fontSize);
+    if (ImGui::Button("D2RHUD Options", ImVec2(buttonWidth, buttonHeight)))
+        showD2RHUDMenu = true;
+
+    ShowD2RHUDMenu();
+
+    if (ImGui::IsItemHovered()) { descriptionTitle = "D2RHUD Options"; descriptionText = "Explore and Control enabled D2RHUD Options\n\n- Values are retrieved and stored in D2RLAN/Launcher/config.json\n- Overrides can be applied by the author in data/D2RLAN/config_override.json\n- Expect implementation changes over the next updates"; }
+    if (ImGui::Button("Memory Edit Info", ImVec2(buttonWidth, buttonHeight)))
+        showMemoryMenu = true;
+
+    ShowMemoryMenu();
+
+    if (ImGui::IsItemHovered()) { descriptionTitle = "Memory Edit Info"; descriptionText = "View your currently active memory edits\n\n- Values are retrieved and stored in D2RLAN/Launcher/config.json\n- These edits provide additional 'hardcode only' options to the game\n- For some entries, game restart will be needed for them to apply\n- This panel is currently read-only during early development"; }
+    if (ImGui::Button("D2RLoot Settings", ImVec2(buttonWidth, buttonHeight)))
+        showLootMenu = true;
+
+    ShowLootMenu();
+    if (ImGui::IsItemHovered()) { descriptionTitle = "D2RLoot Settings"; descriptionText = "Explore and control your currently active loot filter\n\n- Filters operate in real-time with user-defined rules\n- Accessible in D2RLAN > Options > Loot Filter\n- Rules are defined in D2RLAN/D2R/lootfilter_config.lua"; }
+    if (ImGui::Button("Hotkey Controls", ImVec2(buttonWidth, buttonHeight)))
+        showHotkeyMenu = true;
+
+    ShowHotkeyMenu();
+    if (ImGui::IsItemHovered()) { descriptionTitle = "Hotkey Controls"; descriptionText = "Manage your hotkeys used by various tools\n\n- Hotkeys are achieved by utilizing internal game functions\n- They can also be used to dynamically control your loot filter\n- Hotkeys are defined in D2RLAN/Launcher/D2RLAN_Config.txt"; }
+    if (fontSize) ImGui::PopFont();
+
+    // Vertical separator
+    ImGui::GetWindowDrawList()->AddLine(ImVec2(ImGui::GetWindowPos().x + separatorX, ImGui::GetWindowPos().y + 100.0f), ImVec2(ImGui::GetWindowPos().x + separatorX, ImGui::GetWindowPos().y + windowSize.y - 3.0f), IM_COL32(180, 150, 80, 255), 2.0f);
+
+    // Description panel (centered within panel width)
+    ImGui::SetCursorPosX(separatorX - 200.0f);
+    ImGui::SetCursorPosY(100.0f);
+
+    // Title style
+    fontIndex = 3;
+    fontSize = (fontIndex >= 0 && fontIndex < io.Fonts->Fonts.Size) ? io.Fonts->Fonts[fontIndex] : nullptr;
+    if (fontSize) ImGui::PushFont(fontSize);
+    if (descriptionTitle && descriptionTitle[0] != '\0')
+    {
+        ImVec2 textSize = ImGui::CalcTextSize(descriptionTitle);
+        ImGui::SetCursorPosX(separatorX + 5.0f + (descriptionWidth - textSize.x) * 0.5f);
+        ImGui::TextColored(ImVec4(0.0157f, 0.380f, 0.8f, 1.0f), descriptionTitle);
+    }
+    if (fontSize) ImGui::PopFont();
+
+    // Description style
+    fontIndex = 1;
+    fontSize = (fontIndex >= 0 && fontIndex < io.Fonts->Fonts.Size) ? io.Fonts->Fonts[fontIndex] : nullptr;
+    if (fontSize) ImGui::PushFont(fontSize);
+    if (descriptionText && descriptionText[0] != '\0')
+    {
+        ImVec2 textSize = ImGui::CalcTextSize(descriptionText, nullptr, false, descriptionWidth);
+        ImGui::SetCursorPosX(separatorX + 5.0f + (descriptionWidth - textSize.x) * 0.5f);
+        ImGui::TextWrapped("%s", descriptionText);
+    }
+    if (fontSize) ImGui::PopFont();
+
+    ImGui::End();
+}
+
+#pragma endregion
 
 #pragma endregion
 
@@ -3232,6 +4803,32 @@ void D2RHUD::OnDraw() {
         DetourTransactionCommit();
     }
 
+
+
+    ShowMainMenu();
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
     auto drawList = ImGui::GetBackgroundDrawList();
     auto min = drawList->GetClipRectMin();
     auto max = drawList->GetClipRectMax();
@@ -3352,7 +4949,6 @@ void D2RHUD::OnDraw() {
 
 #pragma endregion
 
-
 #pragma region Hotkey Handler
 
 bool D2RHUD::OnKeyPressed(short key)
@@ -3375,6 +4971,7 @@ bool D2RHUD::OnKeyPressed(short key)
         { "Custom Command 5: ", nullptr },
         { "Custom Command 6: ", nullptr },
         { "Open Cube Panel: ", nullptr },
+        { "Open HUDCC Menu: ", nullptr },
     };
 
     auto GetVirtualKeyFromName = [&](const std::string& token) -> short {
@@ -3457,6 +5054,19 @@ bool D2RHUD::OnKeyPressed(short key)
         if (!pClient || !pClient->pGame) return;
         reinterpret_cast<int32_t(__fastcall*)(D2GameStrc*, D2UnitStrc*)>(Pattern::Address(0x34F5A0))(pClient->pGame, pClient->pPlayer);
         });
+
+    // --- Open HUDCC Panel ---
+    CheckAndAddMatch(ReadCommandFromFile(filename, "Open HUDCC Menu: "), 0, [=]() mutable {
+
+        if (!showMainMenu)
+            showMainMenu = true;
+        else
+            showMainMenu = false;
+
+        }, true);
+
+
+        
 
     // --- Cycle Terror Zones ---
     for (const auto& tz : { "Cycle TZ Forward: ", "Cycle TZ Backward: " }) {
