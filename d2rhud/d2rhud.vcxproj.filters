@@ -26,5 +26,7 @@
     <ClInclude Include="d2\Reclass.h" />
     <ClInclude Include="plugin\ItemFilter\ItemFilter.h" />
     <ClInclude Include="..\..\..\Downloads\json.hpp" />
+    <ClInclude Include="stb_image.h" />
+    <ClInclude Include="d3dx12.h" />
   </ItemGroup>
 </Project>

@@ -22,6 +22,7 @@ class D2RHUD : public Plugin {
 public:
 	void OnDraw() override;
 	bool OnKeyPressed(short key) override;
+    static bool IsAnyMenuOpen();
 
 private:
 	void ShowVersionMessage();

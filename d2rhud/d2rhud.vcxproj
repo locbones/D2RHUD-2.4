@@ -98,6 +98,7 @@
     <ClInclude Include="d2\D2Structs.h" />
     <ClInclude Include="d2\Reclass.h" />
     <ClInclude Include="D3D12Hook.h" />
+    <ClInclude Include="d3dx12.h" />
     <ClInclude Include="Logging.h" />
     <ClInclude Include="Pattern.h" />
     <ClInclude Include="plugin\ItemFilter\ItemFilter.h" />
@@ -105,6 +106,7 @@
     <ClInclude Include="plugin\Plugin.h" />
     <ClInclude Include="plugin\PluginManager.h" />
     <ClInclude Include="plugin\D2RHUD\D2RHUD.h" />
+    <ClInclude Include="stb_image.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
