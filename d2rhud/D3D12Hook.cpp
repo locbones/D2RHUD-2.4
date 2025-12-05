@@ -32,6 +32,8 @@
 #pragma comment(lib, "dxgi.lib")
 #pragma comment(lib, "d3d12.lib")
 
+extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
+
 namespace D3D12 {
 
 	template<typename T>
@@ -426,50 +428,31 @@ namespace D3D12 {
 	}
 
 	LRESULT APIENTRY WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
-		if (g_Initialized) {
+		if (g_Initialized && g_PluginManager)
+		{
 			ImGuiIO& io = ImGui::GetIO();
 			g_PluginManager->WndProc(hWnd, msg, wParam, lParam);
 			switch (msg) {
+			case WM_LBUTTONDBLCLK:
 			case WM_LBUTTONDOWN:
-				io.MouseDown[0] = true;
-				return io.WantCaptureMouse ? 0 : CallWindowProc(OriginalWndProc, hWnd, msg, wParam, lParam);
 			case WM_LBUTTONUP:
-				io.MouseDown[0] = false;
-				return io.WantCaptureMouse ? 0 : CallWindowProc(OriginalWndProc, hWnd, msg, wParam, lParam);
+			case WM_RBUTTONDBLCLK:
 			case WM_RBUTTONDOWN:
-				io.MouseDown[1] = true;
-				return io.WantCaptureMouse ? 0 : CallWindowProc(OriginalWndProc, hWnd, msg, wParam, lParam);
 			case WM_RBUTTONUP:
-				io.MouseDown[1] = false;
-				return io.WantCaptureMouse ? 0 : CallWindowProc(OriginalWndProc, hWnd, msg, wParam, lParam);
+			case WM_MBUTTONDBLCLK:
 			case WM_MBUTTONDOWN:
-				io.MouseDown[2] = true;
-				return io.WantCaptureMouse ? 0 : CallWindowProc(OriginalWndProc, hWnd, msg, wParam, lParam);
 			case WM_MBUTTONUP:
-				io.MouseDown[2] = false;
-				return io.WantCaptureMouse ? 0 : CallWindowProc(OriginalWndProc, hWnd, msg, wParam, lParam);
 			case WM_MOUSEWHEEL:
-				io.MouseWheel += GET_WHEEL_DELTA_WPARAM(wParam) > 0 ? +1.0f : -1.0f;
-				return io.WantCaptureMouse ? 0 : CallWindowProc(OriginalWndProc, hWnd, msg, wParam, lParam);
 			case WM_MOUSEMOVE:
-				io.MousePos.x = (signed short)(lParam);
-				io.MousePos.y = (signed short)(lParam >> 16);
+				ImGui_ImplWin32_WndProcHandler(hWnd, msg, wParam, lParam);
 				return io.WantCaptureMouse ? 0 : CallWindowProc(OriginalWndProc, hWnd, msg, wParam, lParam);
 			case WM_KEYDOWN:
-				if (wParam < 256)
-					io.AddKeyEvent(static_cast<ImGuiKey>(wParam), true);
-				return io.WantCaptureKeyboard ? 0 : CallWindowProc(OriginalWndProc, hWnd, msg, wParam, lParam);
-
 			case WM_KEYUP:
-				if (wParam < 256)
-					io.AddKeyEvent(static_cast<ImGuiKey>(wParam), false);
-				return io.WantCaptureKeyboard ? 0 : CallWindowProc(OriginalWndProc, hWnd, msg, wParam, lParam);
-
 			case WM_CHAR:
-				// You can also use ToAscii()+GetKeyboardState() to retrieve characters.
-				if (wParam > 0 && wParam < 0x10000)
-					io.AddInputCharacter((unsigned short)wParam);
-				return io.WantCaptureKeyboard ? 0 : CallWindowProc(OriginalWndProc, hWnd, msg, wParam, lParam);
+				ImGui_ImplWin32_WndProcHandler(hWnd, msg, wParam, lParam);
+				return io.WantCaptureKeyboard || io.WantTextInput ? 0 : CallWindowProc(OriginalWndProc, hWnd, msg, wParam, lParam);
+			default:
+				break;
 			}
 		}
 		return CallWindowProc(OriginalWndProc, hWnd, msg, wParam, lParam);

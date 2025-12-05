@@ -196,6 +196,372 @@ void ApplyUModArray(const uint32_t* offsets, size_t count, uint32_t remainder, c
 
 #pragma endregion
 
+#pragma region D2I Parser
+
+#include <stdexcept>
+
+class BitReader {
+public:
+    BitReader(const std::vector<uint8_t>& buffer)
+        : buf(buffer), bytePos(0), bitPos(0) {
+    }
+
+    uint32_t ReadBits(size_t bits) {
+        if (bits > 32) throw std::runtime_error("Cannot read more than 32 bits at once");
+        uint32_t result = 0;
+        for (size_t i = 0; i < bits; ++i) {
+            if (bytePos >= buf.size()) throw std::runtime_error("Buffer overflow");
+            result <<= 1;
+            result |= (buf[bytePos] >> (7 - bitPos)) & 1;
+            bitPos++;
+            if (bitPos == 8) { bitPos = 0; bytePos++; }
+        }
+        return result;
+    }
+
+    uint8_t ReadUInt8(size_t bits) { return static_cast<uint8_t>(ReadBits(bits)); }
+    uint16_t ReadUInt16(size_t bits) { return static_cast<uint16_t>(ReadBits(bits)); }
+    uint32_t ReadUInt32(size_t bits) { return ReadBits(bits); }
+    bool ReadBit() { return ReadBits(1) != 0; }
+
+    void SkipBits(size_t bits) { for (size_t i = 0; i < bits; ++i) ReadBit(); }
+    void AlignToByte() { if (bitPos != 0) { bitPos = 0; bytePos++; } }
+
+    size_t GetBytePos() const { return bytePos; }
+
+private:
+    const std::vector<uint8_t>& buf;
+    size_t bytePos;
+    uint8_t bitPos;
+};
+
+// -------------------- Item --------------------
+struct EarAttributes {
+    uint8_t clazz = 0;
+    uint8_t level = 0;
+    std::string name;
+};
+
+struct Item {
+    // Existing fields
+    uint32_t id = 0;
+    uint8_t level = 0;
+    uint8_t quality = 0;
+    bool multiple_pictures = false;
+    uint8_t picture_id = 0;
+    bool class_specific = false;
+    uint16_t auto_affix_id = 0;
+
+    uint8_t low_quality_id = 0;
+    uint8_t file_index = 0;
+    uint16_t magic_prefix = 0;
+    uint16_t magic_suffix = 0;
+    uint16_t set_id = 0;
+    uint16_t unique_id = 0;
+    uint8_t rare_name_id = 0;
+    uint8_t rare_name_id2 = 0;
+    uint16_t magical_name_ids[6] = { 0 };
+
+    // New fields from ReadSimpleBits
+    bool identified = false;
+    bool socketed = false;
+    bool new_flag = false;  // 'new' is reserved in C++
+    bool is_ear = false;
+    bool starter_item = false;
+    bool simple_item = false;
+    bool ethereal = false;
+    bool personalized = false;
+    bool given_runeword = false;
+
+    uint16_t version = 0;
+    uint8_t location_id = 0;
+    uint8_t equipped_id = 0;
+    uint8_t position_x = 0;
+    uint8_t position_y = 0;
+    uint8_t alt_position_id = 0;
+
+    std::string type;                // Item type
+    uint8_t nr_of_items_in_sockets = 0;
+
+    EarAttributes ear_attributes;    // Ear-specific data
+
+    std::vector<uint8_t> unknown_bits; // Pre-ID unknown bits for debugging
+};
+
+struct HuffmanNode {
+    char value = 0; // 0 = internal node
+    HuffmanNode* left = nullptr;
+    HuffmanNode* right = nullptr;
+    ~HuffmanNode() { delete left; delete right; }
+};
+
+// Convert your JS array to a C++ tree
+HuffmanNode* BuildHuffmanTree() {
+    // Leaf nodes
+    auto w = new HuffmanNode{ 'w' };
+    auto u = new HuffmanNode{ 'u' };
+    auto eight = new HuffmanNode{ '8' };
+    auto y = new HuffmanNode{ 'y' };
+    auto five = new HuffmanNode{ '5' };
+    auto j = new HuffmanNode{ 'j' };
+    auto h = new HuffmanNode{ 'h' };
+    auto s = new HuffmanNode{ 's' };
+    auto two = new HuffmanNode{ '2' };
+    auto n = new HuffmanNode{ 'n' };
+    auto x = new HuffmanNode{ 'x' };
+    auto c = new HuffmanNode{ 'c' };
+    auto k = new HuffmanNode{ 'k' };
+    auto f = new HuffmanNode{ 'f' };
+    auto b = new HuffmanNode{ 'b' };
+    auto t = new HuffmanNode{ 't' };
+    auto m = new HuffmanNode{ 'm' };
+    auto nine = new HuffmanNode{ '9' };
+    auto seven = new HuffmanNode{ '7' };
+    auto space = new HuffmanNode{ ' ' };
+    auto e = new HuffmanNode{ 'e' };
+    auto d = new HuffmanNode{ 'd' };
+    auto p = new HuffmanNode{ 'p' };
+    auto g = new HuffmanNode{ 'g' };
+    auto z = new HuffmanNode{ 'z' };
+    auto q = new HuffmanNode{ 'q' };
+    auto three = new HuffmanNode{ '3' };
+    auto v = new HuffmanNode{ 'v' };
+    auto r = new HuffmanNode{ 'r' };
+    auto l = new HuffmanNode{ 'l' };
+    auto a = new HuffmanNode{ 'a' };
+    auto one = new HuffmanNode{ '1' };
+    auto four = new HuffmanNode{ '4' };
+    auto zero = new HuffmanNode{ '0' };
+    auto i = new HuffmanNode{ 'i' };
+    auto o = new HuffmanNode{ 'o' };
+
+    // Internal nodes
+    auto j_node = new HuffmanNode{ 0, j, nullptr };
+    auto five_node = new HuffmanNode{ 0, five, j_node };
+    auto y_node = new HuffmanNode{ 0, y, five_node };
+    auto eight_node = new HuffmanNode{ 0, eight, y_node };
+    auto h_node = new HuffmanNode{ 0, h, nullptr };
+    auto left1 = new HuffmanNode{ 0, w, u };
+    auto left2 = new HuffmanNode{ 0, eight_node, h_node };
+    auto left3 = new HuffmanNode{ 0, left1, left2 };
+
+    auto two_node = new HuffmanNode{ 0, two, n };
+    auto right1 = new HuffmanNode{ 0, two_node, x };
+    auto right2 = new HuffmanNode{ 0, c, new HuffmanNode{ 0, k, f } };
+    auto right3 = new HuffmanNode{ 0, t, m };
+    auto right4 = new HuffmanNode{ 0, nine, seven };
+    auto right5 = new HuffmanNode{ 0, right3, right4 };
+    auto right6 = new HuffmanNode{ 0, right2, right5 };
+    auto left_root = new HuffmanNode{ 0, left3, right6 };
+
+    auto e_node = new HuffmanNode{ 0, e, d };
+    auto p_node = new HuffmanNode{ 0, e_node, p };
+    auto z_node = new HuffmanNode{ 0, z, q };
+    auto three_node = new HuffmanNode{ 0, z_node, three };
+    auto six_node = new HuffmanNode{ 0, v, nullptr };
+    auto g_node = new HuffmanNode{ 0, g, six_node };
+    auto right_root_left = new HuffmanNode{ 0, p_node, g_node };
+
+    auto r_node = new HuffmanNode{ 0, r, l };
+    auto one_node = new HuffmanNode{ 0, one, four };
+    auto io_node = new HuffmanNode{ 0, i, o };
+    auto a_node = new HuffmanNode{ 0, a, new HuffmanNode{ 0, one_node, io_node } };
+    auto right_root_right = new HuffmanNode{ 0, r_node, a_node };
+
+    auto right_root = new HuffmanNode{ 0, right_root_left, right_root_right };
+
+    auto root = new HuffmanNode{ 0, left_root, right_root };
+
+    return root;
+}
+
+// Decode 1 character from BitReader using Huffman tree
+char DecodeHuffmanChar(BitReader& reader, HuffmanNode* root) {
+    HuffmanNode* node = root;
+    while (node->value == 0) {
+        bool bit = reader.ReadBit();
+        node = bit ? node->right : node->left;
+        if (!node) throw std::runtime_error("Invalid Huffman tree traversal");
+    }
+    return node->value;
+}
+
+std::string DecodeHuffmanString(BitReader& reader, HuffmanNode* root, int len) {
+    std::string s;
+    for (int i = 0; i < len; ++i) s += DecodeHuffmanChar(reader, root);
+    return s;
+}
+
+void ReadSimpleBits(Item& item, BitReader& reader, uint32_t version, HuffmanNode* huffmanRoot) {
+    item.unknown_bits.reserve(32);
+
+    // Flags
+    for (int i = 0; i < 4; i++) item.unknown_bits.push_back(reader.ReadBit() ? 1 : 0);
+    item.identified = reader.ReadBit();
+    for (int i = 0; i < 6; i++) item.unknown_bits.push_back(reader.ReadBit() ? 1 : 0);
+    item.socketed = reader.ReadBit();
+    item.unknown_bits.push_back(reader.ReadBit() ? 1 : 0);
+    item.new_flag = reader.ReadBit();
+    for (int i = 0; i < 2; i++) item.unknown_bits.push_back(reader.ReadBit() ? 1 : 0);
+    item.is_ear = reader.ReadBit();
+    item.starter_item = reader.ReadBit();
+    for (int i = 0; i < 3; i++) item.unknown_bits.push_back(reader.ReadBit() ? 1 : 0);
+    item.simple_item = reader.ReadBit();
+    item.ethereal = reader.ReadBit();
+    item.unknown_bits.push_back(reader.ReadBit() ? 1 : 0);
+    item.personalized = reader.ReadBit();
+    item.unknown_bits.push_back(reader.ReadBit() ? 1 : 0);
+    item.given_runeword = reader.ReadBit();
+    for (int i = 0; i < 5; i++) item.unknown_bits.push_back(reader.ReadBit() ? 1 : 0);
+
+    // Version
+    item.version = (version <= 0x60) ? reader.ReadUInt16(10) : reader.ReadUInt16(3);
+
+    // Location / position
+    item.location_id = reader.ReadUInt8(3);
+    item.equipped_id = reader.ReadUInt8(4);
+    item.position_x = reader.ReadUInt8(4);
+    item.position_y = reader.ReadUInt8(4);
+    item.alt_position_id = reader.ReadUInt8(3);
+
+    // Ear or type
+    if (item.is_ear) {
+        item.ear_attributes.clazz = reader.ReadUInt8(3);
+        item.ear_attributes.level = reader.ReadUInt8(7);
+        item.ear_attributes.name.clear();
+        for (int i = 0; i < 15; i++) {
+            uint8_t ch = reader.ReadUInt8(7);
+            if (ch == 0) break;
+            item.ear_attributes.name += static_cast<char>(ch);
+        }
+    }
+    else {
+        if (version <= 0x60) {
+            for (int i = 0; i < 4; i++) item.type += static_cast<char>(reader.ReadUInt8(8));
+        }
+        else {
+            item.type = DecodeHuffmanString(reader, huffmanRoot, 4);
+        }
+        item.type.erase(std::remove(item.type.begin(), item.type.end(), '\0'), item.type.end());
+        uint8_t bits = item.simple_item ? 1 : 3;
+        item.nr_of_items_in_sockets = reader.ReadUInt8(bits);
+    }
+}
+
+// -------------------- ParseItem --------------------
+Item ParseItem(BitReader& reader, HuffmanNode* huffmanRoot, uint32_t version) {
+    Item item;
+
+    ReadSimpleBits(item, reader, version, huffmanRoot);
+
+    // Parse remaining fields based on quality
+    item.id = reader.ReadUInt32(32);
+    item.level = reader.ReadUInt8(7);
+    item.quality = reader.ReadUInt8(4);
+
+    item.multiple_pictures = reader.ReadBit();
+    if (item.multiple_pictures) item.picture_id = reader.ReadUInt8(3);
+
+    item.class_specific = reader.ReadBit();
+    if (item.class_specific) item.auto_affix_id = reader.ReadUInt16(11);
+
+    switch (item.quality) {
+    case 0: item.low_quality_id = reader.ReadUInt8(3); break;
+    case 2: item.file_index = reader.ReadUInt8(3); break;
+    case 3:
+        item.magic_prefix = reader.ReadUInt16(11);
+        item.magic_suffix = reader.ReadUInt16(11);
+        break;
+    case 4:
+        item.rare_name_id = reader.ReadUInt8(8);
+        item.rare_name_id2 = reader.ReadUInt8(8);
+        for (int i = 0; i < 6; i++)
+            if (reader.ReadBit()) item.magical_name_ids[i] = reader.ReadUInt16(11);
+        break;
+    case 5: item.set_id = reader.ReadUInt16(12); break;
+    case 6: item.unique_id = reader.ReadUInt16(12); break;
+    default: break;
+    }
+
+    return item;
+}
+
+// -------------------- Shared Stash Parser --------------------
+void ParseSharedStash(const std::string& filePath) {
+    std::ifstream f(filePath, std::ios::binary);
+    if (!f) { std::cerr << "Failed to open file: " << filePath << std::endl; return; }
+
+    std::vector<uint8_t> buf((std::istreambuf_iterator<char>(f)),
+        std::istreambuf_iterator<char>());
+
+    size_t offset = 0;
+    size_t tabIndex = 1;
+
+    while (offset + 8 <= buf.size()) {
+        if (buf[offset] == 0x55 && buf[offset + 1] == 0xAA &&
+            buf[offset + 2] == 0x55 && buf[offset + 3] == 0xAA &&
+            buf[offset + 4] == 0x01 && buf[offset + 5] == 0x00 &&
+            buf[offset + 6] == 0x00 && buf[offset + 7] == 0x00) {
+
+            std::cout << "Found tab " << tabIndex << " at offset " << offset << std::endl;
+
+            size_t versionOffset = offset + 8;
+            std::cout << "  Version bytes at offset " << versionOffset << ": ";
+            for (int i = 0; i < 4; ++i) std::cout << std::hex << (int)buf[versionOffset + i] << " ";
+            std::cout << std::dec << std::endl;
+
+            // Tab item count (1 byte)
+            uint8_t numItems = buf[versionOffset + 4];
+            std::cout << "  Tab item count at offset " << (versionOffset + 4) << ": " << (int)numItems << std::endl;
+
+            // Skip unknown 32 bytes
+            size_t itemDataStart = versionOffset + 4 + 32;
+
+            BitReader reader(buf);
+            reader.SkipBits(itemDataStart * 8); // Move to start of item data
+            reader.AlignToByte();
+
+            for (int i = 0; i < numItems; ++i) {
+                size_t itemOffset = reader.GetBytePos();
+
+                try {
+                    // Assume version is first byte at versionOffset
+                    uint32_t version = buf[versionOffset];
+
+                    Item item = ParseItem(reader, BuildHuffmanTree(), version);
+
+                    std::cout << "    Item at offset " << itemOffset
+                        << " | Quality: " << (int)item.quality
+                        << " | Level: " << (int)item.level
+                        << " | ID: " << item.id;
+
+                    if (item.set_id != 0)
+                        std::cout << " | Set ID: " << item.set_id;
+                    if (item.unique_id != 0)
+                        std::cout << " | Unique ID: " << item.unique_id;
+
+                    std::cout << std::endl;
+                }
+                catch (std::exception& e) {
+                    std::cout << "    Failed to parse item at offset " << itemOffset
+                        << ": " << e.what() << std::endl;
+
+                    break; // stop parsing this tab
+                }
+            }
+
+
+            tabIndex++;
+            offset += 8;
+        }
+        else {
+            offset++;
+        }
+    }
+}
+
+#pragma endregion
+
 #pragma region Monster & Command Constants
 const char* ResistanceNames[6] = { "   ", "   ", "   ", "   ", "   ", "   " };
 constexpr  uint32_t ResistanceStats[6] = { 39, 41, 43, 45, 36, 37 };
@@ -4455,6 +4821,7 @@ void ShowGrailMenu()
     if (!itemsLoaded)
     {
         LoadAllItemData();
+        //ParseSharedStash("C:\\Users\\djsch\\Saved Games\\Diablo II Resurrected\\Mods\\RMD-MP\\Stash_SC_Page1.d2i");
         itemsLoaded = true;
     }
 
@@ -6455,7 +6822,6 @@ void __fastcall HookedDropTCTest(D2GameStrc* pGame, D2UnitStrc* pMonster, D2Unit
     else
         ForceTCDrops(pGame, pMonster, pPlayer, nTCId, nQuality, nItemLevel, a7, ppItems, pnItemsDropped, nMaxItems);
 }
-
 
 #pragma endregion
 
