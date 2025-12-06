@@ -30,6 +30,7 @@
 #include <random>
 #include <unordered_set>
 #include <mutex>
+#include <set>
 
 #pragma endregion
 
@@ -4046,17 +4047,6 @@ bool LoadUniqueItems(const std::string& filepath)
 {
     g_UniqueItems.clear();
 
-    // Use static array for Retail Mods if file doesn't exist
-    if (!std::filesystem::exists("Mods/" + modName + "/" + modName + ".mpq/data/global/excel/uniqueitems.txt"))
-    {
-        int arraySize = sizeof(g_StaticUniqueItems) / sizeof(g_StaticUniqueItems[0]);
-        for (int i = 0; i < arraySize; ++i)
-        {
-            g_UniqueItems.push_back(g_StaticUniqueItems[i]);
-        }
-        return true;
-    }
-
     // Use static array for RMD
     if (modName == "RMD-MP")
     {
@@ -4064,6 +4054,17 @@ bool LoadUniqueItems(const std::string& filepath)
         for (int i = 0; i < arraySize; ++i)
         {
             g_UniqueItems.push_back(g_StaticUniqueItemsRMD[i]);
+        }
+        return true;
+    }
+
+    // Use static array for Retail Mods if file doesn't exist
+    if (!std::filesystem::exists("Mods/" + modName + "/" + modName + ".mpq/data/global/excel/uniqueitems.txt") && modName != "RMD-MP")
+    {
+        int arraySize = sizeof(g_StaticUniqueItems) / sizeof(g_StaticUniqueItems[0]);
+        for (int i = 0; i < arraySize; ++i)
+        {
+            g_UniqueItems.push_back(g_StaticUniqueItems[i]);
         }
         return true;
     }
@@ -4118,17 +4119,6 @@ bool LoadSetItems(const std::string& filepath)
 {
     g_SetItems.clear();
 
-    // Use static array for Retail Mods if file doesn't exist
-    if (!std::filesystem::exists("Mods/" + modName + "/" + modName + ".mpq/data/global/excel/setitems.txt"))
-    {
-        int arraySize = sizeof(g_StaticSetItems) / sizeof(g_StaticSetItems[0]);
-        for (int i = 0; i < arraySize; ++i)
-        {
-            g_SetItems.push_back(g_StaticSetItems[i]);
-        }
-        return true;
-    }
-
     // Use static array for RMD
     if (modName == "RMD-MP")
     {
@@ -4136,6 +4126,17 @@ bool LoadSetItems(const std::string& filepath)
         for (int i = 0; i < arraySize; ++i)
         {
             g_SetItems.push_back(g_StaticSetItemsRMD[i]);
+        }
+        return true;
+    }
+
+    // Use static array for Retail Mods if file doesn't exist
+    if (!std::filesystem::exists("Mods/" + modName + "/" + modName + ".mpq/data/global/excel/setitems.txt") && modName != "RMD-MP")
+    {
+        int arraySize = sizeof(g_StaticSetItems) / sizeof(g_StaticSetItems[0]);
+        for (int i = 0; i < arraySize; ++i)
+        {
+            g_SetItems.push_back(g_StaticSetItems[i]);
         }
         return true;
     }
@@ -4283,12 +4284,17 @@ struct LootFilterHeader
 
 struct MemoryConfigEntry
 {
+    std::string Name;
     std::string Description;
+    std::string Category;
     std::string Address;
     std::vector<std::string> Addresses;
     int Length = 1;
     std::string Type = "Hex";
     std::string Values;
+    std::string OriginalValues;
+    std::string ModdedValues;
+    int UniqueID;
 };
 
 static char searchBuffer[128] = "";
@@ -4636,7 +4642,10 @@ void LoadMemoryConfigs(const std::string& path)
     for (auto& entry : j["MemoryConfigs"])
     {
         MemoryConfigEntry m;
+        m.UniqueID = index++;
+        m.Name = entry.value("Name", "");
         m.Description = entry.value("Description", "");
+        m.Category = entry.value("Category", "");
         m.Address = entry.value("Address", "");
 
         if (entry.contains("Addresses") && entry["Addresses"].is_array())
@@ -4648,6 +4657,8 @@ void LoadMemoryConfigs(const std::string& path)
         m.Length = entry.value("Length", 1);
         m.Type = entry.value("Type", "Hex");
         m.Values = entry.value("Values", "");
+        m.OriginalValues = entry.value("OriginalValues", "");
+        m.ModdedValues = entry.value("ModdedValues", "");
 
         g_MemoryConfigs.push_back(m);
         index++;
@@ -4800,6 +4811,14 @@ void SaveHotkeys(const std::string& filename)
 #pragma endregion
 
 #pragma region - Menu Displays
+
+void RightColumnSeparator(float rightWidth, float thickness = 2.0f)
+{
+    ImVec2 p0 = ImGui::GetCursorScreenPos();
+    ImVec2 p1 = ImVec2(p0.x + rightWidth, p0.y);
+    ImGui::GetWindowDrawList()->AddLine(p0, p1, IM_COL32(200, 200, 200, 255), thickness);
+    ImGui::Dummy(ImVec2(0.0f, thickness + 2.0f));
+}
 
 void ShowGrailMenu()
 {
@@ -5761,107 +5780,278 @@ void ShowMemoryMenu()
     LoadMemoryConfigs("../Launcher/config.json");
 
     EnableAllInput();
-    CenterWindow(ImVec2(850, 420));
+    CenterWindow(ImVec2(850, 500));
 
     PushFontSafe(3);
-    ImGui::Begin("Memory Edit Info", &showMemoryMenu, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoTitleBar);
+    ImGui::Begin("Memory Edit Info", &showMemoryMenu,
+        ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoTitleBar);
 
+    // -------------------------------
+    // STICKY TITLE
+    // -------------------------------
     DrawWindowTitleAndClose("Memory Edit Info", &showMemoryMenu);
+    PopFontSafe(3);
 
-    // --- Window Description ---
+    // -------------------------------
+    // STICKY DESCRIPTION
+    // -------------------------------
     PushFontSafe(2);
-    std::string desc = "Shows the currently enabled memory edits being applied\nThis panel is read-only at this time - Editing supported later";
-    DrawBottomDescription(desc);
+    DrawBottomDescription("Shows the currently enabled memory edits.\nNow fully editable.");
     PopFontSafe(2);
 
-    ImGuiIO& io = ImGui::GetIO();
-    ImVec2 contentSize = ImGui::GetContentRegionAvail();
+    ImGui::Dummy(ImVec2(0, 10));
+    ImGui::Separator();
+    ImGui::Dummy(ImVec2(0, 6));
 
-    // --- Display Memory Config Entries ---
-    static std::unordered_map<std::string, int> selectedIndexMap;
+    // persistent dropdown selections
+    static std::unordered_map<int, int> selectedIndexMap;
+    static std::string selectedCategory = "All";
 
-    for (auto& entry : g_MemoryConfigs)
+    // -------------------------------
+    // 2 COLUMN LAYOUT (LEFT = STICKY)
+    // -------------------------------
+    float leftWidth = 160.0f;
+    float spacing = 10.0f;
+
+    ImGui::Columns(2, nullptr, false);     // NOT scrollable
+    ImGui::SetColumnWidth(0, leftWidth);
+
+    // ===============================
+    // LEFT COLUMN (STICKY)
+    // ===============================
     {
-        ImGui::Dummy(ImVec2(0.0f, 5.0f));
-        ImGui::Separator();
-        ImGui::Dummy(ImVec2(0.0f, 5.0f));
+        std::set<std::string> categories;
+        for (auto& entry : g_MemoryConfigs)
+            if (!entry.Category.empty())
+                categories.insert(entry.Category);
 
-        // Centered Description
-        float descWidth = ImGui::CalcTextSize(entry.Description.c_str()).x;
-        ImGui::SetCursorPosX((contentSize.x - descWidth) * 0.5f);
-        ImGui::TextColored(ImVec4(1.0f, 0.65f, 0.0f, 1.0f), "%s", entry.Description.c_str());
+        if (ImGui::Selectable("All", selectedCategory == "All"))
+            selectedCategory = "All";
 
-        // Type / Length
-        PushFontSafe(1);
-        std::string typeLen = "Type: " + entry.Type + ", Length: " + std::to_string(entry.Length);
-        float typeLenWidth = ImGui::CalcTextSize(typeLen.c_str()).x;
-        ImGui::SetCursorPosX((contentSize.x - typeLenWidth) * 0.5f);
-        ImGui::Text("%s", typeLen.c_str());
-
-        // --- Address Combo ---
-        std::vector<std::string> addressList;
-        if (!entry.Address.empty()) addressList.push_back(entry.Address);
-        if (!entry.Addresses.empty()) addressList.insert(addressList.end(), entry.Addresses.begin(), entry.Addresses.end());
-
-        if (!addressList.empty())
+        for (auto& cat : categories)
         {
-            int& selectedIndex = selectedIndexMap[entry.Description];
-            if (selectedIndex >= addressList.size()) selectedIndex = 0;
-
-            std::string current = addressList[selectedIndex];
-            std::string label = "Address: ";
-            float labelWidth = ImGui::CalcTextSize(label.c_str()).x;
-            float comboWidth = 150.0f;
-            float totalWidth = labelWidth + comboWidth + 5.0f;
-            ImGui::SetCursorPosX((contentSize.x - totalWidth) * 0.5f);
-
-            ImGui::Text("%s", label.c_str());
-            ImGui::SameLine();
-            ImGui::PushItemWidth(comboWidth);
-            std::string comboID = "##addr_" + entry.Description;
-            if (ImGui::BeginCombo(comboID.c_str(), current.c_str(), ImGuiComboFlags_HeightLarge))
-            {
-                for (int i = 0; i < addressList.size(); ++i)
-                {
-                    bool isSelected = (selectedIndex == i);
-                    if (ImGui::Selectable(addressList[i].c_str(), isSelected))
-                        selectedIndex = i;
-                    if (isSelected) ImGui::SetItemDefaultFocus();
-                }
-                ImGui::EndCombo();
-            }
-            ImGui::PopItemWidth();
+            if (ImGui::Selectable(cat.c_str(), selectedCategory == cat))
+                selectedCategory = cat;
         }
-
-        // --- Value Input ---
-        char valueBuffer[64];
-        strncpy(valueBuffer, entry.Values.c_str(), sizeof(valueBuffer));
-        valueBuffer[sizeof(valueBuffer) - 1] = '\0';
-
-        std::string label = "Value: ";
-        float textWidth = ImGui::CalcTextSize(label.c_str()).x;
-        float inputWidth = ImGui::CalcTextSize(valueBuffer).x + 10.0f;
-        float totalWidth = textWidth + inputWidth + 5.0f;
-        ImGui::SetCursorPosX((contentSize.x - totalWidth) * 0.5f);
-
-        ImVec2 cursorPos = ImGui::GetCursorPos();
-        ImGui::SetCursorPosY(cursorPos.y + 3.0f);
-        ImGui::Text("%s", label.c_str());
-        ImGui::SameLine();
-        ImGui::SetCursorPosY(cursorPos.y);
-
-        ImGui::PushItemWidth(inputWidth);
-        std::string inputID = "##val" + entry.Description;
-        if (ImGui::InputText(inputID.c_str(), valueBuffer, sizeof(valueBuffer)))
-            entry.Values = valueBuffer;
-        ImGui::PopItemWidth();
-
-        PopFontSafe(1);
     }
 
-    PopFontSafe(3);
-    ImGui::End();
+    // ===============================
+    // RIGHT COLUMN (SCROLLABLE CHILD)
+    // ===============================
+    ImGui::NextColumn();
+
+    float rightWidth = ImGui::GetContentRegionAvail().x;
+
+    ImGui::BeginChild("RightScrollRegion",
+        ImVec2(rightWidth, 0),  // full height
+        false,
+        ImGuiWindowFlags_AlwaysVerticalScrollbar);
+
+    // ===========================================
+    // RENDER MEMORY ENTRIES (SCROLLABLE)
+    // ===========================================
+    for (auto& entry : g_MemoryConfigs)
+    {
+        if (selectedCategory != "All" && entry.Category != selectedCategory)
+            continue;
+
+        ImGui::Dummy(ImVec2(0.0f, 6.0f));
+        RightColumnSeparator(rightWidth, 2.0f);
+        ImGui::Dummy(ImVec2(0.0f, 6.0f));
+
+        ImGui::PushID(entry.UniqueID);
+
+        // ===== TITLE =====
+        float nameWidth = ImGui::CalcTextSize(entry.Name.c_str()).x;
+        ImGui::SetCursorPosX((rightWidth - nameWidth) * 0.5f);
+        ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.1f, 1.0f), "%s", entry.Name.c_str());
+
+        // ===== DESCRIPTION =====
+        if (!entry.Description.empty())
+        {
+            PushFontSafe(2);
+
+            float wrapWidth = rightWidth * 0.9f;
+            std::istringstream iss(entry.Description);
+            std::string word, line;
+            std::vector<std::string> lines;
+
+            while (iss >> word)
+            {
+                std::string testLine = line.empty() ? word : line + " " + word;
+                if (ImGui::CalcTextSize(testLine.c_str()).x > wrapWidth)
+                {
+                    lines.push_back(line);
+                    line = word;
+                }
+                else line = testLine;
+            }
+            if (!line.empty()) lines.push_back(line);
+
+            for (auto& l : lines)
+            {
+                float w = ImGui::CalcTextSize(l.c_str()).x;
+                ImGui::SetCursorPosX((rightWidth - w) * 0.5f);
+                ImGui::TextColored(ImVec4(0.0157f, 0.380f, 0.8f, 1.0f), "%s", l.c_str());
+            }
+
+            ImGui::Dummy(ImVec2(0.0f, 6.0f));
+            PopFontSafe(2);
+        }
+
+        // ===== TYPE + LENGTH (same line) =====
+        {
+            PushFontSafe(2);
+
+            const char* typeOptions[] = { "Hex", "Integer" };
+            int typeIndex = (entry.Type == "Integer") ? 1 : 0;
+
+            float typeLabelWidth = ImGui::CalcTextSize("Type:").x;
+            float typeComboWidth = 80.0f;
+
+            float lengthLabelWidth = ImGui::CalcTextSize("Length:").x;
+            float lengthInputWidth = 80.0f;
+
+            float totalWidth =
+                typeLabelWidth + typeComboWidth +
+                10.0f +
+                lengthLabelWidth + lengthInputWidth;
+
+            float startX = (rightWidth - totalWidth) * 0.5f;
+
+            ImGui::SetCursorPosX(startX);
+            ImGui::Text("Type:");
+            ImGui::SameLine();
+
+            ImGui::SetCursorPosX(startX + typeLabelWidth + 5.0f);
+            ImGui::PushItemWidth(typeComboWidth);
+            if (ImGui::Combo("##type", &typeIndex, typeOptions, IM_ARRAYSIZE(typeOptions)))
+                entry.Type = (typeIndex == 1 ? "Integer" : "Hex");
+            ImGui::PopItemWidth();
+
+            ImGui::SameLine();
+            ImGui::SetCursorPosX(startX + typeLabelWidth + typeComboWidth + 10.0f);
+            ImGui::Text("Length:");
+
+            ImGui::SameLine();
+            ImGui::SetCursorPosX(startX + typeLabelWidth + typeComboWidth + 10.0f + lengthLabelWidth + 5.0f);
+            ImGui::PushItemWidth(lengthInputWidth);
+            ImGui::InputInt("##length", &entry.Length, 1, 10);
+            if (entry.Length < 1) entry.Length = 1;
+            ImGui::PopItemWidth();
+
+            PopFontSafe(2);
+        }
+
+        // ===== ADDRESS COMBO =====
+        {
+            PushFontSafe(2);
+            std::vector<std::string> addrList;
+
+            if (!entry.Address.empty())
+                addrList.push_back(entry.Address);
+
+            for (auto& a : entry.Addresses)
+                addrList.push_back(a);
+
+            if (!addrList.empty())
+            {
+                int& selectedIdx = selectedIndexMap[entry.UniqueID];
+                if (selectedIdx >= addrList.size()) selectedIdx = 0;
+
+                std::string current = addrList[selectedIdx];
+
+                float labelWidth = ImGui::CalcTextSize("Address:").x;
+                float comboWidth = 120.0f;
+
+                ImGui::SetCursorPosX((rightWidth - (labelWidth + comboWidth + 10)) * 0.5f);
+                ImGui::Text("Address:");
+                ImGui::SameLine();
+
+                ImGui::PushItemWidth(comboWidth);
+                if (ImGui::BeginCombo("##addr", current.c_str()))
+                {
+                    for (int i = 0; i < addrList.size(); ++i)
+                    {
+                        bool selected = (selectedIdx == i);
+                        if (ImGui::Selectable(addrList[i].c_str(), selected))
+                            selectedIdx = i;
+                        if (selected)
+                            ImGui::SetItemDefaultFocus();
+                    }
+                    ImGui::EndCombo();
+                }
+                ImGui::PopItemWidth();
+            }
+
+            PopFontSafe(2);
+        }
+
+
+        // ===== DYNAMIC VALUE INPUT WIDTH =====
+        {
+            PushFontSafe(2);
+
+            char buffer[256];
+            strncpy(buffer, entry.Values.c_str(), sizeof(buffer));
+            buffer[255] = '\0';
+
+            float textWidth = ImGui::CalcTextSize(buffer).x;
+            float boxWidth = std::clamp(textWidth + 20.0f, 60.0f, 300.0f);
+            float labelWidth = ImGui::CalcTextSize("Value:").x;
+
+            ImGui::SetCursorPosX((rightWidth - (labelWidth + boxWidth + 10)) * 0.5f);
+            ImGui::Text("Value:");
+            ImGui::SameLine();
+
+            ImGui::PushItemWidth(boxWidth);
+            if (ImGui::InputText("##value", buffer, sizeof(buffer)))
+                entry.Values = buffer;
+            ImGui::PopItemWidth();
+
+            PopFontSafe(2);
+        }
+
+        // ===== Original | Modded =====
+        {
+            PushFontSafe(1);
+
+            std::string original = "In Retail: " + entry.OriginalValues;
+            std::string modded = "HUD Default: " + entry.ModdedValues;
+            std::string sep = "|";
+
+            ImVec2 o = ImGui::CalcTextSize(original.c_str());
+            ImVec2 m = ImGui::CalcTextSize(modded.c_str());
+            ImVec2 s = ImGui::CalcTextSize(sep.c_str());
+
+            float total = o.x + s.x + m.x + 10.0f;
+            float startX = (rightWidth - total) * 0.5f;
+
+            ImGui::SetCursorPosX(startX);
+            ImGui::TextUnformatted(original.c_str());
+            ImGui::SameLine();
+
+            ImGui::SetCursorPosX(startX + o.x + 5.0f);
+            ImGui::TextUnformatted(sep.c_str());
+            ImGui::SameLine();
+
+            ImGui::SetCursorPosX(startX + o.x + s.x + 10.0f);
+            ImGui::TextUnformatted(modded.c_str());
+
+            PopFontSafe(1);
+        }
+
+        ImGui::PopID();
+    }
+
+    ImGui::EndChild();     // end scrollable region
+    ImGui::Columns(1);     // reset
+    ImGui::End();          // end main window
 }
+
+
+
+
 
 void ShowD2RHUDMenu()
 {
