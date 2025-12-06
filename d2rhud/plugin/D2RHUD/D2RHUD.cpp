@@ -47,10 +47,10 @@
 
 #pragma region Global Static/Structs
 
-std::string configFilePath = "config.json";
+std::string configFilePath = "../Launcher/config.json";
 std::string filename = "../Launcher/D2RLAN_Config.txt";
 std::string lootFile = "../D2R/lootfilter.lua";
-std::string Version = "1.4.7";
+std::string Version = "1.4.8";
 
 using json = nlohmann::json;
 static MonsterStatsDisplaySettings cachedSettings;
@@ -244,29 +244,13 @@ struct EarAttributes {
 };
 
 struct Item {
-    // Existing fields
-    uint32_t id = 0;
-    uint8_t level = 0;
-    uint8_t quality = 0;
-    bool multiple_pictures = false;
-    uint8_t picture_id = 0;
-    bool class_specific = false;
-    uint16_t auto_affix_id = 0;
 
-    uint8_t low_quality_id = 0;
-    uint8_t file_index = 0;
-    uint16_t magic_prefix = 0;
-    uint16_t magic_suffix = 0;
-    uint16_t set_id = 0;
-    uint16_t unique_id = 0;
-    uint8_t rare_name_id = 0;
-    uint8_t rare_name_id2 = 0;
-    uint16_t magical_name_ids[6] = { 0 };
-
-    // New fields from ReadSimpleBits
+    // ----------------------------------------------------
+    // Base header (simple bits block)
+    // ----------------------------------------------------
     bool identified = false;
     bool socketed = false;
-    bool new_flag = false;  // 'new' is reserved in C++
+    bool new_flag = false;        // can't name this "new"
     bool is_ear = false;
     bool starter_item = false;
     bool simple_item = false;
@@ -281,13 +265,83 @@ struct Item {
     uint8_t position_y = 0;
     uint8_t alt_position_id = 0;
 
-    std::string type;                // Item type
+    // Debug copy of the bits BEFORE item ID (useful!)
+    std::vector<uint8_t> unknown_bits;
+
+
+    // ----------------------------------------------------
+    // Item core data
+    // ----------------------------------------------------
+    uint32_t id = 0;                // Item ID (DWORD)
+    uint8_t level = 0;
+    std::string type;               // 3 or 4 letter code
+
     uint8_t nr_of_items_in_sockets = 0;
 
-    EarAttributes ear_attributes;    // Ear-specific data
 
-    std::vector<uint8_t> unknown_bits; // Pre-ID unknown bits for debugging
+    // ----------------------------------------------------
+    // Picture, class-specific, auto-affix
+    // ----------------------------------------------------
+    bool multiple_pictures = false;
+    uint8_t picture_id = 0;
+    bool class_specific = false;
+    uint16_t auto_affix_id = 0;     // only for specific item flags
+
+
+    // ----------------------------------------------------
+    // Quality-dependent blocks
+    // ----------------------------------------------------
+    uint8_t quality = 0;
+
+    uint8_t low_quality_id = 0;     // for quality == low quality
+    uint8_t file_index = 0;         // used for superior / low quality
+
+    uint16_t magic_prefix = 0;      // 0–2047 range (11 bits each)
+    uint16_t magic_suffix = 0;
+
+    uint16_t set_id = 0;            // set item ID
+    uint16_t unique_id = 0;         // unique item ID
+
+    uint8_t rare_name_id = 0;       // rare names: 0–15
+    uint8_t rare_name_id2 = 0;      // suffix part
+    uint16_t magical_name_ids[6] = { 0 }; // for crafted/rare mods
+
+
+    // ----------------------------------------------------
+    // Ear block (only when is_ear == true)
+    // ----------------------------------------------------
+    struct EarAttributes {
+        uint8_t class_id = 0;
+        uint8_t level = 0;
+        std::string name;
+    };
+    EarAttributes ear_attributes;
+
+
+    // ----------------------------------------------------
+    // Runeword / personalization
+    // ----------------------------------------------------
+    uint16_t personalized_id = 0;     // who personalized the item
+    uint32_t runeword_id = 0;
+    uint32_t runeword_parameter = 0;
+
+
+    // ----------------------------------------------------
+    // Properties (magic mods, set mods, runeword mods...)
+    // ----------------------------------------------------
+    struct Property {
+        uint16_t stat = 0;
+        int32_t value = 0;
+        int32_t value2 = 0;         // some stats have two params
+    };
+    std::vector<Property> properties;
+
+    // ----------------------------------------------------
+    // Embedded socket items
+    // ----------------------------------------------------
+    std::vector<Item> socketed_items;
 };
+
 
 struct HuffmanNode {
     char value = 0; // 0 = internal node
@@ -393,68 +447,108 @@ std::string DecodeHuffmanString(BitReader& reader, HuffmanNode* root, int len) {
     return s;
 }
 
-void ReadSimpleBits(Item& item, BitReader& reader, uint32_t version, HuffmanNode* huffmanRoot) {
-    item.unknown_bits.reserve(32);
+void ReadSimpleBits(Item& item, BitReader& reader, uint32_t version, HuffmanNode* huffmanRoot)
+{
+    item.unknown_bits.clear();
 
-    // Flags
-    for (int i = 0; i < 4; i++) item.unknown_bits.push_back(reader.ReadBit() ? 1 : 0);
-    item.identified = reader.ReadBit();
-    for (int i = 0; i < 6; i++) item.unknown_bits.push_back(reader.ReadBit() ? 1 : 0);
-    item.socketed = reader.ReadBit();
-    item.unknown_bits.push_back(reader.ReadBit() ? 1 : 0);
-    item.new_flag = reader.ReadBit();
-    for (int i = 0; i < 2; i++) item.unknown_bits.push_back(reader.ReadBit() ? 1 : 0);
-    item.is_ear = reader.ReadBit();
-    item.starter_item = reader.ReadBit();
-    for (int i = 0; i < 3; i++) item.unknown_bits.push_back(reader.ReadBit() ? 1 : 0);
-    item.simple_item = reader.ReadBit();
-    item.ethereal = reader.ReadBit();
-    item.unknown_bits.push_back(reader.ReadBit() ? 1 : 0);
-    item.personalized = reader.ReadBit();
-    item.unknown_bits.push_back(reader.ReadBit() ? 1 : 0);
-    item.given_runeword = reader.ReadBit();
-    for (int i = 0; i < 5; i++) item.unknown_bits.push_back(reader.ReadBit() ? 1 : 0);
+    // === FLAG BITS (match JS order) ===
+    for (int i = 0; i < 4; i++) item.unknown_bits.push_back(reader.ReadBit());  // skip 4
+    item.identified = reader.ReadBit();                                         // identified
+    for (int i = 0; i < 6; i++) item.unknown_bits.push_back(reader.ReadBit());  // skip 6
+    item.socketed = reader.ReadBit();                                           // socketed
+    item.unknown_bits.push_back(reader.ReadBit());                              // skip 1
+    item.new_flag = reader.ReadBit();                                           // new
+    for (int i = 0; i < 2; i++) item.unknown_bits.push_back(reader.ReadBit());  // skip 2
+    item.is_ear = reader.ReadBit();                                             // is ear
+    item.starter_item = reader.ReadBit();                                       // starter
+    for (int i = 0; i < 3; i++) item.unknown_bits.push_back(reader.ReadBit());  // skip 3
+    item.simple_item = reader.ReadBit();                                        // simple
+    item.ethereal = reader.ReadBit();                                           // ethereal
+    item.unknown_bits.push_back(reader.ReadBit());                              // skip 1
+    item.personalized = reader.ReadBit();                                       // personalized
+    item.unknown_bits.push_back(reader.ReadBit());                              // skip 1
+    item.given_runeword = reader.ReadBit();                                     // runeword
+    for (int i = 0; i < 5; i++) item.unknown_bits.push_back(reader.ReadBit());  // skip 5
 
-    // Version
-    item.version = (version <= 0x60) ? reader.ReadUInt16(10) : reader.ReadUInt16(3);
+    // === VERSION ===
+    if (version <= 0x60)
+        item.version = reader.ReadUInt16(10);  // 10-bit for older versions
+    else
+        item.version = reader.ReadUInt16(3);   // 3-bit for D2R versions
 
-    // Location / position
-    item.location_id = reader.ReadUInt8(3);
-    item.equipped_id = reader.ReadUInt8(4);
-    item.position_x = reader.ReadUInt8(4);
-    item.position_y = reader.ReadUInt8(4);
-    item.alt_position_id = reader.ReadUInt8(3);
+    // === LOCATION DATA ===
+    item.location_id = reader.ReadUInt8(3);      // location
+    item.equipped_id = reader.ReadUInt8(4);      // equipped in slot
+    item.position_x = reader.ReadUInt8(4);       // column
+    item.position_y = reader.ReadUInt8(4);       // row
+    item.alt_position_id = reader.ReadUInt8(3);  // stored / alt pos
 
-    // Ear or type
-    if (item.is_ear) {
-        item.ear_attributes.clazz = reader.ReadUInt8(3);
+    // === EAR SPECIAL CASE ===
+    if (item.is_ear)
+    {
+        item.ear_attributes.class_id = reader.ReadUInt8(3);
         item.ear_attributes.level = reader.ReadUInt8(7);
-        item.ear_attributes.name.clear();
-        for (int i = 0; i < 15; i++) {
+
+        std::string name;
+        for (int i = 0; i < 15; i++)
+        {
             uint8_t ch = reader.ReadUInt8(7);
             if (ch == 0) break;
-            item.ear_attributes.name += static_cast<char>(ch);
+            name.push_back((char)ch);
         }
+        item.ear_attributes.name = name;
+        return;
     }
-    else {
-        if (version <= 0x60) {
-            for (int i = 0; i < 4; i++) item.type += static_cast<char>(reader.ReadUInt8(8));
-        }
-        else {
-            item.type = DecodeHuffmanString(reader, huffmanRoot, 4);
-        }
-        item.type.erase(std::remove(item.type.begin(), item.type.end(), '\0'), item.type.end());
-        uint8_t bits = item.simple_item ? 1 : 3;
-        item.nr_of_items_in_sockets = reader.ReadUInt8(bits);
+
+    // === ITEM TYPE ===
+    item.type.clear();
+    if (version <= 0x60)
+    {
+        for (int i = 0; i < 4; i++)
+            item.type.push_back((char)reader.ReadUInt8(8));
     }
+    else
+    {
+        item.type = DecodeHuffmanString(reader, huffmanRoot, 4); // decode exactly 4 chars
+    }
+
+    // Remove trailing nulls/spaces
+    while (!item.type.empty() && (item.type.back() == '\0' || item.type.back() == ' '))
+        item.type.pop_back();
+
+    // === SOCKET COUNT ===
+    uint8_t bits = item.simple_item ? 1 : 3;
+    item.nr_of_items_in_sockets = reader.ReadUInt8(bits);
 }
+
+
+
 
 // -------------------- ParseItem --------------------
 Item ParseItem(BitReader& reader, HuffmanNode* huffmanRoot, uint32_t version) {
     Item item;
 
+    // MUST read item header first ("JM")
+    char h1 = reader.ReadUInt8(8);
+    char h2 = reader.ReadUInt8(8);
+
+    if (!(h1 == 'J' && h2 == 'M')) {
+        // Output the bits of the two bytes
+        std::cout << "Item header mismatch at offset " << reader.GetBytePos() - 2 << "\n";
+        std::cout << "  Byte 1: 0x" << std::hex << (int)(uint8_t)h1 << " | bits: ";
+        for (int i = 7; i >= 0; --i) std::cout << ((h1 >> i) & 1);
+        std::cout << "\n";
+
+        std::cout << "  Byte 2: 0x" << std::hex << (int)(uint8_t)h2 << " | bits: ";
+        for (int i = 7; i >= 0; --i) std::cout << ((h2 >> i) & 1);
+        std::cout << std::dec << std::endl;
+
+        throw std::runtime_error("Item header 'JM' not found at correct position");
+    }
+
     ReadSimpleBits(item, reader, version, huffmanRoot);
 
+    /*
     // Parse remaining fields based on quality
     item.id = reader.ReadUInt32(32);
     item.level = reader.ReadUInt8(7);
@@ -483,6 +577,7 @@ Item ParseItem(BitReader& reader, HuffmanNode* huffmanRoot, uint32_t version) {
     case 6: item.unique_id = reader.ReadUInt16(12); break;
     default: break;
     }
+    */
 
     return item;
 }
@@ -499,6 +594,7 @@ void ParseSharedStash(const std::string& filePath) {
     size_t tabIndex = 1;
 
     while (offset + 8 <= buf.size()) {
+        // Detect tab header
         if (buf[offset] == 0x55 && buf[offset + 1] == 0xAA &&
             buf[offset + 2] == 0x55 && buf[offset + 3] == 0xAA &&
             buf[offset + 4] == 0x01 && buf[offset + 5] == 0x00 &&
@@ -507,59 +603,114 @@ void ParseSharedStash(const std::string& filePath) {
             std::cout << "Found tab " << tabIndex << " at offset " << offset << std::endl;
 
             size_t versionOffset = offset + 8;
-            std::cout << "  Version bytes at offset " << versionOffset << ": ";
-            for (int i = 0; i < 4; ++i) std::cout << std::hex << (int)buf[versionOffset + i] << " ";
-            std::cout << std::dec << std::endl;
+            uint8_t version = buf[versionOffset];
 
-            // Tab item count (1 byte)
             uint8_t numItems = buf[versionOffset + 4];
-            std::cout << "  Tab item count at offset " << (versionOffset + 4) << ": " << (int)numItems << std::endl;
+            std::cout << "  Tab item count: " << (int)numItems << std::endl;
 
-            // Skip unknown 32 bytes
-            size_t itemDataStart = versionOffset + 4 + 32;
+            // Move BitReader to start of first item (byte 40 relative to tab start)
+            size_t itemDataStart = offset + 64;
+            std::cout << "  Starting first item at byte offset " << itemDataStart << std::endl;
 
             BitReader reader(buf);
-            reader.SkipBits(itemDataStart * 8); // Move to start of item data
+            reader.SkipBits(itemDataStart * 8);
             reader.AlignToByte();
+
+            // Dump next N bytes for debugging before reading items
+            const size_t dumpBytes = 64; // adjust as needed
+            std::cout << "  Next " << dumpBytes << " bytes for this tab: ";
+            for (size_t i = 0; i < dumpBytes && itemDataStart + i < buf.size(); ++i) {
+                std::cout << std::hex << std::setw(2) << std::setfill('0')
+                    << (int)buf[itemDataStart + i] << " ";
+            }
+            std::cout << std::dec << std::endl;
 
             for (int i = 0; i < numItems; ++i) {
                 size_t itemOffset = reader.GetBytePos();
 
                 try {
-                    // Assume version is first byte at versionOffset
-                    uint32_t version = buf[versionOffset];
-
+                    // Parse item
                     Item item = ParseItem(reader, BuildHuffmanTree(), version);
 
-                    std::cout << "    Item at offset " << itemOffset
-                        << " | Quality: " << (int)item.quality
-                        << " | Level: " << (int)item.level
-                        << " | ID: " << item.id;
+                    // Print flags and simple data
+                    std::cout << "--------------------------------------------------\n";
+                    std::cout << "Item at offset " << itemOffset << "\n";
+                    std::cout << "  Identified: " << item.identified << "\n";
+                    std::cout << "  Socketed: " << item.socketed << "\n";
+                    std::cout << "  New Item: " << item.new_flag << "\n";
+                    std::cout << "  Is Ear: " << item.is_ear << "\n";
+                    std::cout << "  Starter Item: " << item.starter_item << "\n";
+                    std::cout << "  Simple Item: " << item.simple_item << "\n";
+                    std::cout << "  Ethereal: " << item.ethereal << "\n";
+                    std::cout << "  Personalized: " << item.personalized << "\n";
+                    std::cout << "  Given Runeword: " << item.given_runeword << "\n";
 
-                    if (item.set_id != 0)
-                        std::cout << " | Set ID: " << item.set_id;
-                    if (item.unique_id != 0)
-                        std::cout << " | Unique ID: " << item.unique_id;
+                    std::cout << "  Version: " << item.version << "\n";
+                    std::cout << "  Location ID: " << (int)item.location_id << "\n";
+                    std::cout << "  Equipped ID: " << (int)item.equipped_id << "\n";
+                    std::cout << "  Position X: " << (int)item.position_x << "\n";
+                    std::cout << "  Position Y: " << (int)item.position_y << "\n";
+                    std::cout << "  Alt Position ID: " << (int)item.alt_position_id << "\n";
 
-                    std::cout << std::endl;
+                    if (item.is_ear) {
+                        std::cout << "  Ear Class: " << (int)item.ear_attributes.class_id << "\n";
+                        std::cout << "  Ear Level: " << (int)item.ear_attributes.level << "\n";
+                        std::cout << "  Ear Name:  " << item.ear_attributes.name << "\n";
+                    }
+                    else {
+                        std::cout << "  Item Type: \"" << item.type << "\"\n";
+                        std::cout << "  Items In Sockets: " << (int)item.nr_of_items_in_sockets << "\n";
+                    }
+
+                    std::cout << "  ID: " << item.id << "\n";
+                    std::cout << "  Level: " << (int)item.level << "\n";
+                    std::cout << "  Quality: " << (int)item.quality << "\n";
+
+                    if (item.multiple_pictures)
+                        std::cout << "  Picture ID: " << (int)item.picture_id << "\n";
+                    if (item.class_specific)
+                        std::cout << "  Auto Affix ID: " << item.auto_affix_id << "\n";
+
+                    // Quality-specific fields
+                    switch (item.quality) {
+                    case 0: std::cout << "  Low Quality ID: " << (int)item.low_quality_id << "\n"; break;
+                    case 2: std::cout << "  File Index: " << (int)item.file_index << "\n"; break;
+                    case 3: std::cout << "  Magic Prefix: " << item.magic_prefix << "\n"
+                        << "  Magic Suffix: " << item.magic_suffix << "\n"; break;
+                    case 4:
+                        std::cout << "  Rare Name IDs: " << (int)item.rare_name_id << ", " << (int)item.rare_name_id2 << "\n";
+                        std::cout << "  Magical Name IDs: ";
+                        for (int n = 0; n < 6; n++)
+                            if (item.magical_name_ids[n]) std::cout << item.magical_name_ids[n] << " ";
+                        std::cout << "\n";
+                        break;
+                    case 5: std::cout << "  Set ID: " << item.set_id << "\n"; break;
+                    case 6: std::cout << "  Unique ID: " << item.unique_id << "\n"; break;
+                    }
+
+                    if (!item.unknown_bits.empty()) {
+                        std::cout << "  Unknown Bits: ";
+                        for (uint8_t b : item.unknown_bits)
+                            std::cout << (int)b;
+                        std::cout << "\n";
+                    }
+
                 }
                 catch (std::exception& e) {
-                    std::cout << "    Failed to parse item at offset " << itemOffset
-                        << ": " << e.what() << std::endl;
-
+                    std::cout << "Failed to parse item at offset " << itemOffset << ": " << e.what() << std::endl;
                     break; // stop parsing this tab
                 }
             }
 
-
             tabIndex++;
-            offset += 8;
+            offset += 8; // move past the tab header
         }
         else {
             offset++;
         }
     }
 }
+
 
 #pragma endregion
 
@@ -1335,7 +1486,6 @@ int mapColorToInt(const std::string& colorCode) {
         return -1;
     }
 }
-
 
 MonsterStatsDisplaySettings getMonsterStatsDisplaySetting(const std::string& configFilePath) {
     StartPolling();
@@ -4219,6 +4369,7 @@ void LoadAllItemData()
     LoadSetItems("Mods/" + modName + "/" + modName + ".mpq/data/global/excel/setitems.txt");
     SortItemLists();
     LoadGrailProgress("Grail_Settings_" + GetModName() + ".json");
+    
 
     //GenerateStaticArrays("Mods/" + modName + "/" + modName + ".mpq/data/global/excel/uniqueitems.txt", 10);
     //GenerateStaticArrays("Mods/" + modName + "/" + modName + ".mpq/data/global/excel/setitems.txt", 10);
@@ -4308,12 +4459,14 @@ static bool showHotkeyMenu = false;
 static bool showGrailMenu = false;
 LootFilterHeader g_LootFilterHeader;
 std::unordered_map<std::string, std::string> g_LuaVariables;
+std::unordered_map<std::string, std::string> g_LuaVariableComments;
 std::unordered_map<std::string, std::pair<std::string, std::string>> g_Hotkeys;
 std::vector<MemoryConfigEntry> g_MemoryConfigs;
 static D2RHUDConfig d2rHUDConfig;
 bool lootConfigLoaded = false;
 bool lootLogicLoaded = false;
 bool showExcluded = false;
+bool HUDConfigLoaded = false;
 
 #pragma endregion
 
@@ -4494,6 +4647,24 @@ void ProcessBackups()
     }
 }
 
+std::unordered_map<std::string, ImVec4> g_TextColors = {
+    { "red",          ImVec4(0.98824f, 0.27451f, 0.27451f, 1.0f) },
+    { "green",        ImVec4(0.0f, 0.98824f, 0.0f, 1.0f) },
+    { "blue",         ImVec4(0.43137f, 0.43137f, 1.0f, 1.0f) },
+    { "gold",         ImVec4(0.78039f, 0.70196f, 0.46667f, 1.0f) },
+    { "gray",         ImVec4(0.38824f, 0.38824f, 0.38824f, 1.0f) },
+    { "grey",         ImVec4(0.38824f, 0.38824f, 0.38824f, 1.0f) },
+    { "orange",       ImVec4(1.0f, 0.65882f, 0.0f, 1.0f) },
+    { "darkgreen",    ImVec4(0.0f, 0.50196f, 0.0f, 1.0f) },
+    { "yellow",       ImVec4(1.0f, 1.0f, 0.39216f, 1.0f) },
+    { "purple",       ImVec4(0.75294f, 0.50196f, 0.94902f, 1.0f) },
+    { "white",        ImVec4(1.0f, 1.0f, 1.0f, 1.0f) },
+    { "turquoise",    ImVec4(0.02353f, 0.64706f, 0.86667f, 1.0f) },
+    { "pink",         ImVec4(1.0f, 0.50196f, 1.0f, 1.0f) },
+    { "lilac",        ImVec4(0.66667f, 0.66667f, 1.0f, 1.0f) },
+    { "black",        ImVec4(0.0f, 0.0f, 0.0f, 1.0f) },
+};
+
 #pragma endregion
 
 #pragma region - File Load/Save
@@ -4531,6 +4702,7 @@ void LoadHotkeys(const std::string& filename)
 void LoadLootFilterConfig(const std::string& path)
 {
     g_LuaVariables.clear();
+    g_LuaVariableComments.clear();
     g_LootFilterHeader = {}; // reset
 
     std::ifstream file(path);
@@ -4538,7 +4710,6 @@ void LoadLootFilterConfig(const std::string& path)
         return;
 
     std::string line;
-    std::regex assignRegex(R"(^\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*(.+?),\s*$)");
     int nestingLevel = 0; // track { } nesting
 
     while (std::getline(file, line))
@@ -4551,9 +4722,8 @@ void LoadLootFilterConfig(const std::string& path)
 
             // Trim leading spaces
             for (auto* str : { &g_LootFilterHeader.Title })
-            {
                 if (!str->empty() && (*str)[0] == ' ') *str = str->substr(1);
-            }
+
             continue;
         }
 
@@ -4567,8 +4737,24 @@ void LoadLootFilterConfig(const std::string& path)
         // Only parse top-level assignments
         if (nestingLevel == 1)
         {
+            // --- Split comment from value ---
+            std::string keyValuePart = line;
+            std::string commentPart;
+
+            size_t commentPos = line.find("--");
+            if (commentPos != std::string::npos)
+            {
+                keyValuePart = line.substr(0, commentPos);
+                commentPart = line.substr(commentPos + 2);
+                // Trim leading spaces in comment
+                while (!commentPart.empty() && commentPart.front() == ' ')
+                    commentPart = commentPart.substr(1);
+            }
+
+            // --- Match key/value ---
+            std::regex assignRegex(R"(^\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*(.+?),?\s*$)");
             std::smatch match;
-            if (std::regex_match(line, match, assignRegex))
+            if (std::regex_match(keyValuePart, match, assignRegex))
             {
                 std::string key = match[1].str();
                 std::string value = match[2].str();
@@ -4578,6 +4764,9 @@ void LoadLootFilterConfig(const std::string& path)
                     value = value.substr(1, value.size() - 2);
 
                 g_LuaVariables[key] = value;
+
+                if (!commentPart.empty())
+                    g_LuaVariableComments[key] = commentPart;
             }
         }
     }
@@ -4697,27 +4886,37 @@ void LoadMemoryConfigs(const std::string& path)
 
 void LoadD2RHUDConfig(const std::string& path)
 {
-    std::ifstream file(path);
-    if (!file.is_open()) return;
+    std::string cleanedJson = CleanJsonFile(path);
+    if (cleanedJson.empty())
+    {
+        std::cerr << "Failed to read or clean D2RHUD config file: " << path << std::endl;
+        return;
+    }
 
-    nlohmann::json j;
-    file >> j;
+    try
+    {
+        nlohmann::json j = nlohmann::json::parse(cleanedJson);
 
-    d2rHUDConfig.MonsterStatsDisplay = j.value("MonsterStatsDisplay", d2rHUDConfig.MonsterStatsDisplay);
-    d2rHUDConfig.ChannelColor = j.value("ChannelColor", d2rHUDConfig.ChannelColor);
-    d2rHUDConfig.PlayerNameColor = j.value("PlayerNameColor", d2rHUDConfig.PlayerNameColor);
-    d2rHUDConfig.MessageColor = j.value("MessageColor", d2rHUDConfig.MessageColor);
-    d2rHUDConfig.HPRolloverMods = j.value("HPRolloverMods", d2rHUDConfig.HPRolloverMods);
-    d2rHUDConfig.HPRolloverPercent = j.value("HPRolloverPercent", d2rHUDConfig.HPRolloverPercent);
-    d2rHUDConfig.HPRolloverDifficulty = j.value("HPRolloverDifficulty", d2rHUDConfig.HPRolloverDifficulty);
-    d2rHUDConfig.SunderedMonUMods = j.value("SunderedMonUMods", d2rHUDConfig.SunderedMonUMods);
-    d2rHUDConfig.SunderValue = j.value("SunderValue", d2rHUDConfig.SunderValue);
-    d2rHUDConfig.MinionEquality = j.value("MinionEquality", d2rHUDConfig.MinionEquality);
-    d2rHUDConfig.GambleCostControl = j.value("GambleCostControl", d2rHUDConfig.GambleCostControl);
-    d2rHUDConfig.CombatLog = j.value("CombatLog", d2rHUDConfig.CombatLog);
+        d2rHUDConfig.MonsterStatsDisplay = j.value("MonsterStatsDisplay", d2rHUDConfig.MonsterStatsDisplay);
+        d2rHUDConfig.ChannelColor = j.value("ChannelColor", d2rHUDConfig.ChannelColor);
+        d2rHUDConfig.PlayerNameColor = j.value("PlayerNameColor", d2rHUDConfig.PlayerNameColor);
+        d2rHUDConfig.MessageColor = j.value("MessageColor", d2rHUDConfig.MessageColor);
+        d2rHUDConfig.HPRolloverMods = j.value("HPRolloverMods", d2rHUDConfig.HPRolloverMods);
+        d2rHUDConfig.HPRolloverPercent = j.value("HPRollover%", d2rHUDConfig.HPRolloverPercent);
+        d2rHUDConfig.HPRolloverDifficulty = j.value("HPRolloverDifficulty", d2rHUDConfig.HPRolloverDifficulty);
+        d2rHUDConfig.SunderedMonUMods = j.value("SunderedMonUMods", d2rHUDConfig.SunderedMonUMods);
+        d2rHUDConfig.SunderValue = j.value("SunderValue", d2rHUDConfig.SunderValue);
+        d2rHUDConfig.MinionEquality = j.value("MinionEquality", d2rHUDConfig.MinionEquality);
+        d2rHUDConfig.GambleCostControl = j.value("GambleCostControl", d2rHUDConfig.GambleCostControl);
+        d2rHUDConfig.CombatLog = j.value("CombatLog", d2rHUDConfig.CombatLog);
 
-    if (j.contains("DLLsToLoad"))
-        d2rHUDConfig.DLLsToLoad = j["DLLsToLoad"].get<std::vector<std::string>>();
+        if (j.contains("DLLsToLoad"))
+            d2rHUDConfig.DLLsToLoad = j["DLLsToLoad"].get<std::vector<std::string>>();
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "Failed to parse D2RHUD config: " << e.what() << std::endl;
+    }
 }
 
 bool SaveD2RHUDConfig(const std::string& path)
@@ -5564,6 +5763,52 @@ void ShowLootMenu()
         lootLogicLoaded = true;
     }
 
+    auto RenderColoredText = [&](const std::string& text)
+        {
+            ImVec4 currentColor = g_TextColors["white"]; // default color
+            size_t pos = 0;
+
+            while (pos < text.size())
+            {
+                size_t openBrace = text.find('{', pos);
+
+                if (openBrace != pos)
+                {
+                    // Render text before the next color code
+                    if (openBrace == std::string::npos) openBrace = text.size();
+                    ImGui::PushStyleColor(ImGuiCol_Text, currentColor);
+                    ImGui::TextUnformatted(text.c_str() + pos, text.c_str() + openBrace);
+                    ImGui::PopStyleColor();
+                    ImGui::SameLine(0.0f, 0.0f);
+                    pos = openBrace;
+                }
+
+                if (pos >= text.size()) break;
+
+                // Must be a '{', find closing brace
+                size_t closeBrace = text.find('}', pos);
+                if (closeBrace == std::string::npos)
+                {
+                    // Invalid, just render the rest
+                    ImGui::PushStyleColor(ImGuiCol_Text, currentColor);
+                    ImGui::TextUnformatted(text.c_str() + pos);
+                    ImGui::PopStyleColor();
+                    break;
+                }
+
+                // Extract color code, convert to lowercase for case-insensitive lookup
+                std::string colorCode = text.substr(pos + 1, closeBrace - pos - 1);
+                std::transform(colorCode.begin(), colorCode.end(), colorCode.begin(),
+                    [](unsigned char c) { return std::tolower(c); });
+
+                // Lookup in map
+                auto it = g_TextColors.find(colorCode);
+                currentColor = (it != g_TextColors.end()) ? it->second : g_TextColors["white"];
+
+                pos = closeBrace + 1; // move past the closing brace
+            }
+        };
+
     EnableAllInput();
     CenterWindow(ImVec2(800, 400));
     static std::string hoveredKey;
@@ -5660,16 +5905,22 @@ void ShowLootMenu()
     RenderCheckboxLine(bools);
 
     // --- Input Text Helper ---
+    // Map to track which key is in edit mode
+    static std::unordered_map<std::string, bool> g_EditMode;
+
     auto RenderInputText = [&](const std::string& key, const std::string& label, const std::string& defaultVal = "Not Defined")
         {
+            // --- Get value ---
             std::string value = defaultVal;
             auto it = g_LuaVariables.find(key);
             if (it != g_LuaVariables.end()) value = it->second;
-            if (!value.empty() && value.front() == '"' && value.back() == '"') value = value.substr(1, value.size() - 2);
+
+            // Strip quotes for display
+            if (!value.empty() && value.front() == '"' && value.back() == '"')
+                value = value.substr(1, value.size() - 2);
 
             std::string fullLabel = label + " = ";
             float labelWidth = ImGui::CalcTextSize(fullLabel.c_str()).x;
-            float valueWidth = ImGui::CalcTextSize(value.c_str()).x + 8.0f;
 
             ImVec2 cursorPos = ImGui::GetCursorPos();
             ImGui::SetCursorPosY(cursorPos.y - 2.0f);
@@ -5677,27 +5928,45 @@ void ShowLootMenu()
             ImGui::Text("%s", fullLabel.c_str());
             ImGui::SameLine(labelWidth + 10.0f, -3.0f);
 
-            char buffer[256];
-            strncpy(buffer, value.c_str(), sizeof(buffer));
-            buffer[sizeof(buffer) - 1] = '\0';
+            bool isEditing = g_EditMode[key];
 
-            std::string inputID = "##val_" + key;
-            ImGui::PushItemWidth(valueWidth);
-            bool changed = ImGui::InputText(inputID.c_str(), buffer, sizeof(buffer));
-            if (ImGui::IsItemActivated()) ImGui::SetKeyboardFocusHere(-1);
-            if (changed)
+            if (isEditing)
             {
-                auto it2 = g_LuaVariables.find(key);
-                if (it2 != g_LuaVariables.end()) it2->second = buffer;
-                else g_LuaVariables.insert({ key, buffer });
-            }
-            ImGui::PopItemWidth();
+                // --- Edit mode: normal input ---
+                char buffer[512];
+                strncpy(buffer, value.c_str(), sizeof(buffer));
+                buffer[sizeof(buffer) - 1] = '\0';
 
+                std::string inputID = "##val_" + key;
+                ImGui::PushItemWidth(300.0f); // adjust width as needed
+                bool changed = ImGui::InputText(inputID.c_str(), buffer, sizeof(buffer));
+                ImGui::PopItemWidth();
+
+                if (ImGui::IsItemActivated()) ImGui::SetKeyboardFocusHere(-1);
+
+                if (changed) g_LuaVariables[key] = buffer;
+
+                ImGui::SameLine();
+                if (ImGui::Button(("Done##" + key).c_str())) g_EditMode[key] = false;
+            }
+            else
+            {
+                // --- Display mode: colored text ---
+                RenderColoredText(value); // uses your function
+
+                ImGui::SameLine();
+                if (ImGui::Button(("Edit##" + key).c_str())) g_EditMode[key] = true;
+            }
+
+            // --- Hover detection ---
             ImVec2 itemMin = ImGui::GetItemRectMin();
             ImVec2 itemMax = ImGui::GetItemRectMax();
             itemMin.x -= labelWidth;
             if (ImGui::IsMouseHoveringRect(itemMin, itemMax)) hoveredKey = key;
         };
+
+
+
 
     RenderInputText("reload", "Reload Message");
     RenderInputText("audioVoice", "Audio Voice");
@@ -6049,29 +6318,16 @@ void ShowMemoryMenu()
     ImGui::End();          // end main window
 }
 
-
-
-
-
 void ShowD2RHUDMenu()
 {
     if (!showD2RHUDMenu) return;
-
+        
     static std::string saveStatusMessage = "";
     static ImVec4 saveStatusColor = ImVec4(0, 1, 0, 1); // default green
     static bool initialized = false;
     if (!initialized)
     {
-        // Initialize from cachedSettings
-        d2rHUDConfig.MonsterStatsDisplay = cachedSettings.monsterStatsDisplay;
-        d2rHUDConfig.HPRolloverMods = cachedSettings.HPRollover;
-        d2rHUDConfig.HPRolloverPercent = cachedSettings.HPRolloverAmt;
-        d2rHUDConfig.SunderedMonUMods = cachedSettings.sunderedMonUMods;
-        d2rHUDConfig.SunderValue = cachedSettings.SunderValue;
-        d2rHUDConfig.MinionEquality = cachedSettings.minionEquality;
-        d2rHUDConfig.GambleCostControl = cachedSettings.gambleForce;
-        d2rHUDConfig.CombatLog = cachedSettings.CombatLog;
-
+        LoadD2RHUDConfig("../Launcher/config.json");
         initialized = true;
     }
 
