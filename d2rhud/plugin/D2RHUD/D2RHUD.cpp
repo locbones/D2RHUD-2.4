@@ -48,7 +48,7 @@
 #pragma region Global Static/Structs
 
 std::string lootFile = "../D2R/lootfilter.lua";
-std::string Version = "1.4.9";
+std::string Version = "1.5.0";
 
 using json = nlohmann::json;
 static MonsterStatsDisplaySettings cachedSettings;
@@ -72,8 +72,6 @@ static std::string GetModName() {
 }
 std::string modName = GetModName();
 std::string configFilePath = "HUDConfig_" + modName + ".json";
-MonsterStatsDisplaySettings settings;
-
 
 #pragma endregion
 
@@ -1492,13 +1490,17 @@ int mapColorToInt(const std::string& colorCode) {
 
 MonsterStatsDisplaySettings getMonsterStatsDisplaySetting(const std::string& configFilePath)
 {
-    StartPolling();
-
     static bool isCached = false;
     static MonsterStatsDisplaySettings cachedSettings;
 
+    // ---- Cache check ----
     if (isCached)
+    {
+        std::cerr << "[DEBUG] Cache HIT — returning cached MonsterStatsDisplaySettings" << std::endl;
         return cachedSettings;
+    }
+
+    StartPolling();
 
     using ordered_json = nlohmann::ordered_json;
     ordered_json j;
@@ -1515,14 +1517,14 @@ MonsterStatsDisplaySettings getMonsterStatsDisplaySetting(const std::string& con
         if (!fs::exists(targetPath) && fs::exists(templatePath))
         {
             fs::rename(templatePath, targetPath);
-            std::cout << "[INFO] First-time setup: renamed HUDConfig_Template.json -> " << targetPath << std::endl;
+            std::cerr << "[INFO] First-time setup: renamed HUDConfig_Template.json -> " << targetPath << std::endl;
         }
 
         std::ifstream file(targetPath);
         if (!file.is_open())
         {
             std::cerr << "[ERROR] Could not open config file: " << targetPath << std::endl;
-            return cachedSettings;
+            return {};
         }
 
         file >> j;
@@ -1530,93 +1532,80 @@ MonsterStatsDisplaySettings getMonsterStatsDisplaySetting(const std::string& con
     catch (const std::exception& e)
     {
         std::cerr << "[ERROR] Failed to parse JSON config: " << e.what() << std::endl;
-        return cachedSettings;
+        return {};
     }
 
-    std::cout << "[DEBUG] Loaded JSON config successfully: " << configFilePath << std::endl;
+    if (!j.is_object())
+    {
+        std::cerr << "[ERROR] Config root is not a JSON object" << std::endl;
+        return {};
+    }
+
+    std::cerr << "[DEBUG] JSON config loaded successfully" << std::endl;
 
     // ---------------- Helper functions ----------------
-    auto getBool = [&](const std::string& key, bool def) -> bool {
-        if (j.contains(key) && j[key].is_boolean())
-            return j[key].get<bool>();
-        std::cout << "[DEBUG] Key missing or not boolean: " << key << ", using default: " << (def ? "true" : "false") << std::endl;
-        return def;
+    auto getBool = [&](std::initializer_list<std::string> path, bool def) -> bool
+        {
+            const ordered_json* cur = &j;
+            for (const auto& p : path)
+            {
+                if (!cur->contains(p))
+                    return def;
+                cur = &(*cur)[p];
+            }
+            return cur->is_boolean() ? cur->get<bool>() : def;
         };
 
-    auto getInt = [&](const std::string& key, int def) -> int {
-        if (j.contains(key) && j[key].is_number_integer())
-            return j[key].get<int>();
-        std::cout << "[DEBUG] Key missing or not integer: " << key << ", using default: " << def << std::endl;
-        return def;
+    auto getInt = [&](std::initializer_list<std::string> path, int def) -> int
+        {
+            const ordered_json* cur = &j;
+            for (const auto& p : path)
+            {
+                if (!cur->contains(p))
+                    return def;
+                cur = &(*cur)[p];
+            }
+            return cur->is_number_integer() ? cur->get<int>() : def;
         };
 
-    auto getString = [&](const std::string& key, const std::string& def) -> std::string {
-        if (j.contains(key) && j[key].is_string())
-            return j[key].get<std::string>();
-        std::cout << "[DEBUG] Key missing or not string: " << key << ", using default: \"" << def << "\"" << std::endl;
-        return def;
+    auto getString = [&](std::initializer_list<std::string> path,
+        const std::string& def) -> std::string
+        {
+            const ordered_json* cur = &j;
+            for (const auto& p : path)
+            {
+                if (!cur->contains(p))
+                    return def;
+                cur = &(*cur)[p];
+            }
+            return cur->is_string() ? cur->get<std::string>() : def;
         };
 
-    auto printBool = [&](const std::string& key, bool value) {
-        std::cout << "[DEBUG] " << key << ": " << (value ? "true" : "false") << std::endl;
-        };
+    // ---------------- Populate settings ----------------
+    cachedSettings.monsterStatsDisplay = getBool({ "MonsterStatsDisplay" }, true);
+    cachedSettings.channelColor = getString({ "Channel Color" }, "");
+    cachedSettings.playerNameColor = getString({ "Player Name Color" }, "");
+    cachedSettings.messageColor = getString({ "Message Color" }, "");
 
-    auto printInt = [&](const std::string& key, int value) {
-        std::cout << "[DEBUG] " << key << ": " << value << std::endl;
-        };
+    cachedSettings.HPRollover = getBool({ "HPRolloverMods" }, true);
+    cachedSettings.HPRolloverAmt = getInt({ "HPRollover%" }, 0);
+    cachedSettings.HPRolloverDiff = getInt({ "HPRolloverDifficulty" }, 0);
 
-    auto printString = [&](const std::string& key, const std::string& value) {
-        std::cout << "[DEBUG] " << key << ": \"" << value << "\"" << std::endl;
-        };
+    cachedSettings.sunderedMonUMods = getBool({ "SunderedMonUMods" }, true);
+    cachedSettings.minionEquality = getBool({ "MinionEquality" }, true);
+    cachedSettings.gambleForce = getBool({ "GambleCostControl" }, true);
+    cachedSettings.SunderValue = getInt({ "SunderValue" }, 0);
+    cachedSettings.CombatLog = getBool({ "CombatLog" }, true);
+    cachedSettings.TransmogVisuals = getBool({ "TransmogVisuals" }, true);
+    cachedSettings.ExtendedItemcodes = getBool({ "ExtendedItemcodes" }, true);
+    cachedSettings.FloatingDamage = getBool({ "FloatingDamage" }, true);
 
-    // ---------------- Core toggles ----------------
-    cachedSettings.monsterStatsDisplay = getBool("MonsterStatsDisplay", true);
-    cachedSettings.channelColor = getString("Channel Color", "");
-    cachedSettings.playerNameColor = getString("Player Name Color", "");
-    cachedSettings.messageColor = getString("Message Color", "");
-
-    printBool("MonsterStatsDisplay", cachedSettings.monsterStatsDisplay);
-    printString("Channel Color", cachedSettings.channelColor);
-    printString("Player Name Color", cachedSettings.playerNameColor);
-    printString("Message Color", cachedSettings.messageColor);
-
-    // ---------------- HP rollover ----------------
-    cachedSettings.HPRollover = getBool("HPRolloverMods", true);
-    cachedSettings.HPRolloverAmt = getInt("HPRollover%", 0);
-    cachedSettings.HPRolloverDiff = getInt("HPRolloverDifficulty", 0);
-
-    printBool("HPRollover", cachedSettings.HPRollover);
-    printInt("HPRollover%", cachedSettings.HPRolloverAmt);
-    printInt("HPRolloverDifficulty", cachedSettings.HPRolloverDiff);
-
-    // ---------------- Misc gameplay flags ----------------
-    cachedSettings.sunderedMonUMods = getBool("SunderedMonUMods", true);
-    cachedSettings.minionEquality = getBool("MinionEquality", true);
-    cachedSettings.gambleForce = getBool("GambleCostControl", true);
-    cachedSettings.SunderValue = getInt("SunderValue", 0);
-    cachedSettings.CombatLog = getBool("CombatLog", true);
-    cachedSettings.TransmogVisuals = getBool("TransmogVisuals", true);
-    cachedSettings.ExtendedItemcodes = getBool("ExtendedItemcodes", true);
-    cachedSettings.FloatingDamage = getBool("FloatingDamage", true);
-
-    printBool("SunderedMonUMods", cachedSettings.sunderedMonUMods);
-    printBool("MinionEquality", cachedSettings.minionEquality);
-    printBool("GambleForce", cachedSettings.gambleForce);
-    printInt("SunderValue", cachedSettings.SunderValue);
-    printBool("CombatLog", cachedSettings.CombatLog);
-    printBool("TransmogVisuals", cachedSettings.TransmogVisuals);
-    printBool("ExtendedItemcodes", cachedSettings.ExtendedItemcodes);
-    printBool("FloatingDamage", cachedSettings.FloatingDamage);
-
-    // ---------------- Done ----------------
+    // ---------------- Finalize cache ----------------
     isCached = true;
-    std::cout << "[DEBUG] MonsterStatsDisplaySettings cached successfully." << std::endl;
-
     return cachedSettings;
 }
 
-
-//MonsterStatsDisplaySettings settings = getMonsterStatsDisplaySetting(configFilePath);
+MonsterStatsDisplaySettings settings = getMonsterStatsDisplaySetting(configFilePath);
 
 #pragma endregion
 
@@ -8625,12 +8614,9 @@ void D2RHUD::OnDraw() {
     bool configLoaded = false;
     if (!configLoaded)
     {
-        settings = getMonsterStatsDisplaySetting(configFilePath);
         LoadCommandsAndKeybinds("HUDConfig_" + modName + ".json");
         configLoaded = true;
     }
-
-    settings = getMonsterStatsDisplaySetting(configFilePath);
 
     if (!menuClickHookInstalled)
     {
