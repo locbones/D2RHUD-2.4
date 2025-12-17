@@ -48,7 +48,7 @@
 #pragma region Global Static/Structs
 
 std::string lootFile = "../D2R/lootfilter.lua";
-std::string Version = "1.5.0";
+std::string Version = "1.5.1";
 
 using json = nlohmann::json;
 static MonsterStatsDisplaySettings cachedSettings;
@@ -5643,6 +5643,7 @@ void LoadMemoryConfigs(const std::string& path)
         Log("Override config file not found: " + overridePath);
     }
 
+
     // --- Merge override entries ---
     if (jOverride.contains("MemoryConfigs") && jOverride["MemoryConfigs"].is_array())
     {
@@ -5666,7 +5667,6 @@ void LoadMemoryConfigs(const std::string& path)
                 }
 
                 MemoryConfigEntry m;
-                m.UniqueID = index++;
                 m.Name = name;
                 m.Description = entry.value("Description", "");
                 m.Category = entry.value("Category", "");
@@ -5677,8 +5677,6 @@ void LoadMemoryConfigs(const std::string& path)
                 m.Values = entry.value("Values", "");
                 m.OriginalValues = entry.value("OriginalValues", "");
                 m.ModdedValues = entry.value("ModdedValues", "");
-                m.Override = entry.value("Override", 0);
-                m.OverrideReason = entry.value("OverrideReason", "");
 
                 g_MemoryConfigs.push_back(std::move(m));
                 Log("Added override entry: " + name + " @ " + address);
@@ -6681,7 +6679,7 @@ void ShowHotkeyMenu()
 
     EnableAllInput();
     ImGuiIO& io = ImGui::GetIO();
-    ImVec2 windowSize = ImVec2(900, 450);
+    ImVec2 windowSize = ImVec2(900, 480);
     CenterWindow(windowSize);
     PushFontSafe(3);
     ImGui::Begin("D2R Hotkeys", &showHotkeyMenu, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoTitleBar);
@@ -6728,7 +6726,7 @@ void ShowHotkeyMenu()
         "Open HUDCC Menu",
         "Reload Game/Filter",
         "Identify Items",
-        "Transmute"
+        "Transmute",
         "Force Save",
         "Open Cube Panel",
         "Remove Ground Items",
@@ -6752,17 +6750,16 @@ void ShowHotkeyMenu()
         ImGui::SameLine();
 
         // --- Capture multi-key input if this hotkey is active ---
-        // --- Capture multi-key input if this hotkey is active ---
         if (activeHotkeyInput == name)
         {
-            auto pressedKeys = GetPressedKeys(); // return all keys currently down, ignoring mouse
+            auto pressedKeys = GetPressedKeys();
 
             // Handle DELETE key separately
             if (std::find(pressedKeys.begin(), pressedKeys.end(), "VK_DELETE") != pressedKeys.end())
             {
                 // Clear the hotkey immediately
                 pair.first.clear();
-                g_Hotkeys[name] = pair;  // update global
+                g_Hotkeys[name] = pair;
                 SaveFullGrailConfig("HUDConfig_" + modName + ".json", false);
 
                 activeCombo.clear();
@@ -6788,8 +6785,8 @@ void ShowHotkeyMenu()
 
                     if (combo != pair.first)
                     {
-                        pair.first = combo;         // update hotkey
-                        g_Hotkeys[name] = pair;     // update global map
+                        pair.first = combo;
+                        g_Hotkeys[name] = pair;
                         SaveFullGrailConfig("HUDConfig_" + modName + ".json", false);
                     }
                 }
@@ -6828,7 +6825,7 @@ void ShowHotkeyMenu()
         }
 
         if (!ImGui::IsItemFocused() && activeHotkeyInput == name)
-            activeHotkeyInput.clear(); // clear focus
+            activeHotkeyInput.clear();
 
         if (inputFont) ImGui::PopFont();
         ImGui::PopItemWidth();
