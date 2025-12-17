@@ -1,8 +1,6 @@
 ﻿  D2RHUD.cpp
-C:\Users\djsch\Github\D2RHUD-2.4\d2rhud\plugin\D2RHUD\D2RHUD.cpp(1554,12): warning C4477: 'printf' : format string '%s' requires an argument of type 'char *', but variadic argument 1 has type 'std::string'
-C:\Users\djsch\Github\D2RHUD-2.4\d2rhud\plugin\D2RHUD\D2RHUD.cpp(1554,12): warning C4477: 'printf' : format string '%s' requires an argument of type 'char *', but variadic argument 2 has type 'std::basic_string<char,std::char_traits<char>,std::allocator<char>>'
-C:\Users\djsch\Github\D2RHUD-2.4\d2rhud\plugin\D2RHUD\D2RHUD.cpp(1640,16): warning C4477: 'printf' : format string '%s' requires an argument of type 'char *', but variadic argument 1 has type 'std::string'
-C:\Users\djsch\Github\D2RHUD-2.4\d2rhud\plugin\D2RHUD\D2RHUD.cpp(1640,16): warning C4477: 'printf' : format string '%s' requires an argument of type 'char *', but variadic argument 2 has type 'std::string'
+C:\Users\djsch\Github\D2RHUD-2.4\d2rhud\plugin\D2RHUD\D2RHUD.cpp(3715,34): warning C4129: '9': unrecognized character escape sequence
+C:\Users\djsch\Github\D2RHUD-2.4\d2rhud\plugin\D2RHUD\D2RHUD.cpp(4069,266): warning C4129: '9': unrecognized character escape sequence
   d2rhud.vcxproj -> C:\Users\djsch\Github\D2RHUD-2.4\x64\Debug\d2rhud.dll
   'pwsh.exe' is not recognized as an internal or external command,
   operable program or batch file.

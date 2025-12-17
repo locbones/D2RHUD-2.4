@@ -25,13 +25,6 @@ struct D2Client {
 	D2Client* pNext; //0x0558
 };
 
-template<size_t T>
-struct small_string_opt {
-	const char* str;
-	size_t length;
-	size_t alloc;
-	char data[T];
-};
 
 struct blz_string {
 	const char* str;

@@ -706,4 +706,42 @@ public:
 	uint32_t dwUnitId; //0x0010
 }; //Size: 0x0014
 static_assert(sizeof(D2UnitRectStrc) == 0x14);
+
+template<size_t T>
+struct small_string_opt {
+	const char* str;
+	size_t length;
+	size_t alloc;
+	char data[T];
+};
+
+class D2JSONManagerStrc    // <d2r.exe> + 0x1e3d8b0
+{
+public:
+	char pad_0000[216]; //0x0000
+	class D2JSONItemStrc* pJSONItems; //0x00D8
+	int64_t nItems; //0x00E0
+	int64_t nItemsAlloc; //0x00E8
+	char pad_00F0[136]; //0x00F0
+}; //Size: 0x0178
+static_assert(sizeof(D2JSONManagerStrc) == 0x178);
+
+class D2JSONItemStrc
+{
+public:
+	char szCode[4]; //0x0000
+	char pad_0004[4]; //0x0004
+	small_string_opt<32> szGfx; //0x0008
+}; //Size: 0x0040
+static_assert(sizeof(D2JSONItemStrc) == 0x40);
+
+class blz__string16
+{
+public:
+	char* pData; //0x0000
+	uint64_t nLength; //0x0008
+	uint64_t nAlloc; //0x0010
+	char szData[16]; //0x0018
+}; //Size: 0x0028
+static_assert(sizeof(blz__string16) == 0x28);
 #pragma pack(pop)

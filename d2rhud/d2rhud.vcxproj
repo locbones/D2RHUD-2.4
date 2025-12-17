@@ -96,6 +96,7 @@
     <ClInclude Include="d2\D2Enums.h" />
     <ClInclude Include="d2\D2Ptrs.h" />
     <ClInclude Include="d2\D2Structs.h" />
+    <ClInclude Include="d2\json.hpp" />
     <ClInclude Include="d2\Reclass.h" />
     <ClInclude Include="D3D12Hook.h" />
     <ClInclude Include="d3dx12.h" />

@@ -16,6 +16,9 @@ struct MonsterStatsDisplaySettings {
     bool gambleForce;
     std::int32_t SunderValue;
     bool CombatLog;
+    bool TransmogVisuals;
+    bool ExtendedItemcodes;
+    bool FloatingDamage;
 };
 
 class D2RHUD : public Plugin {

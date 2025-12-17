@@ -28,5 +28,6 @@
     <ClInclude Include="..\..\..\Downloads\json.hpp" />
     <ClInclude Include="stb_image.h" />
     <ClInclude Include="d3dx12.h" />
+    <ClInclude Include="d2\json.hpp" />
   </ItemGroup>
 </Project>
