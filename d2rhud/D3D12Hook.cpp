@@ -15,6 +15,7 @@
 #include <windows.h>
 #include <sys/stat.h>
 #include <filesystem>
+#include "plugin/D2RHUD/D2RHUD.h"
 
 
 #if __has_include(<detours/detours.h>)
@@ -180,7 +181,8 @@ namespace D3D12 {
 
 			//Add Default D2R font to drawtable
 			namespace fs = std::filesystem;
-			std::string fontPath = "Exocet.otf";
+
+			std::string fontPath = "Mods/" + modName + "/" + modName + ".mpq/data/hd/ui/fonts/exocetblizzardot-medium.otf";
 
 			if (fs::exists(fontPath)) {
 				std::cout << "Adding fonts from file..." << std::endl;

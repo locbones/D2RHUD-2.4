@@ -26,6 +26,7 @@ public:
 	void OnDraw() override;
 	bool OnKeyPressed(short key) override;
     static bool IsAnyMenuOpen();
+    
 
 private:
 	void ShowVersionMessage();
@@ -37,4 +38,5 @@ private:
 extern std::string g_ItemFilterStatusMessage;
 extern bool g_ShouldShowItemFilterMessage;
 extern std::chrono::steady_clock::time_point g_ItemFilterMessageStartTime;
+extern std::string modName;
 

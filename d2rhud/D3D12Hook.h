@@ -2,6 +2,7 @@
 
 #include <Windows.h>
 #include <cstdint>
+#include "plugin/D2RHUD/D2RHUD.h"
 
 namespace D3D12 {
 

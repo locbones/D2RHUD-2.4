@@ -15,12 +15,14 @@
 
 #pragma region Global Static/Structs
 
+#pragma pack(1)
 class D2GSPacketSrv0A {
 public:
 	uint8_t nHeader;
 	uint8_t nUnitType;
 	uint32_t dwUnitGUID;
 };
+#pragma pack()
 
 static SCMDHANDLER oD2CLIENT_PACKETCALLBACK_Rcv0x0A_SCMD_REMOVEUNIT = reinterpret_cast<SCMDHANDLER>(Pattern::Address(0xD6D10));
 static SCMDHANDLER oD2CLIENT_PACKETCALLBACK_Rcv0x9C_SCMD_ITEMEX = reinterpret_cast<SCMDHANDLER>(Pattern::Address(0xDD040));
@@ -1295,14 +1297,16 @@ bool ItemFilter::Install(MonsterStatsDisplaySettings settings) {
 
 		DetourAttach(&(PVOID&)ITEMS_GetColor, Hooked_ITEMS_GetColor);
 
-		DetourUpdateThread(GetCurrentThread());
-
 		if (cachedSettings.TransmogVisuals || cachedSettings.ExtendedItemcodes)
 		{
 			GetItemVisuals();
 			DetourAttach(&(PVOID&)UNITS_GetInvGfxFromJson, Hooked_UNITS_GetInvGfxFromJson);
 			DetourAttach(&(PVOID&)UNITS_GetItemGfxFromJson, Hooked_UNITS_GetItemGfxFromJson);
 		}
+
+		DetourUpdateThread(GetCurrentThread());
+
+		
 		
 		DWORD oldProtect = 0;
 		auto UnitSize = (int32_t*)Pattern::Address(0x2086ca);

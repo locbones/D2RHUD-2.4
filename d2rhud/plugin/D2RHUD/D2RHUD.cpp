@@ -6023,7 +6023,7 @@ void RegisterModOverrides()
     RMD.ForcedMinionEquality = false;
     RMD.GambleCostControl = { true, "Disabling this feature serves no benefit in ReMoDDeD" };
     RMD.ForcedCombatLog = false;
-    RMD.TransmogVisuals = { true, "This feature must be enabled for now for Extended Itemcodes currently" };
+    RMD.TransmogVisuals = { false, "This feature must be enabled for now for Extended Itemcodes currently" };
     RMD.ExtendedItemcodes = { true, "We rely on this feature for our expanded item catalog\nDisabling it serves no benefit" };
     RMD.ForcedFloatingDamage = false;
     RMD.HPRolloverMods = { true, "This feature helps us keep monster HP values in check" };
