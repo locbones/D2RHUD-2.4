@@ -1071,14 +1071,15 @@ void ExportItemAssetsToTxt(const std::string& outputFile)
 void GetItemVisuals()
 {
 	// Load Bases
-	LoadItemAssets("C:\\Users\\djsch\\Desktop\\D2RLAN\\D2R\\Mods\\RMD-MP\\RMD-MP.mpq\\data\\hd\\items\\items.json");
+	LoadItemAssets(std::format("{}/Mods/{}/{}.mpq/data/hd/items/items.json", GetExeDir(), ModName, ModName));
 
 	// Load Sets/Uniques
-	LoadItemAssets("C:\\Users\\djsch\\Desktop\\D2RLAN\\D2R\\Mods\\RMD-MP\\RMD-MP.mpq\\data\\hd\\items\\sets.json");
-	LoadItemAssets("C:\\Users\\djsch\\Desktop\\D2RLAN\\D2R\\Mods\\RMD-MP\\RMD-MP.mpq\\data\\hd\\items\\uniques.json");
+	LoadItemAssets(std::format("{}/Mods/{}/{}.mpq/data/hd/items/sets.json", GetExeDir(), ModName, ModName));
+	LoadItemAssets(std::format("{}/Mods/{}/{}.mpq/data/hd/items/uniques.json", GetExeDir(), ModName, ModName));
 
 	// Generate Transmog Table
 	ExportItemAssetsToTxt(std::format("{}/Mods/{}/{}.mpq/data/global/excel/transmog_table.txt", GetExeDir(), ModName, ModName));
+
 }
 
 #pragma endregion

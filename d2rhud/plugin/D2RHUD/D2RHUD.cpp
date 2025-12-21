@@ -48,7 +48,7 @@
 #pragma region Global Static/Structs
 
 std::string lootFile = "../D2R/lootfilter.lua";
-std::string Version = "1.5.1";
+std::string Version = "1.5.2";
 
 using json = nlohmann::json;
 static MonsterStatsDisplaySettings cachedSettings;
@@ -1787,7 +1787,7 @@ void __fastcall ScaleDamage(D2DamageInfoStrc* pDamageInfo, D2DamageStatTableStrc
             float damageScale = 1.0f - reduction;
             *pDamageStatTableRecord->pOffsetInDamageStrc *= damageScale;
 
-
+            /*
             std::ofstream log("d2r_hp.txt", std::ios::app);
             if (log.is_open()) {
                 log << "Player count: " << nPlayerCount
@@ -1795,7 +1795,7 @@ void __fastcall ScaleDamage(D2DamageInfoStrc* pDamageInfo, D2DamageStatTableStrc
                     << " | Damage scale: " << damageScale << std::endl;
                 log.close();
             }
-
+            */
         }
     }
 }
@@ -2979,7 +2979,10 @@ void ApplyMonsterDifficultyScaling(D2UnitStrc* pUnit, const DesecratedZone& zone
 
     // Calculate base monster stats
     D2MonStatsInitStrc monStatsInit = {};
-    CalculateMonsterStats(pUnit->dwClassId, 1, pGame->nDifficulty, STATLIST_GetUnitStatSigned(pUnit, STAT_LEVEL, 0), 7, monStatsInit);
+
+    if (pUnit->dwClassId != 333) //Ignore Diabloclone
+        CalculateMonsterStats(pUnit->dwClassId, 1, pGame->nDifficulty, STATLIST_GetUnitStatSigned(pUnit, STAT_LEVEL, 0), 7, monStatsInit);
+
     const int32_t nBaseHp = monStatsInit.nMinHP + ITEMS_RollLimitedRandomNumber(&pUnit->pSeed, monStatsInit.nMaxHP - monStatsInit.nMinHP + 1);
     const int32_t nHp = nBaseHp + D2_ComputePercentage(nBaseHp, playerCountModifier);
     const int32_t nShiftedHp = nHp << 8;
@@ -3611,7 +3614,6 @@ std::string BuildTerrorZoneInfoText()
         return "";
 
     time_t currentUtc = std::time(nullptr);
-    int remainingMinutes = 0;
     int remainingSeconds = 0;
 
     if (g_TerrorZoneData.cycleLengthMin > 0 &&
@@ -3628,11 +3630,9 @@ std::string BuildTerrorZoneInfoText()
             // In terror phase
             int totalSecondsInPhase = g_TerrorZoneData.terrorDurationMin * 60;
             int secondsIntoPhase = (currentUtc - g_TerrorZoneData.zoneStartUtc) % (g_TerrorZoneData.cycleLengthMin * 60) % totalSecondsInPhase;
-            int secondsRemaining = totalSecondsInPhase - secondsIntoPhase;
-            remainingMinutes = secondsRemaining / 60;
-            remainingSeconds = secondsRemaining % 60;
+            remainingSeconds = totalSecondsInPhase - secondsIntoPhase;
 
-            if (remainingSeconds == 0 && remainingMinutes == g_TerrorZoneData.terrorDurationMin)
+            if (remainingSeconds == g_TerrorZoneData.terrorDurationMin * 60)
                 ToggleManualZoneGroupInternal(true);
         }
         else
@@ -3640,19 +3640,30 @@ std::string BuildTerrorZoneInfoText()
             // In break phase
             int totalSecondsInCycle = g_TerrorZoneData.cycleLengthMin * 60;
             int secondsIntoCycle = (currentUtc - g_TerrorZoneData.zoneStartUtc) % totalSecondsInCycle;
-            int secondsRemaining = totalSecondsInCycle - secondsIntoCycle;
-            remainingMinutes = secondsRemaining / 60;
-            remainingSeconds = secondsRemaining % 60;
-
+            remainingSeconds = totalSecondsInCycle - secondsIntoCycle;
         }
     }
 
-    std::string finalText = g_ActiveZoneInfoText +
-        "Next Rotation In: " + std::to_string(remainingMinutes) + "m " +
-        std::to_string(remainingSeconds) + "s\n";
+    // Convert remaining seconds into DHMS
+    int days = remainingSeconds / 86400;
+    remainingSeconds %= 86400;
+    int hours = remainingSeconds / 3600;
+    remainingSeconds %= 3600;
+    int minutes = remainingSeconds / 60;
+    int seconds = remainingSeconds % 60;
+
+    std::string timeText;
+    if (days > 0)
+        timeText += std::to_string(days) + "d ";
+    if (hours > 0 || days > 0)
+        timeText += std::to_string(hours) + "h ";
+    timeText += std::to_string(minutes) + "m " + std::to_string(seconds) + "s";
+
+    std::string finalText = g_ActiveZoneInfoText + "Next Rotation In: " + timeText + "\n";
 
     return finalText;
 }
+
 
 #pragma endregion
 
@@ -5258,24 +5269,55 @@ std::vector<std::string> ReadStartupCommandsFromJson(const ordered_json& j)
 {
     std::vector<std::string> result;
 
+    std::cout << "[StartupCmd] Enter ReadStartupCommandsFromJson()\n";
+
     if (!j.contains("Commands"))
-        return result;
-
-    std::string startup =
-        j["Commands"].value("Startup Commands", "");
-
-    std::stringstream ss(startup);
-    std::string cmd;
-
-    while (std::getline(ss, cmd, ','))
     {
-        if (!cmd.empty())
-            result.push_back(cmd);
+        std::cout << "[StartupCmd] ERROR: JSON has no 'Commands' object\n";
+        return result;
     }
 
-    // Pad to 6 entries
-    while (result.size() < 6)
-        result.push_back("");
+    const auto& cmdsObj = j["Commands"];
+
+    if (!cmdsObj.contains("Startup Commands"))
+    {
+        std::cout << "[StartupCmd] WARNING: 'Commands' has no 'Startup Commands' entry\n";
+    }
+
+    std::string startup = cmdsObj.value("Startup Commands", "");
+    g_StartupCommands = startup;
+
+    std::cout << "[StartupCmd] Raw Startup Commands string: \""
+        << startup << "\" (len=" << startup.size() << ")\n";
+
+    if (!startup.empty())
+    {
+        std::stringstream ss(startup);
+        std::string cmd;
+        int index = 0;
+
+        // Split ONLY on commas
+        while (std::getline(ss, cmd, ','))
+        {
+            std::cout << "[StartupCmd] Parsed token [" << index
+                << "]: \"" << cmd << "\" (len=" << cmd.size() << ")\n";
+
+            if (!cmd.empty())
+                result.push_back(cmd);
+
+            ++index;
+        }
+    }
+    else
+    {
+        std::cout << "[StartupCmd] Startup Commands string is EMPTY\n";
+    }
+
+    std::cout << "[StartupCmd] Parsed command count = "
+        << result.size() << "\n";
+
+    // Pad or clamp to exactly 6 entries
+    result.resize(6);
 
     automaticCommand1 = result[0];
     automaticCommand2 = result[1];
@@ -5284,8 +5326,18 @@ std::vector<std::string> ReadStartupCommandsFromJson(const ordered_json& j)
     automaticCommand5 = result[4];
     automaticCommand6 = result[5];
 
+    std::cout << "[StartupCmd] Assigned commands:\n";
+    std::cout << "  [1] \"" << automaticCommand1 << "\"\n";
+    std::cout << "  [2] \"" << automaticCommand2 << "\"\n";
+    std::cout << "  [3] \"" << automaticCommand3 << "\"\n";
+    std::cout << "  [4] \"" << automaticCommand4 << "\"\n";
+    std::cout << "  [5] \"" << automaticCommand5 << "\"\n";
+    std::cout << "  [6] \"" << automaticCommand6 << "\"\n";
+
     return result;
 }
+
+
 
 
 
@@ -5313,6 +5365,9 @@ void ReadCustomCommandsFromJson(const ordered_json& j)
 
 void LoadCommandsAndKeybinds(const std::string& filename)
 {
+    std::cout << "LOADKEYBINDS";
+
+
     ordered_json j = LoadJsonConfig(filename);
 
     ReadKeybindsFromJson(j);
@@ -5426,31 +5481,40 @@ void SaveHotkeys(const std::string& filename)
         }
     }
 
+    // ---------------- Keybinds ----------------
     json& keybinds = j["Keybinds"];
-    keybinds = json::object();
+    if (!keybinds.is_object())
+        keybinds = json::object();
 
     for (auto& [name, pair] : g_Hotkeys)
     {
-        json entry;
+        json& entry = keybinds[name];
 
         if (!pair.first.empty())
             entry["Key"] = pair.first;
         else
             entry["Key"] = nullptr;
 
-        // Optional Enabled handling
         if (!pair.second.empty())
             entry["Enabled"] = (pair.second == "Enabled");
-
-        keybinds[name] = entry;
     }
 
+    // ---------------- Commands ----------------
+    json& commands = j["Commands"];
+    if (!commands.is_object())
+        commands = json::object();
+
+    commands["Startup Commands"] = g_StartupCommands;
+
+    // ---------------- Write file ----------------
     std::ofstream out(filename);
     if (!out.is_open())
         return;
 
     out << std::setw(4) << j << std::endl;
 }
+
+
 
 void LoadLootFilterConfig(const std::string& path)
 {
@@ -6668,9 +6732,22 @@ void ShowGrailMenu()
 
 void ShowHotkeyMenu()
 {
+    static bool hotkeysLoaded = false;
+    static bool wasOpen = false;
+
+    if (!showHotkeyMenu)
+    {
+        // Menu just closed? Save progress including AutoBackup settings
+        if (wasOpen)
+            SaveFullGrailConfig(configFilePath, false);
+
+        wasOpen = false;
+        return;
+    }
+    wasOpen = true;
+
     if (!showHotkeyMenu) return;
 
-    static bool hotkeysLoaded = false;
     if (!hotkeysLoaded)
     {
         LoadCommandsAndKeybinds("HUDConfig_" + modName + ".json");
@@ -6889,19 +6966,27 @@ void ShowHotkeyMenu()
         ImGui::Text("Startup Commands");
         ImGui::PopStyleColor();
 
-        char startupBuf[512];
-        strncpy(startupBuf, g_StartupCommands.c_str(), sizeof(startupBuf));
-        startupBuf[sizeof(startupBuf) - 1] = '\0';
+        static char startupBuf[512] = { 0 };
+        static bool startupBufInitialized = false;
+
+        if (!startupBufInitialized)
+        {
+            strncpy(startupBuf, g_StartupCommands.c_str(), sizeof(startupBuf));
+            startupBuf[sizeof(startupBuf) - 1] = '\0';
+            startupBufInitialized = true;
+        }
 
         ImGui::PushItemWidth(-1);
         if (inputFont) ImGui::PushFont(inputFont);
-        if (ImGui::InputTextMultiline("##startup_commands", startupBuf, sizeof(startupBuf),
-            ImVec2(-1, 80)))
+
+        if (ImGui::InputTextMultiline("##startup_commands", startupBuf, sizeof(startupBuf), ImVec2(-1, 80)))
         {
             g_StartupCommands = startupBuf;
         }
+
         if (inputFont) ImGui::PopFont();
         ImGui::PopItemWidth();
+
     }
 
     ImGui::Columns(1);
@@ -8600,6 +8685,8 @@ void __fastcall Hooked_DamageInfo(void* param1, D2UnitStrc* attacker, D2UnitStrc
 
 #pragma endregion
 
+bool configLoaded = false;
+
 #pragma region Draw Loop for Detours and Stats Display
 void D2RHUD::OnDraw() {
     D2GameStrc* pGame = nullptr;
@@ -8607,8 +8694,7 @@ void D2RHUD::OnDraw() {
 
     if (pGameClient != nullptr)
         pGame = (D2GameStrc*)pGameClient->pGame;
-
-    bool configLoaded = false;
+    
     if (!configLoaded)
     {
         LoadCommandsAndKeybinds("HUDConfig_" + modName + ".json");
