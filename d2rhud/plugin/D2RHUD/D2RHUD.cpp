@@ -48,7 +48,7 @@
 #pragma region Global Static/Structs
 
 std::string lootFile = "../D2R/lootfilter.lua";
-std::string Version = "1.5.2";
+std::string Version = "1.5.3";
 
 using json = nlohmann::json;
 static MonsterStatsDisplaySettings cachedSettings;
@@ -8519,7 +8519,7 @@ uint32_t __fastcall Hooked_ITEMS_CalculateGambleCost(D2UnitStrc* pItem, int nPla
     if (!pItem || !pItem->pItemData || !sgptDataTables || !sgptDataTables->pItemsTxt)
         return oGambleForce(pItem, nPlayerLevel);
 
-    if (cachedSettings.gambleForce)
+    if (settings.gambleForce || cachedSettings.gambleForce)
     {
         D2ItemsTxt* itemTxt = &sgptDataTables->pItemsTxt[pItem->dwClassId];
 
@@ -9101,13 +9101,7 @@ void D2RHUD::OnDraw() {
                     auto hp = std::format("{} / {}", STATLIST_GetUnitStatSigned(pUnitServer, STAT_HITPOINTS, 0) >> 8, STATLIST_GetUnitStatSigned(pUnitServer, STAT_MAXHP, 0) >> 8);
                     auto width = ImGui::CalcTextSize(hp.c_str()).x;
                     drawList->AddText({ center - (width / 2.0f) + 1, ypercent2 }, IM_COL32(255, 255, 255, 255), hp.c_str());
-                }
-
-                
-                
-                //std::string ac = std::format("Pierce IDX: {}", STATLIST_GetUnitStatSigned(pUnitServer, STAT_ARMORCLASS, 0));
-                //drawList->AddText({ 20, 10 }, IM_COL32(170, 50, 50, 255), ac.c_str());
-                
+                }              
             }
         }
 
