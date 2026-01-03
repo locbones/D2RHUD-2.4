@@ -776,6 +776,9 @@ std::vector<ItemRow> g_ItemRows;
 extern std::vector<TransmogRow> g_TransmogTable;
 static std::unordered_map<DWORD, const char*> g_LastTransmogPathByUnitId;
 static std::mutex g_LastTransmogPathMutex;
+static std::unordered_map<DWORD, int> s_InvOverrideAppliedCount;
+static std::unordered_map<DWORD, std::string> s_InvLastOverrideCache;
+static std::mutex s_InvMutex;
 
 #pragma endregion
 
@@ -914,71 +917,84 @@ const char* GetTransmog(D2UnitStrc* pItem)
 
 const char* GetForcedItemcodeOverride(D2UnitStrc* pItem)
 {
-	if (!pItem)
+	if (!pItem || !pItem->pItemData)
 		return nullptr;
 
-	static int g_MaxOverrideApply = 2;
-	static std::unordered_map<DWORD, int> s_OverrideAppliedCount;
-	static std::unordered_map<DWORD, const char*> s_LastOverrideCache;
+	struct ItemVisualKey {
+		uint32_t seed;
+		uint32_t classId;
+
+		bool operator==(const ItemVisualKey& o) const {
+			return seed == o.seed && classId == o.classId;
+		}
+	};
+
+	struct ItemVisualKeyHash {
+		size_t operator()(const ItemVisualKey& k) const {
+			return (size_t(k.seed) << 1) ^ k.classId;
+		}
+	};
+
+	static std::unordered_map<ItemVisualKey, std::string, ItemVisualKeyHash> s_ResolvedOverrides;
 	static std::mutex s_OverrideMutex;
 
+	ItemVisualKey key{
+		pItem->pItemData->dwInitSeed,
+		pItem->dwClassId
+	};
+
+	/* ---------- FAST PATH ---------- */
 	{
 		std::lock_guard<std::mutex> lock(s_OverrideMutex);
-
-		// If we've reached the max applications in-game, return last cached override
-		if (IsPlayerInGame()) {
-			int count = s_OverrideAppliedCount[pItem->dwUnitId];
-			if (count >= g_MaxOverrideApply) {
-				auto it = s_LastOverrideCache.find(pItem->dwUnitId);
-				if (it != s_LastOverrideCache.end())
-					return it->second;
-				else
-					return nullptr; // no previous override, fallback
-			}
-			s_OverrideAppliedCount[pItem->dwUnitId] = count + 1;
-		}
+		auto it = s_ResolvedOverrides.find(key);
+		if (it != s_ResolvedOverrides.end())
+			return it->second.c_str();
 	}
 
-	// --- Extract first 3–4 chars of the item code ---
+	/* ---------- RESOLVE ONCE ---------- */
+
 	char fixedCode[5] = {};
-	strncpy(fixedCode, sgptDataTables->pItemsTxt[pItem->dwClassId].szCode, 4);
-	const char* code = fixedCode;
+	strncpy(
+		fixedCode,
+		sgptDataTables->pItemsTxt[pItem->dwClassId].szCode,
+		4
+	);
 
-	if (code[0] == '\0') {
-		std::cout << "[Override] EMPTY code\n";
+	if (fixedCode[0] == '\0')
 		return nullptr;
-	}
 
-	// --- Scan transmog table for matching code_name ---
-	const char* overridePath = nullptr;
-	for (auto& row : g_TransmogTable)
+	std::string resolvedPath;
+
+	for (const auto& row : g_TransmogTable)
 	{
-		if (_stricmp(row.code_name.c_str(), code) == 0)
+		if (_stricmp(row.code_name.c_str(), fixedCode) == 0)
 		{
-			std::cout << "[Override Match] code=" << row.code_name << " base=" << row.base_path << "\n";
+			std::cout
+				<< "[Override Match] code=" << row.code_name
+				<< " base=" << row.base_path << "\n";
 
 			if (!row.base_path.empty())
-				overridePath = row.base_path.c_str();
+				resolvedPath = row.base_path;
 			else if (!row.sets_normal.empty())
-				overridePath = row.sets_normal.c_str();
+				resolvedPath = row.sets_normal;
 			else if (!row.uniques_normal.empty())
-				overridePath = row.uniques_normal.c_str();
+				resolvedPath = row.uniques_normal;
 
 			break;
 		}
 	}
 
-	if (!overridePath)
+	if (resolvedPath.empty())
 		return nullptr;
 
-	// --- Cache the last applied override per item ---
-	if (IsPlayerInGame()) {
+	/* ---------- STORE IMMUTABLY ---------- */
+	{
 		std::lock_guard<std::mutex> lock(s_OverrideMutex);
-		s_LastOverrideCache[pItem->dwUnitId] = overridePath;
+		auto [it, inserted] = s_ResolvedOverrides.emplace(key, std::move(resolvedPath));
+		return it->second.c_str();
 	}
-
-	return overridePath;
 }
+
 
 bool LoadItemAssets(const std::string& filename)
 {
@@ -1083,6 +1099,16 @@ void GetItemVisuals()
 	ExportItemAssetsToTxt(std::format("{}/Mods/{}/{}.mpq/data/global/excel/transmog_table.txt", GetExeDir(), ModName, ModName));
 }
 
+void ItemFilter::ClearInvOverrideCache()
+{
+	std::lock_guard<std::mutex> lock(s_InvMutex);
+	s_InvOverrideAppliedCount.clear();
+	s_InvLastOverrideCache.clear();
+
+	std::cout << "Cache Cleared!\n";
+}
+
+
 #pragma endregion
 
 #pragma region Hooks
@@ -1099,9 +1125,7 @@ blz__string16* __fastcall Hooked_UNITS_GetInvGfxFromJson(blz__string16* a1, D2Un
 
 	char* buffer = ret->pData;
 	static int g_MaxOverrideApply = 2;
-	static std::unordered_map<DWORD, int> s_InvOverrideAppliedCount;
-	static std::unordered_map<DWORD, std::string> s_InvLastOverrideCache;
-	static std::mutex s_InvMutex;
+	
 	std::string finalPath;
 	{
 		std::lock_guard<std::mutex> lock(s_InvMutex);
@@ -1131,12 +1155,9 @@ blz__string16* __fastcall Hooked_UNITS_GetInvGfxFromJson(blz__string16* a1, D2Un
 				finalPath = "items/weapon/";
 				finalPath += forced;
 			}
-
-			// Cache the override if in-game
-			if (IsPlayerInGame()) {
-				std::lock_guard<std::mutex> lock(s_InvMutex);
-				s_InvLastOverrideCache[pUnit->dwUnitId] = finalPath;
-			}
+			
+			std::lock_guard<std::mutex> lock(s_InvMutex);
+			s_InvLastOverrideCache[pUnit->dwUnitId] = finalPath;
 		}
 	}
 

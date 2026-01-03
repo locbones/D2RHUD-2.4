@@ -48,7 +48,7 @@
 #pragma region Global Static/Structs
 
 std::string lootFile = "../D2R/lootfilter.lua";
-std::string Version = "1.5.3";
+std::string Version = "1.5.4";
 
 using json = nlohmann::json;
 static MonsterStatsDisplaySettings cachedSettings;
@@ -1707,6 +1707,7 @@ void __fastcall GameMenuOnClickHandlerHook(uint64_t a1, Widget* pWidget) {
         ExecuteDebugCheatFunc("save 1");
         WriteToDebugLog("Executed: 'save 1'");
         g_unitsEdited.clear();
+        itemFilter->ClearInvOverrideCache();
 
         queuedActions.push({ "delayexit", [a1, pWidget] {
             WriteToDebugLog("Executing delayed exit action");
@@ -1887,10 +1888,7 @@ uint32_t SubtractResistances(D2UnitStrc* pUnit, D2C_ItemStats nStatId, uint32_t 
     default: break; // ignore other stats
     }
 
-    LogSunder("SU Monster Value: " + std::to_string(nCurrentValue) +
-        ", SU Function Value: " + std::to_string(nValue) +
-        ", SU New Value: " + std::to_string(newValue) +
-        ", SU Remainder: " + std::to_string(remainder));
+    //LogSunder("SU Monster Value: " + std::to_string(nCurrentValue) + ", SU Function Value: " + std::to_string(nValue) + ", SU New Value: " + std::to_string(newValue) + ", SU Remainder: " + std::to_string(remainder));
 
     return remainder;
 }
@@ -1920,13 +1918,11 @@ static void ApplySunderForStat(D2UnitStrc* pUnit, D2C_ItemStats statId, int maxV
         return;
 
     int rem = SubtractResistances(pUnit, statId, maxVal);
-    LogSunder(statName + " max=" + std::to_string(maxVal) + " SubtractResistances rem=" + std::to_string(rem));
+    //LogSunder(statName + " max=" + std::to_string(maxVal) + " SubtractResistances rem=" + std::to_string(rem));
 
     for (size_t i = 0; i < umodArrays.size(); ++i)
     {
-        LogSunder(statName + " UMod[" + std::string(umodCaps[i].first) +
-            "] cap=" + std::to_string(umodCaps[i].second) +
-            " final=" + std::to_string(rem));
+        //LogSunder(statName + " UMod[" + std::string(umodCaps[i].first) + "] cap=" + std::to_string(umodCaps[i].second) + " final=" + std::to_string(rem));
 
         const std::vector<uint8_t>& groupOriginal = (i < originalGroups.size()) ? originalGroups[i] : std::vector<uint8_t>{};
 
@@ -1939,11 +1935,11 @@ void __fastcall ApplyGhettoSunder(D2GameStrc* pGame, D2ActiveRoomStrc* pRoom, D2
 {
     if (!pGame || !pUnit)
     {
-        LogSunder("Invalid game/unit pointer in ApplyGhettoSunder");
+        //LogSunder("Invalid game/unit pointer in ApplyGhettoSunder");
         return;
     }
 
-    LogSunder("=== Begin ApplyGhettoSunder ===");
+    //LogSunder("=== Begin ApplyGhettoSunder ===");
 
     int maxCold = INT_MIN, maxFire = INT_MIN, maxLight = INT_MIN;
     int maxPoison = INT_MIN, maxDamage = INT_MIN, maxMagic = INT_MIN;
@@ -1981,7 +1977,7 @@ void __fastcall ApplyGhettoSunder(D2GameStrc* pGame, D2ActiveRoomStrc* pRoom, D2
     remainders.magic = SubtractResistances(pUnit, STAT_MAGICRESIST, maxMagic);
 
     StoreRemainder(pUnit, remainders);
-    LogSunder("=== End ApplyGhettoSunder ===");
+    //LogSunder("=== End ApplyGhettoSunder ===");
 }
 
 
@@ -2756,7 +2752,7 @@ MonsterTreasureResult GetMonsterTreasure(const std::vector<MonsterTreasureClass>
     MonsterTreasureResult result{ -1, -1 };
 
     if (rowIndex >= monsters.size()) {
-        LogDebug("Error: Row index out of range");
+        //LogDebug("Error: Row index out of range");
         return result;
     }
 
@@ -2764,8 +2760,8 @@ MonsterTreasureResult GetMonsterTreasure(const std::vector<MonsterTreasureClass>
     std::string treasureClassValue;
     std::string tcCheck;
 
-    LogDebug(std::format("---------------------\nMonster: {}", m.MonsterName));
-    LogDebug(std::format("Monstats Row: {}, Difficulty: {}", rowIndex, diff));
+    //LogDebug(std::format("---------------------\nMonster: {}", m.MonsterName));
+    //LogDebug(std::format("Monstats Row: {}, Difficulty: {}", rowIndex, diff));
 
     if (rowIndex >= 410)
         rowIndex++;
@@ -2800,9 +2796,9 @@ MonsterTreasureResult GetMonsterTreasure(const std::vector<MonsterTreasureClass>
         }
     }
 
-    LogDebug(std::format("Treasure Class: {}", tcCheck));
-    LogDebug(std::format("TZ Treasure Class: {}", treasureClassValue));
-    LogDebug(std::format("Base TC Row: {}, Terror TC Row: {}", result.tcCheckIndex, result.treasureIndex));
+    //LogDebug(std::format("Treasure Class: {}", tcCheck));
+    //LogDebug(std::format("TZ Treasure Class: {}", treasureClassValue));
+    //LogDebug(std::format("Base TC Row: {}, Terror TC Row: {}", result.tcCheckIndex, result.treasureIndex));
 
     return result;
 }
@@ -2820,8 +2816,8 @@ MonsterTreasureResult GetMonsterTreasureSU(const std::vector<MonsterTreasureClas
     std::string treasureClassValue;
     std::string tcCheck;
 
-    LogDebug(std::format("---------------------\nSuperUnique: {}", m.BaseMonster));
-    LogDebug(std::format("GetMonsterTreasureSU called with: rowIndex={}", rowIndex));
+    //LogDebug(std::format("---------------------\nSuperUnique: {}", m.BaseMonster));
+    //LogDebug(std::format("GetMonsterTreasureSU called with: rowIndex={}", rowIndex));
 
     if (diff == 0) {
         tcCheck = m.TCChecker1;
@@ -2853,9 +2849,9 @@ MonsterTreasureResult GetMonsterTreasureSU(const std::vector<MonsterTreasureClas
         }
     }
 
-    LogDebug(std::format("SU Treasure Class: {}", tcCheck));
-    LogDebug(std::format("SU TZ Treasure Class: {}", treasureClassValue));
-    LogDebug(std::format("SuperUniques Base TC Row: {}, SuperUniques Terror TC Row: {}", result.tcCheckIndex, result.treasureIndex));
+    //LogDebug(std::format("SU Treasure Class: {}", tcCheck));
+    //LogDebug(std::format("SU TZ Treasure Class: {}", treasureClassValue));
+    //LogDebug(std::format("SuperUniques Base TC Row: {}, SuperUniques Terror TC Row: {}", result.tcCheckIndex, result.treasureIndex));
 
     return result;
 }
@@ -3226,7 +3222,7 @@ void __fastcall ForceTCDrops(D2GameStrc* pGame, D2UnitStrc* pMonster, D2UnitStrc
     int indexUnique = (uniqResult.treasureIndex == -1) ? tcCheckUnique : uniqResult.treasureIndex;
     int indexSuperUnique = (superuniqResult.treasureIndex == -1) ? tcCheckSuperUnique : superuniqResult.treasureIndex;
 
-    LogDebug(std::format("---------------------\nnTCId: {}, indexRegular: {}, indexChamp: {},  indexUnique: {}, indexSuperUnique: {},", nTCId, indexRegular, indexChamp, indexUnique, indexSuperUnique));
+    //LogDebug(std::format("---------------------\nnTCId: {}, indexRegular: {}, indexChamp: {},  indexUnique: {}, indexSuperUnique: {},", nTCId, indexRegular, indexChamp, indexUnique, indexSuperUnique));
 
     if (nTCId == 0)
         oDropTCTest(pGame, pMonster, pPlayer, nTCId, nQuality, nItemLevel, a7, ppItems, pnItemsDropped, nMaxItems);
@@ -3241,7 +3237,7 @@ void __fastcall ForceTCDrops(D2GameStrc* pGame, D2UnitStrc* pMonster, D2UnitStrc
         {
             nTCId = nTCId + (uniqResult.treasureIndex - tcCheckUnique);
             oDropTCTest(pGame, pMonster, pPlayer, nTCId, nQuality, nItemLevel, a7, ppItems, pnItemsDropped, nMaxItems);
-            LogDebug(std::format("nTCId Applied to Monster: {}\n---------------------\n", nTCId));
+            //LogDebug(std::format("nTCId Applied to Monster: {}\n---------------------\n", nTCId));
         }
         else
         {
@@ -3253,7 +3249,7 @@ void __fastcall ForceTCDrops(D2GameStrc* pGame, D2UnitStrc* pMonster, D2UnitStrc
                 nTCId = nTCId + (uniqResult.treasureIndex - tcCheckUnique);
             else nTCId = nTCId + (regResult.treasureIndex - tcCheckRegular);
 
-            LogDebug(std::format("nTCId Applied to Monster: {}\n---------------------\n", nTCId));
+            //LogDebug(std::format("nTCId Applied to Monster: {}\n---------------------\n", nTCId));
             oDropTCTest(pGame, pMonster, pPlayer, nTCId, nQuality, nItemLevel, a7, ppItems, pnItemsDropped, nMaxItems);
         }
     }
@@ -8475,9 +8471,9 @@ void __fastcall HookedMONSTER_InitializeStatsAndSkills(D2GameStrc* pGame, D2Acti
     {
         gZonesFilePath = GetExecutableDir();
         gZonesFilePath += "/Mods/";
-        gZonesFilePath += GetModName();
+        gZonesFilePath += modName;
         gZonesFilePath += "/";
-        gZonesFilePath += GetModName();
+        gZonesFilePath += modName;
         gZonesFilePath += ".mpq/data/hd/global/excel/desecratedzones.json";
     }
 
@@ -8949,6 +8945,7 @@ void D2RHUD::OnDraw() {
 
     }
 
+    
     if (!oMONSTER_InitializeStatsAndSkills) {
         DetourTransactionBegin();
         DetourUpdateThread(GetCurrentThread());
@@ -8956,6 +8953,7 @@ void D2RHUD::OnDraw() {
         DetourAttach(&(PVOID&)oMONSTER_InitializeStatsAndSkills, HookedMONSTER_InitializeStatsAndSkills);
         DetourTransactionCommit();
     }
+    
 
     static bool settingsLoaded = false;
 

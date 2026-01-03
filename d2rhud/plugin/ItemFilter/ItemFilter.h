@@ -10,4 +10,7 @@ public:
 	bool Install(MonsterStatsDisplaySettings settings);
 	void ReloadGameFilter();
 	void CycleFilter();
+	void ClearInvOverrideCache();
 };
+
+
