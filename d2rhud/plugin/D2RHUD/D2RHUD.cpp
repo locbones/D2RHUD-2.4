@@ -48,7 +48,7 @@
 #pragma region Global Static/Structs
 
 std::string lootFile = "../D2R/lootfilter.lua";
-std::string Version = "1.5.4";
+std::string Version = "1.5.5";
 
 using json = nlohmann::json;
 static MonsterStatsDisplaySettings cachedSettings;
@@ -72,10 +72,9 @@ static std::string GetModName() {
 }
 std::string modName = GetModName();
 std::string configFilePath = "HUDConfig_" + modName + ".json";
+bool configLoaded = false;
 
 #pragma endregion
-
-
 
 #pragma region *Currently Unused*
 
@@ -626,7 +625,7 @@ void ParseSharedStash(const std::string& filePath) {
             }
             std::cout << std::dec << std::endl;
 
-            for (int i = 0; i < numItems; ++i) {
+            for (int i = 0; i < 1; ++i) {
                 size_t itemOffset = reader.GetBytePos();
 
                 try {
@@ -3720,7 +3719,7 @@ static UniqueItemEntry g_StaticUniqueItemsRMD[] = {
 { 60, 60, "Bloodthief", "brn", "Brandistock(Pole Now)", false }, { 61, 61, "Lance of Yaggai", "spt", "Spetum(Pole Now)", false }, { 62, 62, "The Tannr Gorerod", "pik", "Pike(Pole Now)", false }, { 63, 63, "Dimoaks Hew", "bar", "Bardiche", false }, { 64, 64, "Steelgoad", "vou", "Voulge", false },
 { 65, 65, "Soul Harvest", "scy", "Scythe (Necro)", false }, { 66, 66, "The Battlebranch", "pax", "Poleaxe", false }, { 67, 67, "Woestave", "hal", "Halberd", false }, { 68, 68, "The Grim Reaper", "wsc", "Thresher (Necro)", false }, { 69, 69, "Bane Ash", "sst", "Short Staff", false },
 { 70, 70, "Serpent Lord", "lst", "Long Staff", false }, { 71, 71, "Lazarus Spire", "cst", "Gnarled Staff", false }, { 72, 72, "The Salamander", "bst", "Battle Staff", false }, { 73, 73, "The Iron Jang Bong", "wst", "War Staff", false }, { 74, 74, "Pluckeye", "sbw", "Short Bow", false },
-{ 75, 75, "Witherstring", "hbw", "Hunter\92s Bow", false }, { 76, 76, "Rimeraven", "lbw", "Long Bow", false }, { 77, 77, "Piercerib", "cbw", "Composite Bow", false }, { 78, 78, "Pullspite", "sbb", "Short Battle Bow", false }, { 79, 79, "Wizendraw", "lbb", "Long Battle Bow", false },
+{ 75, 75, "Witherstring", "hbw", "Hunter's Bow", false }, { 76, 76, "Rimeraven", "lbw", "Long Bow", false }, { 77, 77, "Piercerib", "cbw", "Composite Bow", false }, { 78, 78, "Pullspite", "sbb", "Short Battle Bow", false }, { 79, 79, "Wizendraw", "lbb", "Long Battle Bow", false },
 { 80, 80, "Hellclap", "swb", "Short War Bow", false }, { 81, 81, "Blastbark", "lwb", "Long War Bow", false }, { 82, 82, "Leadcrow", "lxb", "Light Crossbow", false }, { 83, 83, "Ichorsting", "mxb", "Crossbow", false }, { 84, 84, "Hellcast", "hxb", "Heavy Crossbow", false },
 { 85, 85, "Doomspittle", "rxb", "Repeating Crossbow", false }, { 86, 86, "Coldkill", "9ha", "Hatchet", false }, { 87, 87, "Butcher's Pupil", "9ax", "Cleaver", false }, { 88, 88, "Islestrike", "92a", "Twin Axe", false }, { 89, 89, "Pompeii's Wrath", "9mp", "Battle Sickle (Necro)", false },
 { 90, 90, "Guardian Naga", "9wa", "Naga", false }, { 91, 91, "Warlord's Trust", "9la", "Military Axe", false }, { 92, 92, "Spellsteel", "9ba", "Bearded Axe", false }, { 93, 93, "Stormrider", "9bt", "Tabar", false }, { 94, 94, "Boneslayer Blade", "9ga", "Gothic Axe (Barb)", false },
@@ -4074,7 +4073,7 @@ static UniqueItemEntry g_StaticUniqueItems[] = {
 { 40, 41, "The Jade Tan Do", "kri", "Kris", false }, { 41, 42, "Irices Shard", "bld", "Blade", false }, { 42, 43, "The Dragon Chang", "spr", "Spear", false }, { 43, 44, "Razortine", "tri", "Trident", false }, { 44, 45, "Bloodthief", "brn", "Brandistock", false },
 { 45, 46, "Lance of Yaggai", "spt", "Spetum", false }, { 46, 47, "The Tannr Gorerod", "pik", "Pike", false }, { 47, 48, "Dimoaks Hew", "bar", "Bardiche", false }, { 48, 49, "Steelgoad", "vou", "Voulge", false }, { 49, 50, "Soul Harvest", "scy", "Scythe", false },
 { 50, 51, "The Battlebranch", "pax", "Poleaxe", false }, { 51, 52, "Woestave", "hal", "Halberd", false }, { 52, 53, "The Grim Reaper", "wsc", "War Scythe", false }, { 53, 54, "Bane Ash", "sst", "Short Staff", false }, { 54, 55, "Serpent Lord", "lst", "Long Staff", false },
-{ 55, 56, "Lazarus Spire", "cst", "Gnarled Staff", false }, { 56, 57, "The Salamander", "bst", "Battle Staff", false }, { 57, 58, "The Iron Jang Bong", "wst", "War Staff", false }, { 58, 59, "Pluckeye", "sbw", "Short Bow", false }, { 59, 60, "Witherstring", "hbw", "Hunter\92s Bow", false },
+{ 55, 56, "Lazarus Spire", "cst", "Gnarled Staff", false }, { 56, 57, "The Salamander", "bst", "Battle Staff", false }, { 57, 58, "The Iron Jang Bong", "wst", "War Staff", false }, { 58, 59, "Pluckeye", "sbw", "Short Bow", false }, { 59, 60, "Witherstring", "hbw", "Hunter's Bow", false },
 { 60, 61, "Rimeraven", "lbw", "Long Bow", false }, { 61, 62, "Piercerib", "cbw", "Composite Bow", false }, { 62, 63, "Pullspite", "sbb", "Short Battle Bow", false }, { 63, 64, "Wizendraw", "lbb", "Long Battle Bow", false }, { 64, 65, "Hellclap", "swb", "Short War Bow", false },
 { 65, 66, "Blastbark", "lwb", "Long War Bow", false }, { 66, 67, "Leadcrow", "lxb", "Light Crossbow", false }, { 67, 68, "Ichorsting", "mxb", "Crossbow", false }, { 68, 69, "Hellcast", "hxb", "Heavy Crossbow", false }, { 69, 70, "Doomspittle", "rxb", "Repeating Crossbow", false },
 { 70, 71, "War Bonnet", "cap", "Cap", false }, { 71, 72, "Tarnhelm", "skp", "Skull Cap", false }, { 72, 73, "Coif of Glory", "hlm", "Helm", false }, { 73, 74, "Duskdeep", "fhl", "Full Helm", false }, { 74, 75, "Wormskull", "bhm", "Bone Helm", false },
@@ -5333,11 +5332,6 @@ std::vector<std::string> ReadStartupCommandsFromJson(const ordered_json& j)
     return result;
 }
 
-
-
-
-
-
 void ReadCustomCommandsFromJson(const ordered_json& j)
 {
     g_CommandHotkeys.clear();
@@ -5387,8 +5381,6 @@ const Keybind* FindKeybind(const std::string& name)
     }
     return nullptr;
 }
-
-
 
 void LoadHotkeys(const std::string& filename)
 {
@@ -5509,8 +5501,6 @@ void SaveHotkeys(const std::string& filename)
 
     out << std::setw(4) << j << std::endl;
 }
-
-
 
 void LoadLootFilterConfig(const std::string& path)
 {
@@ -5783,8 +5773,6 @@ void LoadMemoryConfigs(const std::string& path)
     Log("Successful operations: " + std::to_string(successfulOperations));
     Log("=== LoadMemoryConfigs END ===");
 }
-
-
 
 void LoadD2RHUDConfig(const std::string& path)
 {
@@ -6190,7 +6178,7 @@ void ShowGrailMenu()
     if (!itemsLoaded)
     {
         LoadAllItemData();
-        //ParseSharedStash("C:\\Users\\UserName\\Saved Games\\Diablo II Resurrected\\Mods\\RMD-MP\\Stash_SC_Page1.d2i");
+        //ParseSharedStash("C:\\Users\\djsch\\Saved Games\\Diablo II Resurrected\\Mods\\RMD-MP\\Stash_SC_Page1.d2i");
         itemsLoaded = true;
     }
 
@@ -6728,7 +6716,6 @@ void ShowGrailMenu()
 
 void ShowHotkeyMenu()
 {
-    static bool hotkeysLoaded = false;
     static bool wasOpen = false;
 
     if (!showHotkeyMenu)
@@ -6743,12 +6730,6 @@ void ShowHotkeyMenu()
     wasOpen = true;
 
     if (!showHotkeyMenu) return;
-
-    if (!hotkeysLoaded)
-    {
-        LoadCommandsAndKeybinds("HUDConfig_" + modName + ".json");
-        hotkeysLoaded = true;
-    }
 
     EnableAllInput();
     ImGuiIO& io = ImGui::GetIO();
@@ -6861,6 +6842,7 @@ void ShowHotkeyMenu()
                         pair.first = combo;
                         g_Hotkeys[name] = pair;
                         SaveFullGrailConfig("HUDConfig_" + modName + ".json", false);
+                        LoadCommandsAndKeybinds("HUDConfig_" + modName + ".json");
                     }
                 }
 
@@ -8681,8 +8663,6 @@ void __fastcall Hooked_DamageInfo(void* param1, D2UnitStrc* attacker, D2UnitStrc
 
 #pragma endregion
 
-bool configLoaded = false;
-
 #pragma region Draw Loop for Detours and Stats Display
 void D2RHUD::OnDraw() {
     D2GameStrc* pGame = nullptr;
@@ -9113,18 +9093,14 @@ void D2RHUD::OnDraw() {
 
 #pragma region Hotkey Handler
 
-
 bool D2RHUD::OnKeyPressed(short key)
 {
     struct BindingMatch { bool matched; int modifierCount; };
     struct PendingAction { int modifierCount; std::function<void()> action; };
     std::vector<PendingAction> matches;
 
-    // ---------------- Key helpers (unchanged) ----------------
-
     auto GetVirtualKeyFromName = [&](std::string token) -> short
         {
-            // normalize
             std::transform(token.begin(), token.end(), token.begin(), ::toupper);
 
             // modifiers
@@ -9155,7 +9131,6 @@ bool D2RHUD::OnKeyPressed(short key)
             return it != keyMap.end() ? it->second : 0;
         };
 
-
     auto GetCurrentlyPressedKeys = [&](short triggeringKey) -> std::unordered_set<short>
         {
             std::unordered_set<short> pressed;
@@ -9169,7 +9144,6 @@ bool D2RHUD::OnKeyPressed(short key)
 
             return pressed;
         };
-
 
     auto IsBindingPressed = [&](const std::string& binding,
         const std::unordered_set<short>& pressed) -> BindingMatch
@@ -9323,9 +9297,6 @@ bool D2RHUD::OnKeyPressed(short key)
     return itemFilter->OnKeyPressed(key);
 }
 
-
-
-//Show D2RHUD Version Info as a MessageBox Popup
 void D2RHUD::ShowVersionMessage()
 {
     std::string parsedVersion = "Unknown";
