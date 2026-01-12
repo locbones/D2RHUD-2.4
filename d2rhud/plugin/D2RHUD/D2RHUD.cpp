@@ -48,7 +48,7 @@
 #pragma region Global Static/Structs
 
 std::string lootFile = "../D2R/lootfilter.lua";
-std::string Version = "1.5.5";
+std::string Version = "1.5.6";
 
 using json = nlohmann::json;
 static MonsterStatsDisplaySettings cachedSettings;
@@ -1761,13 +1761,13 @@ void __fastcall HookedMONSTER_GetPlayerCountBonus(D2GameStrc* pGame, D2PlayerCou
     if (GetModName() != "RMD-MP")
     {
         // cap max hp bonus at 300%. once it gets to 500% + it can rollover quickly causing monsters to have negative hp.
-        if (pPlayerCountBonus->nPlayerCount > 8 && pGame->nDifficulty > cachedSettings.HPRolloverDiff)
+        if (pPlayerCountBonus->nPlayerCount > 8 && pGame->nDifficulty > settings.HPRolloverDiff)
             pPlayerCountBonus->nHP = 300;
     }   
 }
 
 const int32_t nMaxPlayerCount = 65535;
-float nMaxDamageReductionPercent = cachedSettings.HPRolloverAmt; // e.g., 90 means 90% max reduction
+float nMaxDamageReductionPercent = settings.HPRolloverAmt; // e.g., 90 means 90% max reduction
 
 void __fastcall ScaleDamage(D2DamageInfoStrc* pDamageInfo, D2DamageStatTableStrc* pDamageStatTableRecord) {
     if (pDamageInfo->bDefenderIsMonster && *pDamageStatTableRecord->pOffsetInDamageStrc > 0) {
@@ -1803,7 +1803,7 @@ void __fastcall ScaleDamage(D2DamageInfoStrc* pDamageInfo, D2DamageStatTableStrc
 void __fastcall HookedSUNITDMG_ApplyResistancesAndAbsorb(D2DamageInfoStrc* pDamageInfo, D2DamageStatTableStrc* pDamageStatTableRecord, int32_t bDontAbsorb) {
     oSUNITDMG_ApplyResistancesAndAbsorb(pDamageInfo, pDamageStatTableRecord, bDontAbsorb);
 
-    if (pDamageInfo->pGame->nDifficulty > cachedSettings.HPRolloverDiff) {
+    if (pDamageInfo->pGame->nDifficulty > settings.HPRolloverDiff) {
         ScaleDamage(pDamageInfo, pDamageStatTableRecord);
     }
 }
@@ -1925,7 +1925,7 @@ static void ApplySunderForStat(D2UnitStrc* pUnit, D2C_ItemStats statId, int maxV
 
         const std::vector<uint8_t>& groupOriginal = (i < originalGroups.size()) ? originalGroups[i] : std::vector<uint8_t>{};
 
-        if (cachedSettings.sunderedMonUMods)
+        if (settings.sunderedMonUMods || cachedSettings.sunderedMonUMods)
             ApplyUModArray(umodArrays[i], umodSizes[i], rem, groupOriginal, statName);
     }
 }
@@ -3244,7 +3244,7 @@ void __fastcall ForceTCDrops(D2GameStrc* pGame, D2UnitStrc* pMonster, D2UnitStrc
                 nTCId = nTCId + (superuniqResult.treasureIndex - tcCheckSuperUnique);
             else if (pMonsterFlag & (MONTYPEFLAG_CHAMPION | MONTYPEFLAG_POSSESSED | MONTYPEFLAG_GHOSTLY))
                 nTCId = nTCId + (champResult.treasureIndex - tcCheckChamp);
-            else if ((pMonsterFlag & MONTYPEFLAG_UNIQUE) || (cachedSettings.minionEquality && (pMonsterFlag & MONTYPEFLAG_MINION)))
+            else if ((pMonsterFlag & MONTYPEFLAG_UNIQUE) || ((settings.minionEquality || cachedSettings.minionEquality) && (pMonsterFlag & MONTYPEFLAG_MINION)))
                 nTCId = nTCId + (uniqResult.treasureIndex - tcCheckUnique);
             else nTCId = nTCId + (regResult.treasureIndex - tcCheckRegular);
 
@@ -8396,16 +8396,16 @@ void __fastcall Hooked_D2GAME_UMOD8Array_1402fc530(D2UnitStrc* pUnit, int32_t nU
             int finalValue = 0;
             int wastedValue = 0;
 
-            if ((nCurrentValue >= cachedSettings.SunderValue + 1) && cachedSettings.sunderedMonUMods == true)
+            if ((nCurrentValue >= settings.SunderValue + 1) && settings.sunderedMonUMods == true)
             {
                 finalValue = nCurrentValue - remainder;
-                LogSpawnDebug("  Stat %s: nCurrentValue=%d, finalValue=%d, wastedValue=%d, remainder=%d", name, nCurrentValue, finalValue, wastedValue, remainder);
+                //LogSpawnDebug("  Stat %s: nCurrentValue=%d, finalValue=%d, wastedValue=%d, remainder=%d", name, nCurrentValue, finalValue, wastedValue, remainder);
 
-                if (finalValue < cachedSettings.SunderValue)
+                if (finalValue < settings.SunderValue)
                 {
-                    wastedValue = cachedSettings.SunderValue - finalValue;
-                    finalValue = cachedSettings.SunderValue;
-                    LogSpawnDebug("  Stat %s: nCurrentValue=%d, finalValue=%d, wastedValue=%d, remainder=%d", name, nCurrentValue, finalValue, wastedValue, remainder);
+                    wastedValue = settings.SunderValue - finalValue;
+                    finalValue = settings.SunderValue;
+                    //LogSpawnDebug("  Stat %s: nCurrentValue=%d, finalValue=%d, wastedValue=%d, remainder=%d", name, nCurrentValue, finalValue, wastedValue, remainder);
                 }
 
                 STATLISTEX_SetStatListExStat(pUnit->pStatListEx, statId, finalValue, 0);
