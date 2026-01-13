@@ -48,7 +48,7 @@
 #pragma region Global Static/Structs
 
 std::string lootFile = "../D2R/lootfilter.lua";
-std::string Version = "1.5.6";
+std::string Version = "1.5.7";
 
 using json = nlohmann::json;
 static MonsterStatsDisplaySettings cachedSettings;
@@ -2969,7 +2969,10 @@ void ApplyMonsterDifficultyScaling(D2UnitStrc* pUnit, const DesecratedZone& zone
 
     // Clamp boosted level and Apply
     int boostedLevel = std::clamp(playerLevel + boostLevel, boundMin, boundMax);
-    AdjustMonsterLevel(pUnit, STAT_LEVEL, boostedLevel);
+
+    if (pUnit->dwClassId != 333) //Ignore Diabloclone
+        AdjustMonsterLevel(pUnit, STAT_LEVEL, boostedLevel);
+
     int32_t playerCountModifier = (playerCountGlobal >= 9) ? (playerCountGlobal - 2) * 50 : (playerCountGlobal - 1) * 50;
 
     // Calculate base monster stats

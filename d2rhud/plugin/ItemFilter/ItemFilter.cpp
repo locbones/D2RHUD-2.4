@@ -322,8 +322,6 @@ void __fastcall Hooked_ITEMS_GetName(D2UnitStrc* pUnit, char* pBuffer)
 				szName = data.as<std::string>();
 
 			strncpy(pBuffer, szName.c_str(), 0x400);
-
-			std::cout << szName;
 		}
 		{
 			std::lock_guard<std::mutex> lock(g_StoredItemNamesMutex);
