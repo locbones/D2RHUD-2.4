@@ -48,7 +48,7 @@
 #pragma region Global Static/Structs
 
 std::string lootFile = "../D2R/lootfilter.lua";
-std::string Version = "1.5.7";
+std::string Version = "1.5.8";
 
 using json = nlohmann::json;
 static MonsterStatsDisplaySettings cachedSettings;
@@ -1859,9 +1859,9 @@ uint32_t SubtractResistances(D2UnitStrc* pUnit, D2C_ItemStats nStatId, uint32_t 
     if (nCurrentValue >= 100)
     {
         // Calculate overshoot based on cachedSettings.SunderValue
-        if (newValue < cachedSettings.SunderValue) {
-            remainder = cachedSettings.SunderValue - newValue;
-            newValue = cachedSettings.SunderValue;
+        if (newValue < settings.SunderValue) {
+            remainder = settings.SunderValue - newValue;
+            newValue = settings.SunderValue;
         }
 
         STATLISTEX_SetStatListExStat(pUnit->pStatListEx, nStatId, newValue, nLayer);
@@ -3575,7 +3575,7 @@ std::string BuildTerrorZoneStatAdjustmentsText()
     if (gRandomStatsForMonsters.empty() || showStatAdjusts == false)
         return "";
 
-    std::string finalText = "Stat Adjustments:\n";
+    std::string finalText = "Monster Stat Adjustments:\n";
 
     for (const auto& [statID, value] : gRandomStatsForMonsters)
     {
