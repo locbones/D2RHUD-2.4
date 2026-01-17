@@ -6072,6 +6072,7 @@ void RegisterModOverrides()
     RMD.ForcedMonsterStatsDisplay = false;
     RMD.SunderedMonUMods = { true, "Disabling causes immunity reduction discrepancies" };
     RMD.ForcedMinionEquality = false;
+    RMD.ForcedGambleCostControl = true;
     RMD.GambleCostControl = { true, "Disabling this feature serves no benefit in ReMoDDeD" };
     RMD.ForcedCombatLog = false;
     RMD.TransmogVisuals = { false, "This feature must be enabled for now for Extended Itemcodes currently" };
@@ -6107,7 +6108,10 @@ void ApplyModOverrides(const std::string& modName)
         d2rHUDConfig.MinionEquality = o.ForcedMinionEquality;
 
     if (o.GambleCostControl.locked)
+    {
         d2rHUDConfig.GambleCostControl = o.ForcedGambleCostControl;
+        settings.gambleForce = o.ForcedGambleCostControl;
+    }
 
     if (o.CombatLog.locked)
         d2rHUDConfig.CombatLog = o.ForcedCombatLog;
@@ -8677,6 +8681,9 @@ void D2RHUD::OnDraw() {
     if (!configLoaded)
     {
         LoadCommandsAndKeybinds("HUDConfig_" + modName + ".json");
+        LoadD2RHUDConfig(configFilePath);
+        RegisterModOverrides();
+        ApplyModOverrides(modName);
         configLoaded = true;
     }
 
