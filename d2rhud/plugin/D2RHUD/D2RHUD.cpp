@@ -48,7 +48,7 @@
 #pragma region Global Static/Structs
 
 std::string lootFile = "../D2R/lootfilter.lua";
-std::string Version = "1.5.8";
+std::string Version = "1.5.9";
 
 using json = nlohmann::json;
 static MonsterStatsDisplaySettings cachedSettings;
@@ -197,523 +197,6 @@ void ApplyUModArray(const uint32_t* offsets, size_t count, uint32_t remainder, c
 
 #pragma endregion
 
-#pragma region D2I Parser
-
-#include <stdexcept>
-
-class BitReader {
-public:
-    BitReader(const std::vector<uint8_t>& buffer)
-        : buf(buffer), bytePos(0), bitPos(0) {
-    }
-
-    uint32_t ReadBits(size_t bits) {
-        if (bits > 32) throw std::runtime_error("Cannot read more than 32 bits at once");
-        uint32_t result = 0;
-        for (size_t i = 0; i < bits; ++i) {
-            if (bytePos >= buf.size()) throw std::runtime_error("Buffer overflow");
-            result <<= 1;
-            result |= (buf[bytePos] >> (7 - bitPos)) & 1;
-            bitPos++;
-            if (bitPos == 8) { bitPos = 0; bytePos++; }
-        }
-        return result;
-    }
-
-    uint8_t ReadUInt8(size_t bits) { return static_cast<uint8_t>(ReadBits(bits)); }
-    uint16_t ReadUInt16(size_t bits) { return static_cast<uint16_t>(ReadBits(bits)); }
-    uint32_t ReadUInt32(size_t bits) { return ReadBits(bits); }
-    bool ReadBit() { return ReadBits(1) != 0; }
-
-    void SkipBits(size_t bits) { for (size_t i = 0; i < bits; ++i) ReadBit(); }
-    void AlignToByte() { if (bitPos != 0) { bitPos = 0; bytePos++; } }
-
-    size_t GetBytePos() const { return bytePos; }
-
-private:
-    const std::vector<uint8_t>& buf;
-    size_t bytePos;
-    uint8_t bitPos;
-};
-
-// -------------------- Item --------------------
-struct EarAttributes {
-    uint8_t clazz = 0;
-    uint8_t level = 0;
-    std::string name;
-};
-
-struct Item {
-
-    // ----------------------------------------------------
-    // Base header (simple bits block)
-    // ----------------------------------------------------
-    bool identified = false;
-    bool socketed = false;
-    bool new_flag = false;        // can't name this "new"
-    bool is_ear = false;
-    bool starter_item = false;
-    bool simple_item = false;
-    bool ethereal = false;
-    bool personalized = false;
-    bool given_runeword = false;
-
-    uint16_t version = 0;
-    uint8_t location_id = 0;
-    uint8_t equipped_id = 0;
-    uint8_t position_x = 0;
-    uint8_t position_y = 0;
-    uint8_t alt_position_id = 0;
-
-    // Debug copy of the bits BEFORE item ID (useful!)
-    std::vector<uint8_t> unknown_bits;
-
-
-    // ----------------------------------------------------
-    // Item core data
-    // ----------------------------------------------------
-    uint32_t id = 0;                // Item ID (DWORD)
-    uint8_t level = 0;
-    std::string type;               // 3 or 4 letter code
-
-    uint8_t nr_of_items_in_sockets = 0;
-
-
-    // ----------------------------------------------------
-    // Picture, class-specific, auto-affix
-    // ----------------------------------------------------
-    bool multiple_pictures = false;
-    uint8_t picture_id = 0;
-    bool class_specific = false;
-    uint16_t auto_affix_id = 0;     // only for specific item flags
-
-
-    // ----------------------------------------------------
-    // Quality-dependent blocks
-    // ----------------------------------------------------
-    uint8_t quality = 0;
-
-    uint8_t low_quality_id = 0;     // for quality == low quality
-    uint8_t file_index = 0;         // used for superior / low quality
-
-    uint16_t magic_prefix = 0;      // 0–2047 range (11 bits each)
-    uint16_t magic_suffix = 0;
-
-    uint16_t set_id = 0;            // set item ID
-    uint16_t unique_id = 0;         // unique item ID
-
-    uint8_t rare_name_id = 0;       // rare names: 0–15
-    uint8_t rare_name_id2 = 0;      // suffix part
-    uint16_t magical_name_ids[6] = { 0 }; // for crafted/rare mods
-
-
-    // ----------------------------------------------------
-    // Ear block (only when is_ear == true)
-    // ----------------------------------------------------
-    struct EarAttributes {
-        uint8_t class_id = 0;
-        uint8_t level = 0;
-        std::string name;
-    };
-    EarAttributes ear_attributes;
-
-
-    // ----------------------------------------------------
-    // Runeword / personalization
-    // ----------------------------------------------------
-    uint16_t personalized_id = 0;     // who personalized the item
-    uint32_t runeword_id = 0;
-    uint32_t runeword_parameter = 0;
-
-
-    // ----------------------------------------------------
-    // Properties (magic mods, set mods, runeword mods...)
-    // ----------------------------------------------------
-    struct Property {
-        uint16_t stat = 0;
-        int32_t value = 0;
-        int32_t value2 = 0;         // some stats have two params
-    };
-    std::vector<Property> properties;
-
-    // ----------------------------------------------------
-    // Embedded socket items
-    // ----------------------------------------------------
-    std::vector<Item> socketed_items;
-};
-
-
-struct HuffmanNode {
-    char value = 0; // 0 = internal node
-    HuffmanNode* left = nullptr;
-    HuffmanNode* right = nullptr;
-    ~HuffmanNode() { delete left; delete right; }
-};
-
-// Convert your JS array to a C++ tree
-HuffmanNode* BuildHuffmanTree() {
-    // Leaf nodes
-    auto w = new HuffmanNode{ 'w' };
-    auto u = new HuffmanNode{ 'u' };
-    auto eight = new HuffmanNode{ '8' };
-    auto y = new HuffmanNode{ 'y' };
-    auto five = new HuffmanNode{ '5' };
-    auto j = new HuffmanNode{ 'j' };
-    auto h = new HuffmanNode{ 'h' };
-    auto s = new HuffmanNode{ 's' };
-    auto two = new HuffmanNode{ '2' };
-    auto n = new HuffmanNode{ 'n' };
-    auto x = new HuffmanNode{ 'x' };
-    auto c = new HuffmanNode{ 'c' };
-    auto k = new HuffmanNode{ 'k' };
-    auto f = new HuffmanNode{ 'f' };
-    auto b = new HuffmanNode{ 'b' };
-    auto t = new HuffmanNode{ 't' };
-    auto m = new HuffmanNode{ 'm' };
-    auto nine = new HuffmanNode{ '9' };
-    auto seven = new HuffmanNode{ '7' };
-    auto space = new HuffmanNode{ ' ' };
-    auto e = new HuffmanNode{ 'e' };
-    auto d = new HuffmanNode{ 'd' };
-    auto p = new HuffmanNode{ 'p' };
-    auto g = new HuffmanNode{ 'g' };
-    auto z = new HuffmanNode{ 'z' };
-    auto q = new HuffmanNode{ 'q' };
-    auto three = new HuffmanNode{ '3' };
-    auto v = new HuffmanNode{ 'v' };
-    auto r = new HuffmanNode{ 'r' };
-    auto l = new HuffmanNode{ 'l' };
-    auto a = new HuffmanNode{ 'a' };
-    auto one = new HuffmanNode{ '1' };
-    auto four = new HuffmanNode{ '4' };
-    auto zero = new HuffmanNode{ '0' };
-    auto i = new HuffmanNode{ 'i' };
-    auto o = new HuffmanNode{ 'o' };
-
-    // Internal nodes
-    auto j_node = new HuffmanNode{ 0, j, nullptr };
-    auto five_node = new HuffmanNode{ 0, five, j_node };
-    auto y_node = new HuffmanNode{ 0, y, five_node };
-    auto eight_node = new HuffmanNode{ 0, eight, y_node };
-    auto h_node = new HuffmanNode{ 0, h, nullptr };
-    auto left1 = new HuffmanNode{ 0, w, u };
-    auto left2 = new HuffmanNode{ 0, eight_node, h_node };
-    auto left3 = new HuffmanNode{ 0, left1, left2 };
-
-    auto two_node = new HuffmanNode{ 0, two, n };
-    auto right1 = new HuffmanNode{ 0, two_node, x };
-    auto right2 = new HuffmanNode{ 0, c, new HuffmanNode{ 0, k, f } };
-    auto right3 = new HuffmanNode{ 0, t, m };
-    auto right4 = new HuffmanNode{ 0, nine, seven };
-    auto right5 = new HuffmanNode{ 0, right3, right4 };
-    auto right6 = new HuffmanNode{ 0, right2, right5 };
-    auto left_root = new HuffmanNode{ 0, left3, right6 };
-
-    auto e_node = new HuffmanNode{ 0, e, d };
-    auto p_node = new HuffmanNode{ 0, e_node, p };
-    auto z_node = new HuffmanNode{ 0, z, q };
-    auto three_node = new HuffmanNode{ 0, z_node, three };
-    auto six_node = new HuffmanNode{ 0, v, nullptr };
-    auto g_node = new HuffmanNode{ 0, g, six_node };
-    auto right_root_left = new HuffmanNode{ 0, p_node, g_node };
-
-    auto r_node = new HuffmanNode{ 0, r, l };
-    auto one_node = new HuffmanNode{ 0, one, four };
-    auto io_node = new HuffmanNode{ 0, i, o };
-    auto a_node = new HuffmanNode{ 0, a, new HuffmanNode{ 0, one_node, io_node } };
-    auto right_root_right = new HuffmanNode{ 0, r_node, a_node };
-
-    auto right_root = new HuffmanNode{ 0, right_root_left, right_root_right };
-
-    auto root = new HuffmanNode{ 0, left_root, right_root };
-
-    return root;
-}
-
-// Decode 1 character from BitReader using Huffman tree
-char DecodeHuffmanChar(BitReader& reader, HuffmanNode* root) {
-    HuffmanNode* node = root;
-    while (node->value == 0) {
-        bool bit = reader.ReadBit();
-        node = bit ? node->right : node->left;
-        if (!node) throw std::runtime_error("Invalid Huffman tree traversal");
-    }
-    return node->value;
-}
-
-std::string DecodeHuffmanString(BitReader& reader, HuffmanNode* root, int len) {
-    std::string s;
-    for (int i = 0; i < len; ++i) s += DecodeHuffmanChar(reader, root);
-    return s;
-}
-
-void ReadSimpleBits(Item& item, BitReader& reader, uint32_t version, HuffmanNode* huffmanRoot)
-{
-    item.unknown_bits.clear();
-
-    // === FLAG BITS (match JS order) ===
-    for (int i = 0; i < 4; i++) item.unknown_bits.push_back(reader.ReadBit());  // skip 4
-    item.identified = reader.ReadBit();                                         // identified
-    for (int i = 0; i < 6; i++) item.unknown_bits.push_back(reader.ReadBit());  // skip 6
-    item.socketed = reader.ReadBit();                                           // socketed
-    item.unknown_bits.push_back(reader.ReadBit());                              // skip 1
-    item.new_flag = reader.ReadBit();                                           // new
-    for (int i = 0; i < 2; i++) item.unknown_bits.push_back(reader.ReadBit());  // skip 2
-    item.is_ear = reader.ReadBit();                                             // is ear
-    item.starter_item = reader.ReadBit();                                       // starter
-    for (int i = 0; i < 3; i++) item.unknown_bits.push_back(reader.ReadBit());  // skip 3
-    item.simple_item = reader.ReadBit();                                        // simple
-    item.ethereal = reader.ReadBit();                                           // ethereal
-    item.unknown_bits.push_back(reader.ReadBit());                              // skip 1
-    item.personalized = reader.ReadBit();                                       // personalized
-    item.unknown_bits.push_back(reader.ReadBit());                              // skip 1
-    item.given_runeword = reader.ReadBit();                                     // runeword
-    for (int i = 0; i < 5; i++) item.unknown_bits.push_back(reader.ReadBit());  // skip 5
-
-    // === VERSION ===
-    if (version <= 0x60)
-        item.version = reader.ReadUInt16(10);  // 10-bit for older versions
-    else
-        item.version = reader.ReadUInt16(3);   // 3-bit for D2R versions
-
-    // === LOCATION DATA ===
-    item.location_id = reader.ReadUInt8(3);      // location
-    item.equipped_id = reader.ReadUInt8(4);      // equipped in slot
-    item.position_x = reader.ReadUInt8(4);       // column
-    item.position_y = reader.ReadUInt8(4);       // row
-    item.alt_position_id = reader.ReadUInt8(3);  // stored / alt pos
-
-    // === EAR SPECIAL CASE ===
-    if (item.is_ear)
-    {
-        item.ear_attributes.class_id = reader.ReadUInt8(3);
-        item.ear_attributes.level = reader.ReadUInt8(7);
-
-        std::string name;
-        for (int i = 0; i < 15; i++)
-        {
-            uint8_t ch = reader.ReadUInt8(7);
-            if (ch == 0) break;
-            name.push_back((char)ch);
-        }
-        item.ear_attributes.name = name;
-        return;
-    }
-
-    // === ITEM TYPE ===
-    item.type.clear();
-    if (version <= 0x60)
-    {
-        for (int i = 0; i < 4; i++)
-            item.type.push_back((char)reader.ReadUInt8(8));
-    }
-    else
-    {
-        item.type = DecodeHuffmanString(reader, huffmanRoot, 4); // decode exactly 4 chars
-    }
-
-    // Remove trailing nulls/spaces
-    while (!item.type.empty() && (item.type.back() == '\0' || item.type.back() == ' '))
-        item.type.pop_back();
-
-    // === SOCKET COUNT ===
-    uint8_t bits = item.simple_item ? 1 : 3;
-    item.nr_of_items_in_sockets = reader.ReadUInt8(bits);
-}
-
-
-
-
-// -------------------- ParseItem --------------------
-Item ParseItem(BitReader& reader, HuffmanNode* huffmanRoot, uint32_t version) {
-    Item item;
-
-    // MUST read item header first ("JM")
-    char h1 = reader.ReadUInt8(8);
-    char h2 = reader.ReadUInt8(8);
-
-    if (!(h1 == 'J' && h2 == 'M')) {
-        // Output the bits of the two bytes
-        std::cout << "Item header mismatch at offset " << reader.GetBytePos() - 2 << "\n";
-        std::cout << "  Byte 1: 0x" << std::hex << (int)(uint8_t)h1 << " | bits: ";
-        for (int i = 7; i >= 0; --i) std::cout << ((h1 >> i) & 1);
-        std::cout << "\n";
-
-        std::cout << "  Byte 2: 0x" << std::hex << (int)(uint8_t)h2 << " | bits: ";
-        for (int i = 7; i >= 0; --i) std::cout << ((h2 >> i) & 1);
-        std::cout << std::dec << std::endl;
-
-        throw std::runtime_error("Item header 'JM' not found at correct position");
-    }
-
-    ReadSimpleBits(item, reader, version, huffmanRoot);
-
-    /*
-    // Parse remaining fields based on quality
-    item.id = reader.ReadUInt32(32);
-    item.level = reader.ReadUInt8(7);
-    item.quality = reader.ReadUInt8(4);
-
-    item.multiple_pictures = reader.ReadBit();
-    if (item.multiple_pictures) item.picture_id = reader.ReadUInt8(3);
-
-    item.class_specific = reader.ReadBit();
-    if (item.class_specific) item.auto_affix_id = reader.ReadUInt16(11);
-
-    switch (item.quality) {
-    case 0: item.low_quality_id = reader.ReadUInt8(3); break;
-    case 2: item.file_index = reader.ReadUInt8(3); break;
-    case 3:
-        item.magic_prefix = reader.ReadUInt16(11);
-        item.magic_suffix = reader.ReadUInt16(11);
-        break;
-    case 4:
-        item.rare_name_id = reader.ReadUInt8(8);
-        item.rare_name_id2 = reader.ReadUInt8(8);
-        for (int i = 0; i < 6; i++)
-            if (reader.ReadBit()) item.magical_name_ids[i] = reader.ReadUInt16(11);
-        break;
-    case 5: item.set_id = reader.ReadUInt16(12); break;
-    case 6: item.unique_id = reader.ReadUInt16(12); break;
-    default: break;
-    }
-    */
-
-    return item;
-}
-
-// -------------------- Shared Stash Parser --------------------
-void ParseSharedStash(const std::string& filePath) {
-    std::ifstream f(filePath, std::ios::binary);
-    if (!f) { std::cerr << "Failed to open file: " << filePath << std::endl; return; }
-
-    std::vector<uint8_t> buf((std::istreambuf_iterator<char>(f)),
-        std::istreambuf_iterator<char>());
-
-    size_t offset = 0;
-    size_t tabIndex = 1;
-
-    while (offset + 8 <= buf.size()) {
-        // Detect tab header
-        if (buf[offset] == 0x55 && buf[offset + 1] == 0xAA &&
-            buf[offset + 2] == 0x55 && buf[offset + 3] == 0xAA &&
-            buf[offset + 4] == 0x01 && buf[offset + 5] == 0x00 &&
-            buf[offset + 6] == 0x00 && buf[offset + 7] == 0x00) {
-
-            std::cout << "Found tab " << tabIndex << " at offset " << offset << std::endl;
-
-            size_t versionOffset = offset + 8;
-            uint8_t version = buf[versionOffset];
-
-            uint8_t numItems = buf[versionOffset + 4];
-            std::cout << "  Tab item count: " << (int)numItems << std::endl;
-
-            // Move BitReader to start of first item (byte 40 relative to tab start)
-            size_t itemDataStart = offset + 64;
-            std::cout << "  Starting first item at byte offset " << itemDataStart << std::endl;
-
-            BitReader reader(buf);
-            reader.SkipBits(itemDataStart * 8);
-            reader.AlignToByte();
-
-            // Dump next N bytes for debugging before reading items
-            const size_t dumpBytes = 64; // adjust as needed
-            std::cout << "  Next " << dumpBytes << " bytes for this tab: ";
-            for (size_t i = 0; i < dumpBytes && itemDataStart + i < buf.size(); ++i) {
-                std::cout << std::hex << std::setw(2) << std::setfill('0')
-                    << (int)buf[itemDataStart + i] << " ";
-            }
-            std::cout << std::dec << std::endl;
-
-            for (int i = 0; i < 1; ++i) {
-                size_t itemOffset = reader.GetBytePos();
-
-                try {
-                    // Parse item
-                    Item item = ParseItem(reader, BuildHuffmanTree(), version);
-
-                    // Print flags and simple data
-                    std::cout << "--------------------------------------------------\n";
-                    std::cout << "Item at offset " << itemOffset << "\n";
-                    std::cout << "  Identified: " << item.identified << "\n";
-                    std::cout << "  Socketed: " << item.socketed << "\n";
-                    std::cout << "  New Item: " << item.new_flag << "\n";
-                    std::cout << "  Is Ear: " << item.is_ear << "\n";
-                    std::cout << "  Starter Item: " << item.starter_item << "\n";
-                    std::cout << "  Simple Item: " << item.simple_item << "\n";
-                    std::cout << "  Ethereal: " << item.ethereal << "\n";
-                    std::cout << "  Personalized: " << item.personalized << "\n";
-                    std::cout << "  Given Runeword: " << item.given_runeword << "\n";
-
-                    std::cout << "  Version: " << item.version << "\n";
-                    std::cout << "  Location ID: " << (int)item.location_id << "\n";
-                    std::cout << "  Equipped ID: " << (int)item.equipped_id << "\n";
-                    std::cout << "  Position X: " << (int)item.position_x << "\n";
-                    std::cout << "  Position Y: " << (int)item.position_y << "\n";
-                    std::cout << "  Alt Position ID: " << (int)item.alt_position_id << "\n";
-
-                    if (item.is_ear) {
-                        std::cout << "  Ear Class: " << (int)item.ear_attributes.class_id << "\n";
-                        std::cout << "  Ear Level: " << (int)item.ear_attributes.level << "\n";
-                        std::cout << "  Ear Name:  " << item.ear_attributes.name << "\n";
-                    }
-                    else {
-                        std::cout << "  Item Type: \"" << item.type << "\"\n";
-                        std::cout << "  Items In Sockets: " << (int)item.nr_of_items_in_sockets << "\n";
-                    }
-
-                    std::cout << "  ID: " << item.id << "\n";
-                    std::cout << "  Level: " << (int)item.level << "\n";
-                    std::cout << "  Quality: " << (int)item.quality << "\n";
-
-                    if (item.multiple_pictures)
-                        std::cout << "  Picture ID: " << (int)item.picture_id << "\n";
-                    if (item.class_specific)
-                        std::cout << "  Auto Affix ID: " << item.auto_affix_id << "\n";
-
-                    // Quality-specific fields
-                    switch (item.quality) {
-                    case 0: std::cout << "  Low Quality ID: " << (int)item.low_quality_id << "\n"; break;
-                    case 2: std::cout << "  File Index: " << (int)item.file_index << "\n"; break;
-                    case 3: std::cout << "  Magic Prefix: " << item.magic_prefix << "\n"
-                        << "  Magic Suffix: " << item.magic_suffix << "\n"; break;
-                    case 4:
-                        std::cout << "  Rare Name IDs: " << (int)item.rare_name_id << ", " << (int)item.rare_name_id2 << "\n";
-                        std::cout << "  Magical Name IDs: ";
-                        for (int n = 0; n < 6; n++)
-                            if (item.magical_name_ids[n]) std::cout << item.magical_name_ids[n] << " ";
-                        std::cout << "\n";
-                        break;
-                    case 5: std::cout << "  Set ID: " << item.set_id << "\n"; break;
-                    case 6: std::cout << "  Unique ID: " << item.unique_id << "\n"; break;
-                    }
-
-                    if (!item.unknown_bits.empty()) {
-                        std::cout << "  Unknown Bits: ";
-                        for (uint8_t b : item.unknown_bits)
-                            std::cout << (int)b;
-                        std::cout << "\n";
-                    }
-
-                }
-                catch (std::exception& e) {
-                    std::cout << "Failed to parse item at offset " << itemOffset << ": " << e.what() << std::endl;
-                    break; // stop parsing this tab
-                }
-            }
-
-            tabIndex++;
-            offset += 8; // move past the tab header
-        }
-        else {
-            offset++;
-        }
-    }
-}
-
-
-#pragma endregion
-
 #pragma region Monster & Command Constants
 const char* ResistanceNames[6] = { "   ", "   ", "   ", "   ", "   ", "   " };
 constexpr  uint32_t ResistanceStats[6] = { 39, 41, 43, 45, 36, 37 };
@@ -788,8 +271,6 @@ const uint8_t CCMD_DEBUGCHEAT = 0x15;
 const uint8_t SCMD_CHATSTART = 0x26;
 const uint64_t SaveAndExitButtonHash = 0x621D53C05FCA5A67;
 const uint32_t detectGameStatusOffset = 0x1DC76F8; //unknown, just convenient
-
-
 
 static D2Client* GetClientPtr()
 {
@@ -885,10 +366,6 @@ struct RemainderEntry
     int magic = 0;
 };
 static std::unordered_map<DWORD, RemainderEntry> g_resistRemainders;
-
-
-
-
 
 #pragma endregion
 
@@ -3505,8 +2982,6 @@ void __fastcall ApplyGhettoTerrorZone(D2GameStrc* pGame, D2ActiveRoomStrc* pRoom
 
 #pragma region - Terror Zone Controls
 
-
-
 static void ToggleManualZoneGroupInternal(bool forward)
 {
     std::string path = std::format("{0}/Mods/{1}/{1}.mpq/data/hd/global/excel/desecratedzones.json", GetExecutableDir(), GetModName());
@@ -3662,14 +3137,18 @@ std::string BuildTerrorZoneInfoText()
     return finalText;
 }
 
-
-#pragma endregion
-
 #pragma endregion
 
 #pragma region Grail Tracker
 
 #pragma region - Static/Structs
+
+struct FoundLocation {
+    int page;
+    int tab;
+    int x;
+    int y;
+};
 
 struct SetItemEntry {
     std::string name;
@@ -3679,6 +3158,7 @@ struct SetItemEntry {
     std::string code;
     bool enabled = false;
     bool collected = false;
+    std::vector<FoundLocation> locations;
 };
 
 struct UniqueItemEntry {
@@ -3689,6 +3169,7 @@ struct UniqueItemEntry {
     std::string itemName;
     bool enabled = false;
     bool collected = false;
+    std::vector<FoundLocation> locations;
 };
 
 std::vector<UniqueItemEntry> g_UniqueItems;
@@ -3835,7 +3316,8 @@ static UniqueItemEntry g_StaticUniqueItemsRMD[] = {
 { 625, 649, "MythosLogBarbarianC", "y36", "KillTracker", false }, { 626, 650, "MythosLogDruidC", "y37", "KillTracker", false }, { 627, 651, "MythosLogNecromancerC", "y38", "KillTracker", false }, { 628, 652, "MythosLogPaladinC", "y39", "KillTracker", false }, { 629, 653, "MythosLogSorceressC", "y40", "KillTracker", false },
 { 630, 654, "Black Cats Secret", "cm3", "charm", false }, { 631, 655, "Dustdevil", "l18", "Runic Talons - LB", false }, { 632, 656, "Improvise", "6sw", "ward bow", false }, { 633, 657, "Ken'Juk's Blighted Visage", "usk", "demonhead", false }, { 634, 658, "Philios Prophecy", "amc", "Pellet Bow", false },
 { 635, 659, "Whisper", "cqv", "Bolts", false }, { 636, 660, "Dragon's Cinder", "cqv", "Bolts", false }, { 637, 661, "Serpent's Fangs", "cqv", "Bolts", false }, { 638, 662, "Valkyrie Wing Legacy", "xhm", "Winged Helm", false }, { 639, 663, "War Traveler Bugged", "xtb", "Battle Boots", false },
-{ 640, 664, "Undead Crown Fused", "rin", "Ring", false },
+{ 640, 664, "Undead Crown Fused", "rin", "Ring", false }, { 641, 665, "Soul of Edyrem", "m37", "Charm", false }, { 642, 668, "Black Suede", "lbt", "Leather Boots", false }, { 643, 669, "Allebasi", "amu", "Amulet", false }, { 644, 673, "Bigfoot", "xhb", "War Boots", false },
+{ 645, 674, "Static Calling", "7mp", "Reaper Sickle", false }, { 646, 677, "Akara's Blessing", "amu", "Amulet", false },
 };
 
 static SetItemEntry g_StaticSetItemsRMD[] = {
@@ -4560,15 +4042,6 @@ void SaveGrailProgress(const std::string& userPath, bool isAutoBackup)
             j["Unique Items"] = json::parse(uniqueJsonStr);
         }
 
-
-        // SET ITEMS
-        j["Set Items"] = json::object();
-        for (auto& s : setCopy)
-        {
-            if (!s.collected) continue;
-            j["Set Items"][s.setName].push_back(s.name);
-        }
-
         // EXCLUDED ITEMS
         j["Excluded Grail Items"] = json::array();
         for (auto& x : excludedCopy)
@@ -4620,32 +4093,6 @@ void LoadGrailProgress(const std::string& filepath)
     json j;
     try { file >> j; }
     catch (...) { return; }
-
-    // --- Load uniques ---
-    if (j.contains("Unique Items"))
-    {
-        std::unordered_set<std::string> collectedSet;
-        for (auto& x : j["Unique Items"])
-            collectedSet.insert(x.get<std::string>());
-
-        for (auto& u : g_UniqueItems)
-            u.collected = collectedSet.count(u.name) > 0;
-    }
-
-    // --- Load set items ---
-    if (j.contains("Set Items"))
-    {
-        for (auto& s : g_SetItems)
-        {
-            s.collected = false;
-            if (j["Set Items"].contains(s.setName))
-            {
-                for (auto& nm : j["Set Items"][s.setName])
-                    if (nm.get<std::string>() == s.name)
-                        s.collected = true;
-            }
-        }
-    }
 
     // --- Load excluded ---
     g_ExcludedGrailItems.clear();
@@ -4862,6 +4309,831 @@ void LoadAllItemData()
 
 #pragma endregion
 
+#pragma endregion
+
+#pragma region D2I Parser
+
+#pragma region Static/Structs
+std::wstring GetSavePath()
+{
+    const wchar_t* valueName = L"{4C5C32FF-BB9D-43B0-B5B4-2D72E54EAAA4}";
+    const wchar_t* subKey = L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Shell Folders";
+
+    std::wregex sidRegex(LR"(S-1-5-21-\d+-\d+-\d+-\d+$)");
+
+    HKEY hUsers;
+    if (RegOpenKeyExW(HKEY_USERS, nullptr, 0, KEY_READ, &hUsers) != ERROR_SUCCESS)
+        return L"";
+
+    wchar_t name[256];
+    DWORD nameSize = 256;
+    DWORD index = 0;
+
+    std::wstring savePath;
+
+    // Enumerate all SIDs under HKEY_USERS
+    while (RegEnumKeyExW(hUsers, index++, name, &nameSize, nullptr, nullptr, nullptr, nullptr) == ERROR_SUCCESS)
+    {
+        std::wstring sid = name;
+        nameSize = 256;
+
+        if (!std::regex_match(sid, sidRegex))
+            continue;
+
+        std::wstring fullPath = sid + L"\\" + subKey;
+
+        HKEY hKey;
+        if (RegOpenKeyExW(HKEY_USERS, fullPath.c_str(), 0, KEY_READ, &hKey) == ERROR_SUCCESS)
+        {
+            wchar_t buffer[MAX_PATH];
+            DWORD bufSize = sizeof(buffer);
+            DWORD type = 0;
+
+            if (RegQueryValueExW(hKey, valueName, nullptr, &type, (LPBYTE)buffer, &bufSize) == ERROR_SUCCESS)
+            {
+                if (type == REG_SZ || type == REG_EXPAND_SZ)
+                {
+                    savePath = buffer;
+                    RegCloseKey(hKey);
+                    break;
+                }
+            }
+            RegCloseKey(hKey);
+        }
+    }
+
+    RegCloseKey(hUsers);
+
+    // Fallback: HKEY_CURRENT_USER
+    if (savePath.empty())
+    {
+        HKEY hKey;
+        if (RegOpenKeyExW(HKEY_CURRENT_USER, subKey, 0, KEY_READ, &hKey) == ERROR_SUCCESS)
+        {
+            wchar_t buffer[MAX_PATH];
+            DWORD bufSize = sizeof(buffer);
+            DWORD type = 0;
+
+            if (RegQueryValueExW(hKey, valueName, nullptr, &type, (LPBYTE)buffer, &bufSize) == ERROR_SUCCESS)
+            {
+                if (type == REG_SZ || type == REG_EXPAND_SZ)
+                    savePath = buffer;
+            }
+            RegCloseKey(hKey);
+        }
+    }
+
+    return savePath;
+}
+
+class BitReader {
+public:
+    BitReader(const std::vector<uint8_t>& buffer)
+        : buf(buffer), bitPos(0) {
+    }
+
+    // FIXED: LSB-first bit reading (correct for D2R)
+    uint32_t ReadBits(size_t bits) {
+        if (bits > 32) throw std::runtime_error("Cannot read more than 32 bits at once");
+        uint32_t result = 0;
+        for (size_t i = 0; i < bits; ++i) {
+            size_t byteIdx = bitPos >> 3;
+            size_t bitIdx = bitPos & 7;
+            if (byteIdx >= buf.size()) throw std::runtime_error("Buffer overflow");
+            // LSB-first: read bit from position bitIdx (0-7, starting from LSB)
+            if ((buf[byteIdx] >> bitIdx) & 1) {
+                result |= (1u << i);
+            }
+            bitPos++;
+        }
+        return result;
+    }
+
+    uint8_t ReadUInt8(size_t bits) { return static_cast<uint8_t>(ReadBits(bits)); }
+    uint16_t ReadUInt16(size_t bits) { return static_cast<uint16_t>(ReadBits(bits)); }
+    uint32_t ReadUInt32(size_t bits) { return ReadBits(bits); }
+    bool ReadBit() { return ReadBits(1) != 0; }
+
+    void SkipBits(size_t bits) { bitPos += bits; }
+    void SetBitPos(size_t pos) { bitPos = pos; }
+    size_t GetBitPos() const { return bitPos; }
+    size_t GetBytePos() const { return bitPos >> 3; }
+    void AlignToByte() { if (bitPos & 7) bitPos = ((bitPos >> 3) + 1) << 3; }
+
+    bool HasBits(size_t n) const { return bitPos + n <= buf.size() * 8; }
+
+private:
+    const std::vector<uint8_t>& buf;
+    size_t bitPos;
+};
+
+struct EarAttributes {
+    uint8_t clazz = 0;
+    uint8_t level = 0;
+    std::string name;
+};
+
+struct Item {
+    // Base header flags
+    bool identified = false;
+    bool socketed = false;
+    bool new_flag = false;
+    bool is_ear = false;
+    bool starter_item = false;
+    bool simple_item = false;
+    bool ethereal = false;
+    bool personalized = false;
+    bool given_runeword = false;
+
+    uint16_t version = 0;
+    uint8_t location_id = 0;
+    uint8_t equipped_id = 0;
+    uint8_t position_x = 0;
+    uint8_t position_y = 0;
+    uint8_t alt_position_id = 0;
+
+    // Item core data
+    uint32_t id = 0;
+    uint8_t level = 0;
+    std::string type;
+
+    uint8_t nr_of_items_in_sockets = 0;
+
+    // Picture, class-specific
+    bool multiple_pictures = false;
+    uint8_t picture_id = 0;
+    bool class_specific = false;
+    uint16_t auto_affix_id = 0;
+
+    // Quality
+    uint8_t quality = 0;
+
+    uint8_t low_quality_id = 0;
+    uint8_t file_index = 0;
+
+    uint16_t magic_prefix = 0;
+    uint16_t magic_suffix = 0;
+
+    uint16_t set_id = 0;
+    uint16_t unique_id = 0;
+
+    uint8_t rare_name_id = 0;
+    uint8_t rare_name_id2 = 0;
+    uint16_t magical_name_ids[6] = { 0 };
+
+    EarAttributes ear_attributes;
+
+    uint16_t personalized_id = 0;
+    uint32_t runeword_id = 0;
+
+    std::vector<Item> socketed_items;
+};
+
+std::unordered_map<uint32_t, std::string> g_SetItemLookup;
+std::unordered_map<uint32_t, std::string> g_UniqueItemLookup;
+
+#pragma endregion
+
+#pragma region Huffman Tree
+
+struct HuffmanNode {
+    char value = 0;
+    HuffmanNode* left = nullptr;
+    HuffmanNode* right = nullptr;
+    ~HuffmanNode() { delete left; delete right; }
+};
+
+// FIXED: d07RiV's exact Huffman tree structure
+HuffmanNode* BuildHuffmanTree() {
+    // Leaf nodes
+    auto w = new HuffmanNode{ 'w' };
+    auto u = new HuffmanNode{ 'u' };
+    auto eight = new HuffmanNode{ '8' };
+    auto y = new HuffmanNode{ 'y' };
+    auto five = new HuffmanNode{ '5' };
+    auto j = new HuffmanNode{ 'j' };
+    auto h = new HuffmanNode{ 'h' };
+    auto s = new HuffmanNode{ 's' };
+    auto two = new HuffmanNode{ '2' };
+    auto n = new HuffmanNode{ 'n' };
+    auto x = new HuffmanNode{ 'x' };
+    auto c = new HuffmanNode{ 'c' };
+    auto k = new HuffmanNode{ 'k' };
+    auto f = new HuffmanNode{ 'f' };
+    auto b = new HuffmanNode{ 'b' };
+    auto t = new HuffmanNode{ 't' };
+    auto m = new HuffmanNode{ 'm' };
+    auto nine = new HuffmanNode{ '9' };
+    auto seven = new HuffmanNode{ '7' };
+    auto space = new HuffmanNode{ ' ' };
+    auto e = new HuffmanNode{ 'e' };
+    auto d = new HuffmanNode{ 'd' };
+    auto p = new HuffmanNode{ 'p' };
+    auto g = new HuffmanNode{ 'g' };
+    auto z = new HuffmanNode{ 'z' };
+    auto q = new HuffmanNode{ 'q' };
+    auto three = new HuffmanNode{ '3' };
+    auto v = new HuffmanNode{ 'v' };
+    auto six = new HuffmanNode{ '6' };  // FIXED: was missing
+    auto r = new HuffmanNode{ 'r' };
+    auto l = new HuffmanNode{ 'l' };
+    auto a = new HuffmanNode{ 'a' };
+    auto one = new HuffmanNode{ '1' };
+    auto four = new HuffmanNode{ '4' };
+    auto zero = new HuffmanNode{ '0' };
+    auto i = new HuffmanNode{ 'i' };
+    auto o = new HuffmanNode{ 'o' };
+
+    // Build LEFT subtree
+    auto j_nil = new HuffmanNode{ 0, j, nullptr };
+    auto five_j = new HuffmanNode{ 0, five, j_nil };
+    auto y_5j = new HuffmanNode{ 0, y, five_j };
+    auto eight_y5j = new HuffmanNode{ 0, eight, y_5j };
+    auto eight_h = new HuffmanNode{ 0, eight_y5j, h };
+    auto wu = new HuffmanNode{ 0, w, u };
+    auto wu_8h = new HuffmanNode{ 0, wu, eight_h };
+
+    auto two_n = new HuffmanNode{ 0, two, n };
+    auto two_n_x = new HuffmanNode{ 0, two_n, x };
+    auto s_2nx = new HuffmanNode{ 0, s, two_n_x };
+
+    auto left1 = new HuffmanNode{ 0, wu_8h, s_2nx };
+
+    auto kf = new HuffmanNode{ 0, k, f };
+    auto c_kf = new HuffmanNode{ 0, c, kf };
+    auto ckf_b = new HuffmanNode{ 0, c_kf, b };
+
+    auto tm = new HuffmanNode{ 0, t, m };
+    auto nine_seven = new HuffmanNode{ 0, nine, seven };
+    auto tm_97 = new HuffmanNode{ 0, tm, nine_seven };
+
+    auto left2 = new HuffmanNode{ 0, ckf_b, tm_97 };
+
+    auto left_root = new HuffmanNode{ 0, left1, left2 };
+
+    // Build RIGHT subtree
+    auto ed = new HuffmanNode{ 0, e, d };
+    auto ed_p = new HuffmanNode{ 0, ed, p };
+
+    auto zq = new HuffmanNode{ 0, z, q };
+    auto zq_3 = new HuffmanNode{ 0, zq, three };
+    auto v6 = new HuffmanNode{ 0, v, six };  // FIXED: v,6 not v,nullptr
+    auto zq3_v6 = new HuffmanNode{ 0, zq_3, v6 };
+    auto g_zq3v6 = new HuffmanNode{ 0, g, zq3_v6 };
+
+    auto edp_g = new HuffmanNode{ 0, ed_p, g_zq3v6 };
+
+    auto rl = new HuffmanNode{ 0, r, l };
+    auto four_zero = new HuffmanNode{ 0, four, zero };
+    auto one_40 = new HuffmanNode{ 0, one, four_zero };
+    auto io = new HuffmanNode{ 0, i, o };
+    auto one40_io = new HuffmanNode{ 0, one_40, io };
+    auto a_140io = new HuffmanNode{ 0, a, one40_io };
+    auto rl_a = new HuffmanNode{ 0, rl, a_140io };
+
+    auto right_inner = new HuffmanNode{ 0, edp_g, rl_a };
+    auto right_root = new HuffmanNode{ 0, space, right_inner };
+
+    // Root node
+    return new HuffmanNode{ 0, left_root, right_root };
+}
+
+char DecodeHuffmanChar(BitReader& reader, HuffmanNode* root) {
+    HuffmanNode* node = root;
+    int depth = 0;
+    while (node && node->value == 0 && depth++ < 30) {
+        bool bit = reader.ReadBit();
+        node = bit ? node->right : node->left;
+    }
+    if (!node) throw std::runtime_error("Invalid Huffman tree traversal");
+    return node->value;
+}
+
+std::string DecodeHuffmanString(BitReader& reader, HuffmanNode* root) {
+    std::string s;
+    for (int i = 0; i < 4; ++i) {
+        char c = DecodeHuffmanChar(reader, root);
+        if (c == ' ' || c == 0) break;
+        s += c;
+    }
+    return s;
+}
+
+std::vector<size_t> FindItemOffsets(const std::vector<uint8_t>& buf, size_t start, size_t end) {
+    std::vector<size_t> offsets;
+    for (size_t i = start; i + 4 < end; i++) {
+        // D2R item flags have multiple patterns depending on item properties
+        // Common patterns: 10 00 80 00, 10 20 a0 00, 10 08 80 00, etc.
+        // Byte 0: lower nibble is typically 0 (0x10, 0x00)
+        // Byte 2: has bit 7 set (0x80, 0xa0, 0xc0)
+        // Byte 3: is 0x00
+        bool byte0_valid = (buf[i] & 0x0F) == 0;      // lower nibble is 0
+        bool byte2_valid = (buf[i + 2] & 0x80) != 0;    // bit 7 set
+        bool byte3_valid = buf[i + 3] == 0x00;          // must be 0
+
+        if (byte0_valid && byte2_valid && byte3_valid) {
+            offsets.push_back(i);
+        }
+    }
+    return offsets;
+}
+
+Item ParseItem(const uint8_t* data, size_t size, HuffmanNode* huffmanRoot, uint32_t fileVersion) {
+    Item item;
+    std::vector<uint8_t> itemBuf(data, data + size);
+    BitReader reader(itemBuf);
+
+    // === FLAG BITS (32 bits) ===
+    reader.SkipBits(4);                       // bits 0-3: unknown
+    item.identified = reader.ReadBit();       // bit 4
+    reader.SkipBits(1);                       // bit 5
+    item.socketed = reader.ReadBit();         // bit 6
+    reader.SkipBits(2);                       // bits 7-8
+    item.new_flag = reader.ReadBit();         // bit 9
+    reader.SkipBits(1);                       // bit 10
+    item.is_ear = reader.ReadBit();           // bit 11
+    item.starter_item = reader.ReadBit();     // bit 12
+    reader.SkipBits(8);                       // bits 13-20
+    item.simple_item = reader.ReadBit();      // bit 21
+    item.ethereal = reader.ReadBit();         // bit 22
+    reader.SkipBits(1);                       // bit 23
+    item.personalized = reader.ReadBit();     // bit 24
+    reader.SkipBits(1);                       // bit 25
+    item.given_runeword = reader.ReadBit();   // bit 26
+    reader.SkipBits(5);                       // bits 27-31
+
+    // === VERSION ===
+    if (fileVersion >= 0x61)
+        item.version = reader.ReadUInt16(3);
+    else
+        item.version = reader.ReadUInt16(10);
+
+    // === LOCATION DATA ===
+    item.location_id = reader.ReadUInt8(3);
+    item.equipped_id = reader.ReadUInt8(4);
+    item.position_x = reader.ReadUInt8(4);
+    item.position_y = reader.ReadUInt8(4);
+    item.alt_position_id = reader.ReadUInt8(3);
+
+    // === EAR SPECIAL CASE ===
+    // Ears must have BOTH is_ear=1 AND simple_item=1
+    // If is_ear is set but simple_item is not, it's a regular item with different flags
+    if (item.is_ear && item.simple_item) {
+        item.ear_attributes.clazz = reader.ReadUInt8(3);
+        item.ear_attributes.level = reader.ReadUInt8(7);
+        for (int i = 0; i < 15; i++) {
+            uint8_t ch = reader.ReadUInt8(7);
+            if (ch == 0) break;
+            item.ear_attributes.name.push_back((char)ch);
+        }
+        return item;
+    }
+
+    // === ITEM TYPE (Huffman for D2R, ASCII for older) ===
+    if (fileVersion >= 0x61) {
+        item.type = DecodeHuffmanString(reader, huffmanRoot);
+    }
+    else {
+        for (int i = 0; i < 4; ++i) {
+            char c = reader.ReadUInt8(8);
+            if (c && c != ' ') item.type += c;
+        }
+    }
+
+    // === SOCKET COUNT ===
+    item.nr_of_items_in_sockets = reader.ReadUInt8(item.simple_item ? 1 : 3);
+
+    if (item.simple_item) return item;
+
+    // === EXTENDED ITEM DATA ===
+    item.id = reader.ReadUInt32(32);
+    item.level = reader.ReadUInt8(7);
+    item.quality = reader.ReadUInt8(4);
+
+    // Variable picture
+    item.multiple_pictures = reader.ReadBit();
+    if (item.multiple_pictures) item.picture_id = reader.ReadUInt8(3);
+
+    // Class specific
+    item.class_specific = reader.ReadBit();
+    if (item.class_specific) item.auto_affix_id = reader.ReadUInt16(11);
+
+    // === QUALITY-SPECIFIC DATA ===
+    switch (item.quality) {
+    case 1:  // Inferior
+        item.low_quality_id = reader.ReadUInt8(3);
+        break;
+    case 3:  // Superior
+        item.file_index = reader.ReadUInt8(3);
+        break;
+    case 4:  // Magic
+        item.magic_prefix = reader.ReadUInt16(11);
+        item.magic_suffix = reader.ReadUInt16(11);
+        break;
+    case 5:  // Set
+        item.set_id = reader.ReadUInt16(12);
+        break;
+    case 6:  // Rare
+    case 8:  // Crafted
+        item.rare_name_id = reader.ReadUInt8(8);
+        item.rare_name_id2 = reader.ReadUInt8(8);
+        for (int i = 0; i < 6; ++i) {
+            if (reader.ReadBit()) item.magical_name_ids[i] = reader.ReadUInt16(11);
+        }
+        break;
+    case 7:  // Unique
+        item.unique_id = reader.ReadUInt16(12);
+        break;
+    }
+
+    return item;
+}
+
+#pragma endregion
+
+#pragma region Lookup Functions
+
+void BuildItemNameLookups()
+{
+    g_SetItemLookup.clear();
+    g_UniqueItemLookup.clear();
+
+    for (auto& s : g_SetItems)
+        g_SetItemLookup[s.id] = s.setName.empty() ? "Unknown Set Item" : s.setName;
+
+    for (auto& u : g_UniqueItems)
+        g_UniqueItemLookup[u.id] = u.name.empty() ? "Unknown Unique" : u.name;
+}
+
+std::string GetItemTypeName(const std::string& code)
+{
+    for (auto& s : g_SetItems)
+    {
+        if (s.code == code)
+            return s.itemName.empty() ? code : s.itemName;
+    }
+
+    for (auto& u : g_UniqueItems)
+    {
+        if (u.code == code)
+            return u.name.empty() ? code : u.name;
+    }
+
+    // Not Found
+    return "Unknown Item";
+}
+
+std::string GetSetItemName(uint32_t id)
+{
+    auto it = g_SetItemLookup.find(id);
+    return it != g_SetItemLookup.end() ? it->second : "Unknown Set Item";
+}
+
+std::string GetUniqueItemName(uint32_t id)
+{
+    auto it = g_UniqueItemLookup.find(id);
+    return it != g_UniqueItemLookup.end() ? it->second : "Unknown Unique";
+}
+
+const char* GetQualityName(uint32_t q) {
+    const char* names[] = { "", "Inferior", "Normal", "Superior", "Magic", "Set", "Rare", "Unique", "Crafted", "Tempered" };
+    return q < 10 ? names[q] : "Unknown";
+}
+
+#pragma endregion
+
+#pragma region Stash Parsing
+
+static void ShowItemLocationTooltip(int id, bool isSet)
+{
+    if (!ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+        return;
+
+    ImVec2 mousePos = ImGui::GetIO().MousePos;
+    ImGui::SetNextWindowPos(ImVec2(mousePos.x + 70, mousePos.y), ImGuiCond_Always);
+
+    ImGui::BeginTooltip();
+    float tooltipWidth = 420.0f;
+    ImGui::PushTextWrapPos(ImGui::GetCursorPos().x + tooltipWidth);
+
+    int collected = 0;
+    int located = 0;
+
+    if (isSet)
+    {
+        for (auto& s : g_SetItems)
+        {
+            if (s.id == id && s.collected)
+                collected++;
+
+            if (s.id == id)
+                located += (int)s.locations.size();
+        }
+
+        if (collected == 0 || located == 0)
+        {
+            ImGui::TextColored(ImVec4(0.9f, 0.15f, 0.15f, 1.0f), "Not Collected");
+            ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1), "This item has not been found in your stash.");
+        }
+        else
+        {
+            if (located == 1)
+                ImGui::TextColored(ImVec4(0.9f, 0.15f, 0.15f, 1.0f), "Found %d Item", located);
+            else
+                ImGui::TextColored(ImVec4(0.9f, 0.15f, 0.15f, 1.0f), "Found %d Items", located);
+
+            ImGui::Separator();
+            for (auto& s : g_SetItems)
+            {
+                if (s.id == id)
+                {
+                    for (auto& loc : s.locations)
+                    {
+                        ImGui::TextColored(ImVec4(0.4f, 0.7f, 1.0f, 1.0f), "- Page %d, Tab %d  (X: %d, Y: %d)", loc.page, loc.tab, loc.x, loc.y);
+                    }
+                }
+            }
+        }
+    }
+    else // UNIQUE
+    {
+        for (auto& u : g_UniqueItems)
+        {
+            if (u.id == id && u.collected)
+                collected++;
+
+            if (u.id == id)
+                located += (int)u.locations.size();
+        }
+
+        if (collected == 0 || located == 0)
+        {
+            ImGui::TextColored(ImVec4(0.9f, 0.15f, 0.15f, 1.0f), "Not Collected");
+            ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1), "This item has not been found in your stash.");
+        }
+        else
+        {
+            if (located == 1)
+                ImGui::TextColored(ImVec4(0.9f, 0.15f, 0.15f, 1.0f), "Found %d Item", located);
+            else
+                ImGui::TextColored(ImVec4(0.9f, 0.15f, 0.15f, 1.0f), "Found %d Items", located);
+
+            ImGui::Separator();
+            for (auto& u : g_UniqueItems)
+            {
+                if (u.id == id)
+                {
+                    for (auto& loc : u.locations)
+                    {
+                        ImGui::TextColored(ImVec4(0.4f, 0.7f, 1.0f, 1.0f), "- Page %d, Tab %d  (X: %d, Y: %d)", loc.page, loc.tab, loc.x, loc.y);
+                    }
+                }
+            }
+        }
+    }
+
+    ImGui::PopTextWrapPos();
+    ImGui::EndTooltip();
+}
+
+static int ExtractPageFromPath(const std::string& path)
+{
+    size_t p = path.find("Page");
+    if (p == std::string::npos) return -1;
+
+    p += 4; // skip "Page"
+    size_t end = path.find_first_not_of("0123456789", p);
+    std::string num = path.substr(p, end - p);
+
+    int page = std::stoi(num);
+    if (page < 1 || page > 64) return -1;
+    return page;
+}
+
+static int ParseSharedStash(const std::string& filePath, int pageNum) {
+    std::ifstream file(filePath, std::ios::binary | std::ios::ate);
+    if (!file) {
+        std::cerr << "Failed to open file: " << filePath << std::endl;
+        return 1;
+    }
+
+    int page = ExtractPageFromPath(filePath);
+    size_t fileSize = file.tellg();
+    file.seekg(0);
+    std::vector<uint8_t> buf(fileSize);
+    file.read((char*)buf.data(), fileSize);
+
+    std::cout << "\n-----------------------------" << std::endl;
+    std::cout << "File: " << filePath << std::endl;
+    std::cout << "Size: " << fileSize << " bytes" << std::endl;
+
+    // Validate header
+    if (buf.size() < 16 || buf[0] != 0x55 || buf[1] != 0xAA ||
+        buf[2] != 0x55 || buf[3] != 0xAA) {
+        std::cerr << "Invalid D2I file header" << std::endl;
+        return 1;
+    }
+
+    uint32_t version = buf[8];
+    HuffmanNode* huffman = BuildHuffmanTree();
+    int totalItems = 0, uniqueCount = 0, setCount = 0;
+
+    // Helper lambdas to mark items collected
+    auto MarkSetCollected = [&](int id, int tab, int posX, int posY) {
+        for (auto& s : g_SetItems) {
+            if (s.id == id) {
+                s.collected = true;
+                s.locations.push_back({ page, tab, posX + 1, posY + 1 });
+                break;
+            }
+        }
+        };
+
+    auto MarkUniqueCollected = [&](int id, int tab, int posX, int posY) {
+        for (auto& u : g_UniqueItems) {
+            if (u.id == id) {
+                u.collected = true;
+                u.locations.push_back({ page, tab, posX + 1, posY + 1 });
+                break;
+            }
+        }
+        };
+
+    // Find all tab headers (55 AA 55 AA)
+    std::vector<size_t> tabOffsets;
+    for (size_t i = 0; i + 3 < fileSize; i++) {
+        if (buf[i] == 0x55 && buf[i + 1] == 0xAA &&
+            buf[i + 2] == 0x55 && buf[i + 3] == 0xAA) {
+            tabOffsets.push_back(i);
+        }
+    }
+    std::cout << "-----------------------------" << std::endl;
+
+    // Process each tab
+    for (size_t tabIdx = 0; tabIdx < tabOffsets.size(); tabIdx++) {
+        size_t tabStart = tabOffsets[tabIdx];
+        size_t tabEnd = (tabIdx + 1 < tabOffsets.size()) ?
+            tabOffsets[tabIdx + 1] : fileSize;
+
+        // Find JM marker
+        size_t jmOffset = 0;
+        for (size_t i = tabStart; i + 1 < tabEnd; i++) {
+            if (buf[i] == 'J' && buf[i + 1] == 'M') {
+                jmOffset = i;
+                break;
+            }
+        }
+
+        if (jmOffset == 0) continue;
+
+        // Check for empty tab
+        if (jmOffset + 3 < fileSize &&
+            buf[jmOffset + 2] == 0 && buf[jmOffset + 3] == 0) {
+            continue;
+        }
+
+        // Find items
+        auto itemOffsets = FindItemOffsets(buf, jmOffset + 4, tabEnd);
+        if (itemOffsets.empty()) continue;
+
+        // Parse items
+        for (size_t i = 0; i < itemOffsets.size(); i++) {
+            size_t offset = itemOffsets[i];
+            size_t nextOffset = (i + 1 < itemOffsets.size()) ? itemOffsets[i + 1] : tabEnd;
+            size_t itemSize = nextOffset - offset;
+
+            try {
+                Item item = ParseItem(buf.data() + offset, itemSize, huffman, version);
+
+                // Skip invalid items (empty type or non-alphanumeric)
+                if (item.type.empty()) continue;
+                bool validType = true;
+                for (char c : item.type) {
+                    if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9'))) {
+                        validType = false;
+                        break;
+                    }
+                }
+                if (!validType) continue;
+
+                totalItems++;
+                std::string baseName = GetItemTypeName(item.type);
+
+                if (item.quality == 5) {  // Set
+                    std::string setName = GetSetItemName(item.set_id);
+                    std::cout << "[Tab " << tabIdx + 1 << "] - " << itemOffsets.size() << " items" << std::endl;
+                    std::cout << " - Base: " << baseName << " (" << item.type << ")" << std::endl;
+                    std::cout << " - Quality: SET" << std::endl;
+                    std::cout << " - Set ID: " << item.set_id << std::endl;
+                    std::cout << " - iLvl: " << (int)item.level << std::endl;
+                    std::cout << " - Pos: (" << (int)item.position_x + 1 << ", " << (int)item.position_y + 1 << ")\n" << std::endl;
+                    setCount++;
+
+                    // --- Mark the checkbox collected ---
+                    MarkSetCollected(item.set_id, (int)tabIdx + 1, item.position_x, item.position_y);
+                }
+                if (item.quality == 7) {  // Unique
+                    std::string uniqueName = GetUniqueItemName(item.unique_id);
+                    std::cout << "[Tab " << tabIdx + 1 << "] - " << itemOffsets.size() << " items" << std::endl;
+                    std::cout << " - Base: " << baseName << " (" << item.type << ")" << std::endl;
+                    std::cout << " - Quality: UNIQUE" << std::endl;
+                    std::cout << " - Unique ID: " << item.unique_id << std::endl;
+                    std::cout << " - iLvl: " << (int)item.level << std::endl;
+                    std::cout << " - Pos: (" << (int)item.position_x + 1 << ", " << (int)item.position_y + 1 << ")\n" << std::endl;
+                    uniqueCount++;
+
+                    // --- Mark the checkbox collected ---
+                    MarkUniqueCollected(item.unique_id, (int)tabIdx + 1, item.position_x, item.position_y);
+                }
+                /*
+                else {
+                    std::cout << " - Base: " << baseName << " (" << item.type << ")" << std::endl;
+                    std::cout << " - Quality: " << GetQualityName(item.quality) << std::endl;
+                    std::cout << " - iLvl: " << (int)item.level << std::endl;
+                    std::cout << " - Pos: (" << (int)item.position_x + 1 << ", " << (int)item.position_y + 1 << ")\n" << std::endl;
+                }
+                */
+
+                std::string flags;
+                if (item.ethereal) flags += "[ETH] ";
+                if (item.socketed) flags += "[SOCK] ";
+                if (!item.identified) flags += "[UNID] ";
+                if (item.given_runeword) flags += "[RW] ";
+                if (!flags.empty()) std::cout << "  " << flags << std::endl;
+
+            }
+            catch (const std::exception& ex) {
+                std::cerr << "  Error parsing item at 0x" << std::hex << offset << ": " << ex.what() << std::endl;
+            }
+        }
+    }
+
+    std::cout << "Total Items: " << totalItems << std::endl;
+    std::cout << "Set Items:   " << setCount << std::endl;
+    std::cout << "Uniques:     " << uniqueCount << std::endl;
+
+    delete huffman;
+    return 0;
+}
+
+void ScanStashPages()
+{
+    using clock = std::chrono::steady_clock;
+    static clock::time_point lastScan;
+    static bool hasScanned = false;
+
+    auto now = clock::now();
+
+    // If we've scanned before AND cooldown hasn't expired → skip
+    if (hasScanned && (now - lastScan < std::chrono::seconds(30)))
+        return;
+
+    hasScanned = true;
+    lastScan = now;
+
+    for (auto& s : g_SetItems) {
+        s.collected = false;
+        s.locations.clear();
+    }
+    for (auto& u : g_UniqueItems) {
+        u.collected = false;
+        u.locations.clear();
+    }
+
+    namespace fs = std::filesystem;
+    std::wstring stashFolder = GetSavePath() + L"\\Diablo II Resurrected\\Mods\\" + std::wstring(modName.begin(), modName.end()) + L"\\";
+    std::regex pageFileRegex(R"(Stash_SC_Page(\d{1,2})\.d2i)", std::regex::icase);
+    std::vector<std::pair<int, std::string>> pages;
+
+    for (const auto& entry : fs::directory_iterator(stashFolder))
+    {
+        if (!entry.is_regular_file()) continue;
+
+        std::string filename = entry.path().filename().string();
+        std::smatch match;
+        if (std::regex_match(filename, match, pageFileRegex))
+        {
+            int pageNum = std::stoi(match[1].str());
+            if (pageNum >= 1 && pageNum <= 64)
+            {
+                pages.emplace_back(pageNum, entry.path().string());
+            }
+        }
+    }
+
+    std::sort(pages.begin(), pages.end(),
+        [](const auto& a, const auto& b) { return a.first < b.first; });
+
+    for (auto& [pageNum, path] : pages)
+    {
+        ParseSharedStash(path, pageNum);
+    }
+}
+
+#pragma endregion
+
+#pragma endregion
+
 #pragma region Menu System
 
 #pragma region - Static/Structs
@@ -4953,6 +5225,7 @@ static bool showHotkeyMenu = false;
 static bool showGrailMenu = false;
 static bool showBaseCodes = false;
 static bool showBaseNames = false;
+static bool showDuplicates = false;
 LootFilterHeader g_LootFilterHeader;
 std::unordered_map<std::string, std::string> g_LuaVariables;
 std::unordered_map<std::string, std::string> g_LuaVariableComments;
@@ -5217,6 +5490,8 @@ std::unordered_map<std::string, ImVec4> g_TextColors = {
     { "lilac",        ImVec4(0.66667f, 0.66667f, 1.0f, 1.0f) },
     { "black",        ImVec4(0.0f, 0.0f, 0.0f, 1.0f) },
 };
+
+
 
 #pragma endregion
 
@@ -5818,6 +6093,7 @@ void LoadD2RHUDConfig(const std::string& path)
             showExcluded = opt.value("Excluded", showExcluded);
             showBaseCodes = opt.value("Base Codes", showBaseCodes);
             showBaseNames = opt.value("Base Names", showBaseNames);
+            showDuplicates = opt.value("Duplicates", showDuplicates);
         }
     }
     catch (const std::exception& e)
@@ -5848,29 +6124,6 @@ bool SaveFullGrailConfig(const std::string& userPath, bool isAutoBackup)
                 in >> existing;
                 in.close();
             }
-        }
-
-        // --- Grail items: preserve if no in-memory data ---
-        if (!g_SetItems.empty())
-        {
-            j["Set Items"] = ordered_json::object();
-            for (const auto& s : g_SetItems)
-                if (s.collected) j["Set Items"][s.setName].push_back(s.name);
-        }
-        else if (existing.contains("Set Items"))
-        {
-            j["Set Items"] = existing["Set Items"];
-        }
-
-        if (!g_UniqueItems.empty())
-        {
-            j["Unique Items"] = ordered_json::array();
-            for (const auto& u : g_UniqueItems)
-                if (u.collected) j["Unique Items"].push_back(u.name);
-        }
-        else if (existing.contains("Unique Items"))
-        {
-            j["Unique Items"] = existing["Unique Items"];
         }
 
         if (!g_ExcludedGrailItems.empty())
@@ -5904,7 +6157,8 @@ bool SaveFullGrailConfig(const std::string& userPath, bool isAutoBackup)
             {"Base Codes", showBaseCodes},
             {"Base Names", showBaseNames},
             {"Collected", showCollected},
-            {"Excluded", showExcluded}
+            {"Excluded", showExcluded},
+            {"Duplicates", showDuplicates}
         };
         j["AutoBackups"] = ordered_json{
             {"Interval", backupIntervalMinutes},
@@ -6182,12 +6436,14 @@ void ShowGrailMenu()
     wasOpen = true;
 
     static bool itemsLoaded = false;
+
     if (!itemsLoaded)
     {
         LoadAllItemData();
-        //ParseSharedStash("C:\\Users\\djsch\\Saved Games\\Diablo II Resurrected\\Mods\\RMD-MP\\Stash_SC_Page1.d2i");
         itemsLoaded = true;
     }
+
+    ScanStashPages();
 
     // ------- Tooltip helper -------
     auto ShowOffsetTooltip = [](const char* text)
@@ -6212,9 +6468,7 @@ void ShowGrailMenu()
     ImGui::Separator();
     ImGui::Dummy(ImVec2(0, 6));
 
-    // --------------------------------------------------------
     // Persistent State
-    // --------------------------------------------------------
     static int selectedCategory = 0;  // 0 = Sets, 1 = Uniques
     static int selectedType = -1;     // For types later (Goal 4)
     static int selectedSet = -1;      // For future navigation
@@ -6222,9 +6476,7 @@ void ShowGrailMenu()
     static char searchBuffer[128] = "";
     
 
-    // --------------------------------------------------------
     // Layout: Left Panel / Right Panel
-    // --------------------------------------------------------
     ImVec2 full = ImGui::GetContentRegionAvail();
     float leftWidth = 240.0f;
 
@@ -6294,7 +6546,6 @@ void ShowGrailMenu()
     if (ImGui::IsItemHovered())
         ShowOffsetTooltip("Show the raw base item codes in the list.");
 
-
     // --- Show Base Names --- Centered ---
     {
         const char* label = "Show Base Names";
@@ -6308,6 +6559,26 @@ void ShowGrailMenu()
     ImGui::Checkbox("Show Base Names", &showBaseNames);
     if (ImGui::IsItemHovered())
         ShowOffsetTooltip("Show the readable base item names in the list.");
+
+    // --- Show Duplicates --- Centered ---
+    {
+        const char* label = "Show Duplicates";
+        ImVec2 labelSize = ImGui::CalcTextSize(label);
+        float checkboxWidth = ImGui::GetFrameHeight();
+        float totalWidth = checkboxWidth + 4 + labelSize.x;
+
+        // center horizontally
+        float avail = ImGui::GetContentRegionAvail().x;
+        ImGui::SetCursorPosX((avail - totalWidth) * 0.5f + ImGui::GetCursorPosX());
+
+        // render checkbox
+        ImGui::Checkbox(label, &showDuplicates);
+
+        // tooltip
+        if (ImGui::IsItemHovered())
+            ShowOffsetTooltip("Show duplicate items found in your stash");
+    }
+
 
     // --- Backup Section ---
     ImGui::Dummy(ImVec2(0, 3));
@@ -6388,9 +6659,7 @@ void ShowGrailMenu()
     ImGui::Dummy(ImVec2(0, 3));
     ImGui::EndChild();
 
-    // -----------------------------
     // RIGHT PANEL
-    // -----------------------------
     ImGui::SameLine();
     ImGui::BeginChild("right_panel", ImVec2(0, full.y), true);
 
@@ -6523,10 +6792,11 @@ void ShowGrailMenu()
         ImGui::Separator();
         ImGui::Dummy(ImVec2(0, 4));
 
-        // Build map of sets
+        // Build map of sets with filters
         std::unordered_map<std::string, std::vector<SetItemEntry*>> sets;
         for (auto& s : g_SetItems)
         {
+            // FILTERS
             if (!searchStr.empty() &&
                 !CaseInsensitiveContains(s.name, searchStr) &&
                 !CaseInsensitiveContains(s.setName, searchStr))
@@ -6543,23 +6813,34 @@ void ShowGrailMenu()
         for (auto& [setName, items] : sets)
             sortedSetNames.push_back(setName);
 
-        std::sort(sortedSetNames.begin(), sortedSetNames.end(),
-            [](const std::string& a, const std::string& b)
-            {
-                return a < b;
-            });
+        std::sort(sortedSetNames.begin(), sortedSetNames.end());
 
-        // Display sets in sorted order
+        // Display sets
         for (auto& setName : sortedSetNames)
         {
             auto& items = sets[setName];
+
+            // Filter items within this set
+            std::vector<SetItemEntry*> visibleItems;
+            for (auto* s : items)
+            {
+                // Show Duplicates filter: only keep items with duplicates
+                if (showDuplicates && s->locations.size() <= 1)
+                    continue;
+
+                visibleItems.push_back(s);
+            }
+
+            // Skip this set if no items to display
+            if (visibleItems.empty())
+                continue;
 
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.0f, 0.988f, 0.0f, 1.0f));
             if (ImGui::TreeNode(setName.c_str()))
             {
                 ImGui::PopStyleColor();
 
-                for (auto* s : items)
+                for (auto* s : visibleItems)
                 {
                     std::string label;
                     if (showBaseCodes && showBaseNames)
@@ -6571,14 +6852,14 @@ void ShowGrailMenu()
                     else
                         label = s->name;
 
-
                     bool* checked = &s->collected;
 
                     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.0f, 0.988f, 0.0f, 1.0f));
-                    if (ImGui::Checkbox(label.c_str(), checked))
-                    {
-                        // TODO: save state to file later
-                    }
+                    ImGui::Checkbox(label.c_str(), checked);
+
+                    if (ImGui::IsItemHovered())
+                        ShowItemLocationTooltip(s->id, true);
+
                     ImGui::PopStyleColor();
                 }
 
@@ -6592,9 +6873,7 @@ void ShowGrailMenu()
     }
     else
     {
-        // =====================================================
         // UNIQUE ITEM LIST
-        // =====================================================
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.780f, 0.702f, 0.467f, 1.0f));
         ImGui::Text("Unique Items");
 
@@ -6616,9 +6895,10 @@ void ShowGrailMenu()
             ImGui::EndPopup();
         }
 
-        for (size_t i = 0; i < g_UniqueItems.size(); ++i)
+        // Build filtered list of visible items
+        std::vector<UniqueItemEntry*> visibleItems;
+        for (auto& u : g_UniqueItems)
         {
-            auto& u = g_UniqueItems[i];
             std::string trimmedName = Trim(u.name);
             bool isExcluded = g_ExcludedGrailItems.count(trimmedName) > 0;
 
@@ -6632,84 +6912,83 @@ void ShowGrailMenu()
             if (showCollected && u.collected && !isExcluded)
                 continue;
 
-            bool* checked = &u.collected;
-            std::string label = "";
-            if (showBaseCodes && showBaseNames)
-                label = u.name + " (" + u.code + ", " + u.itemName + ")";
-            else if (showBaseCodes)
-                label = u.name + " (" + u.code + ")";
-            else if (showBaseNames)
-                label = u.name + " (" + u.itemName + ")";
-            else
-                label = u.name;
+            // Show Duplicates filter
+            if (showDuplicates && u.locations.size() <= 1)
+                continue;
 
+            visibleItems.push_back(&u);
+        }
+
+        // Render only visible items
+        for (size_t i = 0; i < visibleItems.size(); ++i)
+        {
+            auto* u = visibleItems[i];
+            std::string trimmedName = Trim(u->name);
+            bool isExcluded = g_ExcludedGrailItems.count(trimmedName) > 0;
+
+            std::string label;
+            if (showBaseCodes && showBaseNames)
+                label = u->name + " (" + u->code + ", " + u->itemName + ")";
+            else if (showBaseCodes)
+                label = u->name + " (" + u->code + ")";
+            else if (showBaseNames)
+                label = u->name + " (" + u->itemName + ")";
+            else
+                label = u->name;
+
+            bool* checked = &u->collected;
             std::string checkboxID = label + "##" + std::to_string(i);
 
             // Begin horizontal line
             ImGui::BeginGroup();
 
-            // -------------------------------
-            // TEXT COLOR: GOLD OR GREY
-            // -------------------------------
             if (isExcluded)
                 ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.55f, 0.55f, 0.55f, 1.0f)); // grey
             else
-                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.780f, 0.702f, 0.467f, 1.0f));   // gold
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.780f, 0.702f, 0.467f, 1.0f)); // gold
 
-            // Checkbox for collected/uncollected
             if (ImGui::Checkbox(checkboxID.c_str(), checked))
             {
-                // TODO: functionality if needed
+                // TODO: save state if needed
             }
+
+            if (ImGui::IsItemHovered())
+                ShowItemLocationTooltip(u->id, false);
+
             ImGui::PopStyleColor();
 
-            // -------------------------------
-            // ACTION BUTTON (X or ✓)
-            // -------------------------------
+            // ACTION BUTTON
             float offsetX = ImGui::GetContentRegionAvail().x - 80.0f;
             if (offsetX < 0) offsetX = 0;
 
             ImGui::SameLine(offsetX);
-
             std::string buttonID;
 
             if (isExcluded)
             {
-                //--------------------------------------------------
-                // ✓ GREEN BUTTON FOR EXCLUDED ITEMS
-                //--------------------------------------------------
                 buttonID = "Include##" + std::to_string(i);
                 ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.2f, 0.9f, 0.2f, 1.0f)); // green
-
                 if (ImGui::SmallButton(buttonID.c_str()))
                 {
                     g_ExcludedGrailItems.erase(trimmedName);
                     SaveFullGrailConfig(configFilePath, false);
                 }
-
                 if (ImGui::IsItemHovered())
                     ShowOffsetTooltip("Include this item back in your Grail hunt");
-
                 ImGui::PopStyleColor();
             }
             else
             {
-                //--------------------------------------------------
-                // X RED BUTTON FOR NORMAL ITEMS
-                //--------------------------------------------------
                 buttonID = "Exclude##" + std::to_string(i);
                 ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.9f, 0.15f, 0.15f, 1.0f)); // red
-
                 if (ImGui::SmallButton(buttonID.c_str()))
                 {
                     g_ExcludedGrailItems.insert(trimmedName);
-                    u.enabled = false;
+                    u->enabled = false;
                     SaveFullGrailConfig(configFilePath, false);
                 }
-
                 if (ImGui::IsItemHovered())
                     ShowOffsetTooltip("Exclude this item from your Grail hunt");
-
                 ImGui::PopStyleColor();
             }
 
