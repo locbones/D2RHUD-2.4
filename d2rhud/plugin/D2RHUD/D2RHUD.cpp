@@ -48,7 +48,7 @@
 #pragma region Global Static/Structs
 
 std::string lootFile = "../D2R/lootfilter.lua";
-std::string Version = "1.5.9";
+std::string Version = "1.6.0";
 
 using json = nlohmann::json;
 static MonsterStatsDisplaySettings cachedSettings;
@@ -73,6 +73,19 @@ static std::string GetModName() {
 std::string modName = GetModName();
 std::string configFilePath = "HUDConfig_" + modName + ".json";
 bool configLoaded = false;
+
+const uint32_t sharedStashFlagOffset = 0x1BF0883;
+
+static bool IsHardcore()
+{
+    uint64_t addr = Pattern::Address(sharedStashFlagOffset);
+    if (!addr)
+        return false;
+
+    uint8_t value = *reinterpret_cast<uint8_t*>(addr);
+    return (value & (1 << 2)) != 0;
+}
+static bool isHardcore = false;
 
 #pragma endregion
 
@@ -4503,99 +4516,95 @@ struct HuffmanNode {
     ~HuffmanNode() { delete left; delete right; }
 };
 
-// FIXED: d07RiV's exact Huffman tree structure
-HuffmanNode* BuildHuffmanTree() {
-    // Leaf nodes
-    auto w = new HuffmanNode{ 'w' };
-    auto u = new HuffmanNode{ 'u' };
-    auto eight = new HuffmanNode{ '8' };
-    auto y = new HuffmanNode{ 'y' };
-    auto five = new HuffmanNode{ '5' };
-    auto j = new HuffmanNode{ 'j' };
-    auto h = new HuffmanNode{ 'h' };
-    auto s = new HuffmanNode{ 's' };
-    auto two = new HuffmanNode{ '2' };
-    auto n = new HuffmanNode{ 'n' };
-    auto x = new HuffmanNode{ 'x' };
-    auto c = new HuffmanNode{ 'c' };
-    auto k = new HuffmanNode{ 'k' };
-    auto f = new HuffmanNode{ 'f' };
-    auto b = new HuffmanNode{ 'b' };
-    auto t = new HuffmanNode{ 't' };
-    auto m = new HuffmanNode{ 'm' };
-    auto nine = new HuffmanNode{ '9' };
-    auto seven = new HuffmanNode{ '7' };
-    auto space = new HuffmanNode{ ' ' };
-    auto e = new HuffmanNode{ 'e' };
-    auto d = new HuffmanNode{ 'd' };
-    auto p = new HuffmanNode{ 'p' };
-    auto g = new HuffmanNode{ 'g' };
-    auto z = new HuffmanNode{ 'z' };
-    auto q = new HuffmanNode{ 'q' };
-    auto three = new HuffmanNode{ '3' };
-    auto v = new HuffmanNode{ 'v' };
-    auto six = new HuffmanNode{ '6' };  // FIXED: was missing
-    auto r = new HuffmanNode{ 'r' };
-    auto l = new HuffmanNode{ 'l' };
-    auto a = new HuffmanNode{ 'a' };
-    auto one = new HuffmanNode{ '1' };
-    auto four = new HuffmanNode{ '4' };
-    auto zero = new HuffmanNode{ '0' };
-    auto i = new HuffmanNode{ 'i' };
-    auto o = new HuffmanNode{ 'o' };
+static const std::vector<std::pair<char, std::string>> HUFFMAN_CODES = {
+    {' ', "10"},
+    {'0', "11111011"},
+    {'1', "1111100"},
+    {'2', "001100"},
+    {'3', "1101101"},
+    {'4', "11111010"},
+    {'5', "00010110"},
+    {'6', "1101111"},
+    {'7', "01111"},
+    {'8', "000100"},
+    {'9', "01110"},
+    {'a', "11110"},
+    {'b', "0101"},
+    {'c', "01000"},
+    {'d', "110001"},
+    {'e', "110000"},
+    {'f', "010011"},
+    {'g', "11010"},
+    {'h', "00011"},
+    {'i', "1111110"},
+    {'j', "000101110"},
+    {'k', "010010"},
+    {'l', "11101"},
+    {'m', "01101"},
+    {'n', "001101"},
+    {'o', "1111111"},
+    {'p', "11001"},
+    {'q', "11011001"},
+    {'r', "11100"},
+    {'s', "0010"},
+    {'t', "01100"},
+    {'u', "00001"},
+    {'v', "1101110"},
+    {'w', "00000"},
+    {'x', "00111"},
+    {'y', "0001010"},
+    {'z', "11011000"},
 
-    // Build LEFT subtree
-    auto j_nil = new HuffmanNode{ 0, j, nullptr };
-    auto five_j = new HuffmanNode{ 0, five, j_nil };
-    auto y_5j = new HuffmanNode{ 0, y, five_j };
-    auto eight_y5j = new HuffmanNode{ 0, eight, y_5j };
-    auto eight_h = new HuffmanNode{ 0, eight_y5j, h };
-    auto wu = new HuffmanNode{ 0, w, u };
-    auto wu_8h = new HuffmanNode{ 0, wu, eight_h };
+    // --- Capitals ---
+    {'A', "00010111101011100"},
+    {'B', "00010111111001110"},
+    {'C', "00010111111011001"},
+    {'D', "00010111110011111"},
+    {'E', "00010111101111000"},
+    {'F', "00010111110011100"},
+    {'G', "00010111110101011"},
+    {'H', "00010111110111001"},
+    {'I', "00010111110111100"},
+    {'J', "0001011110000111"},
+    {'K', "00010111110100100"},
+    {'L', "00010111110010010"},
+    {'M', "00010111111011011"},
+    {'N', "0001011110000010"},
+    {'O', "00010111111101011"},
+    {'P', "00010111110100111"},
+    {'Q', "00010111101100100"},
+    {'R', "00010111111100111"},
+    {'S', "00010111101101010"},
+    {'T', "00010111110001010"},
+    {'U', "00010111110001001"},
+    {'V', "00010111110010001"},
+    {'W', "00010111111101110"},
+    {'X', "00010111111111010"},
+    {'Y', "00010111111111101"},
+    {'Z', "00010111110000100"},
+};
 
-    auto two_n = new HuffmanNode{ 0, two, n };
-    auto two_n_x = new HuffmanNode{ 0, two_n, x };
-    auto s_2nx = new HuffmanNode{ 0, s, two_n_x };
+HuffmanNode* BuildHuffmanTreeFromTable() {
+    auto root = new HuffmanNode{};
 
-    auto left1 = new HuffmanNode{ 0, wu_8h, s_2nx };
+    for (auto& [ch, bits] : HUFFMAN_CODES) {
+        HuffmanNode* node = root;
 
-    auto kf = new HuffmanNode{ 0, k, f };
-    auto c_kf = new HuffmanNode{ 0, c, kf };
-    auto ckf_b = new HuffmanNode{ 0, c_kf, b };
+        for (char b : bits) {
+            if (b == '0') {
+                if (!node->left) node->left = new HuffmanNode{};
+                node = node->left;
+            }
+            else {
+                if (!node->right) node->right = new HuffmanNode{};
+                node = node->right;
+            }
+        }
 
-    auto tm = new HuffmanNode{ 0, t, m };
-    auto nine_seven = new HuffmanNode{ 0, nine, seven };
-    auto tm_97 = new HuffmanNode{ 0, tm, nine_seven };
+        node->value = ch; // leaf
+    }
 
-    auto left2 = new HuffmanNode{ 0, ckf_b, tm_97 };
-
-    auto left_root = new HuffmanNode{ 0, left1, left2 };
-
-    // Build RIGHT subtree
-    auto ed = new HuffmanNode{ 0, e, d };
-    auto ed_p = new HuffmanNode{ 0, ed, p };
-
-    auto zq = new HuffmanNode{ 0, z, q };
-    auto zq_3 = new HuffmanNode{ 0, zq, three };
-    auto v6 = new HuffmanNode{ 0, v, six };  // FIXED: v,6 not v,nullptr
-    auto zq3_v6 = new HuffmanNode{ 0, zq_3, v6 };
-    auto g_zq3v6 = new HuffmanNode{ 0, g, zq3_v6 };
-
-    auto edp_g = new HuffmanNode{ 0, ed_p, g_zq3v6 };
-
-    auto rl = new HuffmanNode{ 0, r, l };
-    auto four_zero = new HuffmanNode{ 0, four, zero };
-    auto one_40 = new HuffmanNode{ 0, one, four_zero };
-    auto io = new HuffmanNode{ 0, i, o };
-    auto one40_io = new HuffmanNode{ 0, one_40, io };
-    auto a_140io = new HuffmanNode{ 0, a, one40_io };
-    auto rl_a = new HuffmanNode{ 0, rl, a_140io };
-
-    auto right_inner = new HuffmanNode{ 0, edp_g, rl_a };
-    auto right_root = new HuffmanNode{ 0, space, right_inner };
-
-    // Root node
-    return new HuffmanNode{ 0, left_root, right_root };
+    return root;
 }
 
 char DecodeHuffmanChar(BitReader& reader, HuffmanNode* root) {
@@ -4637,6 +4646,63 @@ std::vector<size_t> FindItemOffsets(const std::vector<uint8_t>& buf, size_t star
     }
     return offsets;
 }
+
+
+
+#pragma endregion
+
+#pragma region Lookup Functions
+
+void BuildItemNameLookups()
+{
+    g_SetItemLookup.clear();
+    g_UniqueItemLookup.clear();
+
+    for (auto& s : g_SetItems)
+        g_SetItemLookup[s.id] = s.setName.empty() ? "Unknown Set Item" : s.setName;
+
+    for (auto& u : g_UniqueItems)
+        g_UniqueItemLookup[u.id] = u.name.empty() ? "Unknown Unique" : u.name;
+}
+
+std::string GetItemTypeName(const std::string& code)
+{
+    for (auto& s : g_SetItems)
+    {
+        if (s.code == code)
+            return s.itemName.empty() ? code : s.itemName;
+    }
+
+    for (auto& u : g_UniqueItems)
+    {
+        if (u.code == code)
+            return u.name.empty() ? code : u.name;
+    }
+
+    // Not Found
+    return "Unknown Item";
+}
+
+std::string GetSetItemName(uint32_t id)
+{
+    auto it = g_SetItemLookup.find(id);
+    return it != g_SetItemLookup.end() ? it->second : "Unknown Set Item";
+}
+
+std::string GetUniqueItemName(uint32_t id)
+{
+    auto it = g_UniqueItemLookup.find(id);
+    return it != g_UniqueItemLookup.end() ? it->second : "Unknown Unique";
+}
+
+const char* GetQualityName(uint32_t q) {
+    const char* names[] = { "", "Inferior", "Normal", "Superior", "Magic", "Set", "Rare", "Unique", "Crafted", "Tempered" };
+    return q < 10 ? names[q] : "Unknown";
+}
+
+#pragma endregion
+
+#pragma region Stash Parsing
 
 Item ParseItem(const uint8_t* data, size_t size, HuffmanNode* huffmanRoot, uint32_t fileVersion) {
     Item item;
@@ -4748,61 +4814,6 @@ Item ParseItem(const uint8_t* data, size_t size, HuffmanNode* huffmanRoot, uint3
 
     return item;
 }
-
-#pragma endregion
-
-#pragma region Lookup Functions
-
-void BuildItemNameLookups()
-{
-    g_SetItemLookup.clear();
-    g_UniqueItemLookup.clear();
-
-    for (auto& s : g_SetItems)
-        g_SetItemLookup[s.id] = s.setName.empty() ? "Unknown Set Item" : s.setName;
-
-    for (auto& u : g_UniqueItems)
-        g_UniqueItemLookup[u.id] = u.name.empty() ? "Unknown Unique" : u.name;
-}
-
-std::string GetItemTypeName(const std::string& code)
-{
-    for (auto& s : g_SetItems)
-    {
-        if (s.code == code)
-            return s.itemName.empty() ? code : s.itemName;
-    }
-
-    for (auto& u : g_UniqueItems)
-    {
-        if (u.code == code)
-            return u.name.empty() ? code : u.name;
-    }
-
-    // Not Found
-    return "Unknown Item";
-}
-
-std::string GetSetItemName(uint32_t id)
-{
-    auto it = g_SetItemLookup.find(id);
-    return it != g_SetItemLookup.end() ? it->second : "Unknown Set Item";
-}
-
-std::string GetUniqueItemName(uint32_t id)
-{
-    auto it = g_UniqueItemLookup.find(id);
-    return it != g_UniqueItemLookup.end() ? it->second : "Unknown Unique";
-}
-
-const char* GetQualityName(uint32_t q) {
-    const char* names[] = { "", "Inferior", "Normal", "Superior", "Magic", "Set", "Rare", "Unique", "Crafted", "Tempered" };
-    return q < 10 ? names[q] : "Unknown";
-}
-
-#pragma endregion
-
-#pragma region Stash Parsing
 
 static void ShowItemLocationTooltip(int id, bool isSet)
 {
@@ -4935,7 +4946,7 @@ static int ParseSharedStash(const std::string& filePath, int pageNum) {
     }
 
     uint32_t version = buf[8];
-    HuffmanNode* huffman = BuildHuffmanTree();
+    HuffmanNode* huffman = BuildHuffmanTreeFromTable();
     int totalItems = 0, uniqueCount = 0, setCount = 0;
 
     // Helper lambdas to mark items collected
@@ -5009,7 +5020,7 @@ static int ParseSharedStash(const std::string& filePath, int pageNum) {
                 if (item.type.empty()) continue;
                 bool validType = true;
                 for (char c : item.type) {
-                    if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9'))) {
+                    if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9'))) {
                         validType = false;
                         break;
                     }
@@ -5090,6 +5101,7 @@ void ScanStashPages()
 
     hasScanned = true;
     lastScan = now;
+    isHardcore = IsHardcore();
 
     for (auto& s : g_SetItems) {
         s.collected = false;
@@ -5102,7 +5114,7 @@ void ScanStashPages()
 
     namespace fs = std::filesystem;
     std::wstring stashFolder = GetSavePath() + L"\\Diablo II Resurrected\\Mods\\" + std::wstring(modName.begin(), modName.end()) + L"\\";
-    std::regex pageFileRegex(R"(Stash_SC_Page(\d{1,2})\.d2i)", std::regex::icase);
+    std::regex pageFileRegex = isHardcore ? std::regex(R"(Stash_HC_Page(\d{1,2})\.d2i)", std::regex::icase) : std::regex(R"(Stash_SC_Page(\d{1,2})\.d2i)", std::regex::icase);
     std::vector<std::pair<int, std::string>> pages;
 
     for (const auto& entry : fs::directory_iterator(stashFolder))
@@ -5226,6 +5238,7 @@ static bool showGrailMenu = false;
 static bool showBaseCodes = false;
 static bool showBaseNames = false;
 static bool showDuplicates = false;
+
 LootFilterHeader g_LootFilterHeader;
 std::unordered_map<std::string, std::string> g_LuaVariables;
 std::unordered_map<std::string, std::string> g_LuaVariableComments;
@@ -6789,6 +6802,16 @@ void ShowGrailMenu()
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.0f, 0.988f, 0.0f, 1.0f));
         ImGui::Text("Set Items");
         ImGui::PopStyleColor();
+
+        // Right-aligned mode label on the SAME line
+        const char* modeText = IsHardcore() ? "[Hardcore]" : "[Softcore]";
+        float right = ImGui::GetWindowContentRegionMax().x;
+        float textWidth = ImGui::CalcTextSize(modeText).x;
+
+        // Move cursor to right edge minus text width
+        ImGui::SameLine(right - textWidth);
+        ImGui::TextUnformatted(modeText);
+
         ImGui::Separator();
         ImGui::Dummy(ImVec2(0, 4));
 
@@ -6883,6 +6906,16 @@ void ShowGrailMenu()
             ImGui::OpenPopup("ExcludedItemsPopup");
 
         ImGui::PopStyleColor();
+
+        // Right-aligned mode label on the SAME line
+        const char* modeText = IsHardcore() ? "[Hardcore]" : "[Softcore]";
+        float right = ImGui::GetWindowContentRegionMax().x;
+        float textWidth = ImGui::CalcTextSize(modeText).x;
+
+        // Move cursor to right edge minus text width
+        ImGui::SameLine(right - textWidth);
+        ImGui::TextUnformatted(modeText);
+
         ImGui::Separator();
         ImGui::Dummy(ImVec2(0, 4));
 
