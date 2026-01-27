@@ -29,5 +29,6 @@
     <ClInclude Include="stb_image.h" />
     <ClInclude Include="d3dx12.h" />
     <ClInclude Include="d2\json.hpp" />
+    <ClInclude Include="plugin\GrailStatus.h" />
   </ItemGroup>
 </Project>

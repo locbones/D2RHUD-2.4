@@ -9,8 +9,9 @@ public:
 	bool bInstalled = false;
 	bool Install(MonsterStatsDisplaySettings settings);
 	void ReloadGameFilter();
+	void ReloadGameFilterForGrail();
 	void CycleFilter();
 	void ClearInvOverrideCache();
 };
 
-
+extern bool IsPlayerInGame();

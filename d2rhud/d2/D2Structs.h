@@ -6,6 +6,7 @@
 #include <vector>
 #define SOL_ALL_SAFETIES_ON 1
 #include <sol/sol.hpp>
+#include "../plugin/GrailStatus.h"
 
 struct D2Client {
 	uint32_t dwClientId; //0x0000
@@ -86,11 +87,14 @@ public:
 		cbNameFunction = sol::nil;
 		cbDescFunction = sol::nil;
 	}
+
+	GrailStatus grail;
 };
 
 class D2UnitStrcCustom : public D2UnitStrc {
 public:
 	class D2ItemFilterResultStrc* pFilterResult;
+	uint32_t grailRevision = 0;
 };
 #pragma endregion
 

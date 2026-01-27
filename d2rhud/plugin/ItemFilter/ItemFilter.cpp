@@ -443,6 +443,14 @@ int64_t* __fastcall Hooked_UI_DrawGroundItemBackground(D2UnitRectStrc* pRect, co
 
 #pragma region LUA Registers
 
+void RegisterGrailStatusStrc(sol::state& s) {
+	auto typeGrail = s.new_usertype<GrailStatus>("GrailStatus", sol::no_constructor,
+		"isGrail", &GrailStatus::isGrail,
+		"collected", &GrailStatus::collected,
+		"located", &GrailStatus::located
+	);
+}
+
 void RegisterD2ItemFilterResultStrc(sol::state& s) {
 	auto type = s.new_usertype<D2ItemFilterResultStrc>("D2ItemFilterResultStrc", sol::no_constructor,
 		"Hide", &D2ItemFilterResultStrc::bHide,
@@ -455,7 +463,8 @@ void RegisterD2ItemFilterResultStrc(sol::state& s) {
 		"HoveredBackgroundFunction", &D2ItemFilterResultStrc::cbHoveredBackgroundFunction,
 		"NameFunction", &D2ItemFilterResultStrc::cbNameFunction,
 		"Description", &D2ItemFilterResultStrc::szDescription,
-		"DescriptionFunction", &D2ItemFilterResultStrc::cbDescFunction
+		"DescriptionFunction", &D2ItemFilterResultStrc::cbDescFunction,
+		"Grail", sol::property([](D2ItemFilterResultStrc* self) -> GrailStatus& { return self->grail; })
 	);
 }
 
@@ -644,6 +653,7 @@ void InitializeLUA() {
 		sol::lib::table, sol::lib::coroutine, sol::lib::string,
 		sol::lib::math, sol::lib::io, sol::lib::os);
 	RegisterBasicTypes(lua);
+	RegisterGrailStatusStrc(lua);
 	RegisterD2ItemFilterResultStrc(lua);
 	RegisterD2ItemDataStrc(lua);
 	RegisterD2PlayerDataStrc(lua);
@@ -660,30 +670,47 @@ void InitializeLUA() {
 }
 
 void DoFilter(D2UnitStrc* pItem) {
-	auto pItemToApplyFilterOn = pItem;
-	if (!pItem) {
-		return;
-	}
+	if (!pItem) return;
+
 	auto pItemCustom = reinterpret_cast<D2UnitStrcCustom*>(pItem);
-	// Do Filter
-	if (applyFilter.valid()) {
-		delete pItemCustom->pFilterResult;
-		pItemCustom->pFilterResult = new D2ItemFilterResultStrc();
-		if (gpClientList) {
-			auto pClient = *gpClientList;
-			if (pClient && pClient->pGame) {
-				pItemToApplyFilterOn = UNITS_GetServerUnitByTypeAndId(pClient->pGame, (D2C_UnitTypes)pItemToApplyFilterOn->dwUnitType, pItemToApplyFilterOn->dwUnitId);
-			}
+
+	// --- Clean up previous filter result ---
+	delete pItemCustom->pFilterResult;
+	pItemCustom->pFilterResult = new D2ItemFilterResultStrc();
+
+	// --- Resolve item pointer in game client ---
+	D2UnitStrc* pItemToApplyFilterOn = pItem;
+	if (gpClientList) {
+		auto pClient = *gpClientList;
+		if (pClient && pClient->pGame) {
+			pItemToApplyFilterOn = UNITS_GetServerUnitByTypeAndId(pClient->pGame, static_cast<D2C_UnitTypes>(pItem->dwUnitType), pItem->dwUnitId);
 		}
-		HandleError(applyFilter(
-			reinterpret_cast<D2PlayerUnitStrc*>(GetUnitByIdAndType(ppClientUnitList, gpClientPlayerIds[*gpClientPlayerListIndex], UNIT_PLAYER)),
-			reinterpret_cast<D2ItemUnitStrc*>(pItemToApplyFilterOn),
-			pItemCustom->pFilterResult));
 	}
 
-	if (pItemCustom->pFilterResult
-		&& pItemCustom->pFilterResult->bHide) {
-		// Todo... Hide item instead of removing it?
+	auto pD2Item = reinterpret_cast<D2ItemUnitStrc*>(pItemToApplyFilterOn);
+	if (pD2Item && pD2Item->pItemData) {
+		uint32_t fileIndex = pD2Item->pItemData->dwFileIndex;
+
+		if (pItemCustom->grailRevision != g_GrailRevision) {
+			pItemCustom->grailRevision = g_GrailRevision;
+			pItemCustom->pFilterResult->grail = GetGrailStatus(fileIndex);
+		}
+
+		/*
+		// --- DEBUG OUTPUT ---
+		printf("[DoFilter] Item ClassId: %u, FileIndex: %u\n", pD2Item->dwClassId, fileIndex);
+		printf("[DoFilter] GrailStatus: isGrail=%d, collected=%d, located=%d\n", pItemCustom->pFilterResult->grail.isGrail, pItemCustom->pFilterResult->grail.collected, pItemCustom->pFilterResult->grail.located);
+		printf("[DoFilter] pFilterResult ptr: %p\n", pItemCustom->pFilterResult);
+		*/
+	}
+
+	// --- Call Lua filter ---
+	if (applyFilter.valid()) {
+		HandleError(applyFilter(reinterpret_cast<D2PlayerUnitStrc*>(GetUnitByIdAndType(ppClientUnitList, gpClientPlayerIds[*gpClientPlayerListIndex], UNIT_PLAYER)), reinterpret_cast<D2ItemUnitStrc*>(pItemToApplyFilterOn), pItemCustom->pFilterResult));
+	}
+
+	// --- Hide item if Lua filter marked it hidden ---
+	if (pItemCustom->pFilterResult && pItemCustom->pFilterResult->bHide) {
 		D2GSPacketSrv0A remove = { 0xA, UNIT_ITEM, pItemToApplyFilterOn->dwUnitId };
 		oD2CLIENT_PACKETCALLBACK_Rcv0x0A_SCMD_REMOVEUNIT(reinterpret_cast<uint8_t*>(&remove));
 	}
@@ -692,6 +719,11 @@ void DoFilter(D2UnitStrc* pItem) {
 void DoFilter(uint32_t nUnitId) {
 	DoFilter(GetUnitByIdAndType(ppClientUnitList, nUnitId, UNIT_ITEM));
 }
+
+
+
+
+
 
 #pragma region Filter Apply Hooks
 
@@ -1390,6 +1422,20 @@ void ItemFilter::ReloadGameFilter()
 	else {
 		g_ShouldShowItemFilterMessage = false;
 		//oDATATBLS_LoadAllJson();
+	}
+}
+
+void ReloadGameFilterForGrail()
+{
+	LoadScript();
+
+	auto ppClientItem = &ppClientUnitList[UNIT_ITEM * 0x80];
+	for (int i = 0; i < 128; i++) {
+		auto pItem = ppClientItem[i];
+		while (pItem) {
+			DoFilter(pItem);
+			pItem = pItem->pListNext;
+		}
 	}
 }
 

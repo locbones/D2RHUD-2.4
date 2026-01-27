@@ -106,6 +106,7 @@
     <ClInclude Include="d3dx12.h" />
     <ClInclude Include="Logging.h" />
     <ClInclude Include="Pattern.h" />
+    <ClInclude Include="plugin\GrailStatus.h" />
     <ClInclude Include="plugin\ItemFilter\ItemFilter.h" />
     <ClInclude Include="plugin\KeyMappings.h" />
     <ClInclude Include="plugin\Plugin.h" />

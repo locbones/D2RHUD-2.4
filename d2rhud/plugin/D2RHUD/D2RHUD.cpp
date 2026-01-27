@@ -48,7 +48,7 @@
 #pragma region Global Static/Structs
 
 std::string lootFile = "../D2R/lootfilter.lua";
-std::string Version = "1.6.0";
+std::string Version = "1.6.1";
 
 using json = nlohmann::json;
 static MonsterStatsDisplaySettings cachedSettings;
@@ -73,6 +73,7 @@ static std::string GetModName() {
 std::string modName = GetModName();
 std::string configFilePath = "HUDConfig_" + modName + ".json";
 bool configLoaded = false;
+bool grailLoaded = false;
 
 const uint32_t sharedStashFlagOffset = 0x1BF0883;
 
@@ -86,6 +87,7 @@ static bool IsHardcore()
     return (value & (1 << 2)) != 0;
 }
 static bool isHardcore = false;
+std::atomic<uint32_t> g_GrailRevision{ 1 };
 
 #pragma endregion
 
@@ -3156,35 +3158,6 @@ std::string BuildTerrorZoneInfoText()
 
 #pragma region - Static/Structs
 
-struct FoundLocation {
-    int page;
-    int tab;
-    int x;
-    int y;
-};
-
-struct SetItemEntry {
-    std::string name;
-    int id;
-    std::string setName;
-    std::string itemName;
-    std::string code;
-    bool enabled = false;
-    bool collected = false;
-    std::vector<FoundLocation> locations;
-};
-
-struct UniqueItemEntry {
-    int index;
-    int id;
-    std::string name;
-    std::string code;
-    std::string itemName;
-    bool enabled = false;
-    bool collected = false;
-    std::vector<FoundLocation> locations;
-};
-
 std::vector<UniqueItemEntry> g_UniqueItems;
 std::vector<SetItemEntry>    g_SetItems;
 static std::unordered_set<std::string> g_ExcludedGrailItems;
@@ -4327,6 +4300,35 @@ void LoadAllItemData()
 #pragma region D2I Parser
 
 #pragma region Static/Structs
+
+GrailStatus GetGrailStatus(uint32_t id)
+{
+    GrailStatus g;
+    g.isGrail = true;
+
+    // Check set items
+    for (auto& s : g_SetItems)
+    {
+        if (s.id == id)
+        {
+            if (s.collected) g.collected = true;
+            g.located += static_cast<int>(s.locations.size());
+        }
+    }
+
+    // Check unique items
+    for (auto& u : g_UniqueItems)
+    {
+        if (u.id == id)
+        {
+            if (u.collected) g.collected = true;
+            g.located += static_cast<int>(u.locations.size());
+        }
+    }
+
+    return g;
+}
+
 std::wstring GetSavePath()
 {
     const wchar_t* valueName = L"{4C5C32FF-BB9D-43B0-B5B4-2D72E54EAAA4}";
@@ -5082,6 +5084,9 @@ static int ParseSharedStash(const std::string& filePath, int pageNum) {
     std::cout << "Total Items: " << totalItems << std::endl;
     std::cout << "Set Items:   " << setCount << std::endl;
     std::cout << "Uniques:     " << uniqueCount << std::endl;
+
+    g_GrailRevision++;
+    ReloadGameFilterForGrail();
 
     delete huffman;
     return 0;
@@ -8996,8 +9001,11 @@ void D2RHUD::OnDraw() {
         LoadD2RHUDConfig(configFilePath);
         RegisterModOverrides();
         ApplyModOverrides(modName);
+        
         configLoaded = true;
     }
+    
+        
 
     if (!menuClickHookInstalled)
     {
@@ -9267,6 +9275,15 @@ void D2RHUD::OnDraw() {
         else {
             itemFilter->Install(cachedSettings);
         }
+    }
+
+    if (configLoaded && settingsLoaded && !grailLoaded && IsPlayerInGame())
+    {
+        LoadAllItemData();
+        ScanStashPages();
+        g_GrailRevision++;
+        ReloadGameFilterForGrail();
+        grailLoaded = true;
     }
 
     if (!oHUDWarnings__PopulateHUDWarnings && GetClientStatus() == 1) {
