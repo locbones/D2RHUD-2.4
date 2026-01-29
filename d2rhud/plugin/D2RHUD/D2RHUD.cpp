@@ -48,7 +48,7 @@
 #pragma region Global Static/Structs
 
 std::string lootFile = "../D2R/lootfilter.lua";
-std::string Version = "1.6.1";
+std::string Version = "1.6.2";
 
 using json = nlohmann::json;
 static MonsterStatsDisplaySettings cachedSettings;
@@ -4404,22 +4404,29 @@ std::wstring GetSavePath()
 class BitReader {
 public:
     BitReader(const std::vector<uint8_t>& buffer)
-        : buf(buffer), bitPos(0) {
+        : bufPtr(buffer.data()), bufSize(buffer.size()), bitPos(0) {
     }
 
-    // FIXED: LSB-first bit reading (correct for D2R)
+    BitReader(const uint8_t* data, size_t size)
+        : bufPtr(data), bufSize(size), bitPos(0) {
+    }
+
     uint32_t ReadBits(size_t bits) {
-        if (bits > 32) throw std::runtime_error("Cannot read more than 32 bits at once");
+        if (bits > 32)
+            throw std::runtime_error("Cannot read more than 32 bits at once");
+
         uint32_t result = 0;
         for (size_t i = 0; i < bits; ++i) {
             size_t byteIdx = bitPos >> 3;
             size_t bitIdx = bitPos & 7;
-            if (byteIdx >= buf.size()) throw std::runtime_error("Buffer overflow");
-            // LSB-first: read bit from position bitIdx (0-7, starting from LSB)
-            if ((buf[byteIdx] >> bitIdx) & 1) {
+
+            if (byteIdx >= bufSize)
+                throw std::runtime_error("Buffer overflow");
+
+            if ((bufPtr[byteIdx] >> bitIdx) & 1)
                 result |= (1u << i);
-            }
-            bitPos++;
+
+            ++bitPos;
         }
         return result;
     }
@@ -4433,14 +4440,22 @@ public:
     void SetBitPos(size_t pos) { bitPos = pos; }
     size_t GetBitPos() const { return bitPos; }
     size_t GetBytePos() const { return bitPos >> 3; }
-    void AlignToByte() { if (bitPos & 7) bitPos = ((bitPos >> 3) + 1) << 3; }
 
-    bool HasBits(size_t n) const { return bitPos + n <= buf.size() * 8; }
+    void AlignToByte() {
+        if (bitPos & 7)
+            bitPos = ((bitPos >> 3) + 1) << 3;
+    }
+
+    bool HasBits(size_t n) const {
+        return bitPos + n <= bufSize * 8;
+    }
 
 private:
-    const std::vector<uint8_t>& buf;
+    const uint8_t* bufPtr;
+    size_t bufSize;
     size_t bitPos;
 };
+
 
 struct EarAttributes {
     uint8_t clazz = 0;
@@ -4649,8 +4664,6 @@ std::vector<size_t> FindItemOffsets(const std::vector<uint8_t>& buf, size_t star
     return offsets;
 }
 
-
-
 #pragma endregion
 
 #pragma region Lookup Functions
@@ -4708,8 +4721,7 @@ const char* GetQualityName(uint32_t q) {
 
 Item ParseItem(const uint8_t* data, size_t size, HuffmanNode* huffmanRoot, uint32_t fileVersion) {
     Item item;
-    std::vector<uint8_t> itemBuf(data, data + size);
-    BitReader reader(itemBuf);
+    BitReader reader(data, size);
 
     // === FLAG BITS (32 bits) ===
     reader.SkipBits(4);                       // bits 0-3: unknown
@@ -4923,191 +4935,190 @@ static int ExtractPageFromPath(const std::string& path)
     return page;
 }
 
-static int ParseSharedStash(const std::string& filePath, int pageNum) {
+static int ParseSharedStash(const std::string& filePath, int pageNum)
+{
     std::ifstream file(filePath, std::ios::binary | std::ios::ate);
-    if (!file) {
-        std::cerr << "Failed to open file: " << filePath << std::endl;
+    if (!file)
         return 1;
-    }
 
-    int page = ExtractPageFromPath(filePath);
-    size_t fileSize = file.tellg();
+    const size_t fileSize = static_cast<size_t>(file.tellg());
+    if (fileSize < 16)
+        return 1;
+
     file.seekg(0);
-    std::vector<uint8_t> buf(fileSize);
-    file.read((char*)buf.data(), fileSize);
 
-    std::cout << "\n-----------------------------" << std::endl;
-    std::cout << "File: " << filePath << std::endl;
-    std::cout << "Size: " << fileSize << " bytes" << std::endl;
+    // Read File
+    std::vector<uint8_t> buf;
+    buf.resize(fileSize);
+    file.read(reinterpret_cast<char*>(buf.data()), fileSize);
 
-    // Validate header
-    if (buf.size() < 16 || buf[0] != 0x55 || buf[1] != 0xAA ||
-        buf[2] != 0x55 || buf[3] != 0xAA) {
-        std::cerr << "Invalid D2I file header" << std::endl;
+    // Validate Header
+    if (buf[0] != 0x55 || buf[1] != 0xAA ||
+        buf[2] != 0x55 || buf[3] != 0xAA)
         return 1;
+
+    const uint32_t version = buf[8];
+    const int page = pageNum;
+
+    // Build Huffman Tree
+    std::unique_ptr<HuffmanNode> huffman(BuildHuffmanTreeFromTable());
+
+    int totalItems = 0;
+    int uniqueCount = 0;
+    int setCount = 0;
+
+    // Build ID → Entry Lookup Tables
+    static std::unordered_map<int, SetItemEntry*> setById;
+    static std::unordered_map<int, UniqueItemEntry*> uniqueById;
+
+    if (setById.empty()) {
+        setById.reserve(g_SetItems.size());
+        for (auto& s : g_SetItems)
+            setById.emplace(s.id, &s);
     }
 
-    uint32_t version = buf[8];
-    HuffmanNode* huffman = BuildHuffmanTreeFromTable();
-    int totalItems = 0, uniqueCount = 0, setCount = 0;
+    if (uniqueById.empty()) {
+        uniqueById.reserve(g_UniqueItems.size());
+        for (auto& u : g_UniqueItems)
+            uniqueById.emplace(u.id, &u);
+    }
 
-    // Helper lambdas to mark items collected
-    auto MarkSetCollected = [&](int id, int tab, int posX, int posY) {
-        for (auto& s : g_SetItems) {
-            if (s.id == id) {
-                s.collected = true;
-                s.locations.push_back({ page, tab, posX + 1, posY + 1 });
-                break;
-            }
-        }
-        };
-
-    auto MarkUniqueCollected = [&](int id, int tab, int posX, int posY) {
-        for (auto& u : g_UniqueItems) {
-            if (u.id == id) {
-                u.collected = true;
-                u.locations.push_back({ page, tab, posX + 1, posY + 1 });
-                break;
-            }
-        }
-        };
-
-    // Find all tab headers (55 AA 55 AA)
+    // Find Tab Headers
     std::vector<size_t> tabOffsets;
-    for (size_t i = 0; i + 3 < fileSize; i++) {
+    tabOffsets.reserve(8);
+
+    for (size_t i = 0, end = fileSize - 3; i < end; ++i) {
         if (buf[i] == 0x55 && buf[i + 1] == 0xAA &&
-            buf[i + 2] == 0x55 && buf[i + 3] == 0xAA) {
+            buf[i + 2] == 0x55 && buf[i + 3] == 0xAA)
+        {
             tabOffsets.push_back(i);
         }
     }
-    std::cout << "-----------------------------" << std::endl;
 
-    // Process each tab
-    for (size_t tabIdx = 0; tabIdx < tabOffsets.size(); tabIdx++) {
-        size_t tabStart = tabOffsets[tabIdx];
-        size_t tabEnd = (tabIdx + 1 < tabOffsets.size()) ?
-            tabOffsets[tabIdx + 1] : fileSize;
+    // Process Tab
+    for (size_t tabIdx = 0; tabIdx < tabOffsets.size(); ++tabIdx) {
+        const size_t tabStart = tabOffsets[tabIdx];
+        const size_t tabEnd =
+            (tabIdx + 1 < tabOffsets.size()) ? tabOffsets[tabIdx + 1] : fileSize;
 
-        // Find JM marker
+        // Find JM Marker
         size_t jmOffset = 0;
-        for (size_t i = tabStart; i + 1 < tabEnd; i++) {
+        for (size_t i = tabStart; i + 1 < tabEnd; ++i) {
             if (buf[i] == 'J' && buf[i + 1] == 'M') {
                 jmOffset = i;
                 break;
             }
         }
 
-        if (jmOffset == 0) continue;
-
-        // Check for empty tab
-        if (jmOffset + 3 < fileSize &&
-            buf[jmOffset + 2] == 0 && buf[jmOffset + 3] == 0) {
+        if (!jmOffset)
             continue;
-        }
 
-        // Find items
+        // Empty tab check
+        if (jmOffset + 3 < fileSize &&
+            buf[jmOffset + 2] == 0 &&
+            buf[jmOffset + 3] == 0)
+            continue;
+
+        // Find Item Offsets
         auto itemOffsets = FindItemOffsets(buf, jmOffset + 4, tabEnd);
-        if (itemOffsets.empty()) continue;
+        if (itemOffsets.empty())
+            continue;
 
         // Parse items
-        for (size_t i = 0; i < itemOffsets.size(); i++) {
-            size_t offset = itemOffsets[i];
-            size_t nextOffset = (i + 1 < itemOffsets.size()) ? itemOffsets[i + 1] : tabEnd;
-            size_t itemSize = nextOffset - offset;
+        for (size_t i = 0; i < itemOffsets.size(); ++i) {
+            const size_t offset = itemOffsets[i];
+            const size_t nextOffset =
+                (i + 1 < itemOffsets.size()) ? itemOffsets[i + 1] : tabEnd;
 
             try {
-                Item item = ParseItem(buf.data() + offset, itemSize, huffman, version);
+                Item item = ParseItem(
+                    buf.data() + offset,
+                    nextOffset - offset,
+                    huffman.get(),
+                    version
+                );
 
-                // Skip invalid items (empty type or non-alphanumeric)
-                if (item.type.empty()) continue;
-                bool validType = true;
+                if (item.type.empty())
+                    continue;
+
+                // Inline validity check
+                bool valid = true;
                 for (char c : item.type) {
-                    if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9'))) {
-                        validType = false;
+                    if (!(std::isalnum(static_cast<unsigned char>(c)))) {
+                        valid = false;
                         break;
                     }
                 }
-                if (!validType) continue;
+                if (!valid)
+                    continue;
 
-                totalItems++;
-                std::string baseName = GetItemTypeName(item.type);
+                ++totalItems;
 
-                if (item.quality == 5) {  // Set
-                    std::string setName = GetSetItemName(item.set_id);
-                    std::cout << "[Tab " << tabIdx + 1 << "] - " << itemOffsets.size() << " items" << std::endl;
-                    std::cout << " - Base: " << baseName << " (" << item.type << ")" << std::endl;
-                    std::cout << " - Quality: SET" << std::endl;
-                    std::cout << " - Set ID: " << item.set_id << std::endl;
-                    std::cout << " - iLvl: " << (int)item.level << std::endl;
-                    std::cout << " - Pos: (" << (int)item.position_x + 1 << ", " << (int)item.position_y + 1 << ")\n" << std::endl;
-                    setCount++;
-
-                    // --- Mark the checkbox collected ---
-                    MarkSetCollected(item.set_id, (int)tabIdx + 1, item.position_x, item.position_y);
+                // Set Items
+                if (item.quality == 5) {
+                    auto it = setById.find(item.set_id);
+                    if (it != setById.end()) {
+                        auto* s = it->second;
+                        s->collected = true;
+                        s->locations.push_back({
+                            page,
+                            static_cast<int>(tabIdx) + 1,
+                            item.position_x + 1,
+                            item.position_y + 1
+                            });
+                        ++setCount;
+                    }
                 }
-                if (item.quality == 7) {  // Unique
-                    std::string uniqueName = GetUniqueItemName(item.unique_id);
-                    std::cout << "[Tab " << tabIdx + 1 << "] - " << itemOffsets.size() << " items" << std::endl;
-                    std::cout << " - Base: " << baseName << " (" << item.type << ")" << std::endl;
-                    std::cout << " - Quality: UNIQUE" << std::endl;
-                    std::cout << " - Unique ID: " << item.unique_id << std::endl;
-                    std::cout << " - iLvl: " << (int)item.level << std::endl;
-                    std::cout << " - Pos: (" << (int)item.position_x + 1 << ", " << (int)item.position_y + 1 << ")\n" << std::endl;
-                    uniqueCount++;
-
-                    // --- Mark the checkbox collected ---
-                    MarkUniqueCollected(item.unique_id, (int)tabIdx + 1, item.position_x, item.position_y);
+                // Unique Items
+                else if (item.quality == 7) {
+                    auto it = uniqueById.find(item.unique_id);
+                    if (it != uniqueById.end()) {
+                        auto* u = it->second;
+                        u->collected = true;
+                        u->locations.push_back({
+                            page,
+                            static_cast<int>(tabIdx) + 1,
+                            item.position_x + 1,
+                            item.position_y + 1
+                            });
+                        ++uniqueCount;
+                    }
                 }
-                /*
-                else {
-                    std::cout << " - Base: " << baseName << " (" << item.type << ")" << std::endl;
-                    std::cout << " - Quality: " << GetQualityName(item.quality) << std::endl;
-                    std::cout << " - iLvl: " << (int)item.level << std::endl;
-                    std::cout << " - Pos: (" << (int)item.position_x + 1 << ", " << (int)item.position_y + 1 << ")\n" << std::endl;
-                }
-                */
-
-                std::string flags;
-                if (item.ethereal) flags += "[ETH] ";
-                if (item.socketed) flags += "[SOCK] ";
-                if (!item.identified) flags += "[UNID] ";
-                if (item.given_runeword) flags += "[RW] ";
-                if (!flags.empty()) std::cout << "  " << flags << std::endl;
-
             }
-            catch (const std::exception& ex) {
-                std::cerr << "  Error parsing item at 0x" << std::hex << offset << ": " << ex.what() << std::endl;
+            catch (...) {
+                // Swallow Errors
             }
         }
     }
 
-    std::cout << "Total Items: " << totalItems << std::endl;
-    std::cout << "Set Items:   " << setCount << std::endl;
-    std::cout << "Uniques:     " << uniqueCount << std::endl;
-
     g_GrailRevision++;
-    ReloadGameFilterForGrail();
-
-    delete huffman;
     return 0;
 }
+
 
 void ScanStashPages()
 {
     using clock = std::chrono::steady_clock;
-    static clock::time_point lastScan;
+    static clock::time_point lastScan{};
     static bool hasScanned = false;
-
+    static bool lastHardcore = false;
     auto now = clock::now();
 
-    // If we've scanned before AND cooldown hasn't expired → skip
-    if (hasScanned && (now - lastScan < std::chrono::seconds(30)))
+    // Cooldown (30s) AND mode unchanged → skip
+    bool hardcore = IsHardcore();
+    if (hasScanned &&
+        hardcore == lastHardcore &&
+        (now - lastScan < std::chrono::seconds(30)))
+    {
         return;
+    }
 
     hasScanned = true;
     lastScan = now;
-    isHardcore = IsHardcore();
+    lastHardcore = hardcore;
+    isHardcore = hardcore;
 
+    // Reset Collected State
     for (auto& s : g_SetItems) {
         s.collected = false;
         s.locations.clear();
@@ -5118,33 +5129,55 @@ void ScanStashPages()
     }
 
     namespace fs = std::filesystem;
-    std::wstring stashFolder = GetSavePath() + L"\\Diablo II Resurrected\\Mods\\" + std::wstring(modName.begin(), modName.end()) + L"\\";
-    std::regex pageFileRegex = isHardcore ? std::regex(R"(Stash_HC_Page(\d{1,2})\.d2i)", std::regex::icase) : std::regex(R"(Stash_SC_Page(\d{1,2})\.d2i)", std::regex::icase);
+    const std::wstring stashFolder = GetSavePath() + L"\\Diablo II Resurrected\\Mods\\" + std::wstring(modName.begin(), modName.end()) + L"\\";
+
+    if (!fs::exists(stashFolder))
+        return;
+
+    const std::string prefix = hardcore ? "Stash_HC_Page" : "Stash_SC_Page";
+    const std::string suffix = ".d2i";
+
     std::vector<std::pair<int, std::string>> pages;
+    pages.reserve(64);
 
     for (const auto& entry : fs::directory_iterator(stashFolder))
     {
-        if (!entry.is_regular_file()) continue;
+        if (!entry.is_regular_file())
+            continue;
 
-        std::string filename = entry.path().filename().string();
-        std::smatch match;
-        if (std::regex_match(filename, match, pageFileRegex))
-        {
-            int pageNum = std::stoi(match[1].str());
-            if (pageNum >= 1 && pageNum <= 64)
-            {
-                pages.emplace_back(pageNum, entry.path().string());
-            }
-        }
+        const std::string filename = entry.path().filename().string();
+
+        // Page String Checks
+        if (filename.rfind(prefix, 0) != 0)
+            continue;
+        if (filename.size() <= prefix.size() + suffix.size())
+            continue;
+        if (filename.compare(filename.size() - suffix.size(), suffix.size(), suffix) != 0)
+            continue;
+
+        // Extract Page Number
+        const std::string numStr = filename.substr(prefix.size(), filename.size() - prefix.size() - suffix.size());
+
+        int pageNum = std::atoi(numStr.c_str());
+        if (pageNum >= 1 && pageNum <= 64)
+            pages.emplace_back(pageNum, entry.path().string());
     }
 
-    std::sort(pages.begin(), pages.end(),
-        [](const auto& a, const auto& b) { return a.first < b.first; });
+    // Only sort if needed
+    if (pages.size() > 1)
+    {
+        std::sort(pages.begin(), pages.end(),
+            [](const auto& a, const auto& b) {
+                return a.first < b.first;
+            });
+    }
 
-    for (auto& [pageNum, path] : pages)
+    for (const auto& [pageNum, path] : pages)
     {
         ParseSharedStash(path, pageNum);
     }
+
+    ReloadGameFilterForGrail();
 }
 
 #pragma endregion
