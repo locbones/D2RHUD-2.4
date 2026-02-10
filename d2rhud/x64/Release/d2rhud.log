@@ -1,27 +1,27 @@
 ﻿  D2RHUD.cpp
-C:\Users\djsch\Github\D2RHUD-2.4\d2rhud\plugin\D2RHUD\D2RHUD.cpp(1262,34): warning C4244: 'initializing': conversion from 'int32_t' to 'float', possible loss of data
-C:\Users\djsch\Github\D2RHUD-2.4\d2rhud\plugin\D2RHUD\D2RHUD.cpp(1280,61): warning C4244: '*=': conversion from 'float' to 'int32_t', possible loss of data
-C:\Users\djsch\Github\D2RHUD-2.4\d2rhud\plugin\D2RHUD\D2RHUD.cpp(2517,43): warning C4244: '=': conversion from 'double' to 'int32_t', possible loss of data
-C:\Users\djsch\Github\D2RHUD-2.4\d2rhud\plugin\D2RHUD\D2RHUD.cpp(2519,43): warning C4244: '=': conversion from 'double' to 'int32_t', possible loss of data
-C:\Users\djsch\Github\D2RHUD-2.4\d2rhud\plugin\D2RHUD\D2RHUD.cpp(5977,31): warning C4267: '=': conversion from 'size_t' to 'int', possible loss of data
-C:\Users\djsch\Github\D2RHUD-2.4\d2rhud\plugin\D2RHUD\D2RHUD.cpp(8040,43): warning C4244: 'argument': conversion from 'int' to 'float', possible loss of data
-      C:\Users\djsch\Github\D2RHUD-2.4\d2rhud\plugin\D2RHUD\D2RHUD.cpp(8040,43):
+C:\Users\djsch\Github\D2RHUD-2.4\d2rhud\plugin\D2RHUD\D2RHUD.cpp(1263,34): warning C4244: 'initializing': conversion from 'int32_t' to 'float', possible loss of data
+C:\Users\djsch\Github\D2RHUD-2.4\d2rhud\plugin\D2RHUD\D2RHUD.cpp(1281,61): warning C4244: '*=': conversion from 'float' to 'int32_t', possible loss of data
+C:\Users\djsch\Github\D2RHUD-2.4\d2rhud\plugin\D2RHUD\D2RHUD.cpp(2518,43): warning C4244: '=': conversion from 'double' to 'int32_t', possible loss of data
+C:\Users\djsch\Github\D2RHUD-2.4\d2rhud\plugin\D2RHUD\D2RHUD.cpp(2520,43): warning C4244: '=': conversion from 'double' to 'int32_t', possible loss of data
+C:\Users\djsch\Github\D2RHUD-2.4\d2rhud\plugin\D2RHUD\D2RHUD.cpp(6018,31): warning C4267: '=': conversion from 'size_t' to 'int', possible loss of data
+C:\Users\djsch\Github\D2RHUD-2.4\d2rhud\plugin\D2RHUD\D2RHUD.cpp(8100,43): warning C4244: 'argument': conversion from 'int' to 'float', possible loss of data
+      C:\Users\djsch\Github\D2RHUD-2.4\d2rhud\plugin\D2RHUD\D2RHUD.cpp(8100,43):
       the template instantiation context (the oldest one first) is
-          C:\Users\djsch\Github\D2RHUD-2.4\d2rhud\plugin\D2RHUD\D2RHUD.cpp(8110,9):
+          C:\Users\djsch\Github\D2RHUD-2.4\d2rhud\plugin\D2RHUD\D2RHUD.cpp(8170,9):
           see reference to function template instantiation 'auto ShowD2RHUDMenu::<lambda_2>::operator ()<ShowD2RHUDMenu::<lambda_3>>(const char *,_T1,const char *,const char *,const char *,bool,int,const LockedValueInfo *) const' being compiled
           with
           [
               _T1=ShowD2RHUDMenu::<lambda_3>
           ]
   
-C:\Users\djsch\Github\D2RHUD-2.4\d2rhud\plugin\D2RHUD\D2RHUD.cpp(8121,152): warning C4244: 'argument': conversion from 'float' to 'int', possible loss of data
-C:\Users\djsch\Github\D2RHUD-2.4\d2rhud\plugin\D2RHUD\D2RHUD.cpp(8137,139): warning C4244: 'argument': conversion from 'float' to 'int', possible loss of data
-C:\Users\djsch\Github\D2RHUD-2.4\d2rhud\plugin\D2RHUD\D2RHUD.cpp(8151,522): warning C4244: 'argument': conversion from 'float' to 'int', possible loss of data
+C:\Users\djsch\Github\D2RHUD-2.4\d2rhud\plugin\D2RHUD\D2RHUD.cpp(8181,152): warning C4244: 'argument': conversion from 'float' to 'int', possible loss of data
+C:\Users\djsch\Github\D2RHUD-2.4\d2rhud\plugin\D2RHUD\D2RHUD.cpp(8197,139): warning C4244: 'argument': conversion from 'float' to 'int', possible loss of data
+C:\Users\djsch\Github\D2RHUD-2.4\d2rhud\plugin\D2RHUD\D2RHUD.cpp(8211,522): warning C4244: 'argument': conversion from 'float' to 'int', possible loss of data
 LINK : warning LNK4098: defaultlib 'LIBCMT' conflicts with use of other libs; use /NODEFAULTLIB:library
   Generating code
-  2 of 25893 functions (<0.1%) were compiled, the rest were copied from previous compilation.
+  4 of 25929 functions (<0.1%) were compiled, the rest were copied from previous compilation.
     0 functions were new in current compilation
-    18 functions had inline decision re-evaluated but remain unchanged
+    20 functions had inline decision re-evaluated but remain unchanged
   Finished generating code
   d2rhud.vcxproj -> C:\Users\djsch\Github\D2RHUD-2.4\x64\Release\d2rhud.dll
   'pwsh.exe' is not recognized as an internal or external command,

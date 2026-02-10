@@ -48,7 +48,7 @@
 #pragma region Global Static/Structs
 
 std::string lootFile = "../D2R/lootfilter.lua";
-std::string Version = "1.6.2";
+std::string Version = "1.6.3";
 
 using json = nlohmann::json;
 static MonsterStatsDisplaySettings cachedSettings;
@@ -88,6 +88,7 @@ static bool IsHardcore()
 }
 static bool isHardcore = false;
 std::atomic<uint32_t> g_GrailRevision{ 1 };
+static int TerrorStat = 0;
 
 #pragma endregion
 
@@ -4895,6 +4896,13 @@ static void ShowItemLocationTooltip(int id, bool isSet)
         {
             ImGui::TextColored(ImVec4(0.9f, 0.15f, 0.15f, 1.0f), "Not Collected");
             ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1), "This item has not been found in your stash.");
+
+            // RMD Quest
+            if (modName == "RMD-MP" && id == 556)
+            {
+                ImGui::Separator();
+                ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.2f, 1.0f), "Quest 31: Cube 2x Town Portal scrolls to receive your completion ticket");
+            }
         }
         else
         {
@@ -4902,6 +4910,17 @@ static void ShowItemLocationTooltip(int id, bool isSet)
                 ImGui::TextColored(ImVec4(0.9f, 0.15f, 0.15f, 1.0f), "Found %d Item", located);
             else
                 ImGui::TextColored(ImVec4(0.9f, 0.15f, 0.15f, 1.0f), "Found %d Items", located);
+
+            // ── Tooltip append (safe & scoped) ──
+            if (ImGui::IsItemHovered())
+            {
+                ImGui::BeginTooltip();
+
+                // original tooltip text (whatever you already show)
+                ImGui::TextUnformatted("Item found in stash.");
+
+                ImGui::EndTooltip();
+            }
 
             ImGui::Separator();
             for (auto& u : g_UniqueItems)
@@ -4911,11 +4930,19 @@ static void ShowItemLocationTooltip(int id, bool isSet)
                     for (auto& loc : u.locations)
                     {
                         ImGui::TextColored(ImVec4(0.4f, 0.7f, 1.0f, 1.0f), "- Page %d, Tab %d  (X: %d, Y: %d)", loc.page, loc.tab, loc.x, loc.y);
+
+                        // RMD Quest
+                        if (modName == "RMD-MP" && id == 556)
+                        {
+                            ImGui::Separator();
+                            ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.2f, 1.0f), "Quest 31: Cube 2x Town Portal scrolls to receive your completion ticket");
+                        }
                     }
                 }
             }
         }
     }
+
 
     ImGui::PopTextWrapPos();
     ImGui::EndTooltip();
@@ -5542,7 +5569,21 @@ std::unordered_map<std::string, ImVec4> g_TextColors = {
     { "black",        ImVec4(0.0f, 0.0f, 0.0f, 1.0f) },
 };
 
+static bool IsTZCycleHotkey(const std::string& name)
+{
+    return name == "Cycle TZ Forward" || name == "Cycle TZ Backward";
+}
 
+static bool IsTZCycleUnavailable(const std::string& name)
+{
+    if (!IsTZCycleHotkey(name))
+        return false;
+
+    if (modName != "RMD-MP")
+        return false;
+
+    return TerrorStat != 1;
+}
 
 #pragma endregion
 
@@ -7225,13 +7266,32 @@ void ShowHotkeyMenu()
         strncpy(buffer, keyDisplay.c_str(), sizeof(buffer));
         buffer[sizeof(buffer) - 1] = '\0';
 
+        bool tzUnavailable = IsTZCycleUnavailable(name);
+
         ImGui::PushItemWidth(180);
         if (inputFont) ImGui::PushFont(inputFont);
         ImGui::InputText(("##key_" + name).c_str(), buffer, sizeof(buffer), ImGuiInputTextFlags_ReadOnly);
 
+        // Tooltip
+        if (ImGui::IsItemHovered() && tzUnavailable)
+        {
+            ImVec2 mousePos = ImGui::GetMousePos();
+
+            ImGui::SetNextWindowPos(ImVec2(mousePos.x + 80.0f, mousePos.y), ImGuiCond_Always);
+            ImGui::SetNextWindowSizeConstraints(ImVec2(0, 0), ImVec2(320.0f, FLT_MAX));
+
+            ImGui::BeginTooltip();
+            ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.2f, 1.0f), "TZ Cycling Disabled!");
+            ImGui::Separator();
+            ImGui::PushTextWrapPos(300.0f);
+            ImGui::TextUnformatted("This hotkey is disabled until you complete a certain task in our mod\n\nI hope you enjoy riddles...");
+            ImGui::PopTextWrapPos();
+            ImGui::EndTooltip();
+        }
+
         if (ImGui::IsItemClicked())
         {
-            activeHotkeyInput = name; // start editing this hotkey
+            activeHotkeyInput = name;
             activeCombo.clear();
             hotkeyReleased = true;
         }
@@ -9382,6 +9442,7 @@ void D2RHUD::OnDraw() {
 
     do
     {
+
         /*
         if (!settings.monsterStatsDisplay)
         {
@@ -9407,6 +9468,7 @@ void D2RHUD::OnDraw() {
             pUnitServer = GetClientUnitPtrFunc(Pattern::Address(unitDataOffset + 0x400 * gMouseHover->HoveredUnitType), gMouseHover->HoveredUnitId & 0x7F, gMouseHover->HoveredUnitId, gMouseHover->HoveredUnitType);
         }
 
+        TerrorStat = STATLIST_GetUnitStatSigned(pUnitPlayer, 361, 0);
         if (!pUnit || !pUnitServer) break;
         if (STATLIST_GetUnitStatSigned(pUnitServer, STAT_HITPOINTS, 0) == 0) break;
 
@@ -9635,10 +9697,27 @@ bool D2RHUD::OnKeyPressed(short key)
             });
 
     if (auto kb = FindKeybind("Cycle TZ Forward"))
-        CheckAndAddMatch(kb->key, 0, []() { CheckToggleForward(); });
+    {
+        if (modName == "RMD-MP")
+        {
+            if (TerrorStat == 1)
+                CheckAndAddMatch(kb->key, 0, []() { CheckToggleForward(); });
+        }
+        else
+            CheckAndAddMatch(kb->key, 0, []() { CheckToggleForward(); });
+    }
+        
 
     if (auto kb = FindKeybind("Cycle TZ Backward"))
-        CheckAndAddMatch(kb->key, 0, []() { CheckToggleBackward(); });
+    {
+        if (modName == "RMD-MP")
+        {
+            if (TerrorStat == 1)
+                CheckAndAddMatch(kb->key, 0, []() { CheckToggleBackward(); });
+        }
+        else
+            CheckAndAddMatch(kb->key, 0, []() { CheckToggleBackward(); });
+    }
 
     // ---------------- Version display ----------------
 
