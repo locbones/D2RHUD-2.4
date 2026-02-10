@@ -48,7 +48,7 @@
 #pragma region Global Static/Structs
 
 std::string lootFile = "../D2R/lootfilter.lua";
-std::string Version = "1.6.3";
+std::string Version = "1.6.4";
 
 using json = nlohmann::json;
 static MonsterStatsDisplaySettings cachedSettings;
@@ -9442,16 +9442,6 @@ void D2RHUD::OnDraw() {
 
     do
     {
-
-        /*
-        if (!settings.monsterStatsDisplay)
-        {
-            if (fontPushed)
-                ImGui::PopFont();
-            return;
-        }
-        */
-
         if (!gMouseHover->IsHovered) break;
         if (gMouseHover->HoveredUnitType > UNIT_MONSTER) break;
 
@@ -9468,7 +9458,18 @@ void D2RHUD::OnDraw() {
             pUnitServer = GetClientUnitPtrFunc(Pattern::Address(unitDataOffset + 0x400 * gMouseHover->HoveredUnitType), gMouseHover->HoveredUnitId & 0x7F, gMouseHover->HoveredUnitId, gMouseHover->HoveredUnitType);
         }
 
-        TerrorStat = STATLIST_GetUnitStatSigned(pUnitPlayer, 361, 0);
+        for (int i = 0; i < 8; ++i)
+        {
+            auto pClient = gpClientList[i];
+            if (!pClient) continue;
+
+            uint32_t guid = pClient->dwUnitGUID;
+            D2UnitStrc* pPlayer = UNITS_GetServerUnitByTypeAndId(pGame, UNIT_PLAYER, guid);
+            if (!pPlayer) continue;
+
+            TerrorStat = STATLIST_GetUnitStatSigned(pPlayer, 361, 0);
+        }
+
         if (!pUnit || !pUnitServer) break;
         if (STATLIST_GetUnitStatSigned(pUnitServer, STAT_HITPOINTS, 0) == 0) break;
 
