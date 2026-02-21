@@ -48,7 +48,7 @@
 #pragma region Global Static/Structs
 
 std::string lootFile = "../D2R/lootfilter.lua";
-std::string Version = "1.6.4";
+std::string Version = "1.6.5";
 
 using json = nlohmann::json;
 static MonsterStatsDisplaySettings cachedSettings;
@@ -1592,6 +1592,7 @@ struct DesecratedZone {
     DifficultySettings default_hell;
     std::vector<WarningInfo> warnings;
     std::vector<ZoneGroup> zones;
+    int random_start_offset = 0; // set at load: random group index for initial cycle position
 };
 
 struct TerrorZoneDisplayData
@@ -2008,17 +2009,25 @@ void from_json(const json& j, DesecratedZone& dz) {
     dz.default_hell = j.at("default_hell").get<DifficultySettings>();
     dz.warnings = j.at("warnings").get<std::vector<WarningInfo>>();
     dz.zones = j.at("zones").get<std::vector<ZoneGroup>>();
-    // Optional: seed
+    // Optional: seed (mix with time so shuffle order varies per load; otherwise same seed => same order => same zone at index 0)
     if (j.contains("seed")) {
         dz.seed = j.at("seed").get<uint64_t>();
 
-        if (dz.seed != 0) {
-            std::mt19937_64 rng(dz.seed);
+        if (dz.seed != 0 && !dz.zones.empty()) {
+            std::mt19937_64 rng(dz.seed ^ static_cast<uint64_t>(std::time(nullptr)));
             std::shuffle(dz.zones.begin(), dz.zones.end(), rng);
         }
     }
     else {
         dz.seed = 0;
+    }
+    // Random initial zone group (which zone is "active") so starting location varies per load
+    int n = static_cast<int>(dz.zones.size());
+    if (n > 0) {
+        std::random_device rd;
+        std::mt19937 gen(rd() ^ static_cast<unsigned>(std::time(nullptr)));
+        std::uniform_int_distribution<> dist(0, n - 1);
+        dz.random_start_offset = dist(gen);
     }
 }
 
@@ -2351,7 +2360,15 @@ MonsterTreasureResult GetMonsterTreasureSU(const std::vector<MonsterTreasureClas
 bool LoadDesecratedZones(const std::string& filename) {
     std::ifstream file(filename);
     if (!file.is_open()) {
-        MessageBoxA(nullptr, "Failed to open desecrated zones config file.", "Error", MB_ICONERROR);
+        // Fallback: try path with .mpq stripped (e.g. extracted mod folder: Mods/ModName/data/...)
+        std::string alt = filename;
+        size_t pos = alt.find(".mpq/data");
+        if (pos != std::string::npos)
+            alt.replace(pos, 9, "/data");
+        file.open(alt);
+    }
+    if (!file.is_open()) {
+        MessageBoxA(nullptr, ("Failed to open desecrated zones config file.\nTried: " + filename).c_str(), "Error", MB_ICONERROR);
         return false;
     }
 
@@ -2381,6 +2398,17 @@ bool LoadDesecratedZones(const std::string& filename) {
     try {
         gDesecratedZones = j.at("desecrated_zones").get<std::vector<DesecratedZone>>();
         level_names = j.at("level_names").get<std::vector<LevelName>>();
+
+        // Randomize initial zone group for each desecrated zone (cycle start position)
+        std::random_device rd;
+        std::mt19937 gen(rd() ^ static_cast<unsigned>(std::time(nullptr)));
+        for (auto& zone : gDesecratedZones) {
+            int n = static_cast<int>(zone.zones.size());
+            if (n > 0) {
+                std::uniform_int_distribution<> dist(0, n - 1);
+                zone.random_start_offset = dist(gen);
+            }
+        }
 
         if (j.contains("level_groups") && j["level_groups"].is_array()) {
             level_groups = j.at("level_groups").get<std::vector<LevelGroup>>();
@@ -2774,9 +2802,8 @@ void UpdateActiveZoneInfoText(time_t currentUtc)
         int activeGroupIndex = g_ManualZoneGroupOverride;
         if (activeGroupIndex == -1)
         {
-            int minutesSinceStart = static_cast<int>((currentUtc - zone.start_time_utc) / 60);
-            int cyclePos = minutesSinceStart % (cycleLengthMin * groupCount);
-            activeGroupIndex = cyclePos / cycleLengthMin;
+            // Use only the random offset (set at load) so the active zone varies per load and isn't tied to fixed shuffle order
+            activeGroupIndex = zone.random_start_offset % groupCount;
         }
         else if (activeGroupIndex >= groupCount)
         {
@@ -2934,10 +2961,13 @@ void __fastcall ApplyGhettoTerrorZone(D2GameStrc* pGame, D2ActiveRoomStrc* pRoom
         int minutesSinceStart = static_cast<int>((currentUtc - zone.start_time_utc) / 60);
         int totalCycle = cycleLengthMin * groupCount;
         int cyclePos = minutesSinceStart % totalCycle;
-
-        int activeGroupIndex = (g_ManualZoneGroupOverride == -1) ? (cyclePos / cycleLengthMin) : g_ManualZoneGroupOverride;
-
         int posWithinGroup = cyclePos % cycleLengthMin;
+
+        // Use only the random offset (set at load) so the active zone varies per load and isn't tied to fixed shuffle order
+        int activeGroupIndex = (g_ManualZoneGroupOverride == -1)
+            ? (zone.random_start_offset % groupCount)
+            : g_ManualZoneGroupOverride;
+
         if (activeGroupIndex < 0 || activeGroupIndex >= groupCount)
             continue;
 
@@ -3120,9 +3150,6 @@ std::string BuildTerrorZoneInfoText()
             int totalSecondsInPhase = g_TerrorZoneData.terrorDurationMin * 60;
             int secondsIntoPhase = (currentUtc - g_TerrorZoneData.zoneStartUtc) % (g_TerrorZoneData.cycleLengthMin * 60) % totalSecondsInPhase;
             remainingSeconds = totalSecondsInPhase - secondsIntoPhase;
-
-            if (remainingSeconds == g_TerrorZoneData.terrorDurationMin * 60)
-                ToggleManualZoneGroupInternal(true);
         }
         else
         {
@@ -5266,6 +5293,14 @@ struct LootFilterHeader
     std::string Version;
 };
 
+struct LootFilterRule
+{
+    std::string comment;
+    std::vector<std::pair<std::string, std::string>> fields;
+};
+
+std::vector<LootFilterRule> g_LootFilterRules;
+
 struct MemoryConfigEntry
 {
     std::string Name;
@@ -5372,8 +5407,18 @@ std::string CleanJsonFile(const std::string& path)
     return text;
 }
 
+// Returns 2.0f for 4K resolution (width >= 3840 or height >= 2160), else 1.0f. Used to scale all menu elements.
+float GetMenuScaleFactor()
+{
+    ImVec2 display = ImGui::GetIO().DisplaySize;
+    return (display.x >= 3840.0f || display.y >= 2160.0f) ? 2.0f : 1.0f;
+}
+
 ImVec2 CenterWindow(ImVec2 size)
 {
+    float scale = GetMenuScaleFactor();
+    size.x *= scale;
+    size.y *= scale;
     ImGuiIO& io = ImGui::GetIO();
     ImVec2 centerPos = ImVec2((io.DisplaySize.x - size.x) * 0.5f,
         (io.DisplaySize.y - size.y) * 0.5f);
@@ -5402,8 +5447,9 @@ void PopFontSafe(int index)
 
 bool DrawWindowTitleAndClose(const char* title, bool* open)
 {
-    float closeBtnSize = 20.0f;
-    float padding = 5.0f;
+    float scale = GetMenuScaleFactor();
+    float closeBtnSize = 20.0f * scale;
+    float padding = 5.0f * scale;
     ImVec2 contentSize = ImGui::GetContentRegionAvail();
 
     float titleWidth = ImGui::CalcTextSize(title).x;
@@ -5877,6 +5923,7 @@ void LoadLootFilterConfig(const std::string& path)
     g_LuaVariables.clear();
     g_LuaVariableComments.clear();
     g_LootFilterHeader = {}; // reset
+    g_LootFilterRules.clear();
 
     std::ifstream file(path);
     if (!file.is_open())
@@ -5884,6 +5931,8 @@ void LoadLootFilterConfig(const std::string& path)
 
     std::string line;
     int nestingLevel = 0; // track { } nesting
+    LootFilterRule currentRule;
+    std::regex assignRegex(R"(^\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*(.+?),?\s*$)");
 
     while (std::getline(file, line))
     {
@@ -5899,6 +5948,8 @@ void LoadLootFilterConfig(const std::string& path)
 
             continue;
         }
+
+        int levelAtStart = nestingLevel;
 
         // --- Track nesting for Lua table ---
         for (char c : line)
@@ -5925,7 +5976,6 @@ void LoadLootFilterConfig(const std::string& path)
             }
 
             // --- Match key/value ---
-            std::regex assignRegex(R"(^\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*(.+?),?\s*$)");
             std::smatch match;
             if (std::regex_match(keyValuePart, match, assignRegex))
             {
@@ -5942,7 +5992,242 @@ void LoadLootFilterConfig(const std::string& path)
                     g_LuaVariableComments[key] = commentPart;
             }
         }
+
+        // --- Parse rules block (nesting level 2 = inside rules = {, level 3 = inside a rule {}) ---
+        if (levelAtStart == 2)
+        {
+            std::string trimmed = line;
+            size_t start = trimmed.find_first_not_of(" \t");
+            if (start != std::string::npos && trimmed[start] == '{')
+            {
+                currentRule = {};
+                size_t commentPos = line.find("--", start + 1);
+                if (commentPos != std::string::npos)
+                {
+                    currentRule.comment = line.substr(commentPos + 2);
+                    size_t cstart = currentRule.comment.find_first_not_of(" \t");
+                    if (cstart != std::string::npos) currentRule.comment = currentRule.comment.substr(cstart);
+                }
+            }
+        }
+        else if (levelAtStart == 3)
+        {
+            std::string keyValuePart = line;
+            size_t commentPos = line.find("--");
+            if (commentPos != std::string::npos)
+                keyValuePart = line.substr(0, commentPos);
+            std::smatch match;
+            if (std::regex_match(keyValuePart, match, assignRegex))
+            {
+                std::string key = match[1].str();
+                std::string value = match[2].str();
+                if (!value.empty() && value.front() == '"' && value.back() == '"')
+                    value = value.substr(1, value.size() - 2);
+                currentRule.fields.push_back({ key, value });
+            }
+            if (nestingLevel == 2)
+            {
+                if (!currentRule.fields.empty() || !currentRule.comment.empty())
+                    g_LootFilterRules.push_back(currentRule);
+                currentRule = {};
+            }
+        }
     }
+}
+
+static std::string FormatLuaValue(const std::string& value)
+{
+    if (value == "true" || value == "false")
+        return value;
+    if (!value.empty() && value.find_first_not_of("0123456789.-") == std::string::npos)
+        return value;
+    if (!value.empty() && value.front() == '{' && value.back() == '}')
+        return value;  // table literal
+    std::string escaped;
+    escaped.reserve(value.size() + 8);
+    for (char c : value)
+    {
+        if (c == '\\') escaped += "\\\\";
+        else if (c == '"') escaped += "\\\"";
+        else escaped += c;
+    }
+    return "\"" + escaped + "\"";
+}
+
+void SaveLootFilterConfig(const std::string& path)
+{
+    std::ifstream in(path);
+    if (!in.is_open())
+        return;
+    std::vector<std::string> lines;
+    std::string line;
+    while (std::getline(in, line))
+        lines.push_back(line);
+    in.close();
+
+    std::regex assignRegex(R"(^\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*(.+?),?\s*$)");
+    std::regex rulesLineRegex(R"(^\s*rules\s*=\s*\{)");
+    int nestingLevel = 0;
+    std::unordered_set<std::string> writtenKeys;
+    size_t lastLevel1AssignLineIndex = 0;   // last level-1 line that is key = value (not "}" or "rules = {")
+    size_t firstRulesLineIndex = (size_t)-1;
+    size_t rulesEndLineIndex = (size_t)-1;
+    std::string defaultIndent = "    ";
+
+    for (size_t i = 0; i < lines.size(); i++)
+    {
+        int levelBefore = nestingLevel;
+        for (char c : lines[i])
+        {
+            if (c == '{') nestingLevel++;
+            if (c == '}') nestingLevel--;
+        }
+        if (firstRulesLineIndex != (size_t)-1 && levelBefore == 2 && nestingLevel == 1)
+            rulesEndLineIndex = i;
+        if (levelBefore == 1)
+        {
+            std::string keyValuePart = lines[i];
+            size_t commentPos = lines[i].find("--");
+            if (commentPos != std::string::npos)
+                keyValuePart = lines[i].substr(0, commentPos);
+            if (firstRulesLineIndex == (size_t)-1 && std::regex_search(keyValuePart, rulesLineRegex))
+                firstRulesLineIndex = i;
+            std::smatch match;
+            if (std::regex_match(keyValuePart, match, assignRegex))
+            {
+                lastLevel1AssignLineIndex = i;
+                if (defaultIndent == "    ")
+                    defaultIndent = keyValuePart.substr(0, match.position(1));
+                std::string key = match[1].str();
+                auto it = g_LuaVariables.find(key);
+                if (it != g_LuaVariables.end())
+                {
+                    std::string value = it->second;
+                    std::string outValue = FormatLuaValue(value);
+                    std::string indent = keyValuePart.substr(0, match.position(1));
+                    std::string newLine = indent + key + " = " + outValue + ",";
+                    auto cit = g_LuaVariableComments.find(key);
+                    if (cit != g_LuaVariableComments.end() && !cit->second.empty())
+                        newLine += "  -- " + cit->second;
+                    lines[i] = newLine;
+                    writtenKeys.insert(key);
+                }
+            }
+        }
+    }
+
+    // Add any global options that exist in g_LuaVariables but were not in the file.
+    // Insert them above the first "rules" line so they stay with other global options.
+    static const std::vector<std::string> preferredKeyOrder = {
+        "allowOverrides", "modTips", "Debug", "audioPlayback",
+        "reload", "audioVoice", "filter_level", "language", "filter_titles"
+    };
+    std::unordered_set<std::string> unwritten;
+    for (const auto& p : g_LuaVariables)
+        if (writtenKeys.find(p.first) == writtenKeys.end())
+            unwritten.insert(p.first);
+    std::vector<std::string> keysToAdd;
+    for (const auto& k : preferredKeyOrder)
+    {
+        auto it = unwritten.find(k);
+        if (it != unwritten.end()) { keysToAdd.push_back(*it); unwritten.erase(it); }
+    }
+    for (const auto& k : unwritten)
+        keysToAdd.push_back(k);
+
+    size_t insertIndex = (firstRulesLineIndex != (size_t)-1) ? firstRulesLineIndex : (lastLevel1AssignLineIndex + 1);
+    for (size_t j = 0; j < keysToAdd.size(); j++)
+    {
+        const std::string& key = keysToAdd[j];
+        std::string value = g_LuaVariables.at(key);
+        std::string outValue = FormatLuaValue(value);
+        std::string newLine = defaultIndent + key + " = " + outValue + ",";
+        auto cit = g_LuaVariableComments.find(key);
+        if (cit != g_LuaVariableComments.end() && !cit->second.empty())
+            newLine += "  -- " + cit->second;
+        lines.insert(lines.begin() + insertIndex + j, newLine);
+    }
+    if (firstRulesLineIndex != (size_t)-1) firstRulesLineIndex += keysToAdd.size();
+    if (rulesEndLineIndex != (size_t)-1) rulesEndLineIndex += keysToAdd.size();
+
+    // Build rules block content from g_LootFilterRules (same format for replace or insert)
+    auto BuildRulesLines = [&defaultIndent]() -> std::vector<std::string>
+    {
+        std::string ruleIndent = "        ";
+        std::string fieldIndent = "            ";
+        std::vector<std::string> out;
+        out.push_back(defaultIndent + "rules = {");
+        for (size_t r = 0; r < g_LootFilterRules.size(); r++)
+        {
+            const auto& rule = g_LootFilterRules[r];
+            std::string commentTrim = rule.comment;
+            size_t cstart = commentTrim.find_first_not_of(" \t");
+            if (cstart != std::string::npos) commentTrim = commentTrim.substr(cstart);
+            if (!commentTrim.empty())
+                out.push_back(ruleIndent + "{ -- " + commentTrim);
+            else
+                out.push_back(ruleIndent + "{");
+            for (size_t f = 0; f < rule.fields.size(); f++)
+            {
+                const std::string& k = rule.fields[f].first;
+                std::string v = rule.fields[f].second;
+                if (k == "codes" && v.find(',') != std::string::npos && (v.empty() || v.front() != '{'))
+                {
+                    std::string tableVal = "{ ";
+                    size_t pos = 0;
+                    while (pos < v.size())
+                    {
+                        size_t next = v.find(',', pos);
+                        if (next == std::string::npos) next = v.size();
+                        std::string part = v.substr(pos, next - pos);
+                        size_t start = part.find_first_not_of(" \t");
+                        if (start != std::string::npos)
+                        {
+                            size_t end = part.find_last_not_of(" \t");
+                            part = part.substr(start, (end == std::string::npos ? part.size() : end + 1) - start);
+                        }
+                        else part.clear();
+                        if (tableVal.size() > 2) tableVal += ", ";
+                        std::string escaped;
+                        for (char c : part)
+                        {
+                            if (c == '\\') escaped += "\\\\";
+                            else if (c == '"') escaped += "\\\"";
+                            else escaped += c;
+                        }
+                        tableVal += "\"" + escaped + "\"";
+                        pos = next + 1;
+                    }
+                    tableVal += " }";
+                    v = tableVal;
+                }
+                std::string outVal = FormatLuaValue(v);
+                out.push_back(fieldIndent + k + " = " + outVal + ",");
+            }
+            out.push_back(ruleIndent + (r + 1 < g_LootFilterRules.size() ? "}," : "}"));
+        }
+        out.push_back(defaultIndent + "}");
+        return out;
+    };
+
+    // Replace existing rules block in place (only when we found it); never append a second block
+    if (!g_LootFilterRules.empty() && firstRulesLineIndex != (size_t)-1 && rulesEndLineIndex != (size_t)-1 && rulesEndLineIndex >= firstRulesLineIndex)
+    {
+        std::vector<std::string> rulesLines = BuildRulesLines();
+        lines.erase(lines.begin() + firstRulesLineIndex, lines.begin() + rulesEndLineIndex + 1);
+        for (size_t r = 0; r < rulesLines.size(); r++)
+            lines.insert(lines.begin() + firstRulesLineIndex + r, rulesLines[r]);
+    }
+
+    std::ofstream out(path);
+    if (!out.is_open())
+        return;
+    for (size_t i = 0; i < lines.size(); i++)
+    {
+        out << lines[i];
+        if (i + 1 < lines.size()) out << "\n";
+    }
+    out.close();
 }
 
 void LoadLootFilterLogic(const std::string& path)
@@ -6537,13 +6822,14 @@ void ShowGrailMenu()
 
     ScanStashPages();
 
+    float menuScale = GetMenuScaleFactor();
     // ------- Tooltip helper -------
-    auto ShowOffsetTooltip = [](const char* text)
+    auto ShowOffsetTooltip = [menuScale](const char* text)
         {
             ImVec2 mousePos = ImGui::GetIO().MousePos;
-            ImGui::SetNextWindowPos(ImVec2(mousePos.x + 70, mousePos.y), ImGuiCond_Always);
+            ImGui::SetNextWindowPos(ImVec2(mousePos.x + 70.0f * menuScale, mousePos.y), ImGuiCond_Always);
             ImGui::BeginTooltip();
-            float tooltipWidth = 600.0f;
+            float tooltipWidth = 600.0f * menuScale;
             ImGui::PushTextWrapPos(ImGui::GetCursorPos().x + tooltipWidth);
             ImGui::TextUnformatted(text);
             ImGui::PopTextWrapPos();
@@ -6558,7 +6844,7 @@ void ShowGrailMenu()
     PopFontSafe(3);
 
     ImGui::Separator();
-    ImGui::Dummy(ImVec2(0, 6));
+    ImGui::Dummy(ImVec2(0, 6.0f * menuScale));
 
     // Persistent State
     static int selectedCategory = 0;  // 0 = Sets, 1 = Uniques
@@ -6570,7 +6856,7 @@ void ShowGrailMenu()
 
     // Layout: Left Panel / Right Panel
     ImVec2 full = ImGui::GetContentRegionAvail();
-    float leftWidth = 240.0f;
+    float leftWidth = 240.0f * menuScale;
 
     // LEFT PANEL
     ImGui::BeginChild("left_panel", ImVec2(leftWidth, full.y), true);
@@ -6587,15 +6873,15 @@ void ShowGrailMenu()
     ImGui::PopStyleColor();
 
     // Center the input box under the label
-    ImGui::PushItemWidth(leftWidth - 55);
+    ImGui::PushItemWidth(leftWidth - 55.0f * menuScale);
     {
-        float inputWidth = leftWidth - 55;
+        float inputWidth = leftWidth - 55.0f * menuScale;
         float avail = ImGui::GetContentRegionAvail().x;
         ImGui::SetCursorPosX((avail - inputWidth) * 0.5f + ImGui::GetCursorPosX());
     }
     ImGui::InputText("##Search", searchBuffer, IM_ARRAYSIZE(searchBuffer));
     ImGui::PopItemWidth();
-    ImGui::Dummy(ImVec2(0, 5));
+    ImGui::Dummy(ImVec2(0, 5.0f * menuScale));
 
     // --- Filter --- Centered checkbox ---
     {
@@ -6686,7 +6972,7 @@ void ShowGrailMenu()
     ImGui::Text("Backup Path:");
     ImGui::PopStyleColor();
 
-    ImGui::PushItemWidth(leftWidth - 55);
+    ImGui::PushItemWidth(leftWidth - 55.0f * menuScale);
     {
         float inputWidth = leftWidth - 55;
         float avail = ImGui::GetContentRegionAvail().x;
@@ -7131,6 +7417,7 @@ void ShowHotkeyMenu()
 
     EnableAllInput();
     ImGuiIO& io = ImGui::GetIO();
+    float menuScale = GetMenuScaleFactor();
     ImVec2 windowSize = ImVec2(900, 480);
     CenterWindow(windowSize);
     PushFontSafe(3);
@@ -7138,7 +7425,7 @@ void ShowHotkeyMenu()
     DrawWindowTitleAndClose("D2R Hotkeys", &showHotkeyMenu);
     if (GetFont(3)) ImGui::PopFont();
     ImGui::Separator();
-    ImGui::Dummy(ImVec2(0.0f, 5.0f));
+    ImGui::Dummy(ImVec2(0.0f, 5.0f * menuScale));
 
     // --- Split hotkeys (Keybinds ONLY) ---
     std::vector<std::pair<std::string, std::pair<std::string, std::string>>> singleKeys;
@@ -7150,8 +7437,8 @@ void ShowHotkeyMenu()
 
     // --- 2-column layout ---
     ImGui::Columns(2, nullptr, true);
-    ImGui::SetColumnWidth(0, 450);
-    ImGui::SetColumnWidth(1, 450);
+    ImGui::SetColumnWidth(0, 450.0f * menuScale);
+    ImGui::SetColumnWidth(1, 450.0f * menuScale);
 
     ImFont* inputFont = GetFont(1);
 
@@ -7268,7 +7555,7 @@ void ShowHotkeyMenu()
 
         bool tzUnavailable = IsTZCycleUnavailable(name);
 
-        ImGui::PushItemWidth(180);
+        ImGui::PushItemWidth(180.0f * menuScale);
         if (inputFont) ImGui::PushFont(inputFont);
         ImGui::InputText(("##key_" + name).c_str(), buffer, sizeof(buffer), ImGuiInputTextFlags_ReadOnly);
 
@@ -7278,7 +7565,7 @@ void ShowHotkeyMenu()
             ImVec2 mousePos = ImGui::GetMousePos();
 
             ImGui::SetNextWindowPos(ImVec2(mousePos.x + 80.0f, mousePos.y), ImGuiCond_Always);
-            ImGui::SetNextWindowSizeConstraints(ImVec2(0, 0), ImVec2(320.0f, FLT_MAX));
+            ImGui::SetNextWindowSizeConstraints(ImVec2(0, 0), ImVec2(320.0f * GetMenuScaleFactor(), FLT_MAX));
 
             ImGui::BeginTooltip();
             ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.2f, 1.0f), "TZ Cycling Disabled!");
@@ -7331,7 +7618,7 @@ void ShowHotkeyMenu()
             strncpy(keyBuf, DisplayKey(cmd.key).c_str(), sizeof(keyBuf));
             keyBuf[sizeof(keyBuf) - 1] = '\0';
 
-            ImGui::PushItemWidth(120);
+            ImGui::PushItemWidth(120.0f * menuScale);
             if (inputFont) ImGui::PushFont(inputFont);
             if (ImGui::InputText(("##cmd_key_" + std::to_string(i)).c_str(), keyBuf, sizeof(keyBuf)))
                 cmd.key = keyBuf;
@@ -7344,7 +7631,7 @@ void ShowHotkeyMenu()
             strncpy(cmdBuf, cmd.command.c_str(), sizeof(cmdBuf));
             cmdBuf[sizeof(cmdBuf) - 1] = '\0';
 
-            ImGui::PushItemWidth(220);
+            ImGui::PushItemWidth(220.0f * menuScale);
             if (inputFont) ImGui::PushFont(inputFont);
             if (ImGui::InputText(("##cmd_txt_" + std::to_string(i)).c_str(), cmdBuf, sizeof(cmdBuf)))
                 cmd.command = cmdBuf;
@@ -7397,6 +7684,8 @@ void ShowLootMenu()
 {
     if (!showLootMenu)
     {
+        if (lootConfigLoaded)
+            SaveLootFilterConfig("lootfilter_config.lua");
         lootConfigLoaded = false;
         lootLogicLoaded = false;
         return;
@@ -7457,7 +7746,8 @@ void ShowLootMenu()
         };
 
     EnableAllInput();
-    CenterWindow(ImVec2(800, 400));
+    float menuScale = GetMenuScaleFactor();
+    CenterWindow(ImVec2(800, 520));
     static std::string hoveredKey;
     hoveredKey.clear();
     PushFontSafe(3);
@@ -7465,7 +7755,7 @@ void ShowLootMenu()
     DrawWindowTitleAndClose("D2RLoot Settings", &showLootMenu);
     PopFontSafe(3);
     ImGui::Separator();
-    ImGui::Dummy(ImVec2(0.0f, 5.0f));
+    ImGui::Dummy(ImVec2(0.0f, 3.0f));
 
     // --- Centered Wrapped Text Helper ---
     auto CenteredWrappedText = [&](const std::string& prefix, const std::string& text,
@@ -7492,12 +7782,16 @@ void ShowLootMenu()
         CenteredWrappedText("My D2RLoot Version: ", g_LootFilterHeader.Version);
     CenteredWrappedText("My Selected Filter: ", g_LootFilterHeader.Title);
 
-    ImGui::Dummy(ImVec2(0.0f, 3.0f));
-    ImGui::Separator();
     ImGui::Dummy(ImVec2(0.0f, 5.0f));
 
-    // --- Boolean Checkboxes ---
-    auto RenderCheckboxLine = [&](const std::vector<std::pair<std::string, std::string>>& items)
+    // --- Global options (collapsible) ---
+    if (ImGui::CollapsingHeader("Global options", ImGuiTreeNodeFlags_DefaultOpen))
+    {
+        ImGui::Indent(8.0f);
+        ImGui::Dummy(ImVec2(0.0f, 2.0f));
+
+        // --- Boolean Checkboxes ---
+    auto RenderCheckboxLine = [&](const std::vector<std::pair<std::string, std::string>>& items, std::function<void()> onChanged = nullptr)
         {
             ImVec2 avail = ImGui::GetContentRegionAvail();
             float spacing = 10.0f;
@@ -7529,6 +7823,7 @@ void ShowLootMenu()
                     auto it2 = g_LuaVariables.find(key);
                     if (it2 != g_LuaVariables.end()) it2->second = boolValue ? "true" : "false";
                     else g_LuaVariables.insert({ key, boolValue ? "true" : "false" });
+                    if (onChanged) onChanged();
                 }
 
                 ImVec2 itemMin = ImGui::GetItemRectMin();
@@ -7549,7 +7844,7 @@ void ShowLootMenu()
         { "Debug Mode", "Debug" },
         { "Audio Playback", "audioPlayback" }
     };
-    RenderCheckboxLine(bools);
+    RenderCheckboxLine(bools, []() { SaveLootFilterConfig("lootfilter_config.lua"); });
 
     // --- Input Text Helper ---
     // Map to track which key is in edit mode
@@ -7585,16 +7880,17 @@ void ShowLootMenu()
                 buffer[sizeof(buffer) - 1] = '\0';
 
                 std::string inputID = "##val_" + key;
-                ImGui::PushItemWidth(300.0f); // adjust width as needed
+                ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 60.0f);
                 bool changed = ImGui::InputText(inputID.c_str(), buffer, sizeof(buffer));
-                ImGui::PopItemWidth();
+                ImGui::SameLine();
+                if (ImGui::Button(("Done##" + key).c_str())) g_EditMode[key] = false;
 
                 if (ImGui::IsItemActivated()) ImGui::SetKeyboardFocusHere(-1);
 
-                if (changed) g_LuaVariables[key] = buffer;
-
-                ImGui::SameLine();
-                if (ImGui::Button(("Done##" + key).c_str())) g_EditMode[key] = false;
+                if (changed) {
+                    g_LuaVariables[key] = buffer;
+                    SaveLootFilterConfig("lootfilter_config.lua");
+                }
             }
             else
             {
@@ -7644,6 +7940,7 @@ void ShowLootMenu()
             ImGui::SameLine(labelWidth + 10.0f);
 
             bool isEditing = g_EditMode[key];
+            bool anyTitleChanged = false;
 
             for (size_t idx = 0; idx < titles.size(); ++idx)
             {
@@ -7659,7 +7956,7 @@ void ShowLootMenu()
                     bool changed = ImGui::InputText(inputID.c_str(), buffer, sizeof(buffer));
                     ImGui::PopItemWidth();
 
-                    if (changed) titles[idx] = buffer;
+                    if (changed) { titles[idx] = buffer; anyTitleChanged = true; }
                 }
                 else
                 {
@@ -7696,10 +7993,90 @@ void ShowLootMenu()
             }
             newValue += " }";
             g_LuaVariables[key] = newValue;
+            if (anyTitleChanged) SaveLootFilterConfig("lootfilter_config.lua");
         };
-    RenderFilterTitles();
+        RenderFilterTitles();
 
+        ImGui::Unindent(8.0f);
+        ImGui::Dummy(ImVec2(0.0f, 5.0f));
+    }
 
+    // --- Rules section ---
+    ImGui::Dummy(ImVec2(0.0f, 2.0f));
+    if (ImGui::CollapsingHeader("Rules", ImGuiTreeNodeFlags_DefaultOpen))
+    {
+        ImGui::Indent(8.0f);
+        ImGui::Dummy(ImVec2(0.0f, 2.0f));
+        if (ImGui::BeginChild("RulesArea", ImVec2(0, 180), true, ImGuiWindowFlags_None))
+        {
+            if (g_LootFilterRules.empty())
+            {
+                ImGui::TextWrapped("No rules in config, or rules table is empty. Add rules in lootfilter_config.lua under the \"rules\" table.");
+            }
+            else
+            {
+                for (size_t r = 0; r < g_LootFilterRules.size(); r++)
+                {
+                    LootFilterRule& rule = g_LootFilterRules[r];
+                    std::string ruleLabel = rule.comment.empty() ? ("Rule " + std::to_string(r + 1)) : (rule.comment.size() > 45 ? rule.comment.substr(0, 42) + "..." : rule.comment);
+                    if (ImGui::TreeNode(("##rule" + std::to_string(r)).c_str(), "%s", ruleLabel.c_str()))
+                    {
+                        char commentBuf[512];
+                        strncpy(commentBuf, rule.comment.c_str(), sizeof(commentBuf) - 1);
+                        commentBuf[sizeof(commentBuf) - 1] = '\0';
+                        ImGui::Text("Comment = ");
+                        ImGui::SameLine(0.0f, 4.0f);
+                        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
+                        if (ImGui::InputText(("##comment_rule" + std::to_string(r)).c_str(), commentBuf, sizeof(commentBuf)))
+                        {
+                            rule.comment = commentBuf;
+                            SaveLootFilterConfig("lootfilter_config.lua");
+                        }
+                        ImGui::Spacing();
+                        for (size_t f = 0; f < rule.fields.size(); f++)
+                        {
+                            std::string& key = rule.fields[f].first;
+                            std::string& value = rule.fields[f].second;
+                            std::string label = key;
+                            if (!label.empty()) label[0] = (char)std::toupper((unsigned char)label[0]);
+                            label += " = ";
+                            std::string id = "rule" + std::to_string(r) + "_" + key;
+                            ImGui::PushID(id.c_str());
+                            ImGui::Text("%s", label.c_str());
+                            ImGui::SameLine(0.0f, 4.0f);
+                            if (value == "true" || value == "false")
+                            {
+                                bool b = (value == "true");
+                                if (ImGui::Checkbox("##val", &b))
+                                {
+                                    rule.fields[f].second = b ? "true" : "false";
+                                    SaveLootFilterConfig("lootfilter_config.lua");
+                                }
+                            }
+                            else
+                            {
+                                char valBuf[256];
+                                strncpy(valBuf, value.c_str(), sizeof(valBuf) - 1);
+                                valBuf[sizeof(valBuf) - 1] = '\0';
+                                ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
+                                if (ImGui::InputText("##val", valBuf, sizeof(valBuf)))
+                                {
+                                    rule.fields[f].second = valBuf;
+                                    SaveLootFilterConfig("lootfilter_config.lua");
+                                }
+                            }
+                            ImGui::PopID();
+                        }
+                        ImGui::TreePop();
+                    }
+                }
+            }
+        }
+        ImGui::EndChild();
+        ImGui::Unindent(8.0f);
+    }
+
+    ImGui::Dummy(ImVec2(0.0f, 3.0f));
 
     // --- Bottom Description ---
     std::string desc = "Hover over an option to see its description.";
@@ -7720,6 +8097,7 @@ void ShowMemoryMenu()
     EnableAllInput();
     CenterWindow(ImVec2(950, 500));
 
+    float menuScale = GetMenuScaleFactor();
     PushFontSafe(3);
     ImGui::Begin("Memory Edit Info", &showMemoryMenu,
         ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoTitleBar);
@@ -7733,17 +8111,17 @@ void ShowMemoryMenu()
     DrawBottomDescription("Shows the currently enabled memory edits.\nNow fully editable.");
     PopFontSafe(2);
 
-    ImGui::Dummy(ImVec2(0, 10));
+    ImGui::Dummy(ImVec2(0, 10.0f * menuScale));
     ImGui::Separator();
-    ImGui::Dummy(ImVec2(0, 6));
+    ImGui::Dummy(ImVec2(0, 6.0f * menuScale));
 
     // persistent dropdown selections
     static std::unordered_map<int, int> selectedIndexMap;
     static std::string selectedCategory = "All";
 
     // 2 COLUMN LAYOUT (LEFT = STICKY)
-    float leftWidth = 160.0f;
-    float spacing = 10.0f;
+    float leftWidth = 160.0f * menuScale;
+    float spacing = 10.0f * menuScale;
 
     ImGui::Columns(2, nullptr, false); // NOT scrollable
     ImGui::SetColumnWidth(0, leftWidth);
@@ -7985,7 +8363,8 @@ void ShowD2RHUDMenu()
         initialized = true;
     }
 
-    ImVec2 windowSize = ImVec2(850, 520);
+    float menuScale = GetMenuScaleFactor();
+    ImVec2 windowSize = ImVec2(850.0f * menuScale, 520.0f * menuScale);
     ImVec2 centerPos = ImVec2((ImGui::GetIO().DisplaySize.x - windowSize.x) * 0.5f, (ImGui::GetIO().DisplaySize.y - windowSize.y) * 0.5f);
     ImGui::SetNextWindowPos(centerPos, ImGuiCond_Once);
     ImGui::SetNextWindowSize(windowSize, ImGuiCond_Once);
@@ -8004,8 +8383,8 @@ void ShowD2RHUDMenu()
         int fontIndex = 3;
         ImFont* fontSize = (fontIndex >= 0 && fontIndex < io.Fonts->Fonts.Size) ? io.Fonts->Fonts[fontIndex] : nullptr;
         const char* windowTitle = "D2RHUD Options";
-        float closeBtnSize = 20.0f;
-        float padding = -10.0f;
+        float closeBtnSize = 20.0f * menuScale;
+        float padding = -10.0f * menuScale;
 
         // Compute window content size
         ImVec2 contentSize = ImGui::GetContentRegionAvail();
@@ -8037,7 +8416,7 @@ void ShowD2RHUDMenu()
 
         // --- two columns: left = controls, right = descriptions ---
         ImGui::Columns(2, nullptr, true);
-        ImGui::SetColumnWidth(0, 280.0f); // width of control column
+        ImGui::SetColumnWidth(0, 280.0f * menuScale); // width of control column
 
         static std::string descriptionTitle = "";
         static std::string descriptionText = "";
@@ -8170,7 +8549,7 @@ void ShowD2RHUDMenu()
         drawLabeledInput(
             "HP Rollover Difficulty",
             [&]() {
-                ImGui::PushItemWidth(250);
+                ImGui::PushItemWidth(250.0f * menuScale);
                 if (ImGui::Combo("##HPRolloverDifficulty", &difficultyIndex,
                     difficultyItems, IM_ARRAYSIZE(difficultyItems)))
                 {
@@ -8186,7 +8565,7 @@ void ShowD2RHUDMenu()
         drawLabeledInput(
             "HP Rollover %",
             [&]() {
-                ImGui::PushItemWidth(100);
+                ImGui::PushItemWidth(100.0f * menuScale);
                 if (ImGui::InputInt("##HPRolloverPercent", &d2rHUDConfig.HPRolloverPercent, 1, 10))
                 {
                     d2rHUDConfig.HPRolloverPercent =
@@ -8200,7 +8579,7 @@ void ShowD2RHUDMenu()
         drawLabeledInput(
             "Sunder Value",
             [&]() {
-                ImGui::PushItemWidth(100);
+                ImGui::PushItemWidth(100.0f * menuScale);
                 if (ImGui::InputInt("##SunderValue", &d2rHUDConfig.SunderValue, 1, 10))
                 {
                     d2rHUDConfig.SunderValue =
@@ -8227,15 +8606,15 @@ void ShowD2RHUDMenu()
 
         // measure title and center it (use local coords)
         float titleW = ImGui::CalcTextSize(descriptionTitle.c_str()).x;
-        ImGui::SetCursorPosX((colLocalX + (colWidthLocal - titleW) * 0.5f) - 10.0f);
+        ImGui::SetCursorPosX((colLocalX + (colWidthLocal - titleW) * 0.5f) - 10.0f * menuScale);
         ImGui::TextColored(ImVec4(0.0157f, 0.380f, 0.8f, 1.0f), "%s", descriptionTitle.c_str());
         if (fontSize) ImGui::PopFont();
 
         // --- Description (right column, fixed width 570px) ---
         if (!descriptionText.empty())
         {
-            const float colWidth = 550.0f;
-            const float paddingRight = 10.0f;
+            const float colWidth = 550.0f * menuScale;
+            const float paddingRight = 10.0f * menuScale;
             const float wrapPos = ImGui::GetCursorPosX() + colWidth - paddingRight;
             ImGui::PushTextWrapPos(wrapPos);
 
@@ -8605,7 +8984,8 @@ void ShowMainMenu()
         return;
 
     ImGuiIO& io = ImGui::GetIO();
-    ImVec2 windowSize = ImVec2(640, 400);
+    float menuScale = GetMenuScaleFactor();
+    ImVec2 windowSize = ImVec2(640.0f * menuScale, 400.0f * menuScale);
 
     // Center the window only on the first run
     static bool firstRun = true;
@@ -8664,8 +9044,8 @@ void ShowMainMenu()
 
     // --- TITLE AND CLOSE BUTTON ---
     const char* windowTitle = "D2RHUD Control Center";
-    float closeBtnSize = 20.0f;
-    float padding = 5.0f;
+    float closeBtnSize = 20.0f * menuScale;
+    float padding = 5.0f * menuScale;
     ImVec2 contentSize = ImGui::GetContentRegionAvail();
 
     float titleWidth = ImGui::CalcTextSize(windowTitle).x;
@@ -8713,10 +9093,10 @@ void ShowMainMenu()
     ImGui::Separator();
 
     // --- MENU BUTTONS AND DESCRIPTION AREA ---
-    float buttonWidth = 200.0f;
-    float buttonHeight = 50.0f;
-    float separatorX = buttonWidth + 20.0f;
-    float descriptionWidth = windowSize.x - separatorX - 15.0f;
+    float buttonWidth = 200.0f * menuScale;
+    float buttonHeight = 50.0f * menuScale;
+    float separatorX = buttonWidth + 20.0f * menuScale;
+    float descriptionWidth = windowSize.x - separatorX - 15.0f * menuScale;
     const char* descriptionTitle = "";
     const char* descriptionText = "";
     const char* descriptionNote = "";
@@ -8751,10 +9131,11 @@ void ShowMainMenu()
     if (ImGui::IsItemHovered()) { descriptionTitle = "Grail Tracker"; descriptionText = "View the progress of your Set/Unique item hunting\n\n- Grail Entries are manually stored for now\n- This feature works for all mods* (or TCP)\n(Mod must have included set/unique items.txt files)\n- Grail Progress/Settings are stored in D2RLAN/D2R/HUD_Settings_ModName.json"; }
     if (fontSize) ImGui::PopFont();
 
-    // Vertical separator + Description Panel
-    ImGui::GetWindowDrawList()->AddLine(ImVec2(ImGui::GetWindowPos().x + separatorX, ImGui::GetWindowPos().y + 100.0f), ImVec2(ImGui::GetWindowPos().x + separatorX, ImGui::GetWindowPos().y + windowSize.y - 3.0f), IM_COL32(180, 150, 80, 255), 2.0f);
+    // Vertical separator + Description Panel (on 4K, move description down ~300px so it isn't shifted too high)
+    float descriptionPanelY = 100.0f + (menuScale >= 2.0f ? 100.0f : 0.0f);
+    ImGui::GetWindowDrawList()->AddLine(ImVec2(ImGui::GetWindowPos().x + separatorX, ImGui::GetWindowPos().y + descriptionPanelY), ImVec2(ImGui::GetWindowPos().x + separatorX, ImGui::GetWindowPos().y + windowSize.y - 3.0f), IM_COL32(180, 150, 80, 255), 2.0f);
     ImGui::SetCursorPosX(separatorX - 200.0f);
-    ImGui::SetCursorPosY(100.0f);
+    ImGui::SetCursorPosY(descriptionPanelY);
 
     // Title style
     fontIndex = 3;
@@ -8946,9 +9327,8 @@ int64_t Hooked_HUDWarnings__PopulateHUDWarnings(void* pWidget) {
         return result;
     }
 
-    if (!GetBaalQuest(pUnitPlayer, pGame)) {
-        return result;
-    }
+    // Always update and show our zone list (don't skip when Baal quest not done - else game's default "first zone" is shown)
+    UpdateActiveZoneInfoText(static_cast<time_t>(std::time(nullptr)));
 
     // TerrorZoneInfoText
     if (tzInfoTextWidget) {
@@ -9264,6 +9644,13 @@ void D2RHUD::OnDraw() {
     
 
 
+    // Scale all menu UI by 200% on 4K resolution
+    {
+        bool anyMenuOpen = showMainMenu || showHUDSettingsMenu || showD2RHUDMenu || showMemoryMenu || showLootMenu || showHotkeyMenu || showGrailMenu;
+        ImGuiIO& io = ImGui::GetIO();
+        io.FontGlobalScale = anyMenuOpen ? GetMenuScaleFactor() : 1.0f;
+    }
+
     if (showMainMenu)
         ShowMainMenu();
 
@@ -9432,6 +9819,8 @@ void D2RHUD::OnDraw() {
     else if (display_size.y <= 1440)
         selectedFont = io.Fonts->Fonts[3];
     else if (display_size.y <= 2160)
+        selectedFont = io.Fonts->Fonts[4];
+    else if (display_size.y <= 2400)
         selectedFont = io.Fonts->Fonts[4];
 
     if (selectedFont)
