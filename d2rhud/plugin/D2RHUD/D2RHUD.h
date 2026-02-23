@@ -25,6 +25,7 @@ class D2RHUD : public Plugin {
 public:
 	void OnDraw() override;
 	bool OnKeyPressed(short key) override;
+    bool TryCloseMenuOnEscape() override;
     static bool IsAnyMenuOpen();
     
 

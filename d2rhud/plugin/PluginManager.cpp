@@ -27,6 +27,14 @@ void PluginManager::Present() {
 }
 
 //plugin/PluginManager.cpp
+bool PluginManager::TryCloseMenuOnEscape() {
+    for (auto& plugin : m_Plugins) {
+        if (plugin->TryCloseMenuOnEscape())
+            return true;
+    }
+    return false;
+}
+
 void PluginManager::WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     switch (msg) {
     case WM_KEYDOWN:

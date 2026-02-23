@@ -12,6 +12,9 @@ public:
 	void ReloadGameFilterForGrail();
 	void CycleFilter();
 	void ClearInvOverrideCache();
+
+	static bool GetShowFilteredItems();
+	static void SetShowFilteredItems(bool show);
 };
 
 extern bool IsPlayerInGame();

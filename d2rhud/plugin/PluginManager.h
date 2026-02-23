@@ -13,5 +13,6 @@ public:
 	PluginManager();
 	void Present();
 	void WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
+	bool TryCloseMenuOnEscape();
 };
 

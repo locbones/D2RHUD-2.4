@@ -31,6 +31,12 @@
 #include <unordered_set>
 #include <mutex>
 #include <set>
+#include <urlmon.h>
+#include <shellapi.h>
+#include <mmsystem.h>
+#pragma comment(lib, "urlmon.lib")
+#pragma comment(lib, "shell32.lib")
+#pragma comment(lib, "winmm.lib")
 
 #pragma endregion
 
@@ -48,7 +54,7 @@
 #pragma region Global Static/Structs
 
 std::string lootFile = "../D2R/lootfilter.lua";
-std::string Version = "1.6.5";
+std::string Version = "1.6.6";
 
 using json = nlohmann::json;
 static MonsterStatsDisplaySettings cachedSettings;
@@ -5297,6 +5303,7 @@ struct LootFilterRule
 {
     std::string comment;
     std::vector<std::pair<std::string, std::string>> fields;
+    std::string rawLua;
 };
 
 std::vector<LootFilterRule> g_LootFilterRules;
@@ -5351,6 +5358,13 @@ bool lootLogicLoaded = false;
 static bool showCollected = false;
 static bool showExcluded = false;
 bool HUDConfigLoaded = false;
+static std::string s_pendingFilter;
+static std::string s_activeFilterInternalName;
+static std::string s_lootFilterUpdateStatus;
+static std::chrono::steady_clock::time_point s_lootFilterUpdateStatusTime;
+static std::atomic<bool> s_lootFilterUpdating{ false };
+static std::string s_lootFilterNewVersion;
+static bool s_lootFilterUpdateApplied = false;
 
 #pragma endregion
 
@@ -5513,6 +5527,18 @@ void EnableAllInput() {
 
 bool D2RHUD::IsAnyMenuOpen() {
     return showGrailMenu || showHotkeyMenu || showLootMenu || showD2RHUDMenu;
+}
+
+bool D2RHUD::TryCloseMenuOnEscape()
+{
+    if (showHotkeyMenu)      { showHotkeyMenu = false; return true; }
+    if (showGrailMenu)       { showGrailMenu = false; return true; }
+    if (showLootMenu)        { showLootMenu = false; return true; }
+    if (showMemoryMenu)      { showMemoryMenu = false; return true; }
+    if (showD2RHUDMenu)      { showD2RHUDMenu = false; return true; }
+    if (showHUDSettingsMenu) { showHUDSettingsMenu = false; return true; }
+    if (showMainMenu)        { showMainMenu = false; return true; }
+    return false;
 }
 
 void ProcessBackups()
@@ -5918,6 +5944,620 @@ void SaveHotkeys(const std::string& filename)
     out << std::setw(4) << j << std::endl;
 }
 
+// Returns the app-root "My Filters" directory (used for filter list and imports). May not exist yet.
+static std::string GetModFiltersDir()
+{
+    std::string appRoot = GetExecutableDir();
+    if (appRoot.empty()) return "";
+    return (std::filesystem::path(appRoot) / "My Filters").string();
+}
+
+// Returns the mod's D2RLAN filters directory path (tries .mpq path then extracted /data path). May not exist.
+static std::string GetModD2RLANFiltersDir()
+{
+    std::string modName = GetModName();
+    if (modName.empty()) return "";
+    auto tryPath = [&](const std::string& subpath) -> std::string {
+        std::string p = GetExecutableDir() + "/Mods/" + modName + "/" + modName + ".mpq/data/" + subpath + "/filters";
+        if (std::filesystem::exists(p)) return p;
+        p = GetExecutableDir() + "/Mods/" + modName + "/data/" + subpath + "/filters";
+        return std::filesystem::exists(p) ? p : "";
+    };
+    std::string p = tryPath("D2RLAN");
+    if (!p.empty()) return p;
+    return tryPath("d2rlan");
+}
+
+// Returns the mod's D2RLAN/filters/sounds directory path. May not exist.
+static std::string GetModD2RLANSoundsDir()
+{
+    std::string filtersDir = GetModD2RLANFiltersDir();
+    if (filtersDir.empty()) return "";
+    return (std::filesystem::path(filtersDir) / "sounds").string();
+}
+
+// Appends filter names from dir (dirs and .lua base names, excludes Sounds folder) into names set.
+static void AppendFilterNamesFromDir(const std::string& dir, std::set<std::string>& names)
+{
+    if (dir.empty() || !std::filesystem::exists(dir)) return;
+    namespace fs = std::filesystem;
+    for (const auto& entry : fs::directory_iterator(dir))
+    {
+        std::string name = entry.path().filename().string();
+        if (entry.is_directory())
+        {
+            std::string lower = name;
+            std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) { return (char)std::tolower(c); });
+            if (lower != "sounds")
+                names.insert(name);
+        }
+        else if (entry.path().extension() == ".lua")
+            names.insert(entry.path().stem().string());
+    }
+}
+
+// Lists filter names from both My Filters and mod's D2RLAN/filters (merged, deduped, sorted).
+static std::vector<std::string> GetModFilterNames()
+{
+    std::set<std::string> names;
+    AppendFilterNamesFromDir(GetModFiltersDir(), names);
+    AppendFilterNamesFromDir(GetModD2RLANFiltersDir(), names);
+    return std::vector<std::string>(names.begin(), names.end());
+}
+
+// Returns the app-root "My Filters/sounds" directory. May not exist yet.
+static std::string GetModSoundsDir()
+{
+    std::string filtersDir = GetModFiltersDir();
+    if (filtersDir.empty()) return "";
+    return (std::filesystem::path(filtersDir) / "sounds").string();
+}
+
+static bool IsSoundExtension(const std::filesystem::path& p);
+
+// Lists sound files from both My Filters/sounds and mod's D2RLAN/sounds. Returns (fullPath, filename) for each.
+static std::vector<std::pair<std::string, std::string>> GetSoundFilesFromBothLocations()
+{
+    std::vector<std::pair<std::string, std::string>> out;
+    std::error_code ec;
+    auto addFromDir = [&](const std::string& dir) {
+        if (dir.empty() || !std::filesystem::exists(dir, ec)) return;
+        for (const auto& entry : std::filesystem::directory_iterator(dir, std::filesystem::directory_options::skip_permission_denied, ec))
+        {
+            if (!entry.is_regular_file(ec)) continue;
+            if (!IsSoundExtension(entry.path())) continue;
+            std::string name = entry.path().filename().string();
+            out.push_back({ entry.path().string(), name });
+        }
+    };
+    addFromDir(GetModSoundsDir());
+    addFromDir(GetModD2RLANSoundsDir());
+    std::sort(out.begin(), out.end(), [](const auto& a, const auto& b) { return a.second < b.second; });
+    return out;
+}
+
+// Display name for filter list; internal name is file/dir name.
+static std::string GetFilterDisplayName(const std::string& internalName)
+{
+    if (internalName == "lootfilter_config_blank") return "No Filter";
+    if (internalName == "lootfilter_default") return GetModName() + "'s Default Filter";
+    if (internalName == "override_rules") return GetModName() + "'s Override Rules";
+    return internalName;
+}
+
+// Ordered list: all filters except special two (sorted), then override_rules, then lootfilter_config_blank.
+static std::vector<std::string> GetOrderedFilterList()
+{
+    std::vector<std::string> raw = GetModFilterNames();
+    std::vector<std::string> out;
+    std::vector<std::string> tail;
+    for (const auto& name : raw)
+    {
+        if (name == "lootfilter_config_blank")
+            tail.push_back(name);
+        else if (name == "override_rules")
+            tail.insert(tail.begin(), name);
+        else
+            out.push_back(name);
+    }
+    std::sort(out.begin(), out.end());
+    for (const auto& t : tail) out.push_back(t);
+    return out;
+}
+
+// Path to lootfilter_config.lua (same directory as lootfilter.lua / lootFile).
+static std::string GetLootFilterConfigPath()
+{
+    std::filesystem::path p(lootFile);
+    return (p.parent_path() / "lootfilter_config.lua").string();
+}
+
+// Absolute path to the active config file (for opening in default app).
+static std::string GetLootFilterConfigPathAbsolute()
+{
+    std::filesystem::path p(GetLootFilterConfigPath());
+    if (p.is_relative())
+        p = std::filesystem::current_path() / p;
+    return std::filesystem::absolute(p).string();
+}
+
+static void OpenInShell(const std::string& pathOrUrl)
+{
+    ShellExecuteA(nullptr, "open", pathOrUrl.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+}
+
+// Play sound file using Windows API (WAV: PlaySound; MP3: MCI; FLAC: fallback to default app).
+static void PlaySoundFile(const std::string& path)
+{
+    if (path.empty()) return;
+    std::string ext = std::filesystem::path(path).extension().string();
+    for (auto& c : ext) c = (char)std::tolower((unsigned char)c);
+    if (ext == ".wav")
+    {
+        PlaySoundA(path.c_str(), nullptr, SND_FILENAME | SND_ASYNC | SND_NODEFAULT);
+        return;
+    }
+    if (ext == ".mp3")
+    {
+        mciSendStringA("close snd", nullptr, 0, nullptr);
+        std::string cmd = "open \"" + path + "\" type mpegvideo alias snd";
+        if (mciSendStringA(cmd.c_str(), nullptr, 0, nullptr) == 0)
+            mciSendStringA("play snd", nullptr, 0, nullptr);
+        return;
+    }
+    if (ext == ".flac")
+    {
+        OpenInShell(path);
+        return;
+    }
+}
+
+static bool CopyModFilterToActive(const std::string& filterName);
+void LoadLootFilterConfig(const std::string& path);
+void LoadLootFilterLogic(const std::string& path);
+
+// Import Filter: paste path only. No modal, no directory listing - avoids freeze when injected.
+static bool s_showImportPathInput = false;
+static bool s_importPathInputJustOpened = false;
+static char s_importPathBuf[1024] = {};
+static std::string s_importPathInput;
+static std::string s_importPathError;
+static std::string s_importSuccessMessage;
+static std::chrono::steady_clock::time_point s_importSuccessTime;
+static const float s_importSuccessDurationSec = 3.0f;
+
+// Create your own filter: prompt for title/type/description, then write template.
+static bool s_showCreateFilterPopup = false;
+static bool s_createFilterPopupJustOpened = false;
+static char s_createFilterTitleBuf[256] = "No Filter";
+static char s_createFilterTypeBuf[256] = "(None)";
+static char s_createFilterDescBuf[1024] = "This is not a filter, it applies no changes.";
+
+static void OpenCreateFilterPopup()
+{
+    s_showCreateFilterPopup = true;
+    s_createFilterPopupJustOpened = true;
+    strncpy(s_createFilterTitleBuf, "No Filter", sizeof(s_createFilterTitleBuf) - 1);
+    s_createFilterTitleBuf[sizeof(s_createFilterTitleBuf) - 1] = '\0';
+    strncpy(s_createFilterTypeBuf, "(None)", sizeof(s_createFilterTypeBuf) - 1);
+    s_createFilterTypeBuf[sizeof(s_createFilterTypeBuf) - 1] = '\0';
+    strncpy(s_createFilterDescBuf, "This is not a filter, it applies no changes.", sizeof(s_createFilterDescBuf) - 1);
+    s_createFilterDescBuf[sizeof(s_createFilterDescBuf) - 1] = '\0';
+}
+
+// Strip surrounding quotes and whitespace (handles "Copy as path" from Explorer).
+static std::string TrimPathPaste(std::string s)
+{
+    while (!s.empty() && (s.front() == ' ' || s.front() == '\t' || s.front() == '"' || s.front() == '\''))
+        s.erase(0, 1);
+    while (!s.empty() && (s.back() == ' ' || s.back() == '\t' || s.back() == '"' || s.back() == '\''))
+        s.pop_back();
+    return s;
+}
+
+static void OpenImportPathInput()
+{
+    s_showImportPathInput = true;
+    s_importPathInputJustOpened = true;
+    s_importPathError.clear();
+    s_importSuccessMessage.clear();
+}
+
+// --- Import Sounds (paste folder path, copy .mp3/.flac/.wav into My Filters/sounds) ---
+static bool s_showImportSoundsPathInput = false;
+static bool s_importSoundsPathInputJustOpened = false;
+static char s_importSoundsPathBuf[1024] = {};
+static std::string s_importSoundsPathError;
+
+static void OpenImportSoundsPathInput()
+{
+    s_showImportSoundsPathInput = true;
+    s_importSoundsPathInputJustOpened = true;
+    s_importSoundsPathError.clear();
+}
+
+static bool IsSoundExtension(const std::filesystem::path& p)
+{
+    std::string ext = p.extension().string();
+    if (ext.empty()) return false;
+    for (auto& c : ext) c = (char)std::tolower((unsigned char)c);
+    return ext == ".mp3" || ext == ".flac" || ext == ".wav";
+}
+
+static void DrawImportSoundsPathRow()
+{
+    if (!s_showImportSoundsPathInput) return;
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Text("Paste folder path containing .mp3, .flac, .wav files (they will be copied into My Filters/sounds):");
+    ImGui::SetNextItemWidth(-80.0f);
+    if (s_importSoundsPathInputJustOpened)
+    {
+        s_importSoundsPathInputJustOpened = false;
+        s_importSoundsPathBuf[0] = '\0';
+    }
+    bool doImport = ImGui::InputText("##importsounds_path", s_importSoundsPathBuf, sizeof(s_importSoundsPathBuf), ImGuiInputTextFlags_EnterReturnsTrue);
+    ImGui::SameLine();
+    if (ImGui::Button("Import##sounds", ImVec2(70.0f, 0.0f))) doImport = true;
+    ImGui::SameLine();
+    if (ImGui::Button("Cancel##sounds", ImVec2(70.0f, 0.0f)))
+    {
+        s_showImportSoundsPathInput = false;
+        s_importSoundsPathError.clear();
+    }
+    if (doImport)
+    {
+        s_importSoundsPathError.clear();
+        std::string pathTrim = TrimPathPaste(s_importSoundsPathBuf);
+        if (pathTrim.empty())
+            s_importSoundsPathError = "Enter a path.";
+        else
+        {
+            std::string destDir = GetModSoundsDir();
+            if (destDir.empty())
+                s_importSoundsPathError = "My Filters/sounds path not found.";
+            else
+            {
+                std::filesystem::path srcDir(pathTrim);
+                std::error_code ec;
+                if (!std::filesystem::exists(srcDir, ec) || !std::filesystem::is_directory(srcDir, ec))
+                    s_importSoundsPathError = "Folder not found.";
+                else
+                {
+                    std::filesystem::create_directories(destDir, ec);
+                    int copied = 0;
+                    for (const auto& entry : std::filesystem::directory_iterator(srcDir, std::filesystem::directory_options::skip_permission_denied, ec))
+                    {
+                        if (!entry.is_regular_file(ec)) continue;
+                        if (!IsSoundExtension(entry.path())) continue;
+                        std::filesystem::path dest = std::filesystem::path(destDir) / entry.path().filename();
+                        std::filesystem::copy_file(entry.path(), dest, std::filesystem::copy_options::overwrite_existing, ec);
+                        if (!ec) copied++;
+                    }
+                    s_showImportSoundsPathInput = false;
+                    s_importSoundsPathBuf[0] = '\0';
+                    if (copied == 0)
+                        s_importSoundsPathError = "No .mp3, .flac or .wav files found in folder.";
+                }
+            }
+        }
+    }
+    if (!s_importSoundsPathError.empty())
+        ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "%s", s_importSoundsPathError.c_str());
+    ImGui::Separator();
+    ImGui::Spacing();
+}
+
+// Draw inline path row when Import is expanded. No popup, no directory iteration.
+static void DrawImportFilterPathRow()
+{
+    if (!s_showImportPathInput) return;
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Text("Paste full path to a .lua filter file (e.g. from Explorer: Shift+Right-click file, Copy as path):");
+    ImGui::SetNextItemWidth(-80.0f);
+    if (s_importPathInputJustOpened)
+    {
+        s_importPathInputJustOpened = false;
+        strncpy(s_importPathBuf, s_importPathInput.c_str(), sizeof(s_importPathBuf) - 1);
+        s_importPathBuf[sizeof(s_importPathBuf) - 1] = '\0';
+    }
+    bool doImport = ImGui::InputText("##importpath", s_importPathBuf, sizeof(s_importPathBuf), ImGuiInputTextFlags_EnterReturnsTrue);
+    s_importPathInput = s_importPathBuf;
+    ImGui::SameLine();
+    if (ImGui::Button("Import", ImVec2(70.0f, 0.0f))) doImport = true;
+    ImGui::SameLine();
+    if (ImGui::Button("Cancel", ImVec2(70.0f, 0.0f)))
+    {
+        s_showImportPathInput = false;
+        s_importPathError.clear();
+    }
+    if (doImport)
+    {
+        s_importPathError.clear();
+        s_importSuccessMessage.clear();
+        std::string pathTrim = TrimPathPaste(s_importPathInput);
+        if (pathTrim.empty())
+            s_importPathError = "Enter a path.";
+        else
+        {
+            std::string dir = GetModFiltersDir();
+            if (dir.empty())
+                s_importPathError = "My Filters path not found.";
+            else
+            {
+                std::filesystem::path src(pathTrim);
+                std::error_code ec;
+                if (!std::filesystem::exists(src, ec) || !std::filesystem::is_regular_file(src, ec))
+                    s_importPathError = "File not found.";
+                else if (src.extension() != ".lua")
+                    s_importPathError = "File must be .lua";
+                else
+                {
+                    std::filesystem::create_directories(dir, ec);
+                    std::filesystem::path dest = std::filesystem::path(dir) / src.filename();
+                    std::filesystem::copy_file(src, dest, std::filesystem::copy_options::overwrite_existing, ec);
+                    if (ec)
+                        s_importPathError = "Copy failed.";
+                    else
+                    {
+                        std::string filterName = src.stem().string();
+                        if (CopyModFilterToActive(filterName))
+                        {
+                            s_activeFilterInternalName = filterName;
+                            LoadLootFilterConfig(GetLootFilterConfigPath());
+                            LoadLootFilterLogic(lootFile);
+                        }
+                        s_importSuccessMessage = "Filter imported successfully.";
+                        s_importSuccessTime = std::chrono::steady_clock::now();
+                        s_importPathInput.clear();
+                        s_importPathBuf[0] = '\0';
+                    }
+                }
+            }
+        }
+    }
+    if (!s_importSuccessMessage.empty())
+    {
+        float elapsed = std::chrono::duration<float>(std::chrono::steady_clock::now() - s_importSuccessTime).count();
+        if (elapsed >= s_importSuccessDurationSec)
+        {
+            s_importSuccessMessage.clear();
+            s_showImportPathInput = false;
+        }
+        else
+            ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "%s", s_importSuccessMessage.c_str());
+    }
+    if (!s_importPathError.empty())
+        ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "%s", s_importPathError.c_str());
+    ImGui::Separator();
+    ImGui::Spacing();
+}
+
+// Returns true if version string a is strictly newer than b (e.g. "1.4.2" > "1.4.1").
+static bool IsVersionNewer(const std::string& a, const std::string& b)
+{
+    auto parse = [](const std::string& s) -> std::vector<int> {
+        std::vector<int> parts;
+        size_t i = 0;
+        while (i < s.size())
+        {
+            while (i < s.size() && (s[i] == '.' || !std::isdigit(static_cast<unsigned char>(s[i])))) i++;
+            if (i >= s.size()) break;
+            int n = 0;
+            while (i < s.size() && std::isdigit(static_cast<unsigned char>(s[i])))
+                n = n * 10 + (s[i++] - '0');
+            parts.push_back(n);
+        }
+        return parts;
+    };
+    std::vector<int> va = parse(a), vb = parse(b);
+    size_t n = (va.size() >= vb.size()) ? va.size() : vb.size();
+    for (size_t i = 0; i < n; i++)
+    {
+        int na = (i < va.size()) ? va[i] : 0;
+        int nb = (i < vb.size()) ? vb[i] : 0;
+        if (na != nb) return na > nb;
+    }
+    return false;
+}
+
+static const char* s_lootFilterUpdateUrl = "https://github.com/locbones/D2RLAN-Filters/raw/refs/heads/main/lootfilter.lua";
+
+static void LootFilterUpdateThread()
+{
+    std::string destPath = std::filesystem::path(lootFile).is_relative()
+        ? (std::filesystem::current_path() / lootFile).string()
+        : lootFile;
+    std::string tempPath = destPath + ".tmp";
+    HRESULT hr = URLDownloadToFileA(nullptr, s_lootFilterUpdateUrl, tempPath.c_str(), 0, nullptr);
+    if (FAILED(hr))
+    {
+        s_lootFilterUpdateStatusTime = std::chrono::steady_clock::now();
+        s_lootFilterUpdateStatus = "Update failed (download error)";
+        s_lootFilterUpdating = false;
+        return;
+    }
+    std::ifstream in(tempPath);
+    if (!in)
+    {
+        s_lootFilterUpdateStatusTime = std::chrono::steady_clock::now();
+        s_lootFilterUpdateStatus = "Update failed (could not read)";
+        std::filesystem::remove(tempPath);
+        s_lootFilterUpdating = false;
+        return;
+    }
+    std::stringstream buf;
+    buf << in.rdbuf();
+    in.close();
+    std::filesystem::remove(tempPath);
+    std::string content = buf.str();
+    std::regex versionRegex(R"delim(local\s+version\s*=\s*"([^"]*)")delim");
+    std::smatch match;
+    std::string remoteVersion;
+    for (std::sregex_iterator it(content.begin(), content.end(), versionRegex), end; it != end; ++it)
+    {
+        remoteVersion = (*it)[1].str();
+        break;
+    }
+    if (remoteVersion.empty())
+    {
+        s_lootFilterUpdateStatusTime = std::chrono::steady_clock::now();
+        s_lootFilterUpdateStatus = "Update failed (no version in file)";
+        s_lootFilterUpdating = false;
+        return;
+    }
+    std::string currentVersion = g_LootFilterHeader.Version;
+    if (!currentVersion.empty() && !IsVersionNewer(remoteVersion, currentVersion))
+    {
+        s_lootFilterUpdateStatusTime = std::chrono::steady_clock::now();
+        s_lootFilterUpdateStatus = "No update available";
+        s_lootFilterUpdating = false;
+        return;
+    }
+    std::ofstream out(destPath);
+    if (!out || !out.write(content.data(), content.size()))
+    {
+        s_lootFilterUpdateStatusTime = std::chrono::steady_clock::now();
+        s_lootFilterUpdateStatus = "Update failed (could not write)";
+        s_lootFilterUpdating = false;
+        return;
+    }
+    out.close();
+    g_LootFilterHeader.Version = remoteVersion;
+    s_lootFilterNewVersion = remoteVersion;
+    s_lootFilterUpdateStatusTime = std::chrono::steady_clock::now();
+    s_lootFilterUpdateStatus = "Updated to " + remoteVersion;
+    s_lootFilterUpdating = false;
+}
+
+// Copies a filter's config from My Filters or mod D2RLAN/filters to lootfilter_config.lua (tries My Filters first).
+// filterName is a directory name or .lua base name.
+static bool CopyModFilterToActive(const std::string& filterName)
+{
+    std::string destPath = GetLootFilterConfigPath();
+    namespace fs = std::filesystem;
+    fs::path dest(destPath);
+    auto tryDir = [&](const std::string& dir) -> bool {
+        if (dir.empty() || !fs::exists(dir)) return false;
+        fs::path base(dir);
+        auto copyIfExists = [&](const fs::path& src) {
+            if (fs::exists(src)) { fs::copy_file(src, dest, fs::copy_options::overwrite_existing); return true; }
+            return false;
+        };
+        fs::path sub = base / filterName;
+        fs::path subConfig = base / (filterName + "_config.lua");
+        fs::path subLua = base / (filterName + ".lua");
+        if (fs::is_directory(sub) && copyIfExists(sub / "lootfilter_config.lua")) return true;
+        if (copyIfExists(subConfig)) return true;
+        if (copyIfExists(subLua)) return true;
+        return false;
+    };
+    if (tryDir(GetModFiltersDir())) return true;
+    return tryDir(GetModD2RLANFiltersDir());
+}
+
+// Sanitize a string to a valid filter filename stem (alphanumeric + underscore).
+static std::string SanitizeFilterName(std::string s)
+{
+    for (size_t i = 0; i < s.size(); i++)
+    {
+        if (s[i] == ' ' || s[i] == '\t') s[i] = '_';
+        else if (!std::isalnum(static_cast<unsigned char>(s[i])) && s[i] != '_')
+        {
+            s.erase(i, 1);
+            i--;
+        }
+    }
+    while (!s.empty() && (s.front() == '_' || s.front() == ' ')) s.erase(0, 1);
+    while (!s.empty() && (s.back() == '_' || s.back() == ' ')) s.pop_back();
+    if (s.empty()) s = "my_filter";
+    return s;
+}
+
+static void DrawCreateFilterPopup()
+{
+    if (!s_showCreateFilterPopup) return;
+    if (s_createFilterPopupJustOpened)
+    {
+        ImGui::OpenPopup("Create your own filter");
+        s_createFilterPopupJustOpened = false;
+    }
+    ImGui::SetNextWindowSize(ImVec2(420.0f, 0.0f), ImGuiCond_FirstUseEver);
+    if (ImGui::BeginPopupModal("Create your own filter", &s_showCreateFilterPopup, ImGuiWindowFlags_AlwaysAutoResize))
+    {
+        ImGui::TextWrapped("Fill in the following. These will appear as comments at the top of your filter.");
+        ImGui::Spacing();
+        ImGui::Text("Title - Name of your filter");
+        ImGui::SetNextItemWidth(-1.0f);
+        ImGui::InputText("##create_title", s_createFilterTitleBuf, sizeof(s_createFilterTitleBuf));
+        ImGui::Spacing();
+        ImGui::Text("Type - Earlygame, Endgame, etc.");
+        ImGui::SetNextItemWidth(-1.0f);
+        ImGui::InputText("##create_type", s_createFilterTypeBuf, sizeof(s_createFilterTypeBuf));
+        ImGui::Spacing();
+        ImGui::Text("Description - What your filter focuses on");
+        ImGui::SetNextItemWidth(-1.0f);
+        ImGui::InputText("##create_desc", s_createFilterDescBuf, sizeof(s_createFilterDescBuf), ImGuiInputTextFlags_None);
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+        if (ImGui::Button("Create", ImVec2(100.0f, 0.0f)))
+        {
+            std::string title(s_createFilterTitleBuf);
+            std::string type(s_createFilterTypeBuf);
+            std::string desc(s_createFilterDescBuf);
+            while (!title.empty() && (title.back() == ' ' || title.back() == '\t')) title.pop_back();
+            while (!title.empty() && (title.front() == ' ' || title.front() == '\t')) title.erase(0, 1);
+            while (!type.empty() && (type.back() == ' ' || type.back() == '\t')) type.pop_back();
+            while (!type.empty() && (type.front() == ' ' || type.front() == '\t')) type.erase(0, 1);
+            while (!desc.empty() && (desc.back() == ' ' || desc.back() == '\t' || desc.back() == '\n')) desc.pop_back();
+            while (!desc.empty() && (desc.front() == ' ' || desc.front() == '\t' || desc.front() == '\n')) desc.erase(0, 1);
+            if (title.empty()) title = "No Filter";
+            if (type.empty()) type = "(None)";
+            if (desc.empty()) desc = "This is not a filter, it applies no changes.";
+            std::string content = "--- Filter Title: " + title + "\n";
+            content += "--- Filter Type: " + type + "\n";
+            content += "--- Filter Description: " + desc + "\n";
+            content += "return {\n";
+            content += "    allowOverrides = true,\n";
+            content += "    rules = {\n\n";
+            content += "    }\n";
+            content += "}\n";
+            std::string destPath = GetLootFilterConfigPathAbsolute();
+            std::error_code ec;
+            std::filesystem::create_directories(std::filesystem::path(destPath).parent_path(), ec);
+            std::ofstream out(destPath);
+            if (out && out.write(content.data(), content.size()))
+            {
+                out.close();
+                std::string filterName = SanitizeFilterName(title);
+                std::string myFiltersDir = GetModFiltersDir();
+                if (!myFiltersDir.empty())
+                {
+                    std::filesystem::create_directories(myFiltersDir, ec);
+                    std::string configPath = (std::filesystem::path(myFiltersDir) / (filterName + "_config.lua")).string();
+                    std::ofstream out2(configPath);
+                    if (out2) out2.write(content.data(), content.size());
+                }
+                s_activeFilterInternalName = filterName;
+                s_pendingFilter.clear();
+                LoadLootFilterConfig(GetLootFilterConfigPath());
+                LoadLootFilterLogic(lootFile);
+            }
+            s_showCreateFilterPopup = false;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel", ImVec2(100.0f, 0.0f)))
+        {
+            s_showCreateFilterPopup = false;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+}
+
 void LoadLootFilterConfig(const std::string& path)
 {
     g_LuaVariables.clear();
@@ -5932,6 +6572,8 @@ void LoadLootFilterConfig(const std::string& path)
     std::string line;
     int nestingLevel = 0; // track { } nesting
     LootFilterRule currentRule;
+    std::string pendingRuleComment;   // comment text from line before opening {
+    std::string pendingRuleCommentLine; // full line for rawLua
     std::regex assignRegex(R"(^\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*(.+?),?\s*$)");
 
     while (std::getline(file, line))
@@ -6004,14 +6646,49 @@ void LoadLootFilterConfig(const std::string& path)
                 size_t commentPos = line.find("--", start + 1);
                 if (commentPos != std::string::npos)
                 {
-                    currentRule.comment = line.substr(commentPos + 2);
-                    size_t cstart = currentRule.comment.find_first_not_of(" \t");
-                    if (cstart != std::string::npos) currentRule.comment = currentRule.comment.substr(cstart);
+                    std::string sameLine = line.substr(commentPos + 2);
+                    size_t cstart = sameLine.find_first_not_of(" \t-");
+                    if (cstart != std::string::npos) sameLine = sameLine.substr(cstart);
+                    if (!sameLine.empty())
+                    {
+                        currentRule.comment = sameLine;
+                        currentRule.rawLua = line + "\n";
+                    }
+                    else
+                    {
+                        currentRule.rawLua = line + "\n";
+                    }
+                    pendingRuleComment.clear();
+                    pendingRuleCommentLine.clear();
                 }
+                else
+                {
+                    currentRule.rawLua = pendingRuleCommentLine.empty() ? (line + "\n") : (pendingRuleCommentLine + "\n" + line + "\n");
+                    if (!pendingRuleComment.empty())
+                    {
+                        currentRule.comment = pendingRuleComment;
+                        pendingRuleComment.clear();
+                        pendingRuleCommentLine.clear();
+                    }
+                }
+            }
+            else if (start != std::string::npos && trimmed.size() >= 2 && trimmed[start] == '-' && trimmed[start + 1] == '-')
+            {
+                pendingRuleCommentLine = line;
+                pendingRuleComment = trimmed.substr(start + 2);
+                size_t cstart = pendingRuleComment.find_first_not_of(" \t-");
+                if (cstart != std::string::npos) pendingRuleComment = pendingRuleComment.substr(cstart);
+                else pendingRuleComment.clear();
+            }
+            else if (start != std::string::npos && trimmed[start] == '}')
+            {
+                pendingRuleComment.clear();
+                pendingRuleCommentLine.clear();
             }
         }
         else if (levelAtStart == 3)
         {
+            currentRule.rawLua += line + "\n";
             std::string keyValuePart = line;
             size_t commentPos = line.find("--");
             if (commentPos != std::string::npos)
@@ -6027,7 +6704,7 @@ void LoadLootFilterConfig(const std::string& path)
             }
             if (nestingLevel == 2)
             {
-                if (!currentRule.fields.empty() || !currentRule.comment.empty())
+                if (!currentRule.rawLua.empty() || !currentRule.fields.empty() || !currentRule.comment.empty())
                     g_LootFilterRules.push_back(currentRule);
                 currentRule = {};
             }
@@ -6150,61 +6827,61 @@ void SaveLootFilterConfig(const std::string& path)
     if (firstRulesLineIndex != (size_t)-1) firstRulesLineIndex += keysToAdd.size();
     if (rulesEndLineIndex != (size_t)-1) rulesEndLineIndex += keysToAdd.size();
 
-    // Build rules block content from g_LootFilterRules (same format for replace or insert)
+    // Build rules block content from g_LootFilterRules (use rawLua when present, else build from fields).
+    // Re-apply rule/field indentation so edited content (which may have had spacing stripped in the UI) matches the original file style.
     auto BuildRulesLines = [&defaultIndent]() -> std::vector<std::string>
     {
-        std::string ruleIndent = "        ";
-        std::string fieldIndent = "            ";
+        std::string ruleIndent = defaultIndent + "    ";
+        std::string fieldIndent = ruleIndent + "    ";
+        auto trimLead = [](std::string s) {
+            size_t start = s.find_first_not_of(" \t");
+            return start != std::string::npos ? s.substr(start) : s;
+        };
         std::vector<std::string> out;
         out.push_back(defaultIndent + "rules = {");
         for (size_t r = 0; r < g_LootFilterRules.size(); r++)
         {
             const auto& rule = g_LootFilterRules[r];
-            std::string commentTrim = rule.comment;
-            size_t cstart = commentTrim.find_first_not_of(" \t");
-            if (cstart != std::string::npos) commentTrim = commentTrim.substr(cstart);
-            if (!commentTrim.empty())
-                out.push_back(ruleIndent + "{ -- " + commentTrim);
-            else
-                out.push_back(ruleIndent + "{");
-            for (size_t f = 0; f < rule.fields.size(); f++)
+            if (!rule.rawLua.empty())
             {
-                const std::string& k = rule.fields[f].first;
-                std::string v = rule.fields[f].second;
-                if (k == "codes" && v.find(',') != std::string::npos && (v.empty() || v.front() != '{'))
+                std::vector<std::string> ruleLines;
+                size_t pos = 0;
+                while (pos < rule.rawLua.size())
                 {
-                    std::string tableVal = "{ ";
-                    size_t pos = 0;
-                    while (pos < v.size())
-                    {
-                        size_t next = v.find(',', pos);
-                        if (next == std::string::npos) next = v.size();
-                        std::string part = v.substr(pos, next - pos);
-                        size_t start = part.find_first_not_of(" \t");
-                        if (start != std::string::npos)
-                        {
-                            size_t end = part.find_last_not_of(" \t");
-                            part = part.substr(start, (end == std::string::npos ? part.size() : end + 1) - start);
-                        }
-                        else part.clear();
-                        if (tableVal.size() > 2) tableVal += ", ";
-                        std::string escaped;
-                        for (char c : part)
-                        {
-                            if (c == '\\') escaped += "\\\\";
-                            else if (c == '"') escaped += "\\\"";
-                            else escaped += c;
-                        }
-                        tableVal += "\"" + escaped + "\"";
-                        pos = next + 1;
-                    }
-                    tableVal += " }";
-                    v = tableVal;
+                    size_t next = rule.rawLua.find('\n', pos);
+                    if (next == std::string::npos) next = rule.rawLua.size();
+                    ruleLines.push_back(rule.rawLua.substr(pos, next - pos));
+                    pos = next + 1;
                 }
-                std::string outVal = FormatLuaValue(v);
-                out.push_back(fieldIndent + k + " = " + outVal + ",");
+                for (size_t i = 0; i < ruleLines.size(); i++)
+                {
+                    std::string line = trimLead(ruleLines[i]);
+                    bool isRuleLevel = (i == 0 || i == ruleLines.size() - 1 || line == "{" || line == "}");
+                    if (isRuleLevel)
+                        out.push_back(ruleIndent + line);
+                    else
+                        out.push_back(fieldIndent + line);
+                }
             }
-            out.push_back(ruleIndent + (r + 1 < g_LootFilterRules.size() ? "}," : "}"));
+            else
+            {
+                std::string ruleIndent = "        ";
+                std::string fieldIndent = "            ";
+                std::string commentTrim = rule.comment;
+                size_t cstart = commentTrim.find_first_not_of(" \t");
+                if (cstart != std::string::npos) commentTrim = commentTrim.substr(cstart);
+                if (!commentTrim.empty())
+                    out.push_back(ruleIndent + "{ -- " + commentTrim);
+                else
+                    out.push_back(ruleIndent + "{");
+                for (size_t f = 0; f < rule.fields.size(); f++)
+                {
+                    const std::string& k = rule.fields[f].first;
+                    std::string v = rule.fields[f].second;
+                    out.push_back(fieldIndent + k + " = " + v + ",");
+                }
+                out.push_back(ruleIndent + (r + 1 < g_LootFilterRules.size() ? "}," : "}"));
+            }
         }
         out.push_back(defaultIndent + "}");
         return out;
@@ -6232,24 +6909,31 @@ void SaveLootFilterConfig(const std::string& path)
 
 void LoadLootFilterLogic(const std::string& path)
 {
-    std::ifstream file(path);
-    if (!file.is_open())
-    {
-        g_LootFilterHeader.Version.clear();
-        return;
-    }
-
-    std::string line;
-    std::regex versionRegex(R"delim(local\s+version\s*=\s*"([^"]*)")delim");
-
-    while (std::getline(file, line))
-    {
-        std::smatch match;
-        if (std::regex_search(line, match, versionRegex))
+    auto tryLoadVersion = [](std::ifstream& file) {
+        std::string line;
+        std::regex versionRegex(R"delim(local\s+version\s*=\s*"([^"]*)")delim");
+        while (std::getline(file, line))
         {
-            g_LootFilterHeader.Version = match[1].str();
-            break; // found
+            std::smatch match;
+            if (std::regex_search(line, match, versionRegex))
+            {
+                g_LootFilterHeader.Version = match[1].str();
+                return true;
+            }
         }
+        return false;
+    };
+
+    std::ifstream file(path);
+    if (file.is_open() && tryLoadVersion(file))
+        return;
+    file.close();
+    g_LootFilterHeader.Version.clear();
+    if (path != lootFile)
+    {
+        file.open(lootFile);
+        if (file.is_open())
+            tryLoadVersion(file);
     }
 }
 
@@ -7472,10 +8156,18 @@ void ShowHotkeyMenu()
         "Reset Skills",
         "Reset Stats",
         "Cycle Filter Level",
+        "Filtered Items Toggle",
         "Cycle TZ Backward",
         "Cycle TZ Forward",
         "Toggle TZ Stats Display",
     };
+
+    // Ensure every standard hotkey has an entry so it appears in the menu (e.g. after config load or new options)
+    for (const auto& name : hotkeyOrder)
+    {
+        if (g_Hotkeys.find(name) == g_Hotkeys.end())
+            g_Hotkeys[name] = { "", "" };
+    }
 
     for (const auto& name : hotkeyOrder)
     {
@@ -7747,7 +8439,7 @@ void ShowLootMenu()
 
     EnableAllInput();
     float menuScale = GetMenuScaleFactor();
-    CenterWindow(ImVec2(800, 520));
+    CenterWindow(ImVec2(1200, 720));
     static std::string hoveredKey;
     hoveredKey.clear();
     PushFontSafe(3);
@@ -7756,6 +8448,7 @@ void ShowLootMenu()
     PopFontSafe(3);
     ImGui::Separator();
     ImGui::Dummy(ImVec2(0.0f, 3.0f));
+    DrawCreateFilterPopup();
 
     // --- Centered Wrapped Text Helper ---
     auto CenteredWrappedText = [&](const std::string& prefix, const std::string& text,
@@ -7778,9 +8471,92 @@ void ShowLootMenu()
             ImGui::TextColored(valueColor, "%s", text.c_str());
         };
 
+    if (!s_lootFilterUpdateStatus.empty())
+    {
+        if (s_lootFilterUpdateStatus.size() >= 9 && s_lootFilterUpdateStatus.compare(0, 9, "Updated to") == 0 && !s_lootFilterUpdateApplied)
+        {
+            if (!s_lootFilterNewVersion.empty())
+                g_LootFilterHeader.Version = s_lootFilterNewVersion;
+            else
+                LoadLootFilterLogic(lootFile);
+            s_lootFilterUpdateApplied = true;
+        }
+        auto now = std::chrono::steady_clock::now();
+        if (std::chrono::duration_cast<std::chrono::seconds>(now - s_lootFilterUpdateStatusTime).count() >= 4)
+        {
+            s_lootFilterUpdateStatus.clear();
+            s_lootFilterUpdateStatusTime = {};
+            s_lootFilterNewVersion.clear();
+            s_lootFilterUpdateApplied = false;
+        }
+    }
     if (!g_LootFilterHeader.Version.empty())
         CenteredWrappedText("My D2RLoot Version: ", g_LootFilterHeader.Version);
-    CenteredWrappedText("My Selected Filter: ", g_LootFilterHeader.Title);
+    ImGui::SameLine(0.0f, 12.0f);
+    if (ImGui::Button(s_lootFilterUpdating ? "Updating..." : "Update"))
+    {
+        if (!s_lootFilterUpdating)
+        {
+            s_lootFilterUpdating = true;
+            s_lootFilterUpdateStatus.clear();
+            s_lootFilterUpdateApplied = false;
+            std::thread(LootFilterUpdateThread).detach();
+        }
+    }
+    if (!s_lootFilterUpdateStatus.empty())
+    {
+        ImGui::SameLine(0.0f, 8.0f);
+        ImGui::TextColored(ImVec4(0.7f, 0.9f, 0.7f, 1.0f), "%s", s_lootFilterUpdateStatus.c_str());
+    }
+
+    // --- My Selected Filter: centered styled display + dropdown to change ---
+    std::vector<std::string> orderedFilters = GetOrderedFilterList();
+    std::string currentDisplayName = s_activeFilterInternalName.empty()
+        ? (g_LootFilterHeader.Title.empty() ? "Custom" : g_LootFilterHeader.Title)
+        : GetFilterDisplayName(s_activeFilterInternalName);
+    CenteredWrappedText("My Selected Filter: ", currentDisplayName);
+
+    float comboWidth = 220.0f;
+    ImVec2 avail = ImGui::GetContentRegionAvail();
+    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (avail.x - comboWidth) * 0.5f);
+    std::string comboLabel = s_pendingFilter.empty() ? currentDisplayName : GetFilterDisplayName(s_pendingFilter);
+    ImGui::SetNextItemWidth(comboWidth);
+    if (ImGui::BeginCombo("##selected_filter", comboLabel.c_str()))
+    {
+        for (const auto& internalName : orderedFilters)
+        {
+            std::string displayName = GetFilterDisplayName(internalName);
+            bool isActive = (internalName == s_activeFilterInternalName);
+            std::string label = displayName + (isActive ? " \xe2\x9c\x93" : "");
+            if (ImGui::Selectable(label.c_str(), isActive))
+            {
+                s_pendingFilter = internalName;
+            }
+        }
+        ImGui::EndCombo();
+    }
+    if (!s_pendingFilter.empty())
+    {
+        ImGui::Dummy(ImVec2(0.0f, 4.0f));
+        std::string applyLabel = "Apply \"" + GetFilterDisplayName(s_pendingFilter) + "\":";
+        float applyW = ImGui::CalcTextSize(applyLabel.c_str()).x;
+        ImVec2 availApply = ImGui::GetContentRegionAvail();
+        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (availApply.x - applyW) * 0.5f);
+        ImGui::Text("%s", applyLabel.c_str());
+        float btnW1 = ImGui::CalcTextSize("Use this filter").x + ImGui::GetStyle().FramePadding.x * 2;
+        ImVec2 availApply2 = ImGui::GetContentRegionAvail();
+        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (availApply2.x - btnW1) * 0.5f);
+        if (ImGui::Button("Use this filter"))
+        {
+            if (CopyModFilterToActive(s_pendingFilter))
+            {
+                s_activeFilterInternalName = s_pendingFilter;
+                LoadLootFilterConfig(GetLootFilterConfigPath());
+                LoadLootFilterLogic(lootFile);
+            }
+            s_pendingFilter.clear();
+        }
+    }
 
     ImGui::Dummy(ImVec2(0.0f, 5.0f));
 
@@ -8002,73 +8778,195 @@ void ShowLootMenu()
     }
 
     // --- Rules section ---
+    static bool s_showAddRulePopup = false;
+    static bool s_addRulePopupJustOpened = false;
+    static char s_addRuleNameBuf[256] = {};
     ImGui::Dummy(ImVec2(0.0f, 2.0f));
     if (ImGui::CollapsingHeader("Rules", ImGuiTreeNodeFlags_DefaultOpen))
     {
         ImGui::Indent(8.0f);
         ImGui::Dummy(ImVec2(0.0f, 2.0f));
-        if (ImGui::BeginChild("RulesArea", ImVec2(0, 180), true, ImGuiWindowFlags_None))
+        if (ImGui::BeginChild("RulesArea", ImVec2(0, 280), true, ImGuiWindowFlags_None))
         {
             if (g_LootFilterRules.empty())
             {
-                ImGui::TextWrapped("No rules in config, or rules table is empty. Add rules in lootfilter_config.lua under the \"rules\" table.");
+                ImGui::TextWrapped("No rules in config, or rules table is empty. Add a new rule using the button below (or edit lootfilter_config.lua directly)");
             }
             else
             {
+                static char s_rawEditBuf[8192];
+                static int s_rawEditRuleIndex = -1;
                 for (size_t r = 0; r < g_LootFilterRules.size(); r++)
                 {
                     LootFilterRule& rule = g_LootFilterRules[r];
-                    std::string ruleLabel = rule.comment.empty() ? ("Rule " + std::to_string(r + 1)) : (rule.comment.size() > 45 ? rule.comment.substr(0, 42) + "..." : rule.comment);
-                    if (ImGui::TreeNode(("##rule" + std::to_string(r)).c_str(), "%s", ruleLabel.c_str()))
+                    std::string ruleLabel = "Rule " + std::to_string(r + 1);
+                    if (!rule.rawLua.empty())
                     {
-                        char commentBuf[512];
-                        strncpy(commentBuf, rule.comment.c_str(), sizeof(commentBuf) - 1);
-                        commentBuf[sizeof(commentBuf) - 1] = '\0';
-                        ImGui::Text("Comment = ");
-                        ImGui::SameLine(0.0f, 4.0f);
-                        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
-                        if (ImGui::InputText(("##comment_rule" + std::to_string(r)).c_str(), commentBuf, sizeof(commentBuf)))
+                        size_t firstLineEnd = rule.rawLua.find('\n');
+                        std::string firstLine = firstLineEnd == std::string::npos ? rule.rawLua : rule.rawLua.substr(0, firstLineEnd);
+                        size_t trim = firstLine.find_first_not_of(" \t");
+                        if (trim != std::string::npos) firstLine = firstLine.substr(trim);
+                        if (!firstLine.empty() && firstLine[0] == '{')
                         {
-                            rule.comment = commentBuf;
-                            SaveLootFilterConfig("lootfilter_config.lua");
-                        }
-                        ImGui::Spacing();
-                        for (size_t f = 0; f < rule.fields.size(); f++)
-                        {
-                            std::string& key = rule.fields[f].first;
-                            std::string& value = rule.fields[f].second;
-                            std::string label = key;
-                            if (!label.empty()) label[0] = (char)std::toupper((unsigned char)label[0]);
-                            label += " = ";
-                            std::string id = "rule" + std::to_string(r) + "_" + key;
-                            ImGui::PushID(id.c_str());
-                            ImGui::Text("%s", label.c_str());
-                            ImGui::SameLine(0.0f, 4.0f);
-                            if (value == "true" || value == "false")
+                            size_t p = firstLine.find("--");
+                            if (p != std::string::npos)
                             {
-                                bool b = (value == "true");
-                                if (ImGui::Checkbox("##val", &b))
-                                {
-                                    rule.fields[f].second = b ? "true" : "false";
-                                    SaveLootFilterConfig("lootfilter_config.lua");
-                                }
+                                p += 2;
+                                while (p < firstLine.size() && (firstLine[p] == '-' || firstLine[p] == ' ' || firstLine[p] == '\t'))
+                                    p++;
+                                firstLine = firstLine.substr(p);
                             }
                             else
-                            {
-                                char valBuf[256];
-                                strncpy(valBuf, value.c_str(), sizeof(valBuf) - 1);
-                                valBuf[sizeof(valBuf) - 1] = '\0';
-                                ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
-                                if (ImGui::InputText("##val", valBuf, sizeof(valBuf)))
-                                {
-                                    rule.fields[f].second = valBuf;
-                                    SaveLootFilterConfig("lootfilter_config.lua");
-                                }
-                            }
-                            ImGui::PopID();
+                                firstLine = firstLine.substr(1);
+                            trim = firstLine.find_first_not_of(" \t");
+                            if (trim != std::string::npos) firstLine = firstLine.substr(trim);
                         }
+                        if (!firstLine.empty()) ruleLabel = firstLine;
+                    }
+                    else if (!rule.comment.empty())
+                        ruleLabel = rule.comment;
+                    if (!ruleLabel.empty() && ruleLabel.size() >= 2 && ruleLabel[0] == '-' && ruleLabel[1] == '-')
+                    {
+                        size_t d = 2;
+                        while (d < ruleLabel.size() && (ruleLabel[d] == '-' || ruleLabel[d] == ' ' || ruleLabel[d] == '\t'))
+                            d++;
+                        if (d < ruleLabel.size())
+                            ruleLabel = ruleLabel.substr(d);
+                    }
+                    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x);
+                    if (ImGui::TreeNode(("##rule" + std::to_string(r)).c_str(), "%s", ruleLabel.c_str()))
+                    {
+                        if (s_rawEditRuleIndex != (int)r)
+                        {
+                            s_rawEditRuleIndex = (int)r;
+                            std::vector<std::string> lines;
+                            size_t pos = 0;
+                            while (pos < rule.rawLua.size())
+                            {
+                                size_t next = rule.rawLua.find('\n', pos);
+                                if (next == std::string::npos) next = rule.rawLua.size();
+                                lines.push_back(rule.rawLua.substr(pos, next - pos));
+                                pos = next + 1;
+                            }
+                            while (!lines.empty())
+                            {
+                                size_t start = lines.back().find_first_not_of(" \t");
+                                if (start != std::string::npos) break;
+                                lines.pop_back();
+                            }
+                            std::string displayLua;
+                            for (size_t i = 0; i < lines.size(); i++)
+                            {
+                                std::string line = lines[i];
+                                size_t start = line.find_first_not_of(" \t");
+                                if (start != std::string::npos) line = line.substr(start);
+                                if (i > 0 && i < lines.size() - 1 && !line.empty())
+                                    line = "\t" + line;
+                                if (!displayLua.empty()) displayLua += "\n";
+                                displayLua += line;
+                            }
+                            while (!displayLua.empty() && (displayLua.back() == '\n' || displayLua.back() == '\r'))
+                                displayLua.pop_back();
+                            strncpy(s_rawEditBuf, displayLua.c_str(), sizeof(s_rawEditBuf) - 1);
+                            s_rawEditBuf[sizeof(s_rawEditBuf) - 1] = '\0';
+                        }
+                        float lineCount = 1.0f;
+                        for (const char* p = s_rawEditBuf; *p; p++) if (*p == '\n') lineCount += 1.0f;
+                        float lineH = ImGui::GetTextLineHeightWithSpacing();
+                        float editHeight = lineCount * lineH + ImGui::GetStyle().FramePadding.y * 2.0f - 1.0f * lineH;
+                        editHeight = std::clamp(editHeight, 60.0f, 500.0f);
+                        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
+                        if (ImGui::InputTextMultiline(("##raw_rule" + std::to_string(r)).c_str(), s_rawEditBuf, sizeof(s_rawEditBuf), ImVec2(-1, editHeight)))
+                        {
+                            std::string saved = s_rawEditBuf;
+                            while (!saved.empty() && (saved.back() == '\n' || saved.back() == '\r'))
+                                saved.pop_back();
+                            rule.rawLua = saved;
+                            SaveLootFilterConfig("lootfilter_config.lua");
+                        }
+                        static int s_copiedRuleIndex = -1;
+                        static std::chrono::steady_clock::time_point s_copiedAt;
+                        bool showCopied = (s_copiedRuleIndex == (int)r) && (std::chrono::steady_clock::now() - s_copiedAt) < std::chrono::milliseconds(1500);
+                        if (ImGui::Button(showCopied ? "Copied!" : "Copy code"))
+                        {
+                            ImGui::SetClipboardText(s_rawEditBuf);
+                            s_copiedRuleIndex = (int)r;
+                            s_copiedAt = std::chrono::steady_clock::now();
+                        }
+                        ImGui::SameLine();
+                        if (ImGui::Button("Remove rule"))
+                        {
+                            g_LootFilterRules.erase(g_LootFilterRules.begin() + r);
+                            SaveLootFilterConfig("lootfilter_config.lua");
+                            if (s_copiedRuleIndex == (int)r) s_copiedRuleIndex = -1;
+                            else if (s_copiedRuleIndex > (int)r) s_copiedRuleIndex--;
+                            if (s_rawEditRuleIndex == (int)r) s_rawEditRuleIndex = -1;
+                            else if (s_rawEditRuleIndex > (int)r) s_rawEditRuleIndex--;
+                            ImGui::TreePop();
+                            ImGui::PopTextWrapPos();
+                            break;
+                        }
+                        if (s_copiedRuleIndex == (int)r && (std::chrono::steady_clock::now() - s_copiedAt) >= std::chrono::milliseconds(1500))
+                            s_copiedRuleIndex = -1;
                         ImGui::TreePop();
                     }
+                    ImGui::PopTextWrapPos();
+                }
+            }
+            ImGui::Dummy(ImVec2(0.0f, 4.0f));
+            float addRuleW = ImGui::CalcTextSize("Add a new rule").x + ImGui::GetStyle().FramePadding.x * 2;
+            ImVec2 rulesAvail = ImGui::GetContentRegionAvail();
+            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (rulesAvail.x - addRuleW) * 0.5f);
+            if (ImGui::Button("Add a new rule"))
+            {
+                s_showAddRulePopup = true;
+                s_addRulePopupJustOpened = true;
+                s_addRuleNameBuf[0] = '\0';
+            }
+            if (s_showAddRulePopup)
+            {
+                if (s_addRulePopupJustOpened)
+                {
+                    ImGui::OpenPopup("Add rule");
+                    s_addRulePopupJustOpened = false;
+                }
+                ImGui::SetNextWindowSize(ImVec2(320.0f, 0.0f), ImGuiCond_FirstUseEver);
+                if (ImGui::BeginPopupModal("Add rule", &s_showAddRulePopup, ImGuiWindowFlags_AlwaysAutoResize))
+                {
+                    ImGui::Text("Rule name (optional, shown as comment):");
+                    ImGui::SetNextItemWidth(-1.0f);
+                    ImGui::InputText("##addrule_name", s_addRuleNameBuf, sizeof(s_addRuleNameBuf));
+                    ImGui::Spacing();
+                    if (ImGui::Button("Add", ImVec2(80.0f, 0.0f)))
+                    {
+                        if (!g_LootFilterRules.empty())
+                        {
+                            std::string& lastRaw = g_LootFilterRules.back().rawLua;
+                            while (!lastRaw.empty() && (lastRaw.back() == '\n' || lastRaw.back() == '\r' || lastRaw.back() == ' ' || lastRaw.back() == '\t'))
+                                lastRaw.pop_back();
+                            if (!lastRaw.empty() && lastRaw.back() == '}')
+                                lastRaw += ",";
+                            lastRaw += "\n";
+                        }
+                        LootFilterRule newRule;
+                        std::string name(s_addRuleNameBuf);
+                        while (!name.empty() && (name.back() == ' ' || name.back() == '\t')) name.pop_back();
+                        while (!name.empty() && (name.front() == ' ' || name.front() == '\t')) name.erase(0, 1);
+                        if (!name.empty())
+                            newRule.rawLua = "-- " + name + "\n";
+                        newRule.rawLua += "{\n    code = \"isc\",\n    hide = true\n}\n";
+                        g_LootFilterRules.push_back(newRule);
+                        SaveLootFilterConfig("lootfilter_config.lua");
+                        s_showAddRulePopup = false;
+                        ImGui::CloseCurrentPopup();
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::Button("Cancel", ImVec2(80.0f, 0.0f)))
+                    {
+                        s_showAddRulePopup = false;
+                        ImGui::CloseCurrentPopup();
+                    }
+                    ImGui::EndPopup();
                 }
             }
         }
@@ -8076,6 +8974,80 @@ void ShowLootMenu()
         ImGui::Unindent(8.0f);
     }
 
+    ImGui::Dummy(ImVec2(0.0f, 3.0f));
+
+    // --- Sounds section ---
+    if (ImGui::CollapsingHeader("Sounds", ImGuiTreeNodeFlags_DefaultOpen))
+    {
+        ImGui::Indent(8.0f);
+        ImGui::Dummy(ImVec2(0.0f, 2.0f));
+        std::vector<std::pair<std::string, std::string>> soundFiles = GetSoundFilesFromBothLocations();
+        if (soundFiles.empty())
+        {
+            ImGui::TextWrapped("No sounds in My Filters/sounds or mod yet. Use \"Import sounds\" to add .mp3, .flac or .wav files.");
+        }
+        else
+        {
+            if (ImGui::BeginChild("SoundsList", ImVec2(0, 120), true, ImGuiWindowFlags_None))
+            {
+                for (size_t i = 0; i < soundFiles.size(); i++)
+                {
+                    const std::string& path = soundFiles[i].first;
+                    const std::string& name = soundFiles[i].second;
+                    ImGui::Text("%s", name.c_str());
+                    float btnX = ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - 55.0f;
+                    if (btnX > ImGui::GetCursorPosX()) ImGui::SameLine(btnX);
+                    std::string playId = "Play##" + name + std::to_string(i);
+                    if (ImGui::Button(playId.c_str(), ImVec2(50.0f, 0.0f)))
+                    {
+                        if (std::filesystem::exists(path))
+                            PlaySoundFile(path);
+                    }
+                }
+            }
+            ImGui::EndChild();  // always call after BeginChild, regardless of return value
+        }
+        ImGui::Dummy(ImVec2(0.0f, 4.0f));
+        float importSoundsW = ImGui::CalcTextSize("Import sounds").x + ImGui::GetStyle().FramePadding.x * 2;
+        ImVec2 soundsAvail = ImGui::GetContentRegionAvail();
+        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (soundsAvail.x - importSoundsW) * 0.5f);
+        if (ImGui::Button("Import sounds"))
+            OpenImportSoundsPathInput();
+        DrawImportSoundsPathRow();
+        ImGui::Unindent(8.0f);
+    }
+
+    ImGui::Dummy(ImVec2(0.0f, 3.0f));
+    ImGui::Separator();
+    ImGui::Dummy(ImVec2(0.0f, 4.0f));
+
+    // --- Import / Open / Guide / Create buttons ---
+    float btnImportW = ImGui::CalcTextSize("Import Filter").x + ImGui::GetStyle().FramePadding.x * 2;
+    float btnOpenW  = ImGui::CalcTextSize("Open Filter").x + ImGui::GetStyle().FramePadding.x * 2;
+    float btnCreateW = ImGui::CalcTextSize("Create my own filter").x + ImGui::GetStyle().FramePadding.x * 2;
+    float btnGuideW = ImGui::CalcTextSize("Filter Guide").x + ImGui::GetStyle().FramePadding.x * 2;
+    float spacing = ImGui::GetStyle().ItemSpacing.x;
+    float totalBtnW = btnImportW + btnOpenW + btnCreateW + btnGuideW + spacing * 3;
+    ImVec2 availBtns = ImGui::GetContentRegionAvail();
+    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (availBtns.x - totalBtnW) * 0.5f);
+    if (ImGui::Button("Import Filter"))
+        OpenImportPathInput();
+    ImGui::SameLine();
+    if (ImGui::Button("Open Filter"))
+    {
+        std::string path = GetLootFilterConfigPathAbsolute();
+        if (std::filesystem::exists(path))
+            OpenInShell(path);
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Create my own filter"))
+        OpenCreateFilterPopup();
+    ImGui::SameLine();
+    if (ImGui::Button("Filter Guide"))
+    {
+        OpenInShell("https://locbones.github.io/D2RLAN-LootFilterGuide");
+    }
+    DrawImportFilterPathRow();
     ImGui::Dummy(ImVec2(0.0f, 3.0f));
 
     // --- Bottom Description ---
@@ -8779,6 +9751,7 @@ void ShowHUDSettingsMenu()
     PopFontSafe(3);
     ImGui::Separator();
     ImGui::Dummy(ImVec2(0.0f, 5.0f));
+    DrawCreateFilterPopup();
 
     // --- Centered Wrapped Text Helper ---
     auto CenteredWrappedText = [&](const std::string& prefix, const std::string& text,
@@ -8801,9 +9774,99 @@ void ShowHUDSettingsMenu()
             ImGui::TextColored(valueColor, "%s", text.c_str());
         };
 
+    static bool hudTriedFilterLoad = false;
+    if (!hudTriedFilterLoad && g_LootFilterHeader.Version.empty())
+    {
+        LoadLootFilterConfig("lootfilter_config.lua");
+        LoadLootFilterLogic("lootfilter.lua");
+        hudTriedFilterLoad = true;
+    }
+    if (!s_lootFilterUpdateStatus.empty())
+    {
+        if (s_lootFilterUpdateStatus.size() >= 9 && s_lootFilterUpdateStatus.compare(0, 9, "Updated to") == 0 && !s_lootFilterUpdateApplied)
+        {
+            if (!s_lootFilterNewVersion.empty())
+                g_LootFilterHeader.Version = s_lootFilterNewVersion;
+            else
+                LoadLootFilterLogic(lootFile);
+            s_lootFilterUpdateApplied = true;
+        }
+        auto now = std::chrono::steady_clock::now();
+        if (std::chrono::duration_cast<std::chrono::seconds>(now - s_lootFilterUpdateStatusTime).count() >= 4)
+        {
+            s_lootFilterUpdateStatus.clear();
+            s_lootFilterUpdateStatusTime = {};
+            s_lootFilterNewVersion.clear();
+            s_lootFilterUpdateApplied = false;
+        }
+    }
     if (!g_LootFilterHeader.Version.empty())
         CenteredWrappedText("My D2RLoot Version: ", g_LootFilterHeader.Version);
-    CenteredWrappedText("My Selected Filter: ", g_LootFilterHeader.Title);
+    ImGui::SameLine(0.0f, 12.0f);
+    if (ImGui::Button(s_lootFilterUpdating ? "Updating...##hud" : "Update##hud"))
+    {
+        if (!s_lootFilterUpdating)
+        {
+            s_lootFilterUpdating = true;
+            s_lootFilterUpdateStatus.clear();
+            s_lootFilterUpdateApplied = false;
+            std::thread(LootFilterUpdateThread).detach();
+        }
+    }
+    if (!s_lootFilterUpdateStatus.empty())
+    {
+        ImGui::SameLine(0.0f, 8.0f);
+        ImGui::TextColored(ImVec4(0.7f, 0.9f, 0.7f, 1.0f), "%s", s_lootFilterUpdateStatus.c_str());
+    }
+
+    // --- My Selected Filter: centered styled display + dropdown to change ---
+    std::vector<std::string> orderedFiltersHUD = GetOrderedFilterList();
+    std::string currentDisplayNameHUD = s_activeFilterInternalName.empty()
+        ? (g_LootFilterHeader.Title.empty() ? "Custom" : g_LootFilterHeader.Title)
+        : GetFilterDisplayName(s_activeFilterInternalName);
+    CenteredWrappedText("My Selected Filter: ", currentDisplayNameHUD);
+
+    float comboWidthHUD = 220.0f;
+    ImVec2 availHUD = ImGui::GetContentRegionAvail();
+    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (availHUD.x - comboWidthHUD) * 0.5f);
+    std::string comboLabelHUD = s_pendingFilter.empty() ? currentDisplayNameHUD : GetFilterDisplayName(s_pendingFilter);
+    ImGui::SetNextItemWidth(comboWidthHUD);
+    if (ImGui::BeginCombo("##selected_filter_hud", comboLabelHUD.c_str()))
+    {
+        for (const auto& internalName : orderedFiltersHUD)
+        {
+            std::string displayName = GetFilterDisplayName(internalName);
+            bool isActive = (internalName == s_activeFilterInternalName);
+            std::string label = displayName + (isActive ? " \xe2\x9c\x93" : "");
+            if (ImGui::Selectable(label.c_str(), isActive))
+            {
+                s_pendingFilter = internalName;
+            }
+        }
+        ImGui::EndCombo();
+    }
+    if (!s_pendingFilter.empty())
+    {
+        ImGui::Dummy(ImVec2(0.0f, 4.0f));
+        std::string applyLabelHUD = "Apply \"" + GetFilterDisplayName(s_pendingFilter) + "\":";
+        float applyWHUD = ImGui::CalcTextSize(applyLabelHUD.c_str()).x;
+        ImVec2 availApplyHUD = ImGui::GetContentRegionAvail();
+        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (availApplyHUD.x - applyWHUD) * 0.5f);
+        ImGui::Text("%s", applyLabelHUD.c_str());
+        float btnW1HUD = ImGui::CalcTextSize("Use this filter").x + ImGui::GetStyle().FramePadding.x * 2;
+        ImVec2 availApply2HUD = ImGui::GetContentRegionAvail();
+        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (availApply2HUD.x - btnW1HUD) * 0.5f);
+        if (ImGui::Button("Use this filter##hud"))
+        {
+            if (CopyModFilterToActive(s_pendingFilter))
+            {
+                s_activeFilterInternalName = s_pendingFilter;
+                LoadLootFilterConfig(GetLootFilterConfigPath());
+                LoadLootFilterLogic(lootFile);
+            }
+            s_pendingFilter.clear();
+        }
+    }
 
     ImGui::Dummy(ImVec2(0.0f, 3.0f));
     ImGui::Separator();
@@ -8967,6 +10030,37 @@ void ShowHUDSettingsMenu()
             else g_LuaVariables.insert({ key, newValue });
         };
     RenderFilterTitles();
+
+    ImGui::Dummy(ImVec2(0.0f, 3.0f));
+    ImGui::Separator();
+    ImGui::Dummy(ImVec2(0.0f, 4.0f));
+    float btnImportWHUD = ImGui::CalcTextSize("Import Filter").x + ImGui::GetStyle().FramePadding.x * 2;
+    float btnOpenWHUD  = ImGui::CalcTextSize("Open Filter").x + ImGui::GetStyle().FramePadding.x * 2;
+    float btnCreateWHUD = ImGui::CalcTextSize("Create my own filter").x + ImGui::GetStyle().FramePadding.x * 2;
+    float btnGuideWHUD = ImGui::CalcTextSize("Filter Guide").x + ImGui::GetStyle().FramePadding.x * 2;
+    float spacingBtnsHUD = ImGui::GetStyle().ItemSpacing.x;
+    float totalBtnWHUD2 = btnImportWHUD + btnOpenWHUD + btnCreateWHUD + btnGuideWHUD + spacingBtnsHUD * 3;
+    ImVec2 availBtnsHUD = ImGui::GetContentRegionAvail();
+    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (availBtnsHUD.x - totalBtnWHUD2) * 0.5f);
+    if (ImGui::Button("Import Filter##hud"))
+        OpenImportPathInput();
+    ImGui::SameLine();
+    if (ImGui::Button("Open Filter##hud"))
+    {
+        std::string path = GetLootFilterConfigPathAbsolute();
+        if (std::filesystem::exists(path))
+            OpenInShell(path);
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Create my own filter##hud"))
+        OpenCreateFilterPopup();
+    ImGui::SameLine();
+    if (ImGui::Button("Filter Guide##hud"))
+    {
+        OpenInShell("https://locbones.github.io/D2RLAN-LootFilterGuide");
+    }
+    DrawImportFilterPathRow();
+    ImGui::Dummy(ImVec2(0.0f, 3.0f));
 
     // --- Bottom Description ---
     std::string desc = "Hover over an option to see its description.";
@@ -10085,6 +11179,11 @@ bool D2RHUD::OnKeyPressed(short key)
         CheckAndAddMatch(kb->key, 0, [=]() {
         if (itemFilter) itemFilter->CycleFilter();
             });
+
+    if (auto kb = FindKeybind("Filtered Items Toggle"))
+        CheckAndAddMatch(kb->key, 0, [=]() {
+        ItemFilter::SetShowFilteredItems(!ItemFilter::GetShowFilteredItems());
+            }, true);
 
     if (auto kb = FindKeybind("Cycle TZ Forward"))
     {

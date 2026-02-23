@@ -449,6 +449,9 @@ namespace D3D12 {
 				ImGui_ImplWin32_WndProcHandler(hWnd, msg, wParam, lParam);
 				return io.WantCaptureMouse ? 0 : CallWindowProc(OriginalWndProc, hWnd, msg, wParam, lParam);
 			case WM_KEYDOWN:
+				if (wParam == VK_ESCAPE && g_PluginManager->TryCloseMenuOnEscape())
+					return 0;
+				// fall through
 			case WM_KEYUP:
 			case WM_CHAR:
 				ImGui_ImplWin32_WndProcHandler(hWnd, msg, wParam, lParam);

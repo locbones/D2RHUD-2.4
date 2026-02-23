@@ -1,4 +1,4 @@
-﻿#define SOL_ALL_SAFETIES_ON 1
+#define SOL_ALL_SAFETIES_ON 1
 
 #include "ItemFilter.h"
 #include <detours/detours.h>
@@ -77,6 +77,14 @@ static std::unordered_map<DWORD, int32_t> g_TransmogValueByUnitId;
 static std::mutex g_TransmogValueMutex;
 static std::unordered_map<DWORD, std::string> g_StoredItemNames;
 static std::mutex g_StoredItemNamesMutex;
+static bool g_ShowFilteredItems = false;
+static std::vector<std::pair<std::vector<uint8_t>, bool>> g_RemovedFilteredItemPackets;
+static std::mutex g_RemovedFilteredItemPacketsMutex;
+static std::unordered_map<uint32_t, std::pair<std::vector<uint8_t>, bool>> g_ReaddedFilteredItemPackets;
+static std::mutex g_ReaddedFilteredItemPacketsMutex;
+static const size_t kMaxItemPacketSize = 1024;
+static thread_local std::vector<uint8_t> g_LastReceivedItemPacket;
+static thread_local bool g_LastReceivedItemPacketIs9D = false;
 uint32_t crc32_table[256];
 
 
@@ -105,6 +113,18 @@ std::unordered_map<std::string, std::string> colorMap = {
 	{"tan", "ÿc7"}, {"orange", "ÿc8"}, {"yellow", "ÿc9"}, {"purple", "ÿc;"},
 	{"dark green", "ÿcA"}, {"turquoise", "ÿcN"}, {"pink", "ÿcO"}, {"lilac", "ÿcP"}
 };
+
+static const char kHiddenItemSuffix[] = " ÿcO[H]";
+
+static void AppendHiddenSuffixIfNeeded(D2UnitStrcCustom* pUnitCustom, char* pBuffer, size_t bufferSize) {
+	if (!pUnitCustom || !pUnitCustom->pFilterResult || !pUnitCustom->pFilterResult->bHide)
+		return;
+	size_t len = strlen(pBuffer);
+	size_t suffixLen = sizeof(kHiddenItemSuffix) - 1;
+	if (len + suffixLen < bufferSize) {
+		memcpy(pBuffer + len, kHiddenItemSuffix, suffixLen + 1);
+	}
+}
 
 #pragma endregion
 
@@ -327,6 +347,7 @@ void __fastcall Hooked_ITEMS_GetName(D2UnitStrc* pUnit, char* pBuffer)
 			std::lock_guard<std::mutex> lock(g_StoredItemNamesMutex);
 			g_StoredItemNames[pUnit->dwUnitId] = pBuffer;
 		}
+		AppendHiddenSuffixIfNeeded(pUnitCustom, pBuffer, 0x400);
 	}
 }
 
@@ -360,8 +381,8 @@ void __fastcall Hooked_ITEMS_GetNameGold(D2UnitStrc* pUnit, char* pBuffer) {
 				szName = data.as<std::string>();
 			}
 			strncpy(pBuffer, szName.c_str(), 0x400);
-
 		}
+		AppendHiddenSuffixIfNeeded(reinterpret_cast<D2UnitStrcCustom*>(pUnit), pBuffer, 0x7F);
 	}
 }
 
@@ -709,8 +730,13 @@ void DoFilter(D2UnitStrc* pItem) {
 		HandleError(applyFilter(reinterpret_cast<D2PlayerUnitStrc*>(GetUnitByIdAndType(ppClientUnitList, gpClientPlayerIds[*gpClientPlayerListIndex], UNIT_PLAYER)), reinterpret_cast<D2ItemUnitStrc*>(pItemToApplyFilterOn), pItemCustom->pFilterResult));
 	}
 
-	// --- Hide item if Lua filter marked it hidden ---
-	if (pItemCustom->pFilterResult && pItemCustom->pFilterResult->bHide) {
+	// --- Hide item if Lua filter marked it hidden (unless filtered-items toggle is on) ---
+	if (pItemCustom->pFilterResult && pItemCustom->pFilterResult->bHide && !g_ShowFilteredItems) {
+		// Store packet for re-add when user toggles "show filtered" (saved by packet hooks before we were called)
+		if (!g_LastReceivedItemPacket.empty()) {
+			std::lock_guard<std::mutex> lock(g_RemovedFilteredItemPacketsMutex);
+			g_RemovedFilteredItemPackets.push_back({ g_LastReceivedItemPacket, g_LastReceivedItemPacketIs9D });
+		}
 		D2GSPacketSrv0A remove = { 0xA, UNIT_ITEM, pItemToApplyFilterOn->dwUnitId };
 		oD2CLIENT_PACKETCALLBACK_Rcv0x0A_SCMD_REMOVEUNIT(reinterpret_cast<uint8_t*>(&remove));
 	}
@@ -728,14 +754,20 @@ void DoFilter(uint32_t nUnitId) {
 #pragma region Filter Apply Hooks
 
 int64_t __fastcall Hooked_D2CLIENT_PACKETCALLBACK_Rcv0x9C_SCMD_ITEMEX(uint8_t* pPacket) {
+	g_LastReceivedItemPacket.assign(pPacket, pPacket + kMaxItemPacketSize);
+	g_LastReceivedItemPacketIs9D = false;
 	auto result = oD2CLIENT_PACKETCALLBACK_Rcv0x9C_SCMD_ITEMEX(pPacket);
 	DoFilter(*(uint32_t*)(pPacket + 4));
+	g_LastReceivedItemPacket.clear();
 	return result;
 }
 
 int64_t __fastcall Hooked_D2CLIENT_PACKETCALLBACK_Rcv0x9D_SCMD_ITEMUNITEX(uint8_t* pPacket) {
+	g_LastReceivedItemPacket.assign(pPacket, pPacket + kMaxItemPacketSize);
+	g_LastReceivedItemPacketIs9D = true;
 	auto result = oD2CLIENT_PACKETCALLBACK_Rcv0x9D_SCMD_ITEMUNITEX(pPacket);
 	DoFilter(*(uint32_t*)(pPacket + 4));
+	g_LastReceivedItemPacket.clear();
 	return result;
 }
 
@@ -1556,6 +1588,72 @@ void ItemFilter::CycleFilter()
 		while (pItem) {
 			DoFilter(pItem);
 			pItem = pItem->pListNext;
+		}
+	}
+}
+
+bool ItemFilter::GetShowFilteredItems()
+{
+	return g_ShowFilteredItems;
+}
+
+void ItemFilter::SetShowFilteredItems(bool show)
+{
+	bool wasShowing = g_ShowFilteredItems;
+	g_ShowFilteredItems = show;
+
+	if (show && !wasShowing) {
+		std::vector<std::pair<std::vector<uint8_t>, bool>> toReplay;
+		{
+			std::lock_guard<std::mutex> lock(g_RemovedFilteredItemPacketsMutex);
+			toReplay = std::move(g_RemovedFilteredItemPackets);
+			g_RemovedFilteredItemPackets.clear();
+		}
+		for (auto& entry : toReplay) {
+			std::vector<uint8_t>& data = entry.first;
+			bool is9D = entry.second;
+			if (data.size() < 8) continue;
+			std::vector<uint8_t> packetCopy = data;
+			uint8_t* pPacket = packetCopy.data();
+			if (is9D)
+				oD2CLIENT_PACKETCALLBACK_Rcv0x9D_SCMD_ITEMUNITEX(pPacket);
+			else
+				oD2CLIENT_PACKETCALLBACK_Rcv0x9C_SCMD_ITEMEX(pPacket);
+			uint32_t nUnitId = *(uint32_t*)(pPacket + 4);
+			DoFilter(nUnitId);
+			std::lock_guard<std::mutex> lock(g_ReaddedFilteredItemPacketsMutex);
+			g_ReaddedFilteredItemPackets[nUnitId] = { data, is9D };
+		}
+	} else if (!show && wasShowing) {
+		std::vector<uint32_t> toRemove;
+		auto ppClientItem = &ppClientUnitList[UNIT_ITEM * 0x80];
+		for (int i = 0; i < 128; i++) {
+			auto pItem = ppClientItem[i];
+			while (pItem) {
+				auto pCustom = reinterpret_cast<D2UnitStrcCustom*>(pItem);
+				if (pCustom->pFilterResult && pCustom->pFilterResult->bHide)
+					toRemove.push_back(pItem->dwUnitId);
+				pItem = pItem->pListNext;
+			}
+		}
+		for (uint32_t nUnitId : toRemove) {
+			std::pair<std::vector<uint8_t>, bool> packetEntry;
+			bool hadPacket = false;
+			{
+				std::lock_guard<std::mutex> lock(g_ReaddedFilteredItemPacketsMutex);
+				auto it = g_ReaddedFilteredItemPackets.find(nUnitId);
+				if (it != g_ReaddedFilteredItemPackets.end()) {
+					packetEntry = std::move(it->second);
+					g_ReaddedFilteredItemPackets.erase(it);
+					hadPacket = true;
+				}
+			}
+			if (hadPacket) {
+				std::lock_guard<std::mutex> lock(g_RemovedFilteredItemPacketsMutex);
+				g_RemovedFilteredItemPackets.push_back(std::move(packetEntry));
+			}
+			D2GSPacketSrv0A remove = { 0xA, UNIT_ITEM, nUnitId };
+			oD2CLIENT_PACKETCALLBACK_Rcv0x0A_SCMD_REMOVEUNIT(reinterpret_cast<uint8_t*>(&remove));
 		}
 	}
 }
