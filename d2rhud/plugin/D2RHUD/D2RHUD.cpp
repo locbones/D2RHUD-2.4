@@ -20,6 +20,7 @@
 #include <thread>
 #include <atomic>
 #include <chrono>
+#include <future>
 #include <cstdint>
 #include <filesystem>
 #include "../../D3D12Hook.h"
@@ -45,7 +46,8 @@
 /*
 - Chat Detours/Structures by Killshot
 - Base Implementation by DannyisGreat
-- Monster Stats and Plugin Mods by Bonesy
+- Camera patterns by Shizza
+- Monster Stats, Plugin Mods and extended features by Bonesy
 - Special Thanks to those who have helped ^^
 */
 
@@ -54,7 +56,7 @@
 #pragma region Global Static/Structs
 
 std::string lootFile = "../D2R/lootfilter.lua";
-std::string Version = "1.6.6";
+std::string Version = "1.6.7";
 
 using json = nlohmann::json;
 static MonsterStatsDisplaySettings cachedSettings;
@@ -4335,28 +4337,35 @@ void LoadAllItemData()
 
 #pragma region Static/Structs
 
-GrailStatus GetGrailStatus(uint32_t id)
+GrailStatus GetGrailStatus(uint32_t id, bool isSetItem)
 {
     GrailStatus g;
-    g.isGrail = true;
+    g.isGrail = false;
 
-    // Check set items
-    for (auto& s : g_SetItems)
+    if (isSetItem)
     {
-        if (s.id == id)
+        for (auto& s : g_SetItems)
         {
-            if (s.collected) g.collected = true;
-            g.located += static_cast<int>(s.locations.size());
+            if (s.id == id)
+            {
+                g.isGrail = true;
+                if (s.collected) g.collected = true;
+                g.located += static_cast<int>(s.locations.size());
+                break;
+            }
         }
     }
-
-    // Check unique items
-    for (auto& u : g_UniqueItems)
+    else
     {
-        if (u.id == id)
+        for (auto& u : g_UniqueItems)
         {
-            if (u.collected) g.collected = true;
-            g.located += static_cast<int>(u.locations.size());
+            if (u.id == id)
+            {
+                g.isGrail = true;
+                if (u.collected) g.collected = true;
+                g.located += static_cast<int>(u.locations.size());
+                break;
+            }
         }
     }
 
@@ -5248,6 +5257,17 @@ void ScanStashPages()
 
 #pragma region - Static/Structs
 
+struct CameraPreset
+{
+    std::string Name;
+    float Pitch = 0.0f;
+    float Height = 0.0f;
+    float Pan = 0.0f;
+    float Roll = 0.0f;
+    float Zoom = 0.0f;
+    bool HasValues = false;
+};
+
 struct D2RHUDConfig
 {
     bool MonsterStatsDisplay = true;
@@ -5266,6 +5286,9 @@ struct D2RHUDConfig
     bool ExtendedItemcodes = true;
     bool FloatingDamage = true;
     std::vector<std::string> DLLsToLoad = { "D2RHUD.dll" };
+    std::array<CameraPreset, 3> CameraPresets{};
+    bool CameraAutoloadLastPreset = false;
+    int CameraLastPresetIndex = 0;  // 0 = Default, 1–3 = preset slot
 };
 
 std::vector<std::string> priorityOrder = {
@@ -5342,9 +5365,40 @@ static bool showMemoryMenu = false;
 static bool showLootMenu = false;
 static bool showHotkeyMenu = false;
 static bool showGrailMenu = false;
+static bool showCameraMenu = false;
 static bool showBaseCodes = false;
 static bool showBaseNames = false;
 static bool showDuplicates = false;
+
+// Persistent camera state for Camera Controls menu
+struct CameraState
+{
+    bool programEnabled = true;
+    bool valuesFound = false;
+    bool zoomFound = false;
+
+    // Track whether a scan has been attempted (for UI messaging)
+    bool didScanAngles = false;
+    bool didScanZoom = false;
+
+    // Track whether the last scan attempt was in-game or out-of-game
+    bool lastAngleScanInGame = false;
+    bool lastZoomScanInGame = false;
+
+    float pitch = 0.0f;
+    float height = 0.0f;
+    float pan = 0.0f;
+    float roll = 0.0f;
+    float zoom = 0.0f;
+
+    float defaultPitch = 0.0f;
+    float defaultHeight = 0.0f;
+    float defaultPan = 0.0f;
+    float defaultRoll = 0.0f;
+    float defaultZoom = 0.0f;
+};
+
+static CameraState g_CameraState;
 
 LootFilterHeader g_LootFilterHeader;
 std::unordered_map<std::string, std::string> g_LuaVariables;
@@ -5526,7 +5580,7 @@ void EnableAllInput() {
 }
 
 bool D2RHUD::IsAnyMenuOpen() {
-    return showGrailMenu || showHotkeyMenu || showLootMenu || showD2RHUDMenu;
+    return showGrailMenu || showHotkeyMenu || showLootMenu || showD2RHUDMenu || showCameraMenu;
 }
 
 bool D2RHUD::TryCloseMenuOnEscape()
@@ -5534,6 +5588,7 @@ bool D2RHUD::TryCloseMenuOnEscape()
     if (showHotkeyMenu)      { showHotkeyMenu = false; return true; }
     if (showGrailMenu)       { showGrailMenu = false; return true; }
     if (showLootMenu)        { showLootMenu = false; return true; }
+    if (showCameraMenu)      { showCameraMenu = false; return true; }
     if (showMemoryMenu)      { showMemoryMenu = false; return true; }
     if (showD2RHUDMenu)      { showD2RHUDMenu = false; return true; }
     if (showHUDSettingsMenu) { showHUDSettingsMenu = false; return true; }
@@ -7145,6 +7200,28 @@ void LoadD2RHUDConfig(const std::string& path)
         if (j.contains("DLLsToLoad"))
             d2rHUDConfig.DLLsToLoad = j["DLLsToLoad"].get<std::vector<std::string>>();
 
+        // Camera presets (optional)
+        if (j.contains("CameraPresets") && j["CameraPresets"].is_array())
+        {
+            auto& arr = j["CameraPresets"];
+            size_t count = std::min<size_t>(arr.size(), d2rHUDConfig.CameraPresets.size());
+            for (size_t i = 0; i < count; ++i)
+            {
+                const auto& pj = arr[i];
+                CameraPreset preset;
+                preset.Name   = pj.value("Name", std::string{});
+                preset.Pitch  = pj.value("Pitch", 0.0f);
+                preset.Height = pj.value("Height", 0.0f);
+                preset.Pan    = pj.value("Pan", 0.0f);
+                preset.Roll   = pj.value("Roll", 0.0f);
+                preset.Zoom   = pj.value("Zoom", 0.0f);
+                preset.HasValues = pj.value("HasValues", true);
+                d2rHUDConfig.CameraPresets[i] = preset;
+            }
+        }
+        d2rHUDConfig.CameraAutoloadLastPreset = j.value("CameraAutoloadLastPreset", d2rHUDConfig.CameraAutoloadLastPreset);
+        d2rHUDConfig.CameraLastPresetIndex = j.value("CameraLastPresetIndex", d2rHUDConfig.CameraLastPresetIndex);
+
         // LOAD "Options" BLOCK
         if (j.contains("Options"))
         {
@@ -7228,6 +7305,37 @@ bool SaveFullGrailConfig(const std::string& userPath, bool isAutoBackup)
             {"Path", backupPath},
             {"Timestamps", backupWithTimestamps}
         };
+
+        // --- Camera presets ---
+        {
+            ordered_json presets = ordered_json::array();
+            for (const auto& preset : d2rHUDConfig.CameraPresets)
+            {
+                if (!preset.HasValues && preset.Name.empty())
+                    continue;
+
+                ordered_json pj;
+                pj["Name"]      = preset.Name;
+                pj["Pitch"]     = preset.Pitch;
+                pj["Height"]    = preset.Height;
+                pj["Pan"]       = preset.Pan;
+                pj["Roll"]      = preset.Roll;
+                pj["Zoom"]      = preset.Zoom;
+                pj["HasValues"] = preset.HasValues;
+                presets.push_back(pj);
+            }
+            if (!presets.empty())
+            {
+                j["CameraPresets"] = presets;
+            }
+            else if (existing.contains("CameraPresets"))
+            {
+                // Preserve existing presets if we don't have new ones yet
+                j["CameraPresets"] = existing["CameraPresets"];
+            }
+        }
+        j["CameraAutoloadLastPreset"] = d2rHUDConfig.CameraAutoloadLastPreset;
+        j["CameraLastPresetIndex"] = d2rHUDConfig.CameraLastPresetIndex;
 
         // --- MemoryConfigs ---
         if (!g_MemoryConfigs.empty())
@@ -8370,6 +8478,437 @@ void ShowHotkeyMenu()
 
     ImGui::End();
     io.ConfigFlags = ImGui::GetIO().ConfigFlags;
+}
+
+// Camera Controller
+void ShowCameraMenu()
+{
+    static bool wasOpen = false;
+    static bool didAutoScanThisOpen = false;
+
+    if (!showCameraMenu)
+    {
+        wasOpen = false;
+        didAutoScanThisOpen = false;
+        return;
+    }
+    bool justOpened = !wasOpen;
+    wasOpen = true;
+    static bool s_autoloadDoneThisOpen = false;
+    static int selectedPreset = 0;
+    if (justOpened)
+    {
+        s_autoloadDoneThisOpen = false;
+        // If autoload is enabled, start from the last-used preset.
+        // Otherwise always start from Default in the dropdown.
+        if (d2rHUDConfig.CameraAutoloadLastPreset)
+            selectedPreset = std::clamp(d2rHUDConfig.CameraLastPresetIndex, 0, 3);
+        else
+            selectedPreset = 0;
+    }
+
+    CameraState& camera = g_CameraState;
+
+    // Async scan state: futures and resolved flags live in this scope so we poll on the main thread.
+    static std::future<DWORD64> angleScanFuture;
+    static std::future<DWORD64> zoomScanFuture;
+    static bool anglePatternResolved = false;
+    static bool zoomPatternResolved = false;
+
+    auto ScanAngleValues = []()
+    {
+        CameraState& camera = g_CameraState;
+        if (camera.valuesFound)
+            return;
+
+        camera.didScanAngles = true;
+        camera.lastAngleScanInGame = IsPlayerInGame();
+        if (!camera.lastAngleScanInGame)
+            return;
+
+        if (anglePatternResolved)
+        {
+            if (gCameraPitchValue && gCameraHeightValue && gCameraPanValue && gCameraRollValue)
+            {
+                camera.pitch  = *gCameraPitchValue;
+                camera.height = *gCameraHeightValue;
+                camera.pan    = *gCameraPanValue;
+                camera.roll   = *gCameraRollValue;
+                camera.defaultPitch  = camera.pitch;
+                camera.defaultHeight = camera.height;
+                camera.defaultPan    = camera.pan;
+                camera.defaultRoll   = camera.roll;
+                camera.valuesFound = true;
+            }
+            return;
+        }
+
+        if (angleScanFuture.valid())
+            return;
+
+        angleScanFuture = std::async(std::launch::async, []() {
+            return Pattern::ScanProcess("44 74 64 BF 3F DB 74 3E F4 41 BD 3E");
+        });
+    };
+
+    auto ScanZoomValue = []()
+    {
+        CameraState& camera = g_CameraState;
+        if (camera.zoomFound)
+            return;
+
+        camera.didScanZoom = true;
+        camera.lastZoomScanInGame = IsPlayerInGame();
+        if (!camera.lastZoomScanInGame)
+            return;
+
+        if (zoomPatternResolved)
+        {
+            if (gCameraZoomValue)
+            {
+                camera.zoom = *gCameraZoomValue;
+                camera.defaultZoom = camera.zoom;
+                camera.zoomFound = true;
+            }
+            return;
+        }
+
+        if (zoomScanFuture.valid())
+            return;
+
+        zoomScanFuture = std::async(std::launch::async, []() {
+            DWORD64 base = Pattern::ScanProcess("00 00 06 00 00 00 ? ? ? ? ? ? ? 43 ? ? ? ? ? ? ? ? 00 00 00 00 01 00 00 00 00 00 00 00 00 00 80 3F");
+            return base ? (base + 0x32) : 0ull;
+        });
+    };
+
+    auto ApplyAngleValues = []()
+    {
+        CameraState& camera = g_CameraState;
+        if (!camera.programEnabled || !camera.valuesFound)
+            return;
+
+        if (gCameraPitchValue)  *gCameraPitchValue  = camera.pitch;
+        if (gCameraHeightValue) *gCameraHeightValue = camera.height;
+        if (gCameraPanValue)    *gCameraPanValue    = camera.pan;
+        if (gCameraRollValue)   *gCameraRollValue   = camera.roll;
+    };
+
+    auto ApplyZoomValue = []()
+    {
+        CameraState& camera = g_CameraState;
+        if (!camera.programEnabled || !camera.zoomFound || !gCameraZoomValue)
+            return;
+
+        *gCameraZoomValue = camera.zoom;
+    };
+
+    // Auto-scan once when the window is opened (fast enough to start immediately).
+    if (!didAutoScanThisOpen)
+    {
+        didAutoScanThisOpen = true;
+        ScanAngleValues();
+        ScanZoomValue();
+    }
+
+    // Poll async scan results on the main thread and apply when ready
+    if (angleScanFuture.valid() && angleScanFuture.wait_for(std::chrono::seconds(0)) == std::future_status::ready)
+    {
+        DWORD64 pitchAddr = angleScanFuture.get();
+        if (pitchAddr)
+        {
+            gCameraPitchValue  = reinterpret_cast<float*>(pitchAddr);
+            gCameraHeightValue = reinterpret_cast<float*>(pitchAddr + 0x4);
+            gCameraPanValue    = reinterpret_cast<float*>(pitchAddr + 0x8);
+            gCameraRollValue   = reinterpret_cast<float*>(pitchAddr - 0x4);
+            anglePatternResolved = true;
+
+            CameraState& cam = g_CameraState;
+            cam.pitch  = *gCameraPitchValue;
+            cam.height = *gCameraHeightValue;
+            cam.pan    = *gCameraPanValue;
+            cam.roll   = *gCameraRollValue;
+            cam.defaultPitch  = cam.pitch;
+            cam.defaultHeight = cam.height;
+            cam.defaultPan    = cam.pan;
+            cam.defaultRoll   = cam.roll;
+            cam.valuesFound = true;
+        }
+    }
+
+    if (zoomScanFuture.valid() && zoomScanFuture.wait_for(std::chrono::seconds(0)) == std::future_status::ready)
+    {
+        DWORD64 zoomAddr = zoomScanFuture.get();
+        if (zoomAddr)
+        {
+            gCameraZoomValue = reinterpret_cast<float*>(zoomAddr);
+            zoomPatternResolved = true;
+
+            CameraState& cam = g_CameraState;
+            cam.zoom = *gCameraZoomValue;
+            cam.defaultZoom = cam.zoom;
+            cam.zoomFound = true;
+        }
+    }
+
+    const bool angleScanning = angleScanFuture.valid() && angleScanFuture.wait_for(std::chrono::seconds(0)) != std::future_status::ready;
+    const bool zoomScanning  = zoomScanFuture.valid() && zoomScanFuture.wait_for(std::chrono::seconds(0)) != std::future_status::ready;
+
+    // Only autoload after both scans have completed and default values are captured
+    if (!s_autoloadDoneThisOpen
+        && d2rHUDConfig.CameraAutoloadLastPreset
+        && d2rHUDConfig.CameraLastPresetIndex >= 1
+        && d2rHUDConfig.CameraLastPresetIndex <= 3
+        && !angleScanning && !zoomScanning
+        && camera.valuesFound && camera.zoomFound)
+    {
+        const CameraPreset& p = d2rHUDConfig.CameraPresets[d2rHUDConfig.CameraLastPresetIndex - 1];
+        if (p.HasValues)
+        {
+            camera.pitch  = p.Pitch;
+            camera.height = p.Height;
+            camera.pan    = p.Pan;
+            camera.roll   = p.Roll;
+            camera.zoom   = p.Zoom;
+
+            ApplyAngleValues();
+            ApplyZoomValue();
+        }
+
+        // Either we applied a preset or there was nothing to apply;
+        s_autoloadDoneThisOpen = true;
+    }
+
+    EnableAllInput();
+    float menuScale = GetMenuScaleFactor();
+    ImVec2 windowSize = ImVec2(680.0f * menuScale, 380.0f * menuScale);
+    CenterWindow(windowSize);
+
+    PushFontSafe(3);
+    ImGui::Begin("Camera Controls", &showCameraMenu, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoTitleBar);
+    DrawWindowTitleAndClose("Camera Controls", &showCameraMenu);
+    PopFontSafe(3);
+
+    ImGui::Separator();
+    ImGui::Dummy(ImVec2(0.0f, 4.0f * menuScale));
+
+    // Top info line
+    PushFontSafe(1);
+    ImGuiTextCentered("Adjust in-game camera pitch, height, pan, roll, and zoom.");
+    ImGuiTextCentered("Camera values are scanned automatically when you open this window.");
+    PopFontSafe(1);
+
+    ImGui::Dummy(ImVec2(0.0f, 4.0f * menuScale));
+
+    // Status text (auto-scan runs on open)
+    ImVec4 okColor = ImVec4(0.4f, 0.9f, 0.4f, 1.0f);
+    ImVec4 warnColor = ImVec4(0.9f, 0.7f, 0.2f, 1.0f);
+    ImVec4 errColor = ImVec4(0.9f, 0.3f, 0.3f, 1.0f);
+
+    ImVec4 angleColor = camera.valuesFound ? okColor : (camera.didScanAngles ? errColor : warnColor);
+    ImVec4 zoomColor  = camera.zoomFound   ? okColor : (camera.didScanZoom   ? errColor : warnColor);
+
+    const char* angleStatus = angleScanning ? "scanning..."
+        : (camera.valuesFound ? "found" : (camera.didScanAngles ? "not found (pattern missing)" : "not scanned"));
+    const char* zoomStatus = zoomScanning ? "scanning..."
+        : (camera.zoomFound ? "found" : (camera.didScanZoom ? "not found (pattern missing)" : "not scanned"));
+
+    char statusBuf[96];
+    snprintf(statusBuf, sizeof(statusBuf), "Angles: %s  Zoom: %s", angleStatus, zoomStatus);
+    float statusWidth = ImGui::CalcTextSize(statusBuf).x;
+    float avail = ImGui::GetContentRegionAvail().x;
+    const float statusOffset = 8.0f * menuScale;
+    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (avail - statusWidth) * 0.5f + statusOffset);
+    ImGui::TextColored(angleColor, "Angles: %s", angleStatus);
+    ImGui::SameLine();
+    ImGui::TextColored(zoomColor, "Zoom: %s", zoomStatus);
+
+    ImGui::Dummy(ImVec2(0.0f, 6.0f * menuScale));
+
+    const float cameraLabelWidth = 90.0f * menuScale;
+    const float cameraInputWidth = 200.0f * menuScale;
+    const float presetColWidth = 350.0f * menuScale;
+
+    // Left: Presets | Right: All values + reset buttons
+    ImGui::BeginChild("CameraPresets", ImVec2(presetColWidth, 0), true);
+    ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.3f, 1.0f), "Presets");
+    ImGui::Separator();
+
+    static char presetNameBuf[64] = {};
+    static int lastPresetIndex = -1;
+    if (lastPresetIndex != selectedPreset)
+    {
+        CameraPreset p{};
+        if (selectedPreset > 0 && selectedPreset <= static_cast<int>(d2rHUDConfig.CameraPresets.size()))
+        {
+            p = d2rHUDConfig.CameraPresets[selectedPreset - 1];
+
+            // When switching to a saved preset, update the input values to match it
+            if (p.HasValues)
+            {
+                camera.pitch  = p.Pitch;
+                camera.height = p.Height;
+                camera.pan    = p.Pan;
+                camera.roll   = p.Roll;
+                camera.zoom   = p.Zoom;
+            }
+        }
+        else if (selectedPreset == 0 && camera.valuesFound && camera.zoomFound)
+        {
+            // Default slot: show the captured in-game defaults in the inputs
+            camera.pitch  = camera.defaultPitch;
+            camera.height = camera.defaultHeight;
+            camera.pan    = camera.defaultPan;
+            camera.roll   = camera.defaultRoll;
+            camera.zoom   = camera.defaultZoom;
+        }
+
+        strncpy(presetNameBuf, p.Name.c_str(), sizeof(presetNameBuf));
+        presetNameBuf[sizeof(presetNameBuf) - 1] = '\0';
+        lastPresetIndex = selectedPreset;
+    }
+
+    static char presetLabel0[64] = "Default";
+    static char presetLabel1[64] = "Preset 1";
+    static char presetLabel2[64] = "Preset 2";
+    static char presetLabel3[64] = "Preset 3";
+    for (int i = 0; i < 3; ++i)
+    {
+        char* buf = (i == 0) ? presetLabel1 : (i == 1) ? presetLabel2 : presetLabel3;
+        const CameraPreset& p = d2rHUDConfig.CameraPresets[i];
+        if (!p.Name.empty())
+        {
+            strncpy(buf, p.Name.c_str(), sizeof(presetLabel1) - 1);
+            buf[sizeof(presetLabel1) - 1] = '\0';
+        }
+        else
+        {
+            snprintf(buf, sizeof(presetLabel1), "Preset %d", i + 1);
+        }
+    }
+    const char* presetLabels[4] = { presetLabel0, presetLabel1, presetLabel2, presetLabel3 };
+    ImGui::Text("Slot");
+    ImGui::SameLine(cameraLabelWidth);
+    ImGui::SetNextItemWidth(-1);
+    ImGui::Combo("##PresetSlot", &selectedPreset, presetLabels, IM_ARRAYSIZE(presetLabels));
+
+    ImGui::Text("Name");
+    ImGui::SameLine(cameraLabelWidth);
+    ImGui::SetNextItemWidth(-1);
+    ImGui::InputText("##PresetName", presetNameBuf, sizeof(presetNameBuf));
+
+    if (ImGui::Button("Save Current to Preset", ImVec2(-1, 0)))
+    {
+        if (selectedPreset > 0 && selectedPreset <= static_cast<int>(d2rHUDConfig.CameraPresets.size()))
+        {
+            CameraPreset& p = d2rHUDConfig.CameraPresets[selectedPreset - 1];
+            p.Name = presetNameBuf;
+            p.Pitch = camera.pitch;
+            p.Height = camera.height;
+            p.Pan = camera.pan;
+            p.Roll = camera.roll;
+            p.Zoom = camera.zoom;
+            p.HasValues = true;
+            SaveFullGrailConfig(configFilePath, false);
+        }
+    }
+    if (ImGui::Button("Apply Preset", ImVec2(-1, 0)))
+    {
+        if (selectedPreset == 0)
+        {
+            if (camera.valuesFound) {
+                camera.pitch = camera.defaultPitch;
+                camera.height = camera.defaultHeight;
+                camera.pan = camera.defaultPan;
+                camera.roll = camera.defaultRoll;
+                ApplyAngleValues();
+            }
+            if (camera.zoomFound) {
+                camera.zoom = camera.defaultZoom;
+                ApplyZoomValue();
+            }
+        }
+        else if (selectedPreset > 0 && selectedPreset <= static_cast<int>(d2rHUDConfig.CameraPresets.size()))
+        {
+            const CameraPreset& p = d2rHUDConfig.CameraPresets[selectedPreset - 1];
+            if (p.HasValues)
+            {
+                camera.pitch = p.Pitch;
+                camera.height = p.Height;
+                camera.pan = p.Pan;
+                camera.roll = p.Roll;
+                camera.zoom = p.Zoom;
+                if (camera.valuesFound) ApplyAngleValues();
+                if (camera.zoomFound) ApplyZoomValue();
+            }
+        }
+        d2rHUDConfig.CameraLastPresetIndex = selectedPreset;
+        SaveFullGrailConfig(configFilePath, false);
+    }
+    if (ImGui::Checkbox("Autoload last preset", &d2rHUDConfig.CameraAutoloadLastPreset))
+        SaveFullGrailConfig(configFilePath, false);
+    ImGui::EndChild();
+
+    ImGui::SameLine();
+
+    ImGui::BeginChild("CameraValues", ImVec2(0, 0), true);
+    ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.3f, 1.0f), "Camera values");
+    ImGui::Separator();
+
+    ImGui::BeginDisabled(!camera.programEnabled || !camera.valuesFound);
+    ImGui::Text("Pitch");
+    ImGui::SameLine(cameraLabelWidth);
+    ImGui::SetNextItemWidth(cameraInputWidth);
+    if (ImGui::DragFloat("##Pitch", &camera.pitch, 0.01f, -10.0f, 10.0f, "%.3f"))
+        ApplyAngleValues();
+    ImGui::Text("Yaw");
+    ImGui::SameLine(cameraLabelWidth);
+    ImGui::SetNextItemWidth(cameraInputWidth);
+    if (ImGui::DragFloat("##Pan", &camera.pan, 0.01f, -10.0f, 10.0f, "%.3f"))
+        ApplyAngleValues();
+    ImGui::Text("Roll");
+    ImGui::SameLine(cameraLabelWidth);
+    ImGui::SetNextItemWidth(cameraInputWidth);
+    if (ImGui::DragFloat("##Roll", &camera.roll, 0.01f, -10.0f, 10.0f, "%.3f"))
+        ApplyAngleValues();
+    ImGui::Text("Height");
+    ImGui::SameLine(cameraLabelWidth);
+    ImGui::SetNextItemWidth(cameraInputWidth);
+    if (ImGui::DragFloat("##Height", &camera.height, 0.01f, -10.0f, 10.0f, "%.3f"))
+        ApplyAngleValues();
+    ImGui::EndDisabled();
+
+    ImGui::BeginDisabled(!camera.programEnabled || !camera.zoomFound);
+    ImGui::Text("Zoom");
+    ImGui::SameLine(cameraLabelWidth);
+    ImGui::SetNextItemWidth(cameraInputWidth);
+    if (ImGui::DragFloat("##Zoom", &camera.zoom, 0.01f, -5.0f, 5.0f, "%.3f"))
+        ApplyZoomValue();
+    ImGui::EndDisabled();
+
+    ImGui::Dummy(ImVec2(0.0f, 4.0f * menuScale));
+    ImGui::BeginDisabled(!camera.valuesFound);
+    if (ImGui::Button("Reset Angles"))
+    {
+        camera.pitch = camera.defaultPitch;
+        camera.height = camera.defaultHeight;
+        camera.pan = camera.defaultPan;
+        camera.roll = camera.defaultRoll;
+        ApplyAngleValues();
+    }
+    ImGui::EndDisabled();
+    ImGui::SameLine();
+    ImGui::BeginDisabled(!camera.zoomFound);
+    if (ImGui::Button("Reset Zoom"))
+    {
+        camera.zoom = camera.defaultZoom;
+        ApplyZoomValue();
+    }
+    ImGui::EndDisabled();
+
+    ImGui::EndChild();
+
+    ImGui::End();
 }
 
 void ShowLootMenu()
@@ -10079,7 +10618,7 @@ void ShowMainMenu()
 
     ImGuiIO& io = ImGui::GetIO();
     float menuScale = GetMenuScaleFactor();
-    ImVec2 windowSize = ImVec2(640.0f * menuScale, 400.0f * menuScale);
+    ImVec2 windowSize = ImVec2(640.0f * menuScale, 450.0f * menuScale);
 
     // Center the window only on the first run
     static bool firstRun = true;
@@ -10208,21 +10747,27 @@ void ShowMainMenu()
         showMemoryMenu = true;
     ShowMemoryMenu();
     if (ImGui::IsItemHovered()) { descriptionTitle = "Memory Edit Info"; descriptionText = "View your currently active memory edits\n\n- Values are retrieved and stored in D2RLAN/Launcher/config.json\n- These edits provide additional 'hardcode only' options to the game\n- For some entries, game restart will be needed for them to apply\n- This panel is currently read-only during early development"; }
-    
+   
     if (ImGui::Button("D2RLoot Settings", ImVec2(buttonWidth, buttonHeight)))
         showLootMenu = true;
     ShowLootMenu();
     if (ImGui::IsItemHovered()) { descriptionTitle = "D2RLoot Settings"; descriptionText = "Explore and control your currently active loot filter\n\n- Filters operate in real-time with user-defined rules\n- Accessible in D2RLAN > Options > Loot Filter\n- Rules are defined in D2RLAN/D2R/lootfilter_config.lua"; }
     
+    if (ImGui::Button("Grail Tracker", ImVec2(buttonWidth, buttonHeight)))
+        showGrailMenu = true;
+    ShowGrailMenu();
+    if (ImGui::IsItemHovered()) { descriptionTitle = "Grail Tracker"; descriptionText = "View the progress of your Set/Unique item hunting\n\n- Grail Entries are manually stored for now\n- This feature works for all mods* (or TCP)\n(Mod must have included set/unique items.txt files)\n- Grail Progress/Settings are stored in D2RLAN/D2R/HUD_Settings_ModName.json"; }
+
     if (ImGui::Button("Hotkey Controls", ImVec2(buttonWidth, buttonHeight)))
         showHotkeyMenu = true;
     ShowHotkeyMenu();
     if (ImGui::IsItemHovered()) { descriptionTitle = "Hotkey Controls"; descriptionText = "Manage your hotkeys used by various tools\n\n- Hotkeys are achieved by utilizing internal game functions\n- They can also be used to dynamically control your loot filter\n- Hotkeys are defined in D2RLAN/Launcher/D2RLAN_Config.txt"; }
 
-    if (ImGui::Button("Grail Tracker", ImVec2(buttonWidth, buttonHeight)))
-        showGrailMenu = true;
-    ShowGrailMenu();
-    if (ImGui::IsItemHovered()) { descriptionTitle = "Grail Tracker"; descriptionText = "View the progress of your Set/Unique item hunting\n\n- Grail Entries are manually stored for now\n- This feature works for all mods* (or TCP)\n(Mod must have included set/unique items.txt files)\n- Grail Progress/Settings are stored in D2RLAN/D2R/HUD_Settings_ModName.json"; }
+    if (ImGui::Button("Camera Controls", ImVec2(buttonWidth, buttonHeight)))
+        showCameraMenu = true;
+    ShowCameraMenu();
+    if (ImGui::IsItemHovered()) { descriptionTitle = "Camera Controls"; descriptionText = "Modify the in-game camera angles and zoom\n\n- Scans memory to find camera control values\n- Angle/zoom scans required for every fresh session\n- Future versions likely to include more automation/controls"; }
+    
     if (fontSize) ImGui::PopFont();
 
     // Vertical separator + Description Panel (on 4K, move description down ~300px so it isn't shifted too high)
@@ -10421,41 +10966,44 @@ int64_t Hooked_HUDWarnings__PopulateHUDWarnings(void* pWidget) {
         return result;
     }
 
-    // Always update and show our zone list (don't skip when Baal quest not done - else game's default "first zone" is shown)
-    UpdateActiveZoneInfoText(static_cast<time_t>(std::time(nullptr)));
+    // Only update and show our terror zone schedule when the player has completed the Baal quest
+    if (pGame && pUnitPlayer && GetBaalQuest(pUnitPlayer, pGame))
+    {
+        UpdateActiveZoneInfoText(static_cast<time_t>(std::time(nullptr)));
 
-    // TerrorZoneInfoText
-    if (tzInfoTextWidget) {
-        char** pOriginal = (char**)((int64_t)tzInfoTextWidget + 0x88);
-        int64_t* nLength = (int64_t*)((int64_t)tzInfoTextWidget + 0x90);
+        // TerrorZoneInfoText
+        if (tzInfoTextWidget) {
+            char** pOriginal = (char**)((int64_t)tzInfoTextWidget + 0x88);
+            int64_t* nLength = (int64_t*)((int64_t)tzInfoTextWidget + 0x90);
 
-        std::string finalText = BuildTerrorZoneInfoText();
-        if (!finalText.empty()) {
-            strncpy(gTZInfoText, finalText.c_str(), sizeof(gTZInfoText) - 1);
-            gTZInfoText[sizeof(gTZInfoText) - 1] = '\0';
+            std::string finalText = BuildTerrorZoneInfoText();
+            if (!finalText.empty()) {
+                strncpy(gTZInfoText, finalText.c_str(), sizeof(gTZInfoText) - 1);
+                gTZInfoText[sizeof(gTZInfoText) - 1] = '\0';
 
-            *pOriginal = gTZInfoText;
-            *nLength = strlen(gTZInfoText) + 1;
+                *pOriginal = gTZInfoText;
+                *nLength = strlen(gTZInfoText) + 1;
+            }
         }
-    }
 
-    // TerrorZoneStatAdjustments
-    if (tzStatAdjustmentsWidget) {
-        char** pOriginal = (char**)((int64_t)tzStatAdjustmentsWidget + 0x88);
-        int64_t* nLength = (int64_t*)((int64_t)tzStatAdjustmentsWidget + 0x90);
+        // TerrorZoneStatAdjustments
+        if (tzStatAdjustmentsWidget) {
+            char** pOriginal = (char**)((int64_t)tzStatAdjustmentsWidget + 0x88);
+            int64_t* nLength = (int64_t*)((int64_t)tzStatAdjustmentsWidget + 0x90);
 
-        std::string finalText = BuildTerrorZoneStatAdjustmentsText();
+            std::string finalText = BuildTerrorZoneStatAdjustmentsText();
 
-        if (finalText.empty()) {
-            gTZStatAdjText[0] = '\0';
-            *pOriginal = gTZStatAdjText;
-            *nLength = 0;
-        }
-        else {
-            strncpy(gTZStatAdjText, finalText.c_str(), sizeof(gTZStatAdjText) - 1);
-            gTZStatAdjText[sizeof(gTZStatAdjText) - 1] = '\0';
-            *pOriginal = gTZStatAdjText;
-            *nLength = strlen(gTZStatAdjText) + 1;
+            if (finalText.empty()) {
+                gTZStatAdjText[0] = '\0';
+                *pOriginal = gTZStatAdjText;
+                *nLength = 0;
+            }
+            else {
+                strncpy(gTZStatAdjText, finalText.c_str(), sizeof(gTZStatAdjText) - 1);
+                gTZStatAdjText[sizeof(gTZStatAdjText) - 1] = '\0';
+                *pOriginal = gTZStatAdjText;
+                *nLength = strlen(gTZStatAdjText) + 1;
+            }
         }
     }
 
@@ -10740,7 +11288,7 @@ void D2RHUD::OnDraw() {
 
     // Scale all menu UI by 200% on 4K resolution
     {
-        bool anyMenuOpen = showMainMenu || showHUDSettingsMenu || showD2RHUDMenu || showMemoryMenu || showLootMenu || showHotkeyMenu || showGrailMenu;
+        bool anyMenuOpen = showMainMenu || showHUDSettingsMenu || showD2RHUDMenu || showMemoryMenu || showLootMenu || showHotkeyMenu || showGrailMenu || showCameraMenu;
         ImGuiIO& io = ImGui::GetIO();
         io.FontGlobalScale = anyMenuOpen ? GetMenuScaleFactor() : 1.0f;
     }

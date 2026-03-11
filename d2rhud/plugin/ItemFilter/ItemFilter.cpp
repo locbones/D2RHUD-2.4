@@ -711,10 +711,15 @@ void DoFilter(D2UnitStrc* pItem) {
 	auto pD2Item = reinterpret_cast<D2ItemUnitStrc*>(pItemToApplyFilterOn);
 	if (pD2Item && pD2Item->pItemData) {
 		uint32_t fileIndex = pD2Item->pItemData->dwFileIndex;
+		uint32_t quality = pD2Item->pItemData->dwQualityNo;
 
 		if (pItemCustom->grailRevision != g_GrailRevision) {
 			pItemCustom->grailRevision = g_GrailRevision;
-			pItemCustom->pFilterResult->grail = GetGrailStatus(fileIndex);
+			// Only set/unique (quality 5 = Set, 7 = Unique) are grail-tracked; use isSetItem so set index 6 and unique index 6 are distinct
+			if (quality == 5 || quality == 7)
+				pItemCustom->pFilterResult->grail = GetGrailStatus(fileIndex, (quality == 5));
+			else
+				pItemCustom->pFilterResult->grail = GrailStatus{};
 		}
 
 		/*

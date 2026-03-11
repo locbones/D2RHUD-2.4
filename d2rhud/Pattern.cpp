@@ -2,6 +2,7 @@
 #include <Psapi.h>
 #include <vector>
 #include <unordered_map>
+#include <algorithm>
 
 static HANDLE hProcess = GetCurrentProcess();
 static std::unordered_map<const wchar_t*, LPMODULEINFO> mModuleInfoMap = {};
@@ -104,4 +105,105 @@ DWORD64 Pattern::ScanRef(const wchar_t* szModule, const char* signature, int32_t
 		}
 	}
 	return NULL;
+}
+
+// Scan the full process virtual space for the given pattern.
+// Uses chunked reads into a local buffer for cache-friendly scanning (much faster
+// than byte-by-byte reads across the whole address space).
+DWORD64 Pattern::ScanProcess(const char* signature)
+{
+	auto patternBytes = pattern_to_byte(signature);
+	size_t patternLength = patternBytes.size();
+	if (patternLength == 0)
+		return 0;
+
+	const char* data = patternBytes.data();
+
+	SYSTEM_INFO sysInfo{};
+	GetSystemInfo(&sysInfo);
+
+	DWORD64 start = reinterpret_cast<DWORD64>(sysInfo.lpMinimumApplicationAddress);
+	DWORD64 end = reinterpret_cast<DWORD64>(sysInfo.lpMaximumApplicationAddress);
+
+	// Chunk size: read this much at a time for cache-friendly scanning.
+	const size_t kChunkSize = 256 * 1024;
+	std::vector<char> buffer(kChunkSize + patternLength - 1);
+
+	MEMORY_BASIC_INFORMATION mbi;
+
+	for (DWORD64 addr = start; addr < end; )
+	{
+		if (!VirtualQuery(reinterpret_cast<LPCVOID>(addr), &mbi, sizeof(mbi)))
+			break;
+
+		DWORD64 regionBase = reinterpret_cast<DWORD64>(mbi.BaseAddress);
+		SIZE_T regionSize = mbi.RegionSize;
+
+		bool readable =
+			(mbi.State == MEM_COMMIT) &&
+			!(mbi.Protect & (PAGE_NOACCESS | PAGE_GUARD));
+
+		if (!readable || regionSize < patternLength)
+		{
+			addr = regionBase + regionSize;
+			continue;
+		}
+
+		// Skip very large regions (camera data is in a small allocation; huge heaps are slow and unlikely).
+		const SIZE_T kMaxRegionToScan = 64 * 1024 * 1024;
+		if (regionSize > kMaxRegionToScan)
+		{
+			addr = regionBase + regionSize;
+			continue;
+		}
+
+		// Scan region in chunks to avoid cache thrash and improve speed.
+		size_t offsetInRegion = 0;
+		size_t bufferValid = 0;
+
+		while (offsetInRegion < regionSize)
+		{
+			size_t toRead = (std::min)(kChunkSize, static_cast<size_t>(regionSize - offsetInRegion));
+
+			if (bufferValid > 0)
+			{
+				// Keep overlap at the end of buffer for patterns spanning chunks.
+				size_t overlap = (bufferValid >= patternLength - 1) ? patternLength - 1 : bufferValid;
+				memmove(buffer.data(), buffer.data() + bufferValid - overlap, overlap);
+				bufferValid = overlap;
+			}
+
+			// Read next chunk from process memory (same process, so direct copy).
+			char* dest = buffer.data() + bufferValid;
+			memcpy(dest, reinterpret_cast<void*>(regionBase + offsetInRegion), toRead);
+			bufferValid += toRead;
+			offsetInRegion += toRead;
+
+			size_t scanEnd = bufferValid - patternLength + 1;
+			if (scanEnd > bufferValid)
+				continue;
+
+			for (size_t i = 0; i < scanEnd; ++i)
+			{
+				bool found = true;
+				for (size_t j = 0; j < patternLength; ++j)
+				{
+					char a = '\?';
+					char b = buffer[i + j];
+					found &= (data[j] == a) || (data[j] == b);
+					if (!found)
+						break;
+				}
+				if (found)
+				{
+					DWORD64 result = regionBase + offsetInRegion - bufferValid + i;
+					return result;
+				}
+			}
+		}
+
+		addr = regionBase + regionSize;
+	}
+
+	return 0;
 }

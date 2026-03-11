@@ -19,6 +19,13 @@ FUNC_DEF(void, __fastcall, CLIENT_DebugExit, (int name2));
 VAR_DEF(D2MouseHoverStruct, gMouseHover);
 VAR_DEF(D2GameStrc*, gCurrentSinglePlayerGame);
 
+// Camera values (angles and zoom)
+VAR_DEF(float, gCameraPitchValue);
+VAR_DEF(float, gCameraHeightValue);
+VAR_DEF(float, gCameraPanValue);
+VAR_DEF(float, gCameraRollValue);
+VAR_DEF(float, gCameraZoomValue);
+
 namespace D2Ptrs {
     // All verified and working on
     // 1.4.71510 
