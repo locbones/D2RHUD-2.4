@@ -16,6 +16,8 @@
 #include <sys/stat.h>
 #include <filesystem>
 #include "plugin/D2RHUD/D2RHUD.h"
+#define STB_IMAGE_IMPLEMENTATION
+#include "stb_image.h"
 
 
 #if __has_include(<detours/detours.h>)
@@ -59,6 +61,396 @@ namespace D3D12 {
 	static CComPtr<ID3D12DescriptorHeap> g_pD3DSrvDescHeap = NULL;
 	static CComPtr<ID3D12CommandQueue> g_pD3DCommandQueue = NULL;
 	static CComPtr<ID3D12GraphicsCommandList> g_pD3DCommandList = NULL;
+
+	static HMODULE g_DllModule = NULL;
+	static CComPtr<ID3D12Resource> g_GearTexture = NULL;
+	static D3D12_GPU_DESCRIPTOR_HANDLE g_GearTextureGPUHandle = {};
+	static int g_GearTextureWidth = 0;
+	static int g_GearTextureHeight = 0;
+	static std::string s_PendingGearFilename;  // non-empty = reload this file next frame
+
+	static const int kWindowBgSlots = 8;
+	static CComPtr<ID3D12Resource> g_WindowBgTexture[kWindowBgSlots] = {};
+	static D3D12_GPU_DESCRIPTOR_HANDLE g_WindowBgTextureGPUHandle[kWindowBgSlots] = {};
+	static std::string s_PendingWindowBgFilename[kWindowBgSlots];
+	static bool s_ClearWindowBg[kWindowBgSlots] = {};
+
+	static const int kFrameBgSlots = 3;
+	static const int kCheckboxSlots = 3;
+	static const int kButtonSlots = 3;
+	static CComPtr<ID3D12Resource> g_FrameBgTexture[kFrameBgSlots] = {};
+	static D3D12_GPU_DESCRIPTOR_HANDLE g_FrameBgTextureGPUHandle[kFrameBgSlots] = {};
+	static std::string s_PendingFrameBgFilename[kFrameBgSlots];
+	static bool s_ClearFrameBg[kFrameBgSlots] = {};
+
+	static CComPtr<ID3D12Resource> g_CheckboxTexture[kCheckboxSlots] = {};
+	static D3D12_GPU_DESCRIPTOR_HANDLE g_CheckboxTextureGPUHandle[kCheckboxSlots] = {};
+	static std::string s_PendingCheckboxFilename[kCheckboxSlots];
+	static bool s_ClearCheckbox[kCheckboxSlots] = {};
+
+	static CComPtr<ID3D12Resource> g_ButtonTexture[kButtonSlots] = {};
+	static D3D12_GPU_DESCRIPTOR_HANDLE g_ButtonTextureGPUHandle[kButtonSlots] = {};
+	static std::string s_PendingButtonFilename[kButtonSlots];
+	static bool s_ClearButton[kButtonSlots] = {};
+
+	static CComPtr<ID3D12Resource> g_CameraButtonTexture = NULL;
+	static D3D12_GPU_DESCRIPTOR_HANDLE g_CameraButtonTextureGPUHandle = {};
+	static int g_CameraButtonTextureWidth = 0;
+	static int g_CameraButtonTextureHeight = 0;
+
+	static std::string GetD2RHUDImagesDir()
+	{
+		std::string dir;
+		char buf[MAX_PATH];
+		if (g_DllModule && GetModuleFileNameA(g_DllModule, buf, MAX_PATH)) {
+			std::filesystem::path p(buf);
+			dir = (p.parent_path() / "D2RHUD_Images").string();
+		}
+		if (dir.empty() || !std::filesystem::exists(dir)) {
+			if (GetModuleFileNameA(NULL, buf, MAX_PATH)) {
+				std::filesystem::path p(buf);
+				dir = (p.parent_path() / "D2RHUD_Images").string();
+			}
+		}
+		if (dir.empty() || !std::filesystem::exists(dir))
+			dir = (std::filesystem::current_path() / "D2RHUD_Images").string();
+		return dir;
+	}
+
+	static bool LoadGearTextureFromPath(ID3D12Device* pD3DDevice, const std::string& fullPath)
+	{
+		if (!pD3DDevice || fullPath.empty() || !std::filesystem::exists(fullPath)) return false;
+		int texW = 0, texH = 0, texCh = 0;
+		unsigned char* pixels = stbi_load(fullPath.c_str(), &texW, &texH, &texCh, 4);
+		if (!pixels || texW <= 0 || texH <= 0) return false;
+		g_GearTexture = NULL;
+		D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint = {};
+		UINT64 totalBytes = 0;
+		D3D12_RESOURCE_DESC texDesc = {};
+		texDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+		texDesc.Alignment = 0;
+		texDesc.Width = (UINT)texW;
+		texDesc.Height = (UINT)texH;
+		texDesc.DepthOrArraySize = 1;
+		texDesc.MipLevels = 1;
+		texDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+		texDesc.SampleDesc.Count = 1;
+		texDesc.SampleDesc.Quality = 0;
+		texDesc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
+		texDesc.Flags = D3D12_RESOURCE_FLAG_NONE;
+		pD3DDevice->GetCopyableFootprints(&texDesc, 0, 1, 0, &footprint, nullptr, nullptr, &totalBytes);
+		footprint.Offset = 0;
+		UINT64 rowPitch = footprint.Footprint.RowPitch;
+		D3D12_RESOURCE_DESC bufDesc = {};
+		bufDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+		bufDesc.Alignment = 0;
+		bufDesc.Width = totalBytes;
+		bufDesc.Height = 1;
+		bufDesc.DepthOrArraySize = 1;
+		bufDesc.MipLevels = 1;
+		bufDesc.Format = DXGI_FORMAT_UNKNOWN;
+		bufDesc.SampleDesc.Count = 1;
+		bufDesc.SampleDesc.Quality = 0;
+		bufDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+		bufDesc.Flags = D3D12_RESOURCE_FLAG_NONE;
+		D3D12_HEAP_PROPERTIES heapProps = {};
+		heapProps.CPUPageProperty = D3D12_CPU_PAGE_PROPERTY_UNKNOWN;
+		heapProps.MemoryPoolPreference = D3D12_MEMORY_POOL_UNKNOWN;
+		CComPtr<ID3D12Resource> uploadBuffer;
+		heapProps.Type = D3D12_HEAP_TYPE_UPLOAD;
+		if (FAILED(pD3DDevice->CreateCommittedResource(&heapProps, D3D12_HEAP_FLAG_NONE, &bufDesc, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&uploadBuffer)))) {
+			stbi_image_free(pixels);
+			return false;
+		}
+		heapProps.Type = D3D12_HEAP_TYPE_DEFAULT;
+		if (FAILED(pD3DDevice->CreateCommittedResource(&heapProps, D3D12_HEAP_FLAG_NONE, &texDesc, D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&g_GearTexture)))) {
+			stbi_image_free(pixels);
+			return false;
+		}
+		void* mapped = nullptr;
+		if (SUCCEEDED(uploadBuffer->Map(0, nullptr, &mapped))) {
+			for (int y = 0; y < texH; ++y)
+				memcpy((char*)mapped + y * (size_t)rowPitch, pixels + y * texW * 4, (size_t)texW * 4);
+			uploadBuffer->Unmap(0, nullptr);
+		}
+		stbi_image_free(pixels);
+		CComPtr<ID3D12CommandQueue> uploadQueue;
+		D3D12_COMMAND_QUEUE_DESC qDesc = {};
+		qDesc.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
+		if (FAILED(pD3DDevice->CreateCommandQueue(&qDesc, IID_PPV_ARGS(&uploadQueue)))) return false;
+		CComPtr<ID3D12CommandAllocator> uploadAlloc;
+		CComPtr<ID3D12GraphicsCommandList> uploadList;
+		if (FAILED(pD3DDevice->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&uploadAlloc))) ||
+			FAILED(pD3DDevice->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, uploadAlloc, nullptr, IID_PPV_ARGS(&uploadList)))) return false;
+		D3D12_TEXTURE_COPY_LOCATION srcLoc = {};
+		srcLoc.pResource = uploadBuffer;
+		srcLoc.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+		srcLoc.PlacedFootprint = footprint;
+		D3D12_TEXTURE_COPY_LOCATION dstLoc = {};
+		dstLoc.pResource = g_GearTexture;
+		dstLoc.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+		dstLoc.SubresourceIndex = 0;
+		uploadList->CopyTextureRegion(&dstLoc, 0, 0, 0, &srcLoc, nullptr);
+		D3D12_RESOURCE_BARRIER barrier = {};
+		barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+		barrier.Flags = D3D12_RESOURCE_BARRIER_FLAG_NONE;
+		barrier.Transition.pResource = g_GearTexture;
+		barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
+		barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+		barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+		uploadList->ResourceBarrier(1, &barrier);
+		uploadList->Close();
+		ID3D12CommandList* lists[] = { uploadList };
+		uploadQueue->ExecuteCommandLists(1, lists);
+		CComPtr<ID3D12Fence> fence;
+		UINT64 fenceVal = 1;
+		if (SUCCEEDED(pD3DDevice->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&fence)))) {
+			HANDLE evt = CreateEventEx(nullptr, nullptr, 0, EVENT_MODIFY_STATE | SYNCHRONIZE);
+			if (evt && SUCCEEDED(fence->SetEventOnCompletion(fenceVal, evt))) {
+				uploadQueue->Signal(fence, fenceVal);
+				WaitForSingleObject(evt, 5000);
+			}
+			if (evt) CloseHandle(evt);
+		}
+		const UINT srvDescSize = pD3DDevice->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+		D3D12_CPU_DESCRIPTOR_HANDLE srvCpu = g_pD3DSrvDescHeap->GetCPUDescriptorHandleForHeapStart();
+		D3D12_GPU_DESCRIPTOR_HANDLE srvGpu = g_pD3DSrvDescHeap->GetGPUDescriptorHandleForHeapStart();
+		srvCpu.ptr += (SIZE_T)srvDescSize * (SIZE_T)g_FrameBufferCount;
+		srvGpu.ptr += (SIZE_T)srvDescSize * (SIZE_T)g_FrameBufferCount;
+		D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+		srvDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+		srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+		srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+		srvDesc.Texture2D.MipLevels = 1;
+		pD3DDevice->CreateShaderResourceView(g_GearTexture, &srvDesc, srvCpu);
+		g_GearTextureGPUHandle = srvGpu;
+		g_GearTextureWidth = texW;
+		g_GearTextureHeight = texH;
+		return true;
+	}
+
+	static bool LoadThemeTextureFromPath(ID3D12Device* pD3DDevice, const std::string& fullPath,
+		CComPtr<ID3D12Resource>& outTex, D3D12_GPU_DESCRIPTOR_HANDLE& outGpuHandle, UINT descriptorOffset)
+	{
+		if (!pD3DDevice || fullPath.empty() || !std::filesystem::exists(fullPath)) return false;
+		int texW = 0, texH = 0, texCh = 0;
+		unsigned char* pixels = stbi_load(fullPath.c_str(), &texW, &texH, &texCh, 4);
+		if (!pixels || texW <= 0 || texH <= 0) return false;
+		outTex = NULL;
+		D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint = {};
+		UINT64 totalBytes = 0;
+		D3D12_RESOURCE_DESC texDesc = {};
+		texDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+		texDesc.Alignment = 0;
+		texDesc.Width = (UINT)texW;
+		texDesc.Height = (UINT)texH;
+		texDesc.DepthOrArraySize = 1;
+		texDesc.MipLevels = 1;
+		texDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+		texDesc.SampleDesc.Count = 1;
+		texDesc.SampleDesc.Quality = 0;
+		texDesc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
+		texDesc.Flags = D3D12_RESOURCE_FLAG_NONE;
+		pD3DDevice->GetCopyableFootprints(&texDesc, 0, 1, 0, &footprint, nullptr, nullptr, &totalBytes);
+		footprint.Offset = 0;
+		UINT64 rowPitch = footprint.Footprint.RowPitch;
+		D3D12_RESOURCE_DESC bufDesc = {};
+		bufDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+		bufDesc.Alignment = 0;
+		bufDesc.Width = totalBytes;
+		bufDesc.Height = 1;
+		bufDesc.DepthOrArraySize = 1;
+		bufDesc.MipLevels = 1;
+		bufDesc.Format = DXGI_FORMAT_UNKNOWN;
+		bufDesc.SampleDesc.Count = 1;
+		bufDesc.SampleDesc.Quality = 0;
+		bufDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+		bufDesc.Flags = D3D12_RESOURCE_FLAG_NONE;
+		D3D12_HEAP_PROPERTIES heapProps = {};
+		heapProps.CPUPageProperty = D3D12_CPU_PAGE_PROPERTY_UNKNOWN;
+		heapProps.MemoryPoolPreference = D3D12_MEMORY_POOL_UNKNOWN;
+		CComPtr<ID3D12Resource> uploadBuffer;
+		heapProps.Type = D3D12_HEAP_TYPE_UPLOAD;
+		if (FAILED(pD3DDevice->CreateCommittedResource(&heapProps, D3D12_HEAP_FLAG_NONE, &bufDesc, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&uploadBuffer)))) {
+			stbi_image_free(pixels);
+			return false;
+		}
+		heapProps.Type = D3D12_HEAP_TYPE_DEFAULT;
+		if (FAILED(pD3DDevice->CreateCommittedResource(&heapProps, D3D12_HEAP_FLAG_NONE, &texDesc, D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&outTex)))) {
+			stbi_image_free(pixels);
+			return false;
+		}
+		void* mapped = nullptr;
+		if (SUCCEEDED(uploadBuffer->Map(0, nullptr, &mapped))) {
+			for (int y = 0; y < texH; ++y)
+				memcpy((char*)mapped + y * (size_t)rowPitch, pixels + y * texW * 4, (size_t)texW * 4);
+			uploadBuffer->Unmap(0, nullptr);
+		}
+		stbi_image_free(pixels);
+		CComPtr<ID3D12CommandQueue> uploadQueue;
+		D3D12_COMMAND_QUEUE_DESC qDesc = {};
+		qDesc.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
+		if (FAILED(pD3DDevice->CreateCommandQueue(&qDesc, IID_PPV_ARGS(&uploadQueue)))) return false;
+		CComPtr<ID3D12CommandAllocator> uploadAlloc;
+		CComPtr<ID3D12GraphicsCommandList> uploadList;
+		if (FAILED(pD3DDevice->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&uploadAlloc))) ||
+			FAILED(pD3DDevice->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, uploadAlloc, nullptr, IID_PPV_ARGS(&uploadList)))) return false;
+		D3D12_TEXTURE_COPY_LOCATION srcLoc = {};
+		srcLoc.pResource = uploadBuffer;
+		srcLoc.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+		srcLoc.PlacedFootprint = footprint;
+		D3D12_TEXTURE_COPY_LOCATION dstLoc = {};
+		dstLoc.pResource = outTex;
+		dstLoc.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+		dstLoc.SubresourceIndex = 0;
+		uploadList->CopyTextureRegion(&dstLoc, 0, 0, 0, &srcLoc, nullptr);
+		D3D12_RESOURCE_BARRIER barrier = {};
+		barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+		barrier.Flags = D3D12_RESOURCE_BARRIER_FLAG_NONE;
+		barrier.Transition.pResource = outTex;
+		barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
+		barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+		barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+		uploadList->ResourceBarrier(1, &barrier);
+		uploadList->Close();
+		ID3D12CommandList* lists[] = { uploadList };
+		uploadQueue->ExecuteCommandLists(1, lists);
+		CComPtr<ID3D12Fence> fence;
+		UINT64 fenceVal = 1;
+		if (SUCCEEDED(pD3DDevice->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&fence)))) {
+			HANDLE evt = CreateEventEx(nullptr, nullptr, 0, EVENT_MODIFY_STATE | SYNCHRONIZE);
+			if (evt && SUCCEEDED(fence->SetEventOnCompletion(fenceVal, evt))) {
+				uploadQueue->Signal(fence, fenceVal);
+				WaitForSingleObject(evt, 5000);
+			}
+			if (evt) CloseHandle(evt);
+		}
+		const UINT srvDescSize = pD3DDevice->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+		D3D12_CPU_DESCRIPTOR_HANDLE srvCpu = g_pD3DSrvDescHeap->GetCPUDescriptorHandleForHeapStart();
+		D3D12_GPU_DESCRIPTOR_HANDLE srvGpu = g_pD3DSrvDescHeap->GetGPUDescriptorHandleForHeapStart();
+		srvCpu.ptr += (SIZE_T)srvDescSize * (SIZE_T)descriptorOffset;
+		srvGpu.ptr += (SIZE_T)srvDescSize * (SIZE_T)descriptorOffset;
+		D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+		srvDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+		srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+		srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+		srvDesc.Texture2D.MipLevels = 1;
+		pD3DDevice->CreateShaderResourceView(outTex, &srvDesc, srvCpu);
+		outGpuHandle = srvGpu;
+		return true;
+	}
+
+	static bool LoadCameraButtonTextureFromPath(ID3D12Device* pD3DDevice, const std::string& fullPath)
+	{
+		if (!pD3DDevice || fullPath.empty() || !std::filesystem::exists(fullPath)) return false;
+		int texW = 0, texH = 0, texCh = 0;
+		unsigned char* pixels = stbi_load(fullPath.c_str(), &texW, &texH, &texCh, 4);
+		if (!pixels || texW <= 0 || texH <= 0) return false;
+		g_CameraButtonTexture = NULL;
+		D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint = {};
+		UINT64 totalBytes = 0;
+		D3D12_RESOURCE_DESC texDesc = {};
+		texDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+		texDesc.Alignment = 0;
+		texDesc.Width = (UINT)texW;
+		texDesc.Height = (UINT)texH;
+		texDesc.DepthOrArraySize = 1;
+		texDesc.MipLevels = 1;
+		texDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+		texDesc.SampleDesc.Count = 1;
+		texDesc.SampleDesc.Quality = 0;
+		texDesc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
+		texDesc.Flags = D3D12_RESOURCE_FLAG_NONE;
+		pD3DDevice->GetCopyableFootprints(&texDesc, 0, 1, 0, &footprint, nullptr, nullptr, &totalBytes);
+		footprint.Offset = 0;
+		UINT64 rowPitch = footprint.Footprint.RowPitch;
+		D3D12_RESOURCE_DESC bufDesc = {};
+		bufDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+		bufDesc.Alignment = 0;
+		bufDesc.Width = totalBytes;
+		bufDesc.Height = 1;
+		bufDesc.DepthOrArraySize = 1;
+		bufDesc.MipLevels = 1;
+		bufDesc.Format = DXGI_FORMAT_UNKNOWN;
+		bufDesc.SampleDesc.Count = 1;
+		bufDesc.SampleDesc.Quality = 0;
+		bufDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+		bufDesc.Flags = D3D12_RESOURCE_FLAG_NONE;
+		D3D12_HEAP_PROPERTIES heapProps = {};
+		heapProps.CPUPageProperty = D3D12_CPU_PAGE_PROPERTY_UNKNOWN;
+		heapProps.MemoryPoolPreference = D3D12_MEMORY_POOL_UNKNOWN;
+		CComPtr<ID3D12Resource> uploadBuffer;
+		heapProps.Type = D3D12_HEAP_TYPE_UPLOAD;
+		if (FAILED(pD3DDevice->CreateCommittedResource(&heapProps, D3D12_HEAP_FLAG_NONE, &bufDesc, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&uploadBuffer)))) {
+			stbi_image_free(pixels);
+			return false;
+		}
+		heapProps.Type = D3D12_HEAP_TYPE_DEFAULT;
+		if (FAILED(pD3DDevice->CreateCommittedResource(&heapProps, D3D12_HEAP_FLAG_NONE, &texDesc, D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&g_CameraButtonTexture)))) {
+			stbi_image_free(pixels);
+			return false;
+		}
+		void* mapped = nullptr;
+		if (SUCCEEDED(uploadBuffer->Map(0, nullptr, &mapped))) {
+			for (int y = 0; y < texH; ++y)
+				memcpy((char*)mapped + y * (size_t)rowPitch, pixels + y * texW * 4, (size_t)texW * 4);
+			uploadBuffer->Unmap(0, nullptr);
+		}
+		stbi_image_free(pixels);
+		CComPtr<ID3D12CommandQueue> uploadQueue;
+		D3D12_COMMAND_QUEUE_DESC qDesc = {};
+		qDesc.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
+		if (FAILED(pD3DDevice->CreateCommandQueue(&qDesc, IID_PPV_ARGS(&uploadQueue)))) return false;
+		CComPtr<ID3D12CommandAllocator> uploadAlloc;
+		CComPtr<ID3D12GraphicsCommandList> uploadList;
+		if (FAILED(pD3DDevice->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&uploadAlloc))) ||
+			FAILED(pD3DDevice->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, uploadAlloc, nullptr, IID_PPV_ARGS(&uploadList)))) return false;
+		D3D12_TEXTURE_COPY_LOCATION srcLoc = {};
+		srcLoc.pResource = uploadBuffer;
+		srcLoc.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+		srcLoc.PlacedFootprint = footprint;
+		D3D12_TEXTURE_COPY_LOCATION dstLoc = {};
+		dstLoc.pResource = g_CameraButtonTexture;
+		dstLoc.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+		dstLoc.SubresourceIndex = 0;
+		uploadList->CopyTextureRegion(&dstLoc, 0, 0, 0, &srcLoc, nullptr);
+		D3D12_RESOURCE_BARRIER barrier = {};
+		barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+		barrier.Flags = D3D12_RESOURCE_BARRIER_FLAG_NONE;
+		barrier.Transition.pResource = g_CameraButtonTexture;
+		barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
+		barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+		barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+		uploadList->ResourceBarrier(1, &barrier);
+		uploadList->Close();
+		ID3D12CommandList* lists[] = { uploadList };
+		uploadQueue->ExecuteCommandLists(1, lists);
+		CComPtr<ID3D12Fence> fence;
+		UINT64 fenceVal = 1;
+		if (SUCCEEDED(pD3DDevice->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&fence)))) {
+			HANDLE evt = CreateEventEx(nullptr, nullptr, 0, EVENT_MODIFY_STATE | SYNCHRONIZE);
+			if (evt && SUCCEEDED(fence->SetEventOnCompletion(fenceVal, evt))) {
+				uploadQueue->Signal(fence, fenceVal);
+				WaitForSingleObject(evt, 5000);
+			}
+			if (evt) CloseHandle(evt);
+		}
+		const UINT srvDescSize = pD3DDevice->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+		D3D12_CPU_DESCRIPTOR_HANDLE srvCpu = g_pD3DSrvDescHeap->GetCPUDescriptorHandleForHeapStart();
+		D3D12_GPU_DESCRIPTOR_HANDLE srvGpu = g_pD3DSrvDescHeap->GetGPUDescriptorHandleForHeapStart();
+		srvCpu.ptr += (SIZE_T)srvDescSize * (SIZE_T)(g_FrameBufferCount + 10);
+		srvGpu.ptr += (SIZE_T)srvDescSize * (SIZE_T)(g_FrameBufferCount + 10);
+		D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+		srvDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+		srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+		srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+		srvDesc.Texture2D.MipLevels = 1;
+		pD3DDevice->CreateShaderResourceView(g_CameraButtonTexture, &srvDesc, srvCpu);
+		g_CameraButtonTextureGPUHandle = srvGpu;
+		g_CameraButtonTextureWidth = texW;
+		g_CameraButtonTextureHeight = texH;
+		return true;
+	}
 
 	LRESULT APIENTRY WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
@@ -107,7 +499,7 @@ namespace D3D12 {
 			{
 				D3D12_DESCRIPTOR_HEAP_DESC desc = {};
 				desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
-				desc.NumDescriptors = g_FrameBufferCount;
+				desc.NumDescriptors = (UINT)(g_FrameBufferCount + 17);  // gear, window bg x9, camera, frame0-2, button0-2
 				desc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
 
 				if (pD3DDevice->CreateDescriptorHeap(&desc, IID_PPV_ARGS(&g_pD3DSrvDescHeap)) != S_OK) {
@@ -174,6 +566,19 @@ namespace D3D12 {
 				g_pD3DSrvDescHeap->GetCPUDescriptorHandleForHeapStart(),
 				g_pD3DSrvDescHeap->GetGPUDescriptorHandleForHeapStart());
 
+			// Load settings icon from D2RHUD_Images/ (default gear.png)
+			{
+				std::string imagesDir = GetD2RHUDImagesDir();
+				std::string gearPath = (std::filesystem::path(imagesDir) / "Theme.png").string();
+				LoadGearTextureFromPath(pD3DDevice, gearPath);
+			}
+			// Load Camera.png for the "use image" button on each color row
+			{
+				std::string imagesDir = GetD2RHUDImagesDir();
+				std::string cameraPath = (std::filesystem::path(imagesDir) / "Camera.png").string();
+				LoadCameraButtonTextureFromPath(pD3DDevice, cameraPath);
+			}
+
 			g_Initialized = true;
 
 			pD3DDevice->Release();
@@ -197,6 +602,79 @@ namespace D3D12 {
 			}
 			else {
 				std::cerr << "Font file does not exist: " << fontPath << std::endl;
+			}
+		}
+
+		// Pending settings icon reload (user chose a different image in Settings)
+		if (g_Initialized && !s_PendingGearFilename.empty()) {
+			ID3D12Device* pDev = nullptr;
+			if (SUCCEEDED(pSwapChain->GetDevice(__uuidof(ID3D12Device), (void**)&pDev))) {
+				std::string path = (std::filesystem::path(GetD2RHUDImagesDir()) / s_PendingGearFilename).string();
+				LoadGearTextureFromPath(pDev, path);
+				pDev->Release();
+				s_PendingGearFilename.clear();
+			}
+		}
+		// Clear or reload window background images (per-window slots)
+		for (int wi = 0; wi < kWindowBgSlots; ++wi) {
+			if (g_Initialized && s_ClearWindowBg[wi]) {
+				g_WindowBgTexture[wi] = nullptr;
+				g_WindowBgTextureGPUHandle[wi] = {};
+				s_ClearWindowBg[wi] = false;
+			}
+			if (g_Initialized && !s_PendingWindowBgFilename[wi].empty()) {
+				ID3D12Device* pDev = nullptr;
+				if (SUCCEEDED(pSwapChain->GetDevice(__uuidof(ID3D12Device), (void**)&pDev))) {
+					std::string path = (std::filesystem::path(GetD2RHUDImagesDir()) / s_PendingWindowBgFilename[wi]).string();
+					if (LoadThemeTextureFromPath(pDev, path, g_WindowBgTexture[wi], g_WindowBgTextureGPUHandle[wi], g_FrameBufferCount + 1 + wi))
+						s_PendingWindowBgFilename[wi].clear();
+					pDev->Release();
+				}
+			}
+		}
+		for (int fi = 0; fi < kFrameBgSlots; ++fi) {
+			if (g_Initialized && s_ClearFrameBg[fi]) {
+				g_FrameBgTexture[fi] = nullptr;
+				g_FrameBgTextureGPUHandle[fi] = {};
+				s_ClearFrameBg[fi] = false;
+			}
+			if (g_Initialized && !s_PendingFrameBgFilename[fi].empty()) {
+				ID3D12Device* pDev = nullptr;
+				if (SUCCEEDED(pSwapChain->GetDevice(__uuidof(ID3D12Device), (void**)&pDev))) {
+					std::string path = (std::filesystem::path(GetD2RHUDImagesDir()) / s_PendingFrameBgFilename[fi]).string();
+					if (LoadThemeTextureFromPath(pDev, path, g_FrameBgTexture[fi], g_FrameBgTextureGPUHandle[fi], g_FrameBufferCount + 11 + fi))
+						s_PendingFrameBgFilename[fi].clear();
+				}
+			}
+		}
+		for (int ci = 0; ci < kCheckboxSlots; ++ci) {
+			if (g_Initialized && s_ClearCheckbox[ci]) {
+				g_CheckboxTexture[ci] = nullptr;
+				g_CheckboxTextureGPUHandle[ci] = {};
+				s_ClearCheckbox[ci] = false;
+			}
+			if (g_Initialized && !s_PendingCheckboxFilename[ci].empty()) {
+				ID3D12Device* pDev = nullptr;
+				if (SUCCEEDED(pSwapChain->GetDevice(__uuidof(ID3D12Device), (void**)&pDev))) {
+					std::string path = (std::filesystem::path(GetD2RHUDImagesDir()) / s_PendingCheckboxFilename[ci]).string();
+					if (LoadThemeTextureFromPath(pDev, path, g_CheckboxTexture[ci], g_CheckboxTextureGPUHandle[ci], g_FrameBufferCount + 14 + ci))
+						s_PendingCheckboxFilename[ci].clear();
+				}
+			}
+		}
+		for (int bi = 0; bi < kButtonSlots; ++bi) {
+			if (g_Initialized && s_ClearButton[bi]) {
+				g_ButtonTexture[bi] = nullptr;
+				g_ButtonTextureGPUHandle[bi] = {};
+				s_ClearButton[bi] = false;
+			}
+			if (g_Initialized && !s_PendingButtonFilename[bi].empty()) {
+				ID3D12Device* pDev = nullptr;
+				if (SUCCEEDED(pSwapChain->GetDevice(__uuidof(ID3D12Device), (void**)&pDev))) {
+					std::string path = (std::filesystem::path(GetD2RHUDImagesDir()) / s_PendingButtonFilename[bi]).string();
+					if (LoadThemeTextureFromPath(pDev, path, g_ButtonTexture[bi], g_ButtonTextureGPUHandle[bi], g_FrameBufferCount + 17 + bi))
+						s_PendingButtonFilename[bi].clear();
+				}
 			}
 		}
 
@@ -250,6 +728,30 @@ namespace D3D12 {
 		g_pD3DCommandList = nullptr;
 		g_pD3DRtvDescHeap = nullptr;
 		g_pD3DSrvDescHeap = nullptr;
+		g_GearTexture = nullptr;
+		g_GearTextureGPUHandle = {};
+		g_GearTextureWidth = 0;
+		g_GearTextureHeight = 0;
+		for (int wi = 0; wi < kWindowBgSlots; ++wi) {
+			g_WindowBgTexture[wi] = nullptr;
+			g_WindowBgTextureGPUHandle[wi] = {};
+		}
+		for (int fi = 0; fi < kFrameBgSlots; ++fi) {
+			g_FrameBgTexture[fi] = nullptr;
+			g_FrameBgTextureGPUHandle[fi] = {};
+		}
+		for (int ci = 0; ci < kCheckboxSlots; ++ci) {
+			g_CheckboxTexture[ci] = nullptr;
+			g_CheckboxTextureGPUHandle[ci] = {};
+		}
+		for (int bi = 0; bi < kButtonSlots; ++bi) {
+			g_ButtonTexture[bi] = nullptr;
+			g_ButtonTextureGPUHandle[bi] = {};
+		}
+		g_CameraButtonTexture = nullptr;
+		g_CameraButtonTextureGPUHandle = {};
+		g_CameraButtonTextureWidth = 0;
+		g_CameraButtonTextureHeight = 0;
 	}
 
 	long HookResizeBuffers(IDXGISwapChain3* pSwapChain, UINT BufferCount, UINT Width, UINT Height, DXGI_FORMAT NewFormat, UINT SwapChainFlags) {
@@ -474,7 +976,7 @@ namespace D3D12 {
 		Hook(54, (void**)&OriginalExecuteCommandLists, HookExecuteCommandLists);
 		Hook(140, (void**)&OriginalPresent, HookPresent);
 		Hook(145, (void**)&OriginalResizeBuffers, HookResizeBuffers);
-		
+
 		g_PluginManager = new PluginManager();
 
 		return Status::Success;
@@ -499,6 +1001,89 @@ namespace D3D12 {
 		//wait for hooks to finish if in one. maybe not needed, but seemed more stable after adding it.
 		Sleep(1000);
 		return Status::Success;
+	}
+
+	void SetDllModule(HMODULE hModule) {
+		g_DllModule = hModule;
+	}
+
+	uint64_t GetGearTextureId() {
+		return (uint64_t)g_GearTextureGPUHandle.ptr;
+	}
+
+	void GetGearTextureSize(int* outWidth, int* outHeight) {
+		if (outWidth) *outWidth = g_GearTextureWidth;
+		if (outHeight) *outHeight = g_GearTextureHeight;
+	}
+
+	std::string GetD2RHUDImagesPath() {
+		return GetD2RHUDImagesDir();
+	}
+
+	void RequestGearIconReload(const std::string& filename) {
+		if (!filename.empty())
+			s_PendingGearFilename = filename;
+	}
+
+	uint64_t GetWindowBgTextureId(int slot) {
+		if (slot < 0 || slot >= kWindowBgSlots) return 0;
+		return (uint64_t)g_WindowBgTextureGPUHandle[slot].ptr;
+	}
+
+	void RequestWindowBgImageReload(int slot, const std::string& filename) {
+		if (slot < 0 || slot >= kWindowBgSlots) return;
+		if (filename.empty())
+			s_ClearWindowBg[slot] = true;
+		else
+			s_PendingWindowBgFilename[slot] = filename;
+	}
+
+	uint64_t GetFrameBgTextureId(int slot) {
+		if (slot < 0 || slot >= kFrameBgSlots) return 0;
+		return (uint64_t)g_FrameBgTextureGPUHandle[slot].ptr;
+	}
+
+	void RequestFrameBgImageReload(int slot, const std::string& filename) {
+		if (slot < 0 || slot >= kFrameBgSlots) return;
+		if (filename.empty())
+			s_ClearFrameBg[slot] = true;
+		else
+			s_PendingFrameBgFilename[slot] = filename;
+	}
+
+	uint64_t GetCheckboxTextureId(int slot) {
+		if (slot < 0 || slot >= kCheckboxSlots) return 0;
+		return (uint64_t)g_CheckboxTextureGPUHandle[slot].ptr;
+	}
+
+	void RequestCheckboxImageReload(int slot, const std::string& filename) {
+		if (slot < 0 || slot >= kCheckboxSlots) return;
+		if (filename.empty())
+			s_ClearCheckbox[slot] = true;
+		else
+			s_PendingCheckboxFilename[slot] = filename;
+	}
+
+	uint64_t GetButtonTextureId(int slot) {
+		if (slot < 0 || slot >= kButtonSlots) return 0;
+		return (uint64_t)g_ButtonTextureGPUHandle[slot].ptr;
+	}
+
+	void RequestButtonImageReload(int slot, const std::string& filename) {
+		if (slot < 0 || slot >= kButtonSlots) return;
+		if (filename.empty())
+			s_ClearButton[slot] = true;
+		else
+			s_PendingButtonFilename[slot] = filename;
+	}
+
+	uint64_t GetCameraButtonTextureId() {
+		return (uint64_t)g_CameraButtonTextureGPUHandle.ptr;
+	}
+
+	void GetCameraButtonTextureSize(int* outWidth, int* outHeight) {
+		if (outWidth) *outWidth = g_CameraButtonTextureWidth;
+		if (outHeight) *outHeight = g_CameraButtonTextureHeight;
 	}
 
 }

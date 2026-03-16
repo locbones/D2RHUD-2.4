@@ -56,7 +56,7 @@
 #pragma region Global Static/Structs
 
 std::string lootFile = "../D2R/lootfilter.lua";
-std::string Version = "1.6.7";
+std::string Version = "1.6.8";
 
 using json = nlohmann::json;
 static MonsterStatsDisplaySettings cachedSettings;
@@ -5343,8 +5343,6 @@ struct MemoryConfigEntry
     std::string Values;
     std::string OriginalValues;
     std::string ModdedValues;
-    bool Override;
-    std::string OverrideReason;
     int UniqueID;
 };
 
@@ -5366,6 +5364,45 @@ static bool showLootMenu = false;
 static bool showHotkeyMenu = false;
 static bool showGrailMenu = false;
 static bool showCameraMenu = false;
+static bool showSettingsPanel = false;
+static std::string s_UITheme = "Default";
+// Per-slot image override: s_UIColorImageOverrides[i] = filename from D2RHUD_Images (empty = use color only)
+static std::vector<std::string> s_UIColorImageOverrides;
+static std::vector<ImVec4> s_UICustomColors;  // when theme is "Custom", applied by index
+static std::vector<std::pair<std::string, std::vector<ImVec4>>> s_UIThemePresets;  // user-added presets
+struct ThemeColorEntry { const char* label; int imguiCol; };
+static const int kImGuiColSentinel = -1;  // theme-only color (not applied to ImGui style; used for checkboxes)
+static const ThemeColorEntry s_ThemeColorEntries[] = {
+    {"Text", ImGuiCol_Text},
+    {"Text Disabled", ImGuiCol_TextDisabled},
+    {"Border", ImGuiCol_Border},
+    {"Frame Bg", ImGuiCol_FrameBg},
+    {"Frame Bg Hovered", ImGuiCol_FrameBgHovered},
+    {"Frame Bg Active", ImGuiCol_FrameBgActive},
+    {"Check Mark", ImGuiCol_CheckMark},
+    {"Checkbox", kImGuiColSentinel},
+    {"Checkbox Hovered", kImGuiColSentinel},
+    {"Checkbox Active", kImGuiColSentinel},
+    {"Button", ImGuiCol_Button},
+    {"Button Hovered", ImGuiCol_ButtonHovered},
+    {"Button Active", ImGuiCol_ButtonActive},
+    {"Header", ImGuiCol_Header},
+    {"Header Hovered", ImGuiCol_HeaderHovered},
+    {"Header Active", ImGuiCol_HeaderActive},
+    {"Separator", ImGuiCol_Separator},
+};
+static const int s_ThemeColorCount = (int)(sizeof(s_ThemeColorEntries) / sizeof(s_ThemeColorEntries[0]));
+
+// Per-window background: order matches UI list (Control Center, Theme Control, D2RHUD Options, Memory, Loot, Grail, Hotkeys, Camera)
+enum WindowBgId { kWindowBg_ControlCenter = 0, kWindowBg_ThemeControl, kWindowBg_D2RHUDOptions, kWindowBg_Memory, kWindowBg_Loot, kWindowBg_Grail, kWindowBg_Hotkeys, kWindowBg_Camera, kWindowBgCount };
+static const char* const s_WindowBgNames[kWindowBgCount] = {
+    "D2RHUD Control Center", "Theme Control", "D2RHUD Options", "Memory Edit Info", "D2RLoot Settings", "Grail Tracker", "Hotkey Controls", "Camera Controls"
+};
+static ImVec4 s_WindowBgColors[kWindowBgCount];
+static std::string s_WindowBgImageOverrides[kWindowBgCount];
+
+static bool ThemeButton(const char* label, const ImVec2& size = ImVec2(0, 0));  // implemented later
+static bool ThemeCheckbox(const char* label, bool* v);  // implemented later
 static bool showBaseCodes = false;
 static bool showBaseNames = false;
 static bool showDuplicates = false;
@@ -5591,6 +5628,7 @@ bool D2RHUD::TryCloseMenuOnEscape()
     if (showCameraMenu)      { showCameraMenu = false; return true; }
     if (showMemoryMenu)      { showMemoryMenu = false; return true; }
     if (showD2RHUDMenu)      { showD2RHUDMenu = false; return true; }
+    if (showSettingsPanel)   { showSettingsPanel = false; return true; }
     if (showHUDSettingsMenu) { showHUDSettingsMenu = false; return true; }
     if (showMainMenu)        { showMainMenu = false; return true; }
     return false;
@@ -6170,6 +6208,9 @@ static void PlaySoundFile(const std::string& path)
 static bool CopyModFilterToActive(const std::string& filterName);
 void LoadLootFilterConfig(const std::string& path);
 void LoadLootFilterLogic(const std::string& path);
+static bool ShouldDrawFrameBgImage();
+static void BeginFrameBgImageRegion();
+static void EndFrameBgImageRegion();
 
 // Import Filter: paste path only. No modal, no directory listing - avoids freeze when injected.
 static bool s_showImportPathInput = false;
@@ -6251,11 +6292,13 @@ static void DrawImportSoundsPathRow()
         s_importSoundsPathInputJustOpened = false;
         s_importSoundsPathBuf[0] = '\0';
     }
+    BeginFrameBgImageRegion();
     bool doImport = ImGui::InputText("##importsounds_path", s_importSoundsPathBuf, sizeof(s_importSoundsPathBuf), ImGuiInputTextFlags_EnterReturnsTrue);
+    EndFrameBgImageRegion();
     ImGui::SameLine();
-    if (ImGui::Button("Import##sounds", ImVec2(70.0f, 0.0f))) doImport = true;
+    if (ThemeButton("Import##sounds", ImVec2(70.0f, 0.0f))) doImport = true;
     ImGui::SameLine();
-    if (ImGui::Button("Cancel##sounds", ImVec2(70.0f, 0.0f)))
+    if (ThemeButton("Cancel##sounds", ImVec2(70.0f, 0.0f)))
     {
         s_showImportSoundsPathInput = false;
         s_importSoundsPathError.clear();
@@ -6317,12 +6360,14 @@ static void DrawImportFilterPathRow()
         strncpy(s_importPathBuf, s_importPathInput.c_str(), sizeof(s_importPathBuf) - 1);
         s_importPathBuf[sizeof(s_importPathBuf) - 1] = '\0';
     }
+    BeginFrameBgImageRegion();
     bool doImport = ImGui::InputText("##importpath", s_importPathBuf, sizeof(s_importPathBuf), ImGuiInputTextFlags_EnterReturnsTrue);
+    EndFrameBgImageRegion();
     s_importPathInput = s_importPathBuf;
     ImGui::SameLine();
-    if (ImGui::Button("Import", ImVec2(70.0f, 0.0f))) doImport = true;
+    if (ThemeButton("Import", ImVec2(70.0f, 0.0f))) doImport = true;
     ImGui::SameLine();
-    if (ImGui::Button("Cancel", ImVec2(70.0f, 0.0f)))
+    if (ThemeButton("Cancel", ImVec2(70.0f, 0.0f)))
     {
         s_showImportPathInput = false;
         s_importPathError.clear();
@@ -6545,19 +6590,25 @@ static void DrawCreateFilterPopup()
         ImGui::Spacing();
         ImGui::Text("Title - Name of your filter");
         ImGui::SetNextItemWidth(-1.0f);
+        BeginFrameBgImageRegion();
         ImGui::InputText("##create_title", s_createFilterTitleBuf, sizeof(s_createFilterTitleBuf));
+        EndFrameBgImageRegion();
         ImGui::Spacing();
         ImGui::Text("Type - Earlygame, Endgame, etc.");
         ImGui::SetNextItemWidth(-1.0f);
+        BeginFrameBgImageRegion();
         ImGui::InputText("##create_type", s_createFilterTypeBuf, sizeof(s_createFilterTypeBuf));
+        EndFrameBgImageRegion();
         ImGui::Spacing();
         ImGui::Text("Description - What your filter focuses on");
         ImGui::SetNextItemWidth(-1.0f);
+        BeginFrameBgImageRegion();
         ImGui::InputText("##create_desc", s_createFilterDescBuf, sizeof(s_createFilterDescBuf), ImGuiInputTextFlags_None);
+        EndFrameBgImageRegion();
         ImGui::Spacing();
         ImGui::Separator();
         ImGui::Spacing();
-        if (ImGui::Button("Create", ImVec2(100.0f, 0.0f)))
+        if (ThemeButton("Create", ImVec2(100.0f, 0.0f)))
         {
             std::string title(s_createFilterTitleBuf);
             std::string type(s_createFilterTypeBuf);
@@ -6604,7 +6655,7 @@ static void DrawCreateFilterPopup()
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
-        if (ImGui::Button("Cancel", ImVec2(100.0f, 0.0f)))
+        if (ThemeButton("Cancel", ImVec2(100.0f, 0.0f)))
         {
             s_showCreateFilterPopup = false;
             ImGui::CloseCurrentPopup();
@@ -7050,8 +7101,6 @@ void LoadMemoryConfigs(const std::string& path)
             m.Values = entry.value("Values", "");
             m.OriginalValues = entry.value("OriginalValues", "");
             m.ModdedValues = entry.value("ModdedValues", "");
-            m.Override = entry.value("Override", 0);
-            m.OverrideReason = entry.value("OverrideReason", "");
 
             g_MemoryConfigs.push_back(std::move(m));
             Log("Loaded main entry: " + entry.value("Name", "") + " @ " + entry.value("Address", ""));
@@ -7168,6 +7217,14 @@ void LoadMemoryConfigs(const std::string& path)
     Log("=== LoadMemoryConfigs END ===");
 }
 
+static void ApplyUITheme(const std::string& themeName);  // implemented later
+static std::vector<ImVec4> GetCurrentThemeColors();     // implemented later
+static bool ShouldDrawWindowBackgroundImage(WindowBgId id);  // implemented later
+static void DrawWindowBackgroundImage(WindowBgId id);       // implemented later
+static bool ShouldDrawFrameBgImage();                   // implemented later
+static void BeginFrameBgImageRegion();                  // implemented later
+static void EndFrameBgImageRegion();                    // implemented later
+
 void LoadD2RHUDConfig(const std::string& path)
 {
     std::string cleanedJson = CleanJsonFile(path);
@@ -7221,6 +7278,189 @@ void LoadD2RHUDConfig(const std::string& path)
         }
         d2rHUDConfig.CameraAutoloadLastPreset = j.value("CameraAutoloadLastPreset", d2rHUDConfig.CameraAutoloadLastPreset);
         d2rHUDConfig.CameraLastPresetIndex = j.value("CameraLastPresetIndex", d2rHUDConfig.CameraLastPresetIndex);
+
+        if (j.contains("UIThemePresets") && j["UIThemePresets"].is_array())
+        {
+            s_UIThemePresets.clear();
+            for (const auto& item : j["UIThemePresets"])
+            {
+                std::string name = item.value("Name", std::string{});
+                std::vector<ImVec4> colors;
+                if (item.contains("Colors") && item["Colors"].is_array())
+                {
+                    for (const auto& c : item["Colors"])
+                    {
+                        if (c.is_array() && c.size() >= 4)
+                            colors.push_back(ImVec4((float)c[0], (float)c[1], (float)c[2], (float)c[3]));
+                    }
+                }
+                if (!name.empty() && (int)colors.size() == s_ThemeColorCount)
+                    s_UIThemePresets.push_back({ name, colors });
+            }
+        }
+        if (j.contains("UICustomColors") && j["UICustomColors"].is_array())
+        {
+            s_UICustomColors.clear();
+            for (const auto& c : j["UICustomColors"])
+            {
+                if (c.is_array() && c.size() >= 4)
+                    s_UICustomColors.push_back(ImVec4((float)c[0], (float)c[1], (float)c[2], (float)c[3]));
+            }
+            if ((int)s_UICustomColors.size() == 20)
+            {
+                std::vector<ImVec4> migrated;
+                migrated.reserve(18);
+                for (int i = 0; i < 20; ++i)
+                    if (i != 3 && i != 4) migrated.push_back(s_UICustomColors[i]);
+                s_UICustomColors = std::move(migrated);
+            }
+            if ((int)s_UICustomColors.size() == 18)
+            {
+                std::vector<ImVec4> migrated;
+                migrated.reserve(14);
+                for (int i = 0; i < 18; ++i)
+                    if (i != 7 && i != 8 && i != 16 && i != 17) migrated.push_back(s_UICustomColors[i]);
+                s_UICustomColors = std::move(migrated);
+            }
+            // Insert Check Mark color at index 7 when upgrading from 16 to 17 theme entries
+            if ((int)s_UICustomColors.size() == 16)
+                s_UICustomColors.insert(s_UICustomColors.begin() + 7, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
+            // Remove Window Bg (index 2) when migrating from 17 to 16 theme entries (per-window bg instead)
+            if ((int)s_UICustomColors.size() == 17)
+                s_UICustomColors.erase(s_UICustomColors.begin() + 2);
+            // Insert Checkbox, Checkbox Hovered, Checkbox Active at index 7 when upgrading from 14 to 17
+            if ((int)s_UICustomColors.size() == 14) {
+                ImVec4 fb = ImVec4(0.20f, 0.20f, 0.20f, 1.00f), fbh = ImVec4(0.28f, 0.28f, 0.28f, 1.00f), fba = ImVec4(0.32f, 0.32f, 0.32f, 1.00f);
+                if (ImGui::GetCurrentContext()) {
+                    ImGuiStyle& st = ImGui::GetStyle();
+                    fb = st.Colors[ImGuiCol_FrameBg]; fbh = st.Colors[ImGuiCol_FrameBgHovered]; fba = st.Colors[ImGuiCol_FrameBgActive];
+                }
+                s_UICustomColors.insert(s_UICustomColors.begin() + 7, fba);
+                s_UICustomColors.insert(s_UICustomColors.begin() + 7, fbh);
+                s_UICustomColors.insert(s_UICustomColors.begin() + 7, fb);
+            }
+        }
+        s_UITheme = j.value("UITheme", s_UITheme);
+        {
+            bool valid = (s_UITheme == "Default" || s_UITheme == "Golden Sunset" || s_UITheme == "Hell's Embrace" || s_UITheme == "RMD Blue" || s_UITheme == "RMD Red" || s_UITheme == "RMD Purple" || s_UITheme == "RMD Green" || s_UITheme == "RMD Gold" || s_UITheme == "RMD Dark" || s_UITheme == "Custom");
+            if (!valid)
+                for (const auto& p : s_UIThemePresets)
+                    if (p.first == s_UITheme) { valid = true; break; }
+            if (!valid)
+                s_UITheme = "Default";
+        }
+        if (j.contains("UIColorImageOverrides") && j["UIColorImageOverrides"].is_array())
+        {
+            s_UIColorImageOverrides.clear();
+            for (const auto& el : j["UIColorImageOverrides"])
+                s_UIColorImageOverrides.push_back(el.is_string() ? el.get<std::string>() : "");
+            if ((int)s_UIColorImageOverrides.size() == 20)
+            {
+                std::vector<std::string> migrated;
+                migrated.reserve(18);
+                for (int i = 0; i < 20; ++i)
+                    if (i != 3 && i != 4) migrated.push_back(s_UIColorImageOverrides[i]);
+                s_UIColorImageOverrides = std::move(migrated);
+            }
+            if ((int)s_UIColorImageOverrides.size() == 18)
+            {
+                std::vector<std::string> migrated;
+                migrated.reserve(14);
+                for (int i = 0; i < 18; ++i)
+                    if (i != 7 && i != 8 && i != 16 && i != 17) migrated.push_back(s_UIColorImageOverrides[i]);
+                s_UIColorImageOverrides = std::move(migrated);
+            }
+            // Insert Check Mark slot (no image) at index 7 when upgrading from 16 to 17 theme entries
+            if ((int)s_UIColorImageOverrides.size() == 16)
+                s_UIColorImageOverrides.insert(s_UIColorImageOverrides.begin() + 7, "");
+            // Insert 3 empty image overrides for Checkbox at index 7 when upgrading from 14 to 17
+            if ((int)s_UIColorImageOverrides.size() == 14) {
+                s_UIColorImageOverrides.insert(s_UIColorImageOverrides.begin() + 7, "");
+                s_UIColorImageOverrides.insert(s_UIColorImageOverrides.begin() + 7, "");
+                s_UIColorImageOverrides.insert(s_UIColorImageOverrides.begin() + 7, "");
+            }
+            // Remove Window Bg (index 2) when migrating from 17 to 16 theme entries; copy old single window bg image to all per-window slots
+            if ((int)s_UIColorImageOverrides.size() == 17)
+            {
+                std::string oldWindowBgImage = (s_UIColorImageOverrides.size() > 2 && !s_UIColorImageOverrides[2].empty()) ? s_UIColorImageOverrides[2] : "";
+                s_UIColorImageOverrides.erase(s_UIColorImageOverrides.begin() + 2);
+                if (!oldWindowBgImage.empty())
+                    for (int w = 0; w < kWindowBgCount; ++w)
+                        s_WindowBgImageOverrides[w] = oldWindowBgImage;
+            }
+            if ((int)s_UIColorImageOverrides.size() != s_ThemeColorCount)
+                s_UIColorImageOverrides.resize(s_ThemeColorCount, "");
+        }
+        else
+            s_UIColorImageOverrides.resize(s_ThemeColorCount, "");
+        if (j.contains("WindowBgColors") && j["WindowBgColors"].is_array())
+        {
+            const auto& arr = j["WindowBgColors"];
+            int srcCount = (int)arr.size();
+            int orderVer = j.contains("WindowBgOrderVersion") ? (int)j["WindowBgOrderVersion"] : 0;
+            // Old order: Grail, Hotkeys, Camera, Loot, Memory, ThemeControl, D2RHUDOptions, ControlCenter -> indices 0..7
+            const int oldToNew[] = { 7, 5, 6, 4, 3, 0, 1, 2 };
+            if (srcCount == 9) {
+                for (int w = 0; w < 7 && w < srcCount; ++w) {
+                    if (arr[w].is_array() && arr[w].size() >= 4)
+                        s_WindowBgColors[w] = ImVec4((float)arr[w][0], (float)arr[w][1], (float)arr[w][2], (float)arr[w][3]);
+                }
+                if (arr[8].is_array() && arr[8].size() >= 4)
+                    s_WindowBgColors[7] = ImVec4((float)arr[8][0], (float)arr[8][1], (float)arr[8][2], (float)arr[8][3]);
+            } else if (srcCount == 8 && orderVer == 0) {
+                for (int w = 0; w < kWindowBgCount && w < srcCount; ++w) {
+                    int o = oldToNew[w];
+                    if (arr[o].is_array() && arr[o].size() >= 4)
+                        s_WindowBgColors[w] = ImVec4((float)arr[o][0], (float)arr[o][1], (float)arr[o][2], (float)arr[o][3]);
+                }
+            } else {
+                for (int w = 0; w < kWindowBgCount && w < srcCount; ++w) {
+                    if (arr[w].is_array() && arr[w].size() >= 4)
+                        s_WindowBgColors[w] = ImVec4((float)arr[w][0], (float)arr[w][1], (float)arr[w][2], (float)arr[w][3]);
+                }
+            }
+        }
+        if (j.contains("WindowBgImageOverrides") && j["WindowBgImageOverrides"].is_array())
+        {
+            const auto& arr = j["WindowBgImageOverrides"];
+            int srcCount = (int)arr.size();
+            int orderVer = j.contains("WindowBgOrderVersion") ? (int)j["WindowBgOrderVersion"] : 0;
+            const int oldToNew[] = { 7, 5, 6, 4, 3, 0, 1, 2 };
+            if (srcCount == 9) {
+                for (int w = 0; w < 7 && w < srcCount; ++w)
+                    s_WindowBgImageOverrides[w] = arr[w].is_string() ? arr[w].get<std::string>() : "";
+                s_WindowBgImageOverrides[7] = arr[8].is_string() ? arr[8].get<std::string>() : "";
+            } else if (srcCount == 8 && orderVer == 0) {
+                for (int w = 0; w < kWindowBgCount && w < srcCount; ++w) {
+                    int o = oldToNew[w];
+                    s_WindowBgImageOverrides[w] = arr[o].is_string() ? arr[o].get<std::string>() : "";
+                }
+            } else {
+                for (int w = 0; w < kWindowBgCount && w < srcCount; ++w)
+                    s_WindowBgImageOverrides[w] = arr[w].is_string() ? arr[w].get<std::string>() : "";
+            }
+        }
+        if (ImGui::GetCurrentContext() != nullptr)
+        {
+            if (s_UITheme == "Custom" && (int)s_UICustomColors.size() != s_ThemeColorCount)
+            {
+                ApplyUITheme("Default");
+                s_UICustomColors = GetCurrentThemeColors();
+            }
+            else
+                ApplyUITheme(s_UITheme);
+            if (!j.contains("WindowBgColors"))
+                for (int w = 0; w < kWindowBgCount; ++w)
+                    s_WindowBgColors[w] = ImGui::GetStyle().Colors[ImGuiCol_WindowBg];
+            for (int w = 0; w < kWindowBgCount; ++w)
+                D3D12::RequestWindowBgImageReload(w, s_WindowBgImageOverrides[w]);
+            for (int i = 3; i <= 5 && i < (int)s_UIColorImageOverrides.size(); ++i)
+                D3D12::RequestFrameBgImageReload(i - 3, (int)s_UIColorImageOverrides.size() > i ? s_UIColorImageOverrides[i] : std::string());
+            for (int i = 7; i <= 9 && i < (int)s_UIColorImageOverrides.size(); ++i)
+                D3D12::RequestCheckboxImageReload(i - 7, (int)s_UIColorImageOverrides.size() > i ? s_UIColorImageOverrides[i] : std::string());
+            for (int i = 10; i <= 12 && i < (int)s_UIColorImageOverrides.size(); ++i)
+                D3D12::RequestButtonImageReload(i - 10, (int)s_UIColorImageOverrides.size() > i ? s_UIColorImageOverrides[i] : std::string());
+        }
 
         // LOAD "Options" BLOCK
         if (j.contains("Options"))
@@ -7336,6 +7576,45 @@ bool SaveFullGrailConfig(const std::string& userPath, bool isAutoBackup)
         }
         j["CameraAutoloadLastPreset"] = d2rHUDConfig.CameraAutoloadLastPreset;
         j["CameraLastPresetIndex"] = d2rHUDConfig.CameraLastPresetIndex;
+        j["UITheme"] = s_UITheme;
+        if ((int)s_UIColorImageOverrides.size() != s_ThemeColorCount)
+            s_UIColorImageOverrides.resize(s_ThemeColorCount, "");
+        {
+            ordered_json arr = ordered_json::array();
+            for (const auto& s : s_UIColorImageOverrides)
+                arr.push_back(s);
+            j["UIColorImageOverrides"] = arr;
+        }
+        {
+            ordered_json customArr = ordered_json::array();
+            for (const auto& v : s_UICustomColors)
+                customArr.push_back(ordered_json::array({ v.x, v.y, v.z, v.w }));
+            j["UICustomColors"] = customArr;
+        }
+        {
+            j["WindowBgOrderVersion"] = 1;
+            ordered_json winBgArr = ordered_json::array();
+            for (int w = 0; w < kWindowBgCount; ++w)
+                winBgArr.push_back(ordered_json::array({ s_WindowBgColors[w].x, s_WindowBgColors[w].y, s_WindowBgColors[w].z, s_WindowBgColors[w].w }));
+            j["WindowBgColors"] = winBgArr;
+        }
+        {
+            ordered_json winBgImgArr = ordered_json::array();
+            for (int w = 0; w < kWindowBgCount; ++w)
+                winBgImgArr.push_back(s_WindowBgImageOverrides[w]);
+            j["WindowBgImageOverrides"] = winBgImgArr;
+        }
+        {
+            ordered_json presetsArr = ordered_json::array();
+            for (const auto& p : s_UIThemePresets)
+            {
+                ordered_json colorsArr = ordered_json::array();
+                for (const auto& v : p.second)
+                    colorsArr.push_back(ordered_json::array({ v.x, v.y, v.z, v.w }));
+                presetsArr.push_back(ordered_json{ {"Name", p.first}, {"Colors", colorsArr} });
+            }
+            j["UIThemePresets"] = presetsArr;
+        }
 
         // --- MemoryConfigs ---
         if (!g_MemoryConfigs.empty())
@@ -7355,8 +7634,6 @@ bool SaveFullGrailConfig(const std::string& userPath, bool isAutoBackup)
                 entry["Values"] = m.Values;
                 entry["OriginalValues"] = m.OriginalValues;
                 entry["ModdedValues"] = m.ModdedValues;
-                entry["Override"] = m.Override;
-                entry["OverrideReason"] = m.OverrideReason;
                 entry["UniqueID"] = m.UniqueID;
 
                 j["MemoryConfigs"].push_back(entry);
@@ -7630,10 +7907,14 @@ void ShowGrailMenu()
 
     CenterWindow(ImVec2(850, 500));
 
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ShouldDrawWindowBackgroundImage(kWindowBg_Grail) ? ImVec4(0, 0, 0, 0) : s_WindowBgColors[kWindowBg_Grail]);
     PushFontSafe(3);
-    ImGui::Begin("Grail Tracker", &showGrailMenu, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoTitleBar);
-    DrawWindowTitleAndClose("Grail Tracker", &showGrailMenu);
-    PopFontSafe(3);
+    if (ImGui::Begin("Grail Tracker", &showGrailMenu, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoTitleBar))
+    {
+        if (ShouldDrawWindowBackgroundImage(kWindowBg_Grail))
+            DrawWindowBackgroundImage(kWindowBg_Grail);
+        DrawWindowTitleAndClose("Grail Tracker", &showGrailMenu);
+        PopFontSafe(3);
 
     ImGui::Separator();
     ImGui::Dummy(ImVec2(0, 6.0f * menuScale));
@@ -7671,7 +7952,9 @@ void ShowGrailMenu()
         float avail = ImGui::GetContentRegionAvail().x;
         ImGui::SetCursorPosX((avail - inputWidth) * 0.5f + ImGui::GetCursorPosX());
     }
+    BeginFrameBgImageRegion();
     ImGui::InputText("##Search", searchBuffer, IM_ARRAYSIZE(searchBuffer));
+    EndFrameBgImageRegion();
     ImGui::PopItemWidth();
     ImGui::Dummy(ImVec2(0, 5.0f * menuScale));
 
@@ -7684,7 +7967,7 @@ void ShowGrailMenu()
         float avail = ImGui::GetContentRegionAvail().x;
         ImGui::SetCursorPosX((avail - totalWidth) * 0.5f + ImGui::GetCursorPosX());
     }
-    ImGui::Checkbox("Hide Collected", &showCollected);
+    ThemeCheckbox("Hide Collected", &showCollected);
 
     // --- Show Excluded --- Centered checkbox ---
     {
@@ -7697,7 +7980,7 @@ void ShowGrailMenu()
         // center horizontally
         ImGui::SetCursorPosX((avail - totalWidth) * 0.5f + ImGui::GetCursorPosX());
     }
-    ImGui::Checkbox("Show Excluded", &showExcluded);
+    ThemeCheckbox("Show Excluded", &showExcluded);
 
     if (ImGui::IsItemHovered())
         ShowOffsetTooltip("displays excluded items in the list, but with grey text");
@@ -7712,7 +7995,7 @@ void ShowGrailMenu()
 
         ImGui::SetCursorPosX((avail - totalWidth) * 0.5f + ImGui::GetCursorPosX());
     }
-    ImGui::Checkbox("Show Base Codes", &showBaseCodes);
+    ThemeCheckbox("Show Base Codes", &showBaseCodes);
     if (ImGui::IsItemHovered())
         ShowOffsetTooltip("Show the raw base item codes in the list.");
 
@@ -7726,7 +8009,7 @@ void ShowGrailMenu()
 
         ImGui::SetCursorPosX((avail - totalWidth) * 0.5f + ImGui::GetCursorPosX());
     }
-    ImGui::Checkbox("Show Base Names", &showBaseNames);
+    ThemeCheckbox("Show Base Names", &showBaseNames);
     if (ImGui::IsItemHovered())
         ShowOffsetTooltip("Show the readable base item names in the list.");
 
@@ -7742,7 +8025,7 @@ void ShowGrailMenu()
         ImGui::SetCursorPosX((avail - totalWidth) * 0.5f + ImGui::GetCursorPosX());
 
         // render checkbox
-        ImGui::Checkbox(label, &showDuplicates);
+        ThemeCheckbox(label, &showDuplicates);
 
         // tooltip
         if (ImGui::IsItemHovered())
@@ -7770,7 +8053,9 @@ void ShowGrailMenu()
         float avail = ImGui::GetContentRegionAvail().x;
         ImGui::SetCursorPosX((avail - inputWidth) * 0.5f + ImGui::GetCursorPosX());
     }
+    BeginFrameBgImageRegion();
     ImGui::InputText("##BackupPath", backupPath, IM_ARRAYSIZE(backupPath));
+    EndFrameBgImageRegion();
     ImGui::PopItemWidth();
     ImGui::Dummy(ImVec2(0, 2));
     ImGui::Separator();
@@ -7787,17 +8072,17 @@ void ShowGrailMenu()
     float startX = (avail - widest) * 0.5f + ImGui::GetCursorPosX();
 
     ImGui::SetCursorPosX(startX);
-    ImGui::Checkbox("Auto-Backups", &autoBackups);
+    ThemeCheckbox("Auto-Backups", &autoBackups);
     ImGui::BeginDisabled(!autoBackups);
     if (ImGui::IsItemHovered()) ShowOffsetTooltip("Enable automatic backups on the specified interval.");
 
     ImGui::SetCursorPosX(startX);
-    if (ImGui::Checkbox("Use Timestamps", &backupWithTimestamps))
+    if (ThemeCheckbox("Use Timestamps", &backupWithTimestamps))
         if (backupWithTimestamps) overwriteOldBackup = false;
     if (ImGui::IsItemHovered()) ShowOffsetTooltip("Append current date/time to backup filename to avoid overwriting.");
 
     ImGui::SetCursorPosX(startX);
-    if (ImGui::Checkbox("Overwrite Old", &overwriteOldBackup))
+    if (ThemeCheckbox("Overwrite Old", &overwriteOldBackup))
         if (overwriteOldBackup) backupWithTimestamps = false;
     if (ImGui::IsItemHovered()) ShowOffsetTooltip("Overwrite previous backup file instead of creating a new one.");
 
@@ -7818,8 +8103,9 @@ void ShowGrailMenu()
     avail = ImGui::GetContentRegionAvail().x;
     ImGui::SetCursorPosX((avail - inputWidth) * 0.5f + ImGui::GetCursorPosX());
     ImGui::SetNextItemWidth(inputWidth);
+    BeginFrameBgImageRegion();
     ImGui::InputInt("##BackupInterval", &backupIntervalMinutes);
-
+    EndFrameBgImageRegion();
     if (ImGui::IsItemHovered())
         ShowOffsetTooltip("How often to save automatic backups.\nMeasured in minutes.");
 
@@ -7851,7 +8137,7 @@ void ShowGrailMenu()
             ImGui::PushStyleColor(ImGuiCol_Text, textColor);
 
             // Use Button instead of Selectable to avoid full-width
-            if (ImGui::Button(label, ImVec2(0, 0)))
+            if (ThemeButton(label, ImVec2(0, 0)))
                 selectedCategory = id;
 
             ImGui::PopStyleColor();
@@ -8035,7 +8321,7 @@ void ShowGrailMenu()
                     bool* checked = &s->collected;
 
                     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.0f, 0.988f, 0.0f, 1.0f));
-                    ImGui::Checkbox(label.c_str(), checked);
+                    ThemeCheckbox(label.c_str(), checked);
 
                     if (ImGui::IsItemHovered())
                         ShowItemLocationTooltip(s->id, true);
@@ -8137,7 +8423,7 @@ void ShowGrailMenu()
             else
                 ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.780f, 0.702f, 0.467f, 1.0f)); // gold
 
-            if (ImGui::Checkbox(checkboxID.c_str(), checked))
+            if (ThemeCheckbox(checkboxID.c_str(), checked))
             {
                 // TODO: save state if needed
             }
@@ -8187,7 +8473,11 @@ void ShowGrailMenu()
     }
 
     ImGui::EndChild();
+        ImGui::PopStyleColor();
     ImGui::End();
+    }
+    else
+        ImGui::PopStyleColor();
 }
 
 void ShowHotkeyMenu()
@@ -8212,11 +8502,15 @@ void ShowHotkeyMenu()
     float menuScale = GetMenuScaleFactor();
     ImVec2 windowSize = ImVec2(900, 480);
     CenterWindow(windowSize);
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ShouldDrawWindowBackgroundImage(kWindowBg_Hotkeys) ? ImVec4(0, 0, 0, 0) : s_WindowBgColors[kWindowBg_Hotkeys]);
     PushFontSafe(3);
-    ImGui::Begin("D2R Hotkeys", &showHotkeyMenu, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoTitleBar);
-    DrawWindowTitleAndClose("D2R Hotkeys", &showHotkeyMenu);
-    if (GetFont(3)) ImGui::PopFont();
-    ImGui::Separator();
+    if (ImGui::Begin("D2R Hotkeys", &showHotkeyMenu, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoTitleBar))
+    {
+        if (ShouldDrawWindowBackgroundImage(kWindowBg_Hotkeys))
+            DrawWindowBackgroundImage(kWindowBg_Hotkeys);
+        DrawWindowTitleAndClose("D2R Hotkeys", &showHotkeyMenu);
+        if (GetFont(3)) ImGui::PopFont();
+        ImGui::Separator();
     ImGui::Dummy(ImVec2(0.0f, 5.0f * menuScale));
 
     // --- Split hotkeys (Keybinds ONLY) ---
@@ -8357,7 +8651,9 @@ void ShowHotkeyMenu()
 
         ImGui::PushItemWidth(180.0f * menuScale);
         if (inputFont) ImGui::PushFont(inputFont);
+        BeginFrameBgImageRegion();
         ImGui::InputText(("##key_" + name).c_str(), buffer, sizeof(buffer), ImGuiInputTextFlags_ReadOnly);
+        EndFrameBgImageRegion();
 
         // Tooltip
         if (ImGui::IsItemHovered() && tzUnavailable)
@@ -8420,8 +8716,10 @@ void ShowHotkeyMenu()
 
             ImGui::PushItemWidth(120.0f * menuScale);
             if (inputFont) ImGui::PushFont(inputFont);
+            BeginFrameBgImageRegion();
             if (ImGui::InputText(("##cmd_key_" + std::to_string(i)).c_str(), keyBuf, sizeof(keyBuf)))
                 cmd.key = keyBuf;
+            EndFrameBgImageRegion();
             if (inputFont) ImGui::PopFont();
             ImGui::PopItemWidth();
 
@@ -8433,8 +8731,10 @@ void ShowHotkeyMenu()
 
             ImGui::PushItemWidth(220.0f * menuScale);
             if (inputFont) ImGui::PushFont(inputFont);
+            BeginFrameBgImageRegion();
             if (ImGui::InputText(("##cmd_txt_" + std::to_string(i)).c_str(), cmdBuf, sizeof(cmdBuf)))
                 cmd.command = cmdBuf;
+            EndFrameBgImageRegion();
             if (inputFont) ImGui::PopFont();
             ImGui::PopItemWidth();
 
@@ -8460,12 +8760,12 @@ void ShowHotkeyMenu()
 
         ImGui::PushItemWidth(-1);
         if (inputFont) ImGui::PushFont(inputFont);
-
+        BeginFrameBgImageRegion();
         if (ImGui::InputTextMultiline("##startup_commands", startupBuf, sizeof(startupBuf), ImVec2(-1, 80)))
         {
             g_StartupCommands = startupBuf;
         }
-
+        EndFrameBgImageRegion();
         if (inputFont) ImGui::PopFont();
         ImGui::PopItemWidth();
 
@@ -8476,7 +8776,11 @@ void ShowHotkeyMenu()
     std::string desc = hoveredHotkey.empty() ? "Hover over a hotkey to see details." : "Set the hotkey for " + hoveredHotkey + ".";
     DrawBottomDescription(desc);
 
+        ImGui::PopStyleColor();
     ImGui::End();
+    }
+    else
+        ImGui::PopStyleColor();
     io.ConfigFlags = ImGui::GetIO().ConfigFlags;
 }
 
@@ -8684,12 +8988,16 @@ void ShowCameraMenu()
     ImVec2 windowSize = ImVec2(680.0f * menuScale, 380.0f * menuScale);
     CenterWindow(windowSize);
 
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ShouldDrawWindowBackgroundImage(kWindowBg_Camera) ? ImVec4(0, 0, 0, 0) : s_WindowBgColors[kWindowBg_Camera]);
     PushFontSafe(3);
-    ImGui::Begin("Camera Controls", &showCameraMenu, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoTitleBar);
-    DrawWindowTitleAndClose("Camera Controls", &showCameraMenu);
-    PopFontSafe(3);
+    if (ImGui::Begin("Camera Controls", &showCameraMenu, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoTitleBar))
+    {
+        if (ShouldDrawWindowBackgroundImage(kWindowBg_Camera))
+            DrawWindowBackgroundImage(kWindowBg_Camera);
+        DrawWindowTitleAndClose("Camera Controls", &showCameraMenu);
+        PopFontSafe(3);
 
-    ImGui::Separator();
+        ImGui::Separator();
     ImGui::Dummy(ImVec2(0.0f, 4.0f * menuScale));
 
     // Top info line
@@ -8790,14 +9098,18 @@ void ShowCameraMenu()
     ImGui::Text("Slot");
     ImGui::SameLine(cameraLabelWidth);
     ImGui::SetNextItemWidth(-1);
+    BeginFrameBgImageRegion();
     ImGui::Combo("##PresetSlot", &selectedPreset, presetLabels, IM_ARRAYSIZE(presetLabels));
+    EndFrameBgImageRegion();
 
     ImGui::Text("Name");
     ImGui::SameLine(cameraLabelWidth);
     ImGui::SetNextItemWidth(-1);
+    BeginFrameBgImageRegion();
     ImGui::InputText("##PresetName", presetNameBuf, sizeof(presetNameBuf));
+    EndFrameBgImageRegion();
 
-    if (ImGui::Button("Save Current to Preset", ImVec2(-1, 0)))
+    if (ThemeButton("Save Current to Preset", ImVec2(-1, 0)))
     {
         if (selectedPreset > 0 && selectedPreset <= static_cast<int>(d2rHUDConfig.CameraPresets.size()))
         {
@@ -8812,7 +9124,7 @@ void ShowCameraMenu()
             SaveFullGrailConfig(configFilePath, false);
         }
     }
-    if (ImGui::Button("Apply Preset", ImVec2(-1, 0)))
+    if (ThemeButton("Apply Preset", ImVec2(-1, 0)))
     {
         if (selectedPreset == 0)
         {
@@ -8845,7 +9157,7 @@ void ShowCameraMenu()
         d2rHUDConfig.CameraLastPresetIndex = selectedPreset;
         SaveFullGrailConfig(configFilePath, false);
     }
-    if (ImGui::Checkbox("Autoload last preset", &d2rHUDConfig.CameraAutoloadLastPreset))
+    if (ThemeCheckbox("Autoload last preset", &d2rHUDConfig.CameraAutoloadLastPreset))
         SaveFullGrailConfig(configFilePath, false);
     ImGui::EndChild();
 
@@ -8888,7 +9200,7 @@ void ShowCameraMenu()
 
     ImGui::Dummy(ImVec2(0.0f, 4.0f * menuScale));
     ImGui::BeginDisabled(!camera.valuesFound);
-    if (ImGui::Button("Reset Angles"))
+    if (ThemeButton("Reset Angles"))
     {
         camera.pitch = camera.defaultPitch;
         camera.height = camera.defaultHeight;
@@ -8899,7 +9211,7 @@ void ShowCameraMenu()
     ImGui::EndDisabled();
     ImGui::SameLine();
     ImGui::BeginDisabled(!camera.zoomFound);
-    if (ImGui::Button("Reset Zoom"))
+    if (ThemeButton("Reset Zoom"))
     {
         camera.zoom = camera.defaultZoom;
         ApplyZoomValue();
@@ -8908,7 +9220,11 @@ void ShowCameraMenu()
 
     ImGui::EndChild();
 
+        ImGui::PopStyleColor();
     ImGui::End();
+    }
+    else
+        ImGui::PopStyleColor();
 }
 
 void ShowLootMenu()
@@ -8981,11 +9297,15 @@ void ShowLootMenu()
     CenterWindow(ImVec2(1200, 720));
     static std::string hoveredKey;
     hoveredKey.clear();
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ShouldDrawWindowBackgroundImage(kWindowBg_Loot) ? ImVec4(0, 0, 0, 0) : s_WindowBgColors[kWindowBg_Loot]);
     PushFontSafe(3);
-    ImGui::Begin("D2RLoot Settings", &showLootMenu, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoTitleBar);
-    DrawWindowTitleAndClose("D2RLoot Settings", &showLootMenu);
-    PopFontSafe(3);
-    ImGui::Separator();
+    if (ImGui::Begin("D2RLoot Settings", &showLootMenu, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoTitleBar))
+    {
+        if (ShouldDrawWindowBackgroundImage(kWindowBg_Loot))
+            DrawWindowBackgroundImage(kWindowBg_Loot);
+        DrawWindowTitleAndClose("D2RLoot Settings", &showLootMenu);
+        PopFontSafe(3);
+        ImGui::Separator();
     ImGui::Dummy(ImVec2(0.0f, 3.0f));
     DrawCreateFilterPopup();
 
@@ -9032,7 +9352,7 @@ void ShowLootMenu()
     if (!g_LootFilterHeader.Version.empty())
         CenteredWrappedText("My D2RLoot Version: ", g_LootFilterHeader.Version);
     ImGui::SameLine(0.0f, 12.0f);
-    if (ImGui::Button(s_lootFilterUpdating ? "Updating..." : "Update"))
+    if (ThemeButton(s_lootFilterUpdating ? "Updating..." : "Update"))
     {
         if (!s_lootFilterUpdating)
         {
@@ -9060,6 +9380,7 @@ void ShowLootMenu()
     ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (avail.x - comboWidth) * 0.5f);
     std::string comboLabel = s_pendingFilter.empty() ? currentDisplayName : GetFilterDisplayName(s_pendingFilter);
     ImGui::SetNextItemWidth(comboWidth);
+    BeginFrameBgImageRegion();
     if (ImGui::BeginCombo("##selected_filter", comboLabel.c_str()))
     {
         for (const auto& internalName : orderedFilters)
@@ -9074,6 +9395,7 @@ void ShowLootMenu()
         }
         ImGui::EndCombo();
     }
+    EndFrameBgImageRegion();
     if (!s_pendingFilter.empty())
     {
         ImGui::Dummy(ImVec2(0.0f, 4.0f));
@@ -9085,7 +9407,7 @@ void ShowLootMenu()
         float btnW1 = ImGui::CalcTextSize("Use this filter").x + ImGui::GetStyle().FramePadding.x * 2;
         ImVec2 availApply2 = ImGui::GetContentRegionAvail();
         ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (availApply2.x - btnW1) * 0.5f);
-        if (ImGui::Button("Use this filter"))
+        if (ThemeButton("Use this filter"))
         {
             if (CopyModFilterToActive(s_pendingFilter))
             {
@@ -9133,7 +9455,7 @@ void ShowLootMenu()
 
                 bool boolValue = (val == "true");
 
-                if (ImGui::Checkbox(items[i].first.c_str(), &boolValue))
+                if (ThemeCheckbox(items[i].first.c_str(), &boolValue))
                 {
                     auto it2 = g_LuaVariables.find(key);
                     if (it2 != g_LuaVariables.end()) it2->second = boolValue ? "true" : "false";
@@ -9196,9 +9518,11 @@ void ShowLootMenu()
 
                 std::string inputID = "##val_" + key;
                 ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 60.0f);
+                BeginFrameBgImageRegion();
                 bool changed = ImGui::InputText(inputID.c_str(), buffer, sizeof(buffer));
+                EndFrameBgImageRegion();
                 ImGui::SameLine();
-                if (ImGui::Button(("Done##" + key).c_str())) g_EditMode[key] = false;
+                if (ThemeButton(("Done##" + key).c_str())) g_EditMode[key] = false;
 
                 if (ImGui::IsItemActivated()) ImGui::SetKeyboardFocusHere(-1);
 
@@ -9213,7 +9537,7 @@ void ShowLootMenu()
                 RenderColoredText(value); // uses your function
 
                 ImGui::SameLine();
-                if (ImGui::Button(("Edit##" + key).c_str())) g_EditMode[key] = true;
+                if (ThemeButton(("Edit##" + key).c_str())) g_EditMode[key] = true;
             }
 
             // --- Hover detection ---
@@ -9268,7 +9592,9 @@ void ShowLootMenu()
 
                     std::string inputID = "##filter_title_" + std::to_string(idx);
                     ImGui::PushItemWidth(ImGui::CalcTextSize(buffer).x + 12.0f);
+                    BeginFrameBgImageRegion();
                     bool changed = ImGui::InputText(inputID.c_str(), buffer, sizeof(buffer));
+                    EndFrameBgImageRegion();
                     ImGui::PopItemWidth();
 
                     if (changed) { titles[idx] = buffer; anyTitleChanged = true; }
@@ -9290,12 +9616,12 @@ void ShowLootMenu()
             ImGui::SameLine();
             if (isEditing)
             {
-                if (ImGui::Button(("Done##" + key).c_str()))
+                if (ThemeButton(("Done##" + key).c_str()))
                     g_EditMode[key] = false;
             }
             else
             {
-                if (ImGui::Button(("Edit##" + key).c_str()))
+                if (ThemeButton(("Edit##" + key).c_str()))
                     g_EditMode[key] = true;
             }
 
@@ -9415,6 +9741,7 @@ void ShowLootMenu()
                         float editHeight = lineCount * lineH + ImGui::GetStyle().FramePadding.y * 2.0f - 1.0f * lineH;
                         editHeight = std::clamp(editHeight, 60.0f, 500.0f);
                         ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
+                        BeginFrameBgImageRegion();
                         if (ImGui::InputTextMultiline(("##raw_rule" + std::to_string(r)).c_str(), s_rawEditBuf, sizeof(s_rawEditBuf), ImVec2(-1, editHeight)))
                         {
                             std::string saved = s_rawEditBuf;
@@ -9423,17 +9750,18 @@ void ShowLootMenu()
                             rule.rawLua = saved;
                             SaveLootFilterConfig("lootfilter_config.lua");
                         }
+                        EndFrameBgImageRegion();
                         static int s_copiedRuleIndex = -1;
                         static std::chrono::steady_clock::time_point s_copiedAt;
                         bool showCopied = (s_copiedRuleIndex == (int)r) && (std::chrono::steady_clock::now() - s_copiedAt) < std::chrono::milliseconds(1500);
-                        if (ImGui::Button(showCopied ? "Copied!" : "Copy code"))
+                        if (ThemeButton(showCopied ? "Copied!" : "Copy code"))
                         {
                             ImGui::SetClipboardText(s_rawEditBuf);
                             s_copiedRuleIndex = (int)r;
                             s_copiedAt = std::chrono::steady_clock::now();
                         }
                         ImGui::SameLine();
-                        if (ImGui::Button("Remove rule"))
+                        if (ThemeButton("Remove rule"))
                         {
                             g_LootFilterRules.erase(g_LootFilterRules.begin() + r);
                             SaveLootFilterConfig("lootfilter_config.lua");
@@ -9453,10 +9781,10 @@ void ShowLootMenu()
                 }
             }
             ImGui::Dummy(ImVec2(0.0f, 4.0f));
-            float addRuleW = ImGui::CalcTextSize("Add a new rule").x + ImGui::GetStyle().FramePadding.x * 2;
+            float addRuleW = ImGui::CalcTextSize("Add new rule").x + ImGui::GetStyle().FramePadding.x * 2;
             ImVec2 rulesAvail = ImGui::GetContentRegionAvail();
             ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (rulesAvail.x - addRuleW) * 0.5f);
-            if (ImGui::Button("Add a new rule"))
+            if (ThemeButton("Add new rule"))
             {
                 s_showAddRulePopup = true;
                 s_addRulePopupJustOpened = true;
@@ -9474,9 +9802,11 @@ void ShowLootMenu()
                 {
                     ImGui::Text("Rule name (optional, shown as comment):");
                     ImGui::SetNextItemWidth(-1.0f);
+                    BeginFrameBgImageRegion();
                     ImGui::InputText("##addrule_name", s_addRuleNameBuf, sizeof(s_addRuleNameBuf));
+                    EndFrameBgImageRegion();
                     ImGui::Spacing();
-                    if (ImGui::Button("Add", ImVec2(80.0f, 0.0f)))
+                    if (ThemeButton("Add", ImVec2(80.0f, 0.0f)))
                     {
                         if (!g_LootFilterRules.empty())
                         {
@@ -9500,7 +9830,7 @@ void ShowLootMenu()
                         ImGui::CloseCurrentPopup();
                     }
                     ImGui::SameLine();
-                    if (ImGui::Button("Cancel", ImVec2(80.0f, 0.0f)))
+                    if (ThemeButton("Cancel", ImVec2(80.0f, 0.0f)))
                     {
                         s_showAddRulePopup = false;
                         ImGui::CloseCurrentPopup();
@@ -9537,7 +9867,7 @@ void ShowLootMenu()
                     float btnX = ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - 55.0f;
                     if (btnX > ImGui::GetCursorPosX()) ImGui::SameLine(btnX);
                     std::string playId = "Play##" + name + std::to_string(i);
-                    if (ImGui::Button(playId.c_str(), ImVec2(50.0f, 0.0f)))
+                    if (ThemeButton(playId.c_str(), ImVec2(50.0f, 0.0f)))
                     {
                         if (std::filesystem::exists(path))
                             PlaySoundFile(path);
@@ -9550,7 +9880,7 @@ void ShowLootMenu()
         float importSoundsW = ImGui::CalcTextSize("Import sounds").x + ImGui::GetStyle().FramePadding.x * 2;
         ImVec2 soundsAvail = ImGui::GetContentRegionAvail();
         ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (soundsAvail.x - importSoundsW) * 0.5f);
-        if (ImGui::Button("Import sounds"))
+        if (ThemeButton("Import sounds"))
             OpenImportSoundsPathInput();
         DrawImportSoundsPathRow();
         ImGui::Unindent(8.0f);
@@ -9569,20 +9899,20 @@ void ShowLootMenu()
     float totalBtnW = btnImportW + btnOpenW + btnCreateW + btnGuideW + spacing * 3;
     ImVec2 availBtns = ImGui::GetContentRegionAvail();
     ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (availBtns.x - totalBtnW) * 0.5f);
-    if (ImGui::Button("Import Filter"))
+    if (ThemeButton("Import Filter"))
         OpenImportPathInput();
     ImGui::SameLine();
-    if (ImGui::Button("Open Filter"))
+    if (ThemeButton("Open Filter"))
     {
         std::string path = GetLootFilterConfigPathAbsolute();
         if (std::filesystem::exists(path))
             OpenInShell(path);
     }
     ImGui::SameLine();
-    if (ImGui::Button("Create my own filter"))
+    if (ThemeButton("Create my own filter"))
         OpenCreateFilterPopup();
     ImGui::SameLine();
-    if (ImGui::Button("Filter Guide"))
+    if (ThemeButton("Filter Guide"))
     {
         OpenInShell("https://locbones.github.io/D2RLAN-LootFilterGuide");
     }
@@ -9596,26 +9926,43 @@ void ShowLootMenu()
 
     DrawBottomDescription(desc);
 
+        ImGui::PopStyleColor();
     ImGui::End();
+    }
+    else
+        ImGui::PopStyleColor();
 }
 
 void ShowMemoryMenu()
 {
-    if (!showMemoryMenu) return;
+    static bool s_wasMemoryMenuOpen = false;
+    if (!showMemoryMenu)
+    {
+        s_wasMemoryMenuOpen = false;
+        return;
+    }
 
-    LoadMemoryConfigs(configFilePath);
+    // Load from file only when the panel is first opened, so user edits (Type, Length, Value) are not overwritten every frame
+    if (!s_wasMemoryMenuOpen)
+    {
+        LoadMemoryConfigs(configFilePath);
+        s_wasMemoryMenuOpen = true;
+    }
 
     EnableAllInput();
     CenterWindow(ImVec2(950, 500));
 
     float menuScale = GetMenuScaleFactor();
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ShouldDrawWindowBackgroundImage(kWindowBg_Memory) ? ImVec4(0, 0, 0, 0) : s_WindowBgColors[kWindowBg_Memory]);
     PushFontSafe(3);
-    ImGui::Begin("Memory Edit Info", &showMemoryMenu,
-        ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoTitleBar);
-
-    // STICKY TITLE
-    DrawWindowTitleAndClose("Memory Edit Info", &showMemoryMenu);
-    PopFontSafe(3);
+    if (ImGui::Begin("Memory Edit Info", &showMemoryMenu,
+        ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoTitleBar))
+    {
+        if (ShouldDrawWindowBackgroundImage(kWindowBg_Memory))
+            DrawWindowBackgroundImage(kWindowBg_Memory);
+        // STICKY TITLE
+        DrawWindowTitleAndClose("Memory Edit Info", &showMemoryMenu);
+        PopFontSafe(3);
 
     // STICKY DESCRIPTION
     PushFontSafe(2);
@@ -9624,6 +9971,12 @@ void ShowMemoryMenu()
 
     ImGui::Dummy(ImVec2(0, 10.0f * menuScale));
     ImGui::Separator();
+    ImGui::Dummy(ImVec2(0, 6.0f * menuScale));
+
+    // Red disclaimer: game restart required
+    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.2f, 0.2f, 1.0f));
+    ImGui::TextWrapped("Disclaimer: The game must be restarted for memory edit changes to take effect.");
+    ImGui::PopStyleColor();
     ImGui::Dummy(ImVec2(0, 6.0f * menuScale));
 
     // persistent dropdown selections
@@ -9735,8 +10088,13 @@ void ShowMemoryMenu()
 
             ImGui::SetCursorPosX(startX + typeLabelWidth + 5.0f);
             ImGui::PushItemWidth(typeComboWidth);
+            BeginFrameBgImageRegion();
             if (ImGui::Combo("##type", &typeIndex, typeOptions, IM_ARRAYSIZE(typeOptions)))
+            {
                 entry.Type = (typeIndex == 1 ? "Integer" : "Hex");
+                SaveFullGrailConfig(configFilePath, false);
+            }
+            EndFrameBgImageRegion();
             ImGui::PopItemWidth();
 
             ImGui::SameLine();
@@ -9746,8 +10104,11 @@ void ShowMemoryMenu()
             ImGui::SameLine();
             ImGui::SetCursorPosX(startX + typeLabelWidth + typeComboWidth + 10.0f + lengthLabelWidth + 5.0f);
             ImGui::PushItemWidth(lengthInputWidth);
-            ImGui::InputInt("##length", &entry.Length, 1, 10);
+            BeginFrameBgImageRegion();
+            bool lengthChanged = ImGui::InputInt("##length", &entry.Length, 1, 10);
+            EndFrameBgImageRegion();
             if (entry.Length < 1) entry.Length = 1;
+            if (lengthChanged) SaveFullGrailConfig(configFilePath, false);
             ImGui::PopItemWidth();
 
             PopFontSafe(2);
@@ -9779,6 +10140,7 @@ void ShowMemoryMenu()
                 ImGui::SameLine();
 
                 ImGui::PushItemWidth(comboWidth);
+                BeginFrameBgImageRegion();
                 if (ImGui::BeginCombo("##addr", current.c_str()))
                 {
                     for (int i = 0; i < addrList.size(); ++i)
@@ -9791,6 +10153,7 @@ void ShowMemoryMenu()
                     }
                     ImGui::EndCombo();
                 }
+                EndFrameBgImageRegion();
                 ImGui::PopItemWidth();
             }
 
@@ -9815,8 +10178,13 @@ void ShowMemoryMenu()
             ImGui::SameLine();
 
             ImGui::PushItemWidth(boxWidth);
+            BeginFrameBgImageRegion();
             if (ImGui::InputText("##value", buffer, sizeof(buffer)))
+            {
                 entry.Values = buffer;
+                SaveFullGrailConfig(configFilePath, false);
+            }
+            EndFrameBgImageRegion();
             ImGui::PopItemWidth();
 
             PopFontSafe(2);
@@ -9856,7 +10224,928 @@ void ShowMemoryMenu()
 
     ImGui::EndChild();     // end scrollable region
     ImGui::Columns(1);     // reset
+        ImGui::PopStyleColor();
     ImGui::End();          // end main window
+    }
+    else
+        ImGui::PopStyleColor();
+}
+
+static void ApplyUITheme(const std::string& themeName);
+
+static void ApplyThemeColorsToStyle(const std::vector<ImVec4>& colors)
+{
+    if ((int)colors.size() != s_ThemeColorCount) return;
+    ImGuiStyle& style = ImGui::GetStyle();
+    for (int i = 0; i < s_ThemeColorCount; ++i) {
+        if (s_ThemeColorEntries[i].imguiCol == kImGuiColSentinel)
+            continue;  // checkbox colors: applied only when drawing checkboxes, not to global style
+        // Use transparent when an image override is set so the loaded image shows instead of the color
+        bool useImage = (int)s_UIColorImageOverrides.size() > i && !s_UIColorImageOverrides[i].empty();
+        if (useImage && ((i >= 3 && i <= 5) || (i >= 7 && i <= 9) || (i >= 10 && i <= 12)))
+            style.Colors[s_ThemeColorEntries[i].imguiCol] = ImVec4(0, 0, 0, 0);
+        else
+            style.Colors[s_ThemeColorEntries[i].imguiCol] = colors[i];
+    }
+}
+
+static std::vector<ImVec4> GetCurrentThemeColors()
+{
+    ImGuiStyle& style = ImGui::GetStyle();
+    std::vector<ImVec4> out;
+    out.reserve(s_ThemeColorCount);
+    for (int i = 0; i < s_ThemeColorCount; ++i) {
+        if (s_ThemeColorEntries[i].imguiCol == kImGuiColSentinel) {
+            if (i < (int)s_UICustomColors.size())
+                out.push_back(s_UICustomColors[i]);
+            else if (i == 7)
+                out.push_back(style.Colors[ImGuiCol_FrameBg]);
+            else if (i == 8)
+                out.push_back(style.Colors[ImGuiCol_FrameBgHovered]);
+            else
+                out.push_back(style.Colors[ImGuiCol_FrameBgActive]);
+        } else
+            out.push_back(style.Colors[s_ThemeColorEntries[i].imguiCol]);
+    }
+    return out;
+}
+
+static bool ShouldDrawWindowBackgroundImage(WindowBgId id)
+{
+    if (id < 0 || id >= kWindowBgCount) return false;
+    return !s_WindowBgImageOverrides[id].empty() && D3D12::GetWindowBgTextureId((int)id) != 0;
+}
+
+static void DrawWindowBackgroundImage(WindowBgId id)
+{
+    if (id < 0 || id >= kWindowBgCount) return;
+    uint64_t texId = D3D12::GetWindowBgTextureId((int)id);
+    if (texId == 0) return;
+    ImVec2 winPos = ImGui::GetWindowPos();
+    ImVec2 winSize = ImGui::GetWindowSize();
+    ImVec2 bgMin(winPos.x, winPos.y);
+    ImVec2 bgMax(winPos.x + winSize.x, winPos.y + winSize.y);
+    ImGui::GetWindowDrawList()->AddImage((ImTextureID)texId, bgMin, bgMax, ImVec2(0, 0), ImVec2(1, 1), IM_COL32_WHITE);
+}
+
+static bool ShouldDrawFrameBgImage()
+{
+    // If we have image overrides set but no texture loaded yet, re-request load (retry until it succeeds)
+    for (int s = 0; s < 3; ++s) {
+        if (s + 3 < (int)s_UIColorImageOverrides.size() && !s_UIColorImageOverrides[s + 3].empty() && D3D12::GetFrameBgTextureId(s) == 0)
+            D3D12::RequestFrameBgImageReload(s, s_UIColorImageOverrides[s + 3]);
+    }
+    for (int s = 0; s < 3; ++s) {
+        if (s + 7 < (int)s_UIColorImageOverrides.size() && !s_UIColorImageOverrides[s + 7].empty() && D3D12::GetCheckboxTextureId(s) == 0)
+            D3D12::RequestCheckboxImageReload(s, s_UIColorImageOverrides[s + 7]);
+    }
+    for (int s = 0; s < 3; ++s)
+        if (D3D12::GetFrameBgTextureId(s) != 0) return true;
+    return false;
+}
+
+// Frame Bg image should appear only inside input boxes/dropdowns (not as window body).
+// Slots 0=default, 1=hovered, 2=active. Call Begin before widget, End after.
+static bool s_InFrameBgImageRegion = false;
+static void BeginFrameBgImageRegion()
+{
+    if (s_InFrameBgImageRegion) return;
+    if (!ShouldDrawFrameBgImage()) return;
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    if (dl) { dl->ChannelsSplit(2); dl->ChannelsSetCurrent(1); s_InFrameBgImageRegion = true; }
+}
+static void EndFrameBgImageRegion()
+{
+    if (!s_InFrameBgImageRegion) return;
+    s_InFrameBgImageRegion = false;
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    if (!dl) return;
+    // Pick texture by widget state: active -> slot 2, hovered -> slot 1, else slot 0
+    int slot = ImGui::IsItemActive() ? 2 : (ImGui::IsItemHovered() ? 1 : 0);
+    uint64_t texId = D3D12::GetFrameBgTextureId(slot);
+    if (texId == 0 && slot != 0)
+        texId = D3D12::GetFrameBgTextureId(0);
+    if (texId != 0) {
+        ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
+        dl->ChannelsSetCurrent(0);
+        dl->AddImage((ImTextureID)texId, mn, mx, ImVec2(0, 0), ImVec2(1, 1), IM_COL32_WHITE);
+    }
+    dl->ChannelsMerge();
+}
+
+static bool ThemeButton(const char* label, const ImVec2& size)
+{
+    uint64_t texIdAny = 0;
+    for (int s = 2; s >= 0 && texIdAny == 0; --s)
+        texIdAny = D3D12::GetButtonTextureId(s);
+    if (texIdAny == 0)
+        return ImGui::Button(label, size);
+    ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32(0, 0, 0, 0));
+    // RMD themes: add 5px left/right padding for background image borders; overall button width +10px
+    if (s_UITheme == "RMD Blue" || s_UITheme == "RMD Red" || s_UITheme == "RMD Purple" || s_UITheme == "RMD Green" || s_UITheme == "RMD Gold" || s_UITheme == "RMD Dark") {
+        ImGuiStyle& style = ImGui::GetStyle();
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(style.FramePadding.x + 5.0f, style.FramePadding.y));
+    }
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const int channels = 2;
+    if (dl) {
+        dl->ChannelsSplit(channels);
+        dl->ChannelsSetCurrent(1);  // Button draws to channel 1 so image (channel 0) is behind
+    }
+    bool ret = ImGui::Button(label, size);
+    if (dl) {
+        // Pick slot after Button: 2 = active, 1 = hovered, 0 = default; fallback to lower slot
+        int slot = ImGui::IsItemActive() ? 2 : (ImGui::IsItemHovered() ? 1 : 0);
+        uint64_t texId = 0;
+        for (int s = slot; s >= 0 && texId == 0; --s)
+            texId = D3D12::GetButtonTextureId(s);
+        if (texId != 0) {
+            ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
+            dl->ChannelsSetCurrent(0);
+            dl->AddImage((ImTextureID)texId, mn, mx, ImVec2(0, 0), ImVec2(1, 1), IM_COL32_WHITE);
+        }
+        dl->ChannelsMerge();
+    }
+    if (s_UITheme == "RMD Blue" || s_UITheme == "RMD Red" || s_UITheme == "RMD Purple" || s_UITheme == "RMD Green" || s_UITheme == "RMD Gold" || s_UITheme == "RMD Dark")
+        ImGui::PopStyleVar(1);
+    ImGui::PopStyleColor(1);
+    return ret;
+}
+
+static bool ThemeCheckbox(const char* label, bool* v)
+{
+    ImGuiStyle& style = ImGui::GetStyle();
+    ImVec4 cb = ((int)s_UICustomColors.size() > 7) ? s_UICustomColors[7] : style.Colors[ImGuiCol_FrameBg];
+    ImVec4 cbH = ((int)s_UICustomColors.size() > 8) ? s_UICustomColors[8] : style.Colors[ImGuiCol_FrameBgHovered];
+    ImVec4 cbA = ((int)s_UICustomColors.size() > 9) ? s_UICustomColors[9] : style.Colors[ImGuiCol_FrameBgActive];
+    uint64_t texIdAny = 0;
+    for (int s = 2; s >= 0 && texIdAny == 0; --s)
+        texIdAny = D3D12::GetCheckboxTextureId(s);
+    if (texIdAny == 0) {
+        ImGui::PushStyleColor(ImGuiCol_FrameBg, cb);
+        ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, cbH);
+        ImGui::PushStyleColor(ImGuiCol_FrameBgActive, cbA);
+        bool ret = ImGui::Checkbox(label, v);
+        ImGui::PopStyleColor(3);
+        return ret;
+    }
+    ImGui::PushStyleColor(ImGuiCol_FrameBg, IM_COL32(0, 0, 0, 0));
+    ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, IM_COL32(0, 0, 0, 0));
+    ImGui::PushStyleColor(ImGuiCol_FrameBgActive, IM_COL32(0, 0, 0, 0));
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    if (dl) {
+        dl->ChannelsSplit(2);
+        dl->ChannelsSetCurrent(1);
+    }
+    bool ret = ImGui::Checkbox(label, v);
+    if (dl) {
+        int slot = ImGui::IsItemActive() ? 2 : (ImGui::IsItemHovered() ? 1 : 0);
+        uint64_t texId = D3D12::GetCheckboxTextureId(slot);
+        if (texId == 0 && slot != 0) texId = D3D12::GetCheckboxTextureId(0);
+        if (texId != 0) {
+            // Draw image only over the checkbox box (left square), not the label text.
+            // Extend right (and bottom) by 2px so the image border isn't clipped by ImGui's frame rounding.
+            ImVec2 mn = ImGui::GetItemRectMin();
+            float frameH = ImGui::GetFrameHeight();
+            ImVec2 boxMax(mn.x + frameH + 2.0f, mn.y + frameH + 2.0f);
+            dl->ChannelsSetCurrent(0);
+            dl->AddImage((ImTextureID)texId, mn, boxMax, ImVec2(0, 0), ImVec2(1, 1), IM_COL32_WHITE);
+        }
+        dl->ChannelsMerge();
+    }
+    ImGui::PopStyleColor(3);
+    return ret;
+}
+
+static void ClearThemeImageOverrides()
+{
+    s_UIColorImageOverrides.resize(s_ThemeColorCount, "");
+    for (int i = 0; i < s_ThemeColorCount; ++i)
+        s_UIColorImageOverrides[i] = "";
+    for (int i = 3; i <= 5; ++i)
+        D3D12::RequestFrameBgImageReload(i - 3, "");
+    for (int i = 7; i <= 9; ++i)
+        D3D12::RequestCheckboxImageReload(i - 7, "");
+    for (int i = 10; i <= 12; ++i)
+        D3D12::RequestButtonImageReload(i - 10, "");
+    for (int w = 0; w < kWindowBgCount; ++w)
+    {
+        s_WindowBgImageOverrides[w] = "";
+        D3D12::RequestWindowBgImageReload(w, "");
+    }
+}
+
+static void ApplyUITheme(const std::string& themeName)
+{
+    ImGuiStyle& style = ImGui::GetStyle();
+    if (themeName == "Dark")
+    {
+        ImGui::StyleColorsDark();
+        ClearThemeImageOverrides();
+        for (int w = 0; w < kWindowBgCount; ++w)
+            s_WindowBgColors[w] = style.Colors[ImGuiCol_WindowBg];
+    }
+    else if (themeName == "Golden Sunset")
+    {
+        ImGui::StyleColorsDark();
+        ImVec4* colors = style.Colors;
+        colors[ImGuiCol_Text]                   = ImVec4(0.85f, 0.75f, 0.55f, 1.00f);
+        colors[ImGuiCol_TextDisabled]           = ImVec4(0.45f, 0.40f, 0.30f, 1.00f);
+        colors[ImGuiCol_WindowBg]               = ImVec4(0.08f, 0.06f, 0.05f, 0.94f);
+        colors[ImGuiCol_ChildBg]                = ImVec4(0.10f, 0.08f, 0.06f, 1.00f);
+        colors[ImGuiCol_PopupBg]                = ImVec4(0.10f, 0.08f, 0.06f, 0.98f);
+        colors[ImGuiCol_Border]                  = ImVec4(0.45f, 0.35f, 0.20f, 0.50f);
+        colors[ImGuiCol_FrameBg]                = ImVec4(0.18f, 0.12f, 0.08f, 1.00f);
+        colors[ImGuiCol_FrameBgHovered]         = ImVec4(0.35f, 0.22f, 0.10f, 1.00f);
+        colors[ImGuiCol_FrameBgActive]          = ImVec4(0.42f, 0.28f, 0.12f, 1.00f);
+        colors[ImGuiCol_TitleBg]                 = ImVec4(0.15f, 0.10f, 0.05f, 1.00f);
+        colors[ImGuiCol_TitleBgActive]           = ImVec4(0.35f, 0.22f, 0.08f, 1.00f);
+        colors[ImGuiCol_Button]                  = ImVec4(0.30f, 0.20f, 0.08f, 1.00f);
+        colors[ImGuiCol_ButtonHovered]           = ImVec4(0.55f, 0.38f, 0.12f, 1.00f);
+        colors[ImGuiCol_ButtonActive]            = ImVec4(0.70f, 0.50f, 0.18f, 1.00f);
+        colors[ImGuiCol_Header]                  = ImVec4(0.28f, 0.18f, 0.06f, 1.00f);
+        colors[ImGuiCol_HeaderHovered]           = ImVec4(0.45f, 0.30f, 0.10f, 1.00f);
+        colors[ImGuiCol_HeaderActive]            = ImVec4(0.55f, 0.38f, 0.12f, 1.00f);
+        colors[ImGuiCol_Separator]               = ImVec4(0.45f, 0.35f, 0.20f, 0.50f);
+        colors[ImGuiCol_SliderGrab]              = ImVec4(0.65f, 0.45f, 0.15f, 1.00f);
+        colors[ImGuiCol_SliderGrabActive]        = ImVec4(0.85f, 0.65f, 0.25f, 1.00f);
+        ClearThemeImageOverrides();
+        for (int w = 0; w < kWindowBgCount; ++w)
+            s_WindowBgColors[w] = style.Colors[ImGuiCol_WindowBg];
+    }
+    else if (themeName == "Hell's Embrace")
+    {
+        ImGui::StyleColorsDark();
+        ImVec4* colors = style.Colors;
+        colors[ImGuiCol_Text]                   = ImVec4(0.95f, 0.85f, 0.85f, 1.00f);
+        colors[ImGuiCol_TextDisabled]           = ImVec4(0.50f, 0.40f, 0.40f, 1.00f);
+        colors[ImGuiCol_WindowBg]               = ImVec4(0.04f, 0.02f, 0.02f, 0.94f);
+        colors[ImGuiCol_ChildBg]                = ImVec4(0.06f, 0.03f, 0.03f, 1.00f);
+        colors[ImGuiCol_PopupBg]                = ImVec4(0.06f, 0.03f, 0.03f, 0.98f);
+        colors[ImGuiCol_Border]                  = ImVec4(0.45f, 0.15f, 0.15f, 0.50f);
+        colors[ImGuiCol_FrameBg]                = ImVec4(0.12f, 0.05f, 0.05f, 1.00f);
+        colors[ImGuiCol_FrameBgHovered]         = ImVec4(0.25f, 0.08f, 0.08f, 1.00f);
+        colors[ImGuiCol_FrameBgActive]          = ImVec4(0.35f, 0.10f, 0.10f, 1.00f);
+        colors[ImGuiCol_TitleBg]                 = ImVec4(0.08f, 0.02f, 0.02f, 1.00f);
+        colors[ImGuiCol_TitleBgActive]           = ImVec4(0.22f, 0.06f, 0.06f, 1.00f);
+        colors[ImGuiCol_Button]                  = ImVec4(0.20f, 0.05f, 0.05f, 1.00f);
+        colors[ImGuiCol_ButtonHovered]           = ImVec4(0.45f, 0.10f, 0.10f, 1.00f);
+        colors[ImGuiCol_ButtonActive]            = ImVec4(0.60f, 0.12f, 0.12f, 1.00f);
+        colors[ImGuiCol_Header]                  = ImVec4(0.18f, 0.05f, 0.05f, 1.00f);
+        colors[ImGuiCol_HeaderHovered]           = ImVec4(0.35f, 0.08f, 0.08f, 1.00f);
+        colors[ImGuiCol_HeaderActive]            = ImVec4(0.50f, 0.10f, 0.10f, 1.00f);
+        colors[ImGuiCol_Separator]               = ImVec4(0.40f, 0.15f, 0.15f, 0.50f);
+        colors[ImGuiCol_SliderGrab]              = ImVec4(0.55f, 0.15f, 0.15f, 1.00f);
+        colors[ImGuiCol_SliderGrabActive]        = ImVec4(0.75f, 0.20f, 0.20f, 1.00f);
+        ClearThemeImageOverrides();
+        for (int w = 0; w < kWindowBgCount; ++w)
+            s_WindowBgColors[w] = style.Colors[ImGuiCol_WindowBg];
+    }
+    else if (themeName == "RMD Blue")
+    {
+        static const ImVec4 s_RMDBlueColors[] = {
+            ImVec4(1.0f, 1.0f, 1.0f, 1.0f),
+            ImVec4(0.5f, 0.5f, 0.5f, 1.0f),
+            ImVec4(0.43f, 0.43f, 0.5f, 0.5f),
+            ImVec4(0.16f, 0.29f, 0.48f, 0.54f),
+            ImVec4(0.26f, 0.59f, 0.98f, 0.4f),
+            ImVec4(0.26f, 0.59f, 0.98f, 0.67f),
+            ImVec4(0.26f, 0.59f, 0.98f, 1.0f),
+            ImVec4(0.16f, 0.29f, 0.48f, 0.54f),
+            ImVec4(0.26f, 0.59f, 0.98f, 0.4f),
+            ImVec4(0.26f, 0.59f, 0.98f, 0.67f),
+            ImVec4(0.26f, 0.59f, 0.98f, 0.4f),
+            ImVec4(0.26f, 0.59f, 0.98f, 1.0f),
+            ImVec4(0.06f, 0.53f, 0.98f, 1.0f),
+            ImVec4(0.186f, 0.466f, 0.796f, 0.31f),
+            ImVec4(0.26f, 0.59f, 0.98f, 0.8f),
+            ImVec4(0.26f, 0.59f, 0.98f, 1.0f),
+            ImVec4(0.43f, 0.43f, 0.5f, 0.5f),
+        };
+        static const char* const s_RMDBlueImageOverrides[] = {
+            "", "", "", "Input_BG.png", "Input_BGH.png", "Input_BG.png", "",
+            "Checkbox_BG.png", "Checkbox_BG.png", "Checkbox_BG.png",
+            "RMD_Button_B.png", "RMD_Button_BA.png", "", "", "", "", ""
+        };
+        static const ImVec4 s_RMDBlueWindowBgColors[] = {
+            ImVec4(0.06f, 0.06f, 0.06f, 0.94f), ImVec4(0.06f, 0.06f, 0.06f, 0.94f), ImVec4(0.06f, 0.06f, 0.06f, 0.94f),
+            ImVec4(0.06f, 0.06f, 0.06f, 0.94f), ImVec4(0.06f, 0.06f, 0.06f, 0.94f), ImVec4(0.06f, 0.06f, 0.06f, 0.94f),
+            ImVec4(0.06f, 0.06f, 0.06f, 0.94f), ImVec4(0.06f, 0.06f, 0.06f, 0.94f)
+        };
+        static const char* const s_RMDBlueWindowBgImages[] = {
+            "InfoBG_B2.png", "InfoBG_B1.png", "InfoBG_B2.png", "InfoBG_B3.png", "InfoBG_B4.png",
+            "InfoBG_B2.png", "InfoBG_B2.png", "InfoBG_B3.png"
+        };
+        s_UICustomColors.assign(s_RMDBlueColors, s_RMDBlueColors + s_ThemeColorCount);
+        s_UIColorImageOverrides.resize(s_ThemeColorCount, "");
+        for (int i = 0; i < s_ThemeColorCount && i < (int)(sizeof(s_RMDBlueImageOverrides) / sizeof(s_RMDBlueImageOverrides[0])); ++i)
+            s_UIColorImageOverrides[i] = s_RMDBlueImageOverrides[i];
+        for (int w = 0; w < kWindowBgCount; ++w) {
+            s_WindowBgColors[w] = s_RMDBlueWindowBgColors[w];
+            s_WindowBgImageOverrides[w] = s_RMDBlueWindowBgImages[w];
+        }
+        for (int i = 3; i <= 5; ++i)
+            D3D12::RequestFrameBgImageReload(i - 3, s_UIColorImageOverrides[i]);
+        for (int i = 7; i <= 9; ++i)
+            D3D12::RequestCheckboxImageReload(i - 7, s_UIColorImageOverrides[i]);
+        for (int i = 10; i <= 12; ++i)
+            D3D12::RequestButtonImageReload(i - 10, s_UIColorImageOverrides[i]);
+        for (int w = 0; w < kWindowBgCount; ++w)
+            D3D12::RequestWindowBgImageReload(w, s_WindowBgImageOverrides[w]);
+        ApplyThemeColorsToStyle(s_UICustomColors);
+    }
+    else if (themeName == "RMD Red")
+    {
+        static const ImVec4 s_RMDColors[] = {
+            ImVec4(1.0f, 1.0f, 1.0f, 1.0f), ImVec4(0.5f, 0.5f, 0.5f, 1.0f), ImVec4(0.5f, 0.35f, 0.35f, 0.5f),
+            ImVec4(0.48f, 0.16f, 0.16f, 0.54f), ImVec4(0.98f, 0.26f, 0.26f, 0.4f), ImVec4(0.98f, 0.26f, 0.26f, 0.67f), ImVec4(0.98f, 0.26f, 0.26f, 1.0f),
+            ImVec4(0.48f, 0.16f, 0.16f, 0.54f), ImVec4(0.98f, 0.26f, 0.26f, 0.4f), ImVec4(0.98f, 0.26f, 0.26f, 0.67f),
+            ImVec4(0.98f, 0.26f, 0.26f, 0.4f), ImVec4(0.98f, 0.26f, 0.26f, 1.0f), ImVec4(0.98f, 0.12f, 0.06f, 1.0f),
+            ImVec4(0.796f, 0.186f, 0.186f, 0.31f), ImVec4(0.98f, 0.26f, 0.26f, 0.8f), ImVec4(0.98f, 0.26f, 0.26f, 1.0f), ImVec4(0.5f, 0.4f, 0.4f, 0.5f),
+        };
+        static const char* const s_RMDImageOverrides[] = {
+            "", "", "", "Input_BG.png", "Input_BGH.png", "Input_BG.png", "",
+            "Checkbox_BG.png", "Checkbox_BG.png", "Checkbox_BG.png",
+            "RMD_Button_R.png", "RMD_Button_RA.png", "", "", "", "", ""
+        };
+        static const ImVec4 s_RMDWindowBgColors[] = {
+            ImVec4(0.06f, 0.06f, 0.06f, 0.94f), ImVec4(0.06f, 0.06f, 0.06f, 0.94f), ImVec4(0.06f, 0.06f, 0.06f, 0.94f),
+            ImVec4(0.06f, 0.06f, 0.06f, 0.94f), ImVec4(0.06f, 0.06f, 0.06f, 0.94f), ImVec4(0.06f, 0.06f, 0.06f, 0.94f), ImVec4(0.06f, 0.06f, 0.06f, 0.94f), ImVec4(0.06f, 0.06f, 0.06f, 0.94f)
+        };
+        static const char* const s_RMDWindowBgImages[] = {
+            "InfoBG_R2.png", "InfoBG_R1.png", "InfoBG_R2.png", "InfoBG_R3.png", "InfoBG_R4.png",
+            "InfoBG_R2.png", "InfoBG_R2.png", "InfoBG_R3.png"
+        };
+        s_UICustomColors.assign(s_RMDColors, s_RMDColors + s_ThemeColorCount);
+        s_UIColorImageOverrides.resize(s_ThemeColorCount, "");
+        for (int i = 0; i < s_ThemeColorCount && i < (int)(sizeof(s_RMDImageOverrides) / sizeof(s_RMDImageOverrides[0])); ++i)
+            s_UIColorImageOverrides[i] = s_RMDImageOverrides[i];
+        for (int w = 0; w < kWindowBgCount; ++w) {
+            s_WindowBgColors[w] = s_RMDWindowBgColors[w];
+            s_WindowBgImageOverrides[w] = s_RMDWindowBgImages[w];
+        }
+        for (int i = 3; i <= 5; ++i)
+            D3D12::RequestFrameBgImageReload(i - 3, s_UIColorImageOverrides[i]);
+        for (int i = 7; i <= 9; ++i)
+            D3D12::RequestCheckboxImageReload(i - 7, s_UIColorImageOverrides[i]);
+        for (int i = 10; i <= 12; ++i)
+            D3D12::RequestButtonImageReload(i - 10, s_UIColorImageOverrides[i]);
+        for (int w = 0; w < kWindowBgCount; ++w)
+            D3D12::RequestWindowBgImageReload(w, s_WindowBgImageOverrides[w]);
+        ApplyThemeColorsToStyle(s_UICustomColors);
+    }
+    else if (themeName == "RMD Purple")
+    {
+        static const ImVec4 s_RMDColors[] = {
+            ImVec4(1.0f, 1.0f, 1.0f, 1.0f), ImVec4(0.5f, 0.5f, 0.5f, 1.0f), ImVec4(0.45f, 0.4f, 0.5f, 0.5f),
+            ImVec4(0.35f, 0.16f, 0.48f, 0.54f), ImVec4(0.6f, 0.25f, 0.98f, 0.4f), ImVec4(0.65f, 0.3f, 0.98f, 0.67f), ImVec4(0.7f, 0.35f, 0.98f, 1.0f),
+            ImVec4(0.35f, 0.16f, 0.48f, 0.54f), ImVec4(0.6f, 0.25f, 0.98f, 0.4f), ImVec4(0.65f, 0.3f, 0.98f, 0.67f),
+            ImVec4(0.6f, 0.25f, 0.98f, 0.4f), ImVec4(0.7f, 0.35f, 0.98f, 1.0f), ImVec4(0.55f, 0.15f, 0.98f, 1.0f),
+            ImVec4(0.5f, 0.2f, 0.75f, 0.31f), ImVec4(0.65f, 0.3f, 0.98f, 0.8f), ImVec4(0.7f, 0.35f, 0.98f, 1.0f), ImVec4(0.45f, 0.4f, 0.5f, 0.5f),
+        };
+        static const char* const s_RMDImageOverrides[] = {
+            "", "", "", "Input_BG.png", "Input_BGH.png", "Input_BG.png", "",
+            "Checkbox_BG.png", "Checkbox_BG.png", "Checkbox_BG.png",
+            "RMD_Button_P.png", "RMD_Button_PA.png", "", "", "", "", ""
+        };
+        static const ImVec4 s_RMDWindowBgColors[] = {
+            ImVec4(0.06f, 0.06f, 0.06f, 0.94f), ImVec4(0.06f, 0.06f, 0.06f, 0.94f), ImVec4(0.06f, 0.06f, 0.06f, 0.94f),
+            ImVec4(0.06f, 0.06f, 0.06f, 0.94f), ImVec4(0.06f, 0.06f, 0.06f, 0.94f), ImVec4(0.06f, 0.06f, 0.06f, 0.94f), ImVec4(0.06f, 0.06f, 0.06f, 0.94f), ImVec4(0.06f, 0.06f, 0.06f, 0.94f)
+        };
+        static const char* const s_RMDWindowBgImages[] = {
+            "InfoBG_P2.png", "InfoBG_P1.png", "InfoBG_P2.png", "InfoBG_P3.png", "InfoBG_P4.png",
+            "InfoBG_P2.png", "InfoBG_P2.png", "InfoBG_P3.png"
+        };
+        s_UICustomColors.assign(s_RMDColors, s_RMDColors + s_ThemeColorCount);
+        s_UIColorImageOverrides.resize(s_ThemeColorCount, "");
+        for (int i = 0; i < s_ThemeColorCount && i < (int)(sizeof(s_RMDImageOverrides) / sizeof(s_RMDImageOverrides[0])); ++i)
+            s_UIColorImageOverrides[i] = s_RMDImageOverrides[i];
+        for (int w = 0; w < kWindowBgCount; ++w) {
+            s_WindowBgColors[w] = s_RMDWindowBgColors[w];
+            s_WindowBgImageOverrides[w] = s_RMDWindowBgImages[w];
+        }
+        for (int i = 3; i <= 5; ++i)
+            D3D12::RequestFrameBgImageReload(i - 3, s_UIColorImageOverrides[i]);
+        for (int i = 7; i <= 9; ++i)
+            D3D12::RequestCheckboxImageReload(i - 7, s_UIColorImageOverrides[i]);
+        for (int i = 10; i <= 12; ++i)
+            D3D12::RequestButtonImageReload(i - 10, s_UIColorImageOverrides[i]);
+        for (int w = 0; w < kWindowBgCount; ++w)
+            D3D12::RequestWindowBgImageReload(w, s_WindowBgImageOverrides[w]);
+        ApplyThemeColorsToStyle(s_UICustomColors);
+    }
+    else if (themeName == "RMD Green")
+    {
+        static const ImVec4 s_RMDColors[] = {
+            ImVec4(1.0f, 1.0f, 1.0f, 1.0f), ImVec4(0.5f, 0.5f, 0.5f, 1.0f), ImVec4(0.35f, 0.45f, 0.38f, 0.5f),
+            ImVec4(0.16f, 0.4f, 0.2f, 0.54f), ImVec4(0.25f, 0.85f, 0.35f, 0.4f), ImVec4(0.28f, 0.88f, 0.38f, 0.67f), ImVec4(0.3f, 0.9f, 0.35f, 1.0f),
+            ImVec4(0.16f, 0.4f, 0.2f, 0.54f), ImVec4(0.25f, 0.85f, 0.35f, 0.4f), ImVec4(0.28f, 0.88f, 0.38f, 0.67f),
+            ImVec4(0.25f, 0.85f, 0.35f, 0.4f), ImVec4(0.3f, 0.9f, 0.35f, 1.0f), ImVec4(0.1f, 0.9f, 0.25f, 1.0f),
+            ImVec4(0.18f, 0.6f, 0.25f, 0.31f), ImVec4(0.28f, 0.88f, 0.38f, 0.8f), ImVec4(0.3f, 0.9f, 0.35f, 1.0f), ImVec4(0.4f, 0.5f, 0.43f, 0.5f),
+        };
+        static const char* const s_RMDImageOverrides[] = {
+            "", "", "", "Input_BG.png", "Input_BGH.png", "Input_BG.png", "",
+            "Checkbox_BG.png", "Checkbox_BG.png", "Checkbox_BG.png",
+            "RMD_Button_BG.png", "RMD_Button_GA.png", "", "", "", "", ""
+        };
+        static const ImVec4 s_RMDWindowBgColors[] = {
+            ImVec4(0.06f, 0.06f, 0.06f, 0.94f), ImVec4(0.06f, 0.06f, 0.06f, 0.94f), ImVec4(0.06f, 0.06f, 0.06f, 0.94f),
+            ImVec4(0.06f, 0.06f, 0.06f, 0.94f), ImVec4(0.06f, 0.06f, 0.06f, 0.94f), ImVec4(0.06f, 0.06f, 0.06f, 0.94f), ImVec4(0.06f, 0.06f, 0.06f, 0.94f), ImVec4(0.06f, 0.06f, 0.06f, 0.94f)
+        };
+        static const char* const s_RMDWindowBgImages[] = {
+            "InfoBG_G2.png", "InfoBG_G1.png", "InfoBG_G2.png", "InfoBG_G3.png", "InfoBG_G4.png",
+            "InfoBG_G2.png", "InfoBG_G2.png", "InfoBG_G3.png"
+        };
+        s_UICustomColors.assign(s_RMDColors, s_RMDColors + s_ThemeColorCount);
+        s_UIColorImageOverrides.resize(s_ThemeColorCount, "");
+        for (int i = 0; i < s_ThemeColorCount && i < (int)(sizeof(s_RMDImageOverrides) / sizeof(s_RMDImageOverrides[0])); ++i)
+            s_UIColorImageOverrides[i] = s_RMDImageOverrides[i];
+        for (int w = 0; w < kWindowBgCount; ++w) {
+            s_WindowBgColors[w] = s_RMDWindowBgColors[w];
+            s_WindowBgImageOverrides[w] = s_RMDWindowBgImages[w];
+        }
+        for (int i = 3; i <= 5; ++i)
+            D3D12::RequestFrameBgImageReload(i - 3, s_UIColorImageOverrides[i]);
+        for (int i = 7; i <= 9; ++i)
+            D3D12::RequestCheckboxImageReload(i - 7, s_UIColorImageOverrides[i]);
+        for (int i = 10; i <= 12; ++i)
+            D3D12::RequestButtonImageReload(i - 10, s_UIColorImageOverrides[i]);
+        for (int w = 0; w < kWindowBgCount; ++w)
+            D3D12::RequestWindowBgImageReload(w, s_WindowBgImageOverrides[w]);
+        ApplyThemeColorsToStyle(s_UICustomColors);
+    }
+    else if (themeName == "RMD Gold")
+    {
+        static const ImVec4 s_RMDColors[] = {
+            ImVec4(1.0f, 1.0f, 1.0f, 1.0f), ImVec4(0.5f, 0.5f, 0.5f, 1.0f), ImVec4(0.5f, 0.45f, 0.35f, 0.5f),
+            ImVec4(0.45f, 0.35f, 0.1f, 0.54f), ImVec4(0.95f, 0.75f, 0.2f, 0.4f), ImVec4(0.96f, 0.78f, 0.25f, 0.67f), ImVec4(0.98f, 0.8f, 0.25f, 1.0f),
+            ImVec4(0.45f, 0.35f, 0.1f, 0.54f), ImVec4(0.95f, 0.75f, 0.2f, 0.4f), ImVec4(0.96f, 0.78f, 0.25f, 0.67f),
+            ImVec4(0.95f, 0.75f, 0.2f, 0.4f), ImVec4(0.98f, 0.8f, 0.25f, 1.0f), ImVec4(0.98f, 0.8f, 0.1f, 1.0f),
+            ImVec4(0.75f, 0.55f, 0.15f, 0.31f), ImVec4(0.96f, 0.78f, 0.25f, 0.8f), ImVec4(0.98f, 0.8f, 0.25f, 1.0f), ImVec4(0.5f, 0.48f, 0.4f, 0.5f),
+        };
+        static const char* const s_RMDImageOverrides[] = {
+            "", "", "", "Input_BG.png", "Input_BGH.png", "Input_BG.png", "",
+            "Checkbox_BG.png", "Checkbox_BG.png", "Checkbox_BG.png",
+            "RMD_Button_Y.png", "RMD_Button_YA.png", "", "", "", "", ""
+        };
+        static const ImVec4 s_RMDWindowBgColors[] = {
+            ImVec4(0.06f, 0.06f, 0.06f, 0.94f), ImVec4(0.06f, 0.06f, 0.06f, 0.94f), ImVec4(0.06f, 0.06f, 0.06f, 0.94f),
+            ImVec4(0.06f, 0.06f, 0.06f, 0.94f), ImVec4(0.06f, 0.06f, 0.06f, 0.94f), ImVec4(0.06f, 0.06f, 0.06f, 0.94f), ImVec4(0.06f, 0.06f, 0.06f, 0.94f), ImVec4(0.06f, 0.06f, 0.06f, 0.94f)
+        };
+        static const char* const s_RMDWindowBgImages[] = {
+            "InfoBG_Y2.png", "InfoBG_Y1.png", "InfoBG_Y2.png", "InfoBG_Y3.png", "InfoBG_Y4.png",
+            "InfoBG_Y2.png", "InfoBG_Y2.png", "InfoBG_Y3.png"
+        };
+        s_UICustomColors.assign(s_RMDColors, s_RMDColors + s_ThemeColorCount);
+        s_UIColorImageOverrides.resize(s_ThemeColorCount, "");
+        for (int i = 0; i < s_ThemeColorCount && i < (int)(sizeof(s_RMDImageOverrides) / sizeof(s_RMDImageOverrides[0])); ++i)
+            s_UIColorImageOverrides[i] = s_RMDImageOverrides[i];
+        for (int w = 0; w < kWindowBgCount; ++w) {
+            s_WindowBgColors[w] = s_RMDWindowBgColors[w];
+            s_WindowBgImageOverrides[w] = s_RMDWindowBgImages[w];
+        }
+        for (int i = 3; i <= 5; ++i)
+            D3D12::RequestFrameBgImageReload(i - 3, s_UIColorImageOverrides[i]);
+        for (int i = 7; i <= 9; ++i)
+            D3D12::RequestCheckboxImageReload(i - 7, s_UIColorImageOverrides[i]);
+        for (int i = 10; i <= 12; ++i)
+            D3D12::RequestButtonImageReload(i - 10, s_UIColorImageOverrides[i]);
+        for (int w = 0; w < kWindowBgCount; ++w)
+            D3D12::RequestWindowBgImageReload(w, s_WindowBgImageOverrides[w]);
+        ApplyThemeColorsToStyle(s_UICustomColors);
+    }
+    else if (themeName == "RMD Dark")
+    {
+        static const ImVec4 s_RMDColors[] = {
+            ImVec4(0.9f, 0.9f, 0.9f, 1.0f), ImVec4(0.45f, 0.45f, 0.45f, 1.0f), ImVec4(0.35f, 0.35f, 0.38f, 0.5f),
+            ImVec4(0.18f, 0.2f, 0.24f, 0.54f), ImVec4(0.28f, 0.3f, 0.35f, 0.4f), ImVec4(0.32f, 0.34f, 0.4f, 0.67f), ImVec4(0.5f, 0.52f, 0.58f, 1.0f),
+            ImVec4(0.18f, 0.2f, 0.24f, 0.54f), ImVec4(0.28f, 0.3f, 0.35f, 0.4f), ImVec4(0.32f, 0.34f, 0.4f, 0.67f),
+            ImVec4(0.28f, 0.3f, 0.35f, 0.4f), ImVec4(0.45f, 0.48f, 0.55f, 1.0f), ImVec4(0.35f, 0.38f, 0.45f, 1.0f),
+            ImVec4(0.22f, 0.24f, 0.28f, 0.31f), ImVec4(0.38f, 0.4f, 0.46f, 0.8f), ImVec4(0.45f, 0.48f, 0.55f, 1.0f), ImVec4(0.35f, 0.35f, 0.38f, 0.5f),
+        };
+        static const char* const s_RMDImageOverrides[] = {
+            "", "", "", "Input_BG.png", "Input_BGH.png", "Input_BG.png", "",
+            "Checkbox_BG.png", "Checkbox_BG.png", "Checkbox_BG.png",
+            "RMD_Button_D.png", "RMD_Button_DA.png", "", "", "", "", ""
+        };
+        static const ImVec4 s_RMDWindowBgColors[] = {
+            ImVec4(0.06f, 0.06f, 0.06f, 0.94f), ImVec4(0.06f, 0.06f, 0.06f, 0.94f), ImVec4(0.06f, 0.06f, 0.06f, 0.94f),
+            ImVec4(0.06f, 0.06f, 0.06f, 0.94f), ImVec4(0.06f, 0.06f, 0.06f, 0.94f), ImVec4(0.06f, 0.06f, 0.06f, 0.94f), ImVec4(0.06f, 0.06f, 0.06f, 0.94f), ImVec4(0.06f, 0.06f, 0.06f, 0.94f)
+        };
+        static const char* const s_RMDWindowBgImages[] = {
+            "InfoBG_D2.png", "InfoBG_D1.png", "InfoBG_D2.png", "InfoBG_D3.png", "InfoBG_D4.png",
+            "InfoBG_D2.png", "InfoBG_D2.png", "InfoBG_D3.png"
+        };
+        s_UICustomColors.assign(s_RMDColors, s_RMDColors + s_ThemeColorCount);
+        s_UIColorImageOverrides.resize(s_ThemeColorCount, "");
+        for (int i = 0; i < s_ThemeColorCount && i < (int)(sizeof(s_RMDImageOverrides) / sizeof(s_RMDImageOverrides[0])); ++i)
+            s_UIColorImageOverrides[i] = s_RMDImageOverrides[i];
+        for (int w = 0; w < kWindowBgCount; ++w) {
+            s_WindowBgColors[w] = s_RMDWindowBgColors[w];
+            s_WindowBgImageOverrides[w] = s_RMDWindowBgImages[w];
+        }
+        for (int i = 3; i <= 5; ++i)
+            D3D12::RequestFrameBgImageReload(i - 3, s_UIColorImageOverrides[i]);
+        for (int i = 7; i <= 9; ++i)
+            D3D12::RequestCheckboxImageReload(i - 7, s_UIColorImageOverrides[i]);
+        for (int i = 10; i <= 12; ++i)
+            D3D12::RequestButtonImageReload(i - 10, s_UIColorImageOverrides[i]);
+        for (int w = 0; w < kWindowBgCount; ++w)
+            D3D12::RequestWindowBgImageReload(w, s_WindowBgImageOverrides[w]);
+        ApplyThemeColorsToStyle(s_UICustomColors);
+    }
+    else if (themeName == "Custom" && (int)s_UICustomColors.size() == s_ThemeColorCount)
+    {
+        ApplyThemeColorsToStyle(s_UICustomColors);
+    }
+    else
+    {
+        for (const auto& p : s_UIThemePresets)
+        {
+            if (p.first == themeName && (int)p.second.size() == s_ThemeColorCount)
+            {
+                ApplyThemeColorsToStyle(p.second);
+                ClearThemeImageOverrides();
+                ImVec4 windowBg = style.Colors[ImGuiCol_WindowBg];
+                for (int w = 0; w < kWindowBgCount; ++w)
+                    s_WindowBgColors[w] = windowBg;
+                return;
+            }
+        }
+        // Default: classic dark
+        ImGui::StyleColorsDark();
+        ClearThemeImageOverrides();
+        for (int w = 0; w < kWindowBgCount; ++w)
+            s_WindowBgColors[w] = style.Colors[ImGuiCol_WindowBg];
+    }
+}
+
+void ShowSettingsPanel()
+{
+    if (!showSettingsPanel) return;
+
+    float menuScale = GetMenuScaleFactor();
+    ImVec2 panelSize = ImVec2(480.0f * menuScale, 560.0f * menuScale);
+    ImVec2 centerPos = ImVec2((ImGui::GetIO().DisplaySize.x - panelSize.x) * 0.5f, (ImGui::GetIO().DisplaySize.y - panelSize.y) * 0.5f);
+    ImGui::SetNextWindowPos(centerPos, ImGuiCond_Once);
+    ImGui::SetNextWindowSize(panelSize, ImGuiCond_Once);
+
+    ImGuiIO& io = ImGui::GetIO();
+    int fontIndexTitle = 3;
+    int fontIndexBody = 1;
+    ImFont* fontTitle = (fontIndexTitle >= 0 && fontIndexTitle < io.Fonts->Fonts.Size) ? io.Fonts->Fonts[fontIndexTitle] : nullptr;
+    ImFont* fontBody = (fontIndexBody >= 0 && fontIndexBody < io.Fonts->Fonts.Size) ? io.Fonts->Fonts[fontIndexBody] : nullptr;
+    if (fontTitle) ImGui::PushFont(fontTitle);
+
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ShouldDrawWindowBackgroundImage(kWindowBg_ThemeControl) ? ImVec4(0, 0, 0, 0) : s_WindowBgColors[kWindowBg_ThemeControl]);
+    if (ImGui::Begin("Theme Control", &showSettingsPanel, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoTitleBar))
+    {
+        if (ShouldDrawWindowBackgroundImage(kWindowBg_ThemeControl))
+            DrawWindowBackgroundImage(kWindowBg_ThemeControl);
+        const char* panelTitle = "Theme Control";
+        float titleWidth = ImGui::CalcTextSize(panelTitle).x;
+        ImVec2 contentSize = ImGui::GetContentRegionAvail();
+        float closeBtnSize = 18.0f;
+        float padding = 5.0f;
+        ImGui::SetCursorPosX((contentSize.x - titleWidth) * 0.5f);
+        ImGui::TextColored(ImVec4(0.95f, 0.85f, 0.5f, 1.0f), "%s", panelTitle);
+        ImGui::SameLine(contentSize.x - closeBtnSize - padding);
+        ImVec2 btnPos = ImGui::GetCursorScreenPos();
+        ImGui::InvisibleButton("CloseBtnSettings", ImVec2(closeBtnSize, closeBtnSize));
+        if (ImGui::IsItemClicked())
+            showSettingsPanel = false;
+        ImDrawList* drawList = ImGui::GetWindowDrawList();
+        ImVec2 textSize = ImGui::CalcTextSize("X");
+        ImVec2 textPos = ImVec2(btnPos.x + (closeBtnSize - textSize.x) * 0.5f, btnPos.y + (closeBtnSize - textSize.y) * 0.5f);
+        drawList->AddText(textPos, IM_COL32(255, 80, 80, 255), "X");
+        ImGui::Separator();
+        ImGui::Dummy(ImVec2(0.0f, 4.0f * menuScale));
+        if (fontTitle) ImGui::PopFont();
+        if (fontBody) ImGui::PushFont(fontBody);
+
+        // Build theme list: Default, Golden Sunset, Hell's Embrace, RMD Blue, RMD Red, RMD Purple, RMD Green, RMD Gold, RMD Dark, Custom, then user presets
+        static std::vector<std::string> s_ThemeComboNames;
+        s_ThemeComboNames.clear();
+        s_ThemeComboNames.push_back("Default");
+        s_ThemeComboNames.push_back("Golden Sunset");
+        s_ThemeComboNames.push_back("Hell's Embrace");
+        s_ThemeComboNames.push_back("RMD Blue");
+        s_ThemeComboNames.push_back("RMD Red");
+        s_ThemeComboNames.push_back("RMD Purple");
+        s_ThemeComboNames.push_back("RMD Green");
+        s_ThemeComboNames.push_back("RMD Gold");
+        s_ThemeComboNames.push_back("RMD Dark");
+        s_ThemeComboNames.push_back("Custom");
+        for (const auto& p : s_UIThemePresets)
+            s_ThemeComboNames.push_back(p.first);
+
+        static int themeComboIndex = 0;
+        themeComboIndex = 0;
+        for (size_t i = 0; i < s_ThemeComboNames.size(); ++i)
+            if (s_ThemeComboNames[i] == s_UITheme) { themeComboIndex = (int)i; break; }
+
+        // --- Theme preset ---
+        ImGui::Text("Theme preset");
+        ImGui::SameLine(110.0f);
+        ImGui::SetNextItemWidth(180.0f);
+        BeginFrameBgImageRegion();
+        if (ImGui::Combo("##Theme", &themeComboIndex, [](void* data, int idx, const char** out) {
+            const auto* names = (const std::vector<std::string>*)data;
+            if (idx >= 0 && idx < (int)names->size()) { *out = (*names)[idx].c_str(); return true; }
+            return false;
+        }, &s_ThemeComboNames, (int)s_ThemeComboNames.size()))
+        {
+            s_UITheme = s_ThemeComboNames[themeComboIndex];
+            ApplyUITheme(s_UITheme);
+            s_UICustomColors = GetCurrentThemeColors();  // update color pickers to show selected preset
+            SaveFullGrailConfig(configFilePath, false);
+        }
+        EndFrameBgImageRegion();
+
+        // Save current as new preset
+        static char s_NewPresetName[64] = "";
+        ImGui::SetNextItemWidth(180.0f);
+        BeginFrameBgImageRegion();
+        ImGui::InputTextWithHint("##NewPreset", "New preset name", s_NewPresetName, sizeof(s_NewPresetName));
+        EndFrameBgImageRegion();
+        ImGui::SameLine();
+        if (ThemeButton("Save preset", ImVec2(100.0f, 0)))
+        {
+            std::string name(s_NewPresetName);
+            if (!name.empty())
+            {
+                for (auto it = s_UIThemePresets.begin(); it != s_UIThemePresets.end(); ++it)
+                    if (it->first == name) { s_UIThemePresets.erase(it); break; }
+                s_UIThemePresets.push_back({ name, GetCurrentThemeColors() });
+                s_NewPresetName[0] = '\0';
+                SaveFullGrailConfig(configFilePath, false);
+            }
+        }
+
+        ImGui::Dummy(ImVec2(0.0f, 4.0f));
+        ImGui::Separator();
+        ImGui::Text("Customize colors");
+        ImGui::Dummy(ImVec2(0.0f, 2.0f));
+
+        // Ensure Custom colors are populated when editing
+        if ((int)s_UICustomColors.size() != s_ThemeColorCount)
+            s_UICustomColors = GetCurrentThemeColors();
+
+        if (ImGui::BeginChild("ThemeColors", ImVec2(0, -4.0f), true))
+        {
+            if ((int)s_UIColorImageOverrides.size() != s_ThemeColorCount)
+                s_UIColorImageOverrides.resize(s_ThemeColorCount, "");
+            static std::vector<std::string> s_ImageList;
+            static int s_ImagePickerForSlot = -1;
+            static bool s_OpenImagePickerThisFrame = false;
+            static ImVec2 s_ImagePickerPos = ImVec2(0, 0);
+            const float cameraBtnSize = 22.0f;
+            int camW = 0, camH = 0;
+            D3D12::GetCameraButtonTextureSize(&camW, &camH);
+            ImTextureID cameraTexId = (ImTextureID)(uint64_t)D3D12::GetCameraButtonTextureId();
+            for (int i = 0; i < s_ThemeColorCount; ++i)
+            {
+                ImGui::PushID(i);
+                ImVec4* col = &s_UICustomColors[i];
+                bool showImageBtn = (i >= 3 && i <= 5) || (i >= 7 && i <= 9) || (i >= 10 && i <= 12);
+                bool imageActive = showImageBtn && (int)s_UIColorImageOverrides.size() > i && !s_UIColorImageOverrides[i].empty();
+                if (imageActive)
+                {
+                    float patchSize = ImGui::GetFrameHeight();
+                    ImGui::InvisibleButton("##colorpatch", ImVec2(patchSize, patchSize));
+                    ImVec2 pmin = ImGui::GetItemRectMin();
+                    ImVec2 pmax = ImGui::GetItemRectMax();
+                    ImGui::GetWindowDrawList()->AddRectFilled(pmin, pmax, IM_COL32(50, 50, 50, 255));
+                    if (cameraTexId && camW > 0 && camH > 0)
+                    {
+                        float scale = patchSize / (camW > camH ? (float)camW : (float)camH);
+                        if (scale > 1.0f) scale = 1.0f;
+                        ImVec2 drawSize((float)camW * scale, (float)camH * scale);
+                        ImVec2 center(pmin.x + (patchSize - drawSize.x) * 0.5f, pmin.y + (patchSize - drawSize.y) * 0.5f);
+                        ImGui::GetWindowDrawList()->AddImage(cameraTexId, center, ImVec2(center.x + drawSize.x, center.y + drawSize.y), ImVec2(0, 0), ImVec2(1, 1), IM_COL32_WHITE);
+                    }
+                    ImGui::SameLine(0, ImGui::GetStyle().ItemInnerSpacing.x);
+                    ImGui::TextUnformatted(s_ThemeColorEntries[i].label);
+                    if (ImGui::IsItemHovered())
+                    {
+                        ImVec2 mouse = ImGui::GetIO().MousePos;
+                        ImGui::SetNextWindowPos(ImVec2(mouse.x + 30.0f, mouse.y - 30.0f), ImGuiCond_Always);
+                        const std::string& imgName = (int)s_UIColorImageOverrides.size() > i ? s_UIColorImageOverrides[i] : "";
+                        ImGui::SetTooltip("Image: %s\nUse the image button to choose \"(none)\" to use color again.", imgName.empty() ? "(none)" : imgName.c_str());
+                    }
+                }
+                else
+                {
+                    if (ImGui::ColorEdit4(s_ThemeColorEntries[i].label, (float*)col, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_AlphaBar))
+                    {
+                        s_UITheme = "Custom";
+                        ApplyThemeColorsToStyle(s_UICustomColors);
+                        SaveFullGrailConfig(configFilePath, false);
+                    }
+                }
+                if (showImageBtn)
+                {
+                    ImGui::SameLine(ImGui::GetWindowContentRegionMax().x - cameraBtnSize - 8.0f);
+                    if (ImGui::InvisibleButton("##ImgBtn", ImVec2(cameraBtnSize, cameraBtnSize)))
+                    {
+                        s_ImagePickerForSlot = i;
+                        s_ImagePickerPos.x = ImGui::GetItemRectMin().x;
+                        s_ImagePickerPos.y = ImGui::GetItemRectMax().y + 2.0f;
+                        s_OpenImagePickerThisFrame = true;
+                    }
+                    if (cameraTexId && camW > 0 && camH > 0)
+                    {
+                        ImVec2 btnMin = ImGui::GetItemRectMin();
+                        float scale = cameraBtnSize / (camW > camH ? (float)camW : (float)camH);
+                        if (scale > 1.0f) scale = 1.0f;
+                        ImVec2 drawSize((float)camW * scale, (float)camH * scale);
+                        ImVec2 center(btnMin.x + (cameraBtnSize - drawSize.x) * 0.5f, btnMin.y + (cameraBtnSize - drawSize.y) * 0.5f);
+                        ImGui::GetWindowDrawList()->AddImage(cameraTexId, center, ImVec2(center.x + drawSize.x, center.y + drawSize.y), ImVec2(0, 0), ImVec2(1, 1), IM_COL32_WHITE);
+                    }
+                    if (ImGui::IsItemHovered())
+                    {
+                        ImVec2 mouse = ImGui::GetIO().MousePos;
+                        ImGui::SetNextWindowPos(ImVec2(mouse.x + 30.0f, mouse.y - 30.0f), ImGuiCond_Always);
+                        ImGui::SetTooltip("Use image from the 'D2RHUD_Images' folder for this element");
+                    }
+                }
+                ImGui::PopID();
+            }
+            ImGui::Dummy(ImVec2(0.0f, 6.0f));
+            ImGui::Separator();
+            ImGui::Text("Window backgrounds");
+            ImGui::Dummy(ImVec2(0.0f, 2.0f));
+            static int s_WindowBgImagePickerSlot = -1;
+            static bool s_OpenWindowBgImagePickerThisFrame = false;
+            static ImVec2 s_WindowBgImagePickerPos = ImVec2(0, 0);
+            for (int w = 0; w < kWindowBgCount; ++w)
+            {
+                ImGui::PushID(w + 1000);
+                bool hasImage = !s_WindowBgImageOverrides[w].empty() && D3D12::GetWindowBgTextureId(w) != 0;
+                if (hasImage)
+                {
+                    float patchSize = ImGui::GetFrameHeight();
+                    ImGui::InvisibleButton("##winbgpatch", ImVec2(patchSize, patchSize));
+                    ImVec2 pmin = ImGui::GetItemRectMin(), pmax = ImGui::GetItemRectMax();
+                    ImGui::GetWindowDrawList()->AddRectFilled(pmin, pmax, IM_COL32(50, 50, 50, 255));
+                    if (cameraTexId && camW > 0 && camH > 0)
+                    {
+                        float scale = patchSize / (camW > camH ? (float)camW : (float)camH);
+                        if (scale > 1.0f) scale = 1.0f;
+                        ImVec2 drawSize((float)camW * scale, (float)camH * scale);
+                        ImVec2 center(pmin.x + (patchSize - drawSize.x) * 0.5f, pmin.y + (patchSize - drawSize.y) * 0.5f);
+                        ImGui::GetWindowDrawList()->AddImage(cameraTexId, center, ImVec2(center.x + drawSize.x, center.y + drawSize.y), ImVec2(0, 0), ImVec2(1, 1), IM_COL32_WHITE);
+                    }
+                    ImGui::SameLine(0, ImGui::GetStyle().ItemInnerSpacing.x);
+                    ImGui::TextUnformatted(s_WindowBgNames[w]);
+                    if (ImGui::IsItemHovered())
+                    {
+                        ImVec2 mouse = ImGui::GetIO().MousePos;
+                        ImGui::SetNextWindowPos(ImVec2(mouse.x + 30.0f, mouse.y - 30.0f), ImGuiCond_Always);
+                        ImGui::SetTooltip("Image: %s\nUse the image button to choose \"(none)\" to use color.", s_WindowBgImageOverrides[w].empty() ? "(none)" : s_WindowBgImageOverrides[w].c_str());
+                    }
+                }
+                else if (ImGui::ColorEdit4(s_WindowBgNames[w], (float*)&s_WindowBgColors[w], ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_AlphaBar))
+                    SaveFullGrailConfig(configFilePath, false);
+                ImGui::SameLine(ImGui::GetWindowContentRegionMax().x - cameraBtnSize - 8.0f);
+                if (ImGui::InvisibleButton("##WinBgImgBtn", ImVec2(cameraBtnSize, cameraBtnSize)))
+                {
+                    s_WindowBgImagePickerSlot = w;
+                    s_WindowBgImagePickerPos.x = ImGui::GetItemRectMin().x;
+                    s_WindowBgImagePickerPos.y = ImGui::GetItemRectMax().y + 2.0f;
+                    s_OpenWindowBgImagePickerThisFrame = true;
+                }
+                if (cameraTexId && camW > 0 && camH > 0)
+                {
+                    ImVec2 btnMin = ImGui::GetItemRectMin();
+                    float scale = cameraBtnSize / (camW > camH ? (float)camW : (float)camH);
+                    if (scale > 1.0f) scale = 1.0f;
+                    ImVec2 drawSize((float)camW * scale, (float)camH * scale);
+                    ImVec2 center(btnMin.x + (cameraBtnSize - drawSize.x) * 0.5f, btnMin.y + (cameraBtnSize - drawSize.y) * 0.5f);
+                    ImGui::GetWindowDrawList()->AddImage(cameraTexId, center, ImVec2(center.x + drawSize.x, center.y + drawSize.y), ImVec2(0, 0), ImVec2(1, 1), IM_COL32_WHITE);
+                }
+                if (ImGui::IsItemHovered())
+                {
+                    ImVec2 mouse = ImGui::GetIO().MousePos;
+                    ImGui::SetNextWindowPos(ImVec2(mouse.x + 30.0f, mouse.y - 30.0f), ImGuiCond_Always);
+                    ImGui::SetTooltip("Use image from D2RHUD_Images for this window background");
+                }
+                ImGui::PopID();
+            }
+            if (s_OpenWindowBgImagePickerThisFrame && s_WindowBgImagePickerSlot >= 0)
+            {
+                ImGui::SetNextWindowPos(s_WindowBgImagePickerPos);
+                ImGui::OpenPopup("##WindowBgImagePicker");
+                s_OpenWindowBgImagePickerThisFrame = false;
+            }
+            if (ImGui::BeginPopup("##WindowBgImagePicker", ImGuiWindowFlags_NoTitleBar))
+            {
+                if (s_WindowBgImagePickerSlot >= 0 && s_WindowBgImagePickerSlot < kWindowBgCount)
+                {
+                    int w = s_WindowBgImagePickerSlot;
+                    static std::vector<std::string> s_WindowBgImageList;
+                    s_WindowBgImageList.clear();
+                    s_WindowBgImageList.push_back("(none)");
+                    try {
+                        std::string imagesPath = D3D12::GetD2RHUDImagesPath();
+                        if (std::filesystem::exists(imagesPath) && std::filesystem::is_directory(imagesPath)) {
+                            for (const auto& entry : std::filesystem::directory_iterator(imagesPath)) {
+                                if (!entry.is_regular_file()) continue;
+                                std::string ext = entry.path().extension().string();
+                                for (auto& c : ext) c = (char)tolower((unsigned char)c);
+                                if (ext == ".png" || ext == ".jpg" || ext == ".jpeg")
+                                    s_WindowBgImageList.push_back(entry.path().filename().string());
+                            }
+                            std::sort(s_WindowBgImageList.begin() + 1, s_WindowBgImageList.end());
+                        }
+                    } catch (...) {}
+                    const std::string& cur = s_WindowBgImageOverrides[w];
+                    float listH = (float)((int)s_WindowBgImageList.size() * 22 + 8);
+                    if (listH > 250.0f) listH = 250.0f;
+                    if (ImGui::BeginChild("##WinBgImageDropList", ImVec2(320.0f, listH), true))
+                    {
+                        for (int k = 0; k < (int)s_WindowBgImageList.size(); ++k)
+                        {
+                            bool isSelected = (k == 0 && cur.empty()) || (k > 0 && s_WindowBgImageList[k] == cur);
+                            if (ImGui::Selectable(s_WindowBgImageList[k].c_str(), isSelected))
+                            {
+                                s_WindowBgImageOverrides[w] = (k == 0) ? "" : s_WindowBgImageList[k];
+                                D3D12::RequestWindowBgImageReload(w, s_WindowBgImageOverrides[w]);
+                                SaveFullGrailConfig(configFilePath, false);
+                                ImGui::CloseCurrentPopup();
+                            }
+                        }
+                    }
+                    ImGui::EndChild();
+                }
+                ImGui::EndPopup();
+            }
+            else
+                s_WindowBgImagePickerSlot = -1;
+
+            if (s_OpenImagePickerThisFrame && s_ImagePickerForSlot >= 0)
+            {
+                ImGui::SetNextWindowPos(s_ImagePickerPos);
+                ImGui::OpenPopup("##ImagePicker");
+                s_OpenImagePickerThisFrame = false;
+            }
+            if (ImGui::BeginPopup("##ImagePicker", ImGuiWindowFlags_NoTitleBar))
+            {
+                if (s_ImagePickerForSlot >= 0 && s_ImagePickerForSlot < s_ThemeColorCount)
+                {
+                    int idx = s_ImagePickerForSlot;
+                    s_ImageList.clear();
+                    s_ImageList.push_back("(none)");
+                    try {
+                        std::string imagesPath = D3D12::GetD2RHUDImagesPath();
+                        if (std::filesystem::exists(imagesPath) && std::filesystem::is_directory(imagesPath)) {
+                            for (const auto& entry : std::filesystem::directory_iterator(imagesPath)) {
+                                if (!entry.is_regular_file()) continue;
+                                std::string ext = entry.path().extension().string();
+                                for (auto& c : ext) c = (char)tolower((unsigned char)c);
+                                if (ext == ".png" || ext == ".jpg" || ext == ".jpeg")
+                                    s_ImageList.push_back(entry.path().filename().string());
+                            }
+                            std::sort(s_ImageList.begin() + 1, s_ImageList.end());
+                        }
+                    } catch (...) {}
+                    const std::string& cur = s_UIColorImageOverrides[idx];
+                    float listH = (float)((int)s_ImageList.size() * 22 + 8);
+                    if (listH > 250.0f) listH = 250.0f;
+                    if (ImGui::BeginChild("##ImageDropList", ImVec2(320.0f, listH), true))
+                    {
+                        for (int k = 0; k < (int)s_ImageList.size(); ++k)
+                        {
+                            bool isSelected = (k == 0 && cur.empty()) || (k > 0 && s_ImageList[k] == cur);
+                            if (ImGui::Selectable(s_ImageList[k].c_str(), isSelected))
+                            {
+                                s_UIColorImageOverrides[idx] = (k == 0) ? "" : s_ImageList[k];
+                                if (idx >= 3 && idx <= 5)
+                                    D3D12::RequestFrameBgImageReload(idx - 3, s_UIColorImageOverrides[idx]);
+                                else if (idx >= 7 && idx <= 9)
+                                    D3D12::RequestCheckboxImageReload(idx - 7, s_UIColorImageOverrides[idx]);
+                                else if (idx >= 10 && idx <= 12)
+                                    D3D12::RequestButtonImageReload(idx - 10, s_UIColorImageOverrides[idx]);
+                                ApplyThemeColorsToStyle(s_UICustomColors);  // apply transparent for image slots so image shows when loaded
+                                SaveFullGrailConfig(configFilePath, false);
+                                ImGui::CloseCurrentPopup();
+                            }
+                        }
+                    }
+                    ImGui::EndChild();
+                }
+                ImGui::EndPopup();
+            }
+            else
+                s_ImagePickerForSlot = -1;
+        }
+        ImGui::EndChild();
+        ImGui::PopStyleColor();
+    }
+    else
+        ImGui::PopStyleColor();
+    ImGui::End();
+    if (fontBody) ImGui::PopFont();
 }
 
 void ShowD2RHUDMenu()
@@ -9871,6 +11160,7 @@ void ShowD2RHUDMenu()
         LoadD2RHUDConfig(configFilePath);
         RegisterModOverrides();
         ApplyModOverrides(modName);
+        ApplyUITheme(s_UITheme);
         initialized = true;
     }
 
@@ -9887,8 +11177,11 @@ void ShowD2RHUDMenu()
     ImFont* fontSize = (fontIndex >= 0 && fontIndex < io.Fonts->Fonts.Size) ? io.Fonts->Fonts[fontIndex] : nullptr;
     if (fontSize) ImGui::PushFont(fontSize);
 
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ShouldDrawWindowBackgroundImage(kWindowBg_D2RHUDOptions) ? ImVec4(0, 0, 0, 0) : s_WindowBgColors[kWindowBg_D2RHUDOptions]);
     if (ImGui::Begin("D2RHUD Options", &showD2RHUDMenu, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoTitleBar))
     {
+        if (ShouldDrawWindowBackgroundImage(kWindowBg_D2RHUDOptions))
+            DrawWindowBackgroundImage(kWindowBg_D2RHUDOptions);
         // --- CENTERED WINDOW TITLE WITH TOP-RIGHT CLOSE BUTTON ---
         ImGuiIO& io = ImGui::GetIO();
         int fontIndex = 3;
@@ -9900,6 +11193,8 @@ void ShowD2RHUDMenu()
         // Compute window content size
         ImVec2 contentSize = ImGui::GetContentRegionAvail();
         float titleWidth = ImGui::CalcTextSize(windowTitle).x;
+
+        // --- Centered window title (themes icon only on Control Center) ---
         ImGui::SetCursorPosX((contentSize.x - titleWidth) * 0.5f);
         ImGui::TextColored(ImVec4(0.95f, 0.85f, 0.5f, 1.0f), "%s", windowTitle);
 
@@ -9948,7 +11243,7 @@ void ShowD2RHUDMenu()
                 if (lockInfo && lockInfo->locked)
                     ImGui::BeginDisabled();
 
-                ImGui::Checkbox(label, value);
+                ThemeCheckbox(label, value);
 
                 if (lockInfo && lockInfo->locked)
                     ImGui::EndDisabled();
@@ -10061,11 +11356,13 @@ void ShowD2RHUDMenu()
             "HP Rollover Difficulty",
             [&]() {
                 ImGui::PushItemWidth(250.0f * menuScale);
+                BeginFrameBgImageRegion();
                 if (ImGui::Combo("##HPRolloverDifficulty", &difficultyIndex,
                     difficultyItems, IM_ARRAYSIZE(difficultyItems)))
                 {
                     d2rHUDConfig.HPRolloverDifficulty = difficultyIndex - 1;
                 }
+                EndFrameBgImageRegion();
                 ImGui::PopItemWidth();
             },
             "HP Rollover Difficulty", "- Control the applied Difficulty of HP Rollover Mods\n\n", "Only valid if HP Rollover Mods are enabled", false, 35.0f, GetLockInfo(modName, &ModOverrideSettings::HPRolloverDifficulty)
@@ -10077,11 +11374,13 @@ void ShowD2RHUDMenu()
             "HP Rollover %",
             [&]() {
                 ImGui::PushItemWidth(100.0f * menuScale);
+                BeginFrameBgImageRegion();
                 if (ImGui::InputInt("##HPRolloverPercent", &d2rHUDConfig.HPRolloverPercent, 1, 10))
                 {
                     d2rHUDConfig.HPRolloverPercent =
                         std::clamp(d2rHUDConfig.HPRolloverPercent, 0, 100);
                 }
+                EndFrameBgImageRegion();
                 ImGui::PopItemWidth();
             },
             "HP Rollover %", "- Controls the maximum amount of Damage reduction\n\n", "Only valid if HP Rollover Mods are enabled", true, 35.0f, GetLockInfo(modName, &ModOverrideSettings::HPRolloverPercent)
@@ -10091,11 +11390,13 @@ void ShowD2RHUDMenu()
             "Sunder Value",
             [&]() {
                 ImGui::PushItemWidth(100.0f * menuScale);
+                BeginFrameBgImageRegion();
                 if (ImGui::InputInt("##SunderValue", &d2rHUDConfig.SunderValue, 1, 10))
                 {
                     d2rHUDConfig.SunderValue =
                         std::clamp(d2rHUDConfig.SunderValue, 0, 100);
                 }
+                EndFrameBgImageRegion();
                 ImGui::PopItemWidth();
             },
             "Sunder Value", "- Controls the Sundered monster value\n(When specified value is reached, reduction stops)\n- Only applies when monster is above 100 resistance\n- Applies edit at the time of monster spawn\n- States like Conviction will apply at full effect\n(Instead of by 1/5 if the monster is immune)\n- For TCPIP, the highest sunder value for each element\nFound among all players will be applied\n\n", "Requires compatible sunder-edited mod files to use\nMore info available at D2RModding Discord", true, 42.0f, GetLockInfo(modName, &ModOverrideSettings::SunderValue)
@@ -10155,7 +11456,7 @@ void ShowD2RHUDMenu()
 
         // --- Test Settings Button ---
         ImGui::PushID("TestSettings");
-        if (ImGui::Button("Test Settings", ImVec2(buttonWidth, 0)))
+        if (ThemeButton("Test Settings", ImVec2(buttonWidth, 0)))
         {
             // Update cachedSettings with the latest values
             cachedSettings.HPRollover = d2rHUDConfig.HPRolloverMods;
@@ -10189,7 +11490,7 @@ void ShowD2RHUDMenu()
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.0f, 0.5f, 0.0f, 1.0f));
         ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.1f, 0.6f, 0.1f, 1.0f));
 
-        if (ImGui::Button("Save Config", ImVec2(buttonWidth, 0)))
+        if (ThemeButton("Save Config", ImVec2(buttonWidth, 0)))
         {
             namespace fs = std::filesystem;
             std::string modName = GetModName();
@@ -10270,8 +11571,11 @@ void ShowD2RHUDMenu()
             ImGui::TextColored(saveStatusColor, "%s", saveStatusMessage.c_str());
         }
 
+        ImGui::PopStyleColor();
         ImGui::End();
     }
+    else
+        ImGui::PopStyleColor();
 }
 
 void ShowHUDSettingsMenu()
@@ -10284,11 +11588,15 @@ void ShowHUDSettingsMenu()
     CenterWindow(ImVec2(800, 400));
     static std::string hoveredKey;
     hoveredKey.clear();
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ShouldDrawWindowBackgroundImage(kWindowBg_ThemeControl) ? ImVec4(0, 0, 0, 0) : s_WindowBgColors[kWindowBg_ThemeControl]);
     PushFontSafe(3);
-    ImGui::Begin("HUD Settings", &showHUDSettingsMenu, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoTitleBar);
-    DrawWindowTitleAndClose("HUD Settings", &showHUDSettingsMenu);
-    PopFontSafe(3);
-    ImGui::Separator();
+    if (ImGui::Begin("HUD Settings", &showHUDSettingsMenu, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoTitleBar))
+    {
+        if (ShouldDrawWindowBackgroundImage(kWindowBg_ThemeControl))
+            DrawWindowBackgroundImage(kWindowBg_ThemeControl);
+        DrawWindowTitleAndClose("HUD Settings", &showHUDSettingsMenu);
+        PopFontSafe(3);
+        ImGui::Separator();
     ImGui::Dummy(ImVec2(0.0f, 5.0f));
     DrawCreateFilterPopup();
 
@@ -10342,7 +11650,7 @@ void ShowHUDSettingsMenu()
     if (!g_LootFilterHeader.Version.empty())
         CenteredWrappedText("My D2RLoot Version: ", g_LootFilterHeader.Version);
     ImGui::SameLine(0.0f, 12.0f);
-    if (ImGui::Button(s_lootFilterUpdating ? "Updating...##hud" : "Update##hud"))
+    if (ThemeButton(s_lootFilterUpdating ? "Updating...##hud" : "Update##hud"))
     {
         if (!s_lootFilterUpdating)
         {
@@ -10370,6 +11678,7 @@ void ShowHUDSettingsMenu()
     ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (availHUD.x - comboWidthHUD) * 0.5f);
     std::string comboLabelHUD = s_pendingFilter.empty() ? currentDisplayNameHUD : GetFilterDisplayName(s_pendingFilter);
     ImGui::SetNextItemWidth(comboWidthHUD);
+    BeginFrameBgImageRegion();
     if (ImGui::BeginCombo("##selected_filter_hud", comboLabelHUD.c_str()))
     {
         for (const auto& internalName : orderedFiltersHUD)
@@ -10384,6 +11693,7 @@ void ShowHUDSettingsMenu()
         }
         ImGui::EndCombo();
     }
+    EndFrameBgImageRegion();
     if (!s_pendingFilter.empty())
     {
         ImGui::Dummy(ImVec2(0.0f, 4.0f));
@@ -10395,7 +11705,7 @@ void ShowHUDSettingsMenu()
         float btnW1HUD = ImGui::CalcTextSize("Use this filter").x + ImGui::GetStyle().FramePadding.x * 2;
         ImVec2 availApply2HUD = ImGui::GetContentRegionAvail();
         ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (availApply2HUD.x - btnW1HUD) * 0.5f);
-        if (ImGui::Button("Use this filter##hud"))
+        if (ThemeButton("Use this filter##hud"))
         {
             if (CopyModFilterToActive(s_pendingFilter))
             {
@@ -10439,7 +11749,7 @@ void ShowHUDSettingsMenu()
 
                 bool boolValue = (val == "true");
 
-                if (ImGui::Checkbox(items[i].first.c_str(), &boolValue))
+                if (ThemeCheckbox(items[i].first.c_str(), &boolValue))
                 {
                     auto it2 = g_LuaVariables.find(key);
                     if (it2 != g_LuaVariables.end()) it2->second = boolValue ? "true" : "false";
@@ -10490,7 +11800,9 @@ void ShowHUDSettingsMenu()
 
             std::string inputID = "##val_" + key;
             ImGui::PushItemWidth(valueWidth);
+            BeginFrameBgImageRegion();
             bool changed = ImGui::InputText(inputID.c_str(), buffer, sizeof(buffer));
+            EndFrameBgImageRegion();
             if (ImGui::IsItemActivated()) ImGui::SetKeyboardFocusHere(-1);
             if (changed)
             {
@@ -10544,7 +11856,9 @@ void ShowHUDSettingsMenu()
                 ImGui::PushItemWidth(textWidth + 8.0f);
 
                 std::string inputID = "##filter_title_" + std::to_string(idx);
+                BeginFrameBgImageRegion();
                 bool changed = ImGui::InputText(inputID.c_str(), buffer, sizeof(buffer));
+                EndFrameBgImageRegion();
                 ImGui::PopItemWidth();
 
                 if (changed) titles[idx] = buffer;
@@ -10581,20 +11895,20 @@ void ShowHUDSettingsMenu()
     float totalBtnWHUD2 = btnImportWHUD + btnOpenWHUD + btnCreateWHUD + btnGuideWHUD + spacingBtnsHUD * 3;
     ImVec2 availBtnsHUD = ImGui::GetContentRegionAvail();
     ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (availBtnsHUD.x - totalBtnWHUD2) * 0.5f);
-    if (ImGui::Button("Import Filter##hud"))
+    if (ThemeButton("Import Filter##hud"))
         OpenImportPathInput();
     ImGui::SameLine();
-    if (ImGui::Button("Open Filter##hud"))
+    if (ThemeButton("Open Filter##hud"))
     {
         std::string path = GetLootFilterConfigPathAbsolute();
         if (std::filesystem::exists(path))
             OpenInShell(path);
     }
     ImGui::SameLine();
-    if (ImGui::Button("Create my own filter##hud"))
+    if (ThemeButton("Create my own filter##hud"))
         OpenCreateFilterPopup();
     ImGui::SameLine();
-    if (ImGui::Button("Filter Guide##hud"))
+    if (ThemeButton("Filter Guide##hud"))
     {
         OpenInShell("https://locbones.github.io/D2RLAN-LootFilterGuide");
     }
@@ -10608,7 +11922,11 @@ void ShowHUDSettingsMenu()
 
     DrawBottomDescription(desc);
 
+        ImGui::PopStyleColor();
     ImGui::End();
+    }
+    else
+        ImGui::PopStyleColor();
 }
 
 void ShowMainMenu()
@@ -10630,59 +11948,55 @@ void ShowMainMenu()
     }
 
     ImGui::SetNextWindowSize(windowSize, ImGuiCond_Always);
-    ImGui::Begin("D2RHUD Control Center", &showMainMenu, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoTitleBar);
-
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ShouldDrawWindowBackgroundImage(kWindowBg_ControlCenter) ? ImVec4(0, 0, 0, 0) : s_WindowBgColors[kWindowBg_ControlCenter]);
+    if (ImGui::Begin("D2RHUD Control Center", &showMainMenu, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoTitleBar))
+    {
+        if (ShouldDrawWindowBackgroundImage(kWindowBg_ControlCenter))
+            DrawWindowBackgroundImage(kWindowBg_ControlCenter);
     // --- HEADER ---
     int fontIndex = 3;
     ImFont* fontSize = (fontIndex >= 0 && fontIndex < io.Fonts->Fonts.Size) ? io.Fonts->Fonts[fontIndex] : nullptr;
     if (fontSize) ImGui::PushFont(fontSize);
 
-    /*
-    // ---- Hud Settings Button ----
-    {
-        const char* gearIcon = reinterpret_cast<const char*>(u8"\u216C"); // or u8"⚙🔧"
-        float btnSize = 20.0f;
-        float padding = 35.0f;
-
-        ImVec2 startPos = ImGui::GetCursorScreenPos();  // top-left of window content
-
-        // Position gear on far left
-        ImGui::SetCursorPosX(padding);
-
-        // Button hitbox
-        ImGui::InvisibleButton("SettingsBtn", ImVec2(btnSize, btnSize));
-        bool gearClicked = ImGui::IsItemClicked();
-
-        // Draw the icon centered in the hitbox
-        ImDrawList* dl = ImGui::GetWindowDrawList();
-        ImVec2 gearPos = ImGui::GetItemRectMin();
-        ImVec2 gearSize = ImGui::CalcTextSize(gearIcon);
-
-        dl->AddText(ImVec2(
-            gearPos.x + (btnSize - gearSize.x) * 0.5f,
-            gearPos.y + (btnSize - gearSize.y) * 0.5f
-        ), IM_COL32(230, 230, 230, 255), gearIcon);
-
-        if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("Open D2RHUDCC Settings");
-
-        if (gearClicked)
-        {
-            showHUDSettingsMenu = true;
-            
-        }
-        ShowHUDSettingsMenu();
-    }
-    */
-
-    // --- TITLE AND CLOSE BUTTON ---
     const char* windowTitle = "D2RHUD Control Center";
     float closeBtnSize = 20.0f * menuScale;
     float padding = 5.0f * menuScale;
     ImVec2 contentSize = ImGui::GetContentRegionAvail();
-
     float titleWidth = ImGui::CalcTextSize(windowTitle).x;
-    ImGui::SetCursorPosX((contentSize.x - titleWidth) * 0.5f);
+
+    // --- Gear icon at top-left: opens Settings panel (uses theme.png if available, else shows "Settings" text) ---
+    float gearBtnSize = 28.0f * menuScale;
+    float leftPadding = 8.0f * menuScale;
+    ImGui::SetCursorPosX(leftPadding);
+    ImGui::InvisibleButton("SettingsGear", ImVec2(gearBtnSize, gearBtnSize));
+    if (ImGui::IsItemClicked())
+        showSettingsPanel = true;
+    if (ImGui::IsItemHovered())
+    {
+        ImVec2 mouse = ImGui::GetIO().MousePos;
+        ImGui::SetNextWindowPos(ImVec2(mouse.x + 30.0f, mouse.y - 30.0f), ImGuiCond_Always);
+        ImGui::SetTooltip("Theme Control (Beta)");
+    }
+    ImVec2 gearMin = ImGui::GetItemRectMin();
+    int gearW = 0, gearH = 0;
+    D3D12::GetGearTextureSize(&gearW, &gearH);
+    ImTextureID gearTexId = (ImTextureID)(uint64_t)D3D12::GetGearTextureId();
+    if (gearTexId && gearW > 0 && gearH > 0) {
+        ImVec2 gearSize((float)gearW, (float)gearH);
+        float scale = (gearBtnSize - 4.0f) / (gearSize.x > gearSize.y ? gearSize.x : gearSize.y);
+        if (scale > 1.0f) scale = 1.0f;
+        ImVec2 drawSize(gearSize.x * scale, gearSize.y * scale);
+        ImVec2 center(gearMin.x + (gearBtnSize - drawSize.x) * 0.5f, gearMin.y + (gearBtnSize - drawSize.y) * 0.5f);
+        ImGui::GetWindowDrawList()->AddImage(gearTexId, center, ImVec2(center.x + drawSize.x, center.y + drawSize.y), ImVec2(0, 0), ImVec2(1, 1), IM_COL32(255, 255, 255, 255));
+    } else {
+        const char* label = "Settings";
+        ImVec2 labelSize = ImGui::CalcTextSize(label);
+        ImVec2 textPos(gearMin.x + (gearBtnSize - labelSize.x) * 0.5f, gearMin.y + (gearBtnSize - labelSize.y) * 0.5f);
+        ImGui::GetWindowDrawList()->AddText(textPos, IM_COL32(230, 230, 230, 255), label);
+    }
+
+    // --- Centered title ---
+    ImGui::SameLine((contentSize.x - titleWidth) * 0.5f);
     ImGui::TextColored(ImVec4(0.95f, 0.85f, 0.5f, 1.0f), "%s", windowTitle);
 
     ImGui::SameLine(contentSize.x - closeBtnSize - padding);
@@ -10738,32 +12052,34 @@ void ShowMainMenu()
     fontSize = (fontIndex >= 0 && fontIndex < io.Fonts->Fonts.Size) ? io.Fonts->Fonts[fontIndex] : nullptr;
     if (fontSize) ImGui::PushFont(fontSize);
     
-    if (ImGui::Button("D2RHUD Options", ImVec2(buttonWidth, buttonHeight)))
+    if (ThemeButton("D2RHUD Options", ImVec2(buttonWidth, buttonHeight)))
         showD2RHUDMenu = true;
     ShowD2RHUDMenu();
+    if (showSettingsPanel)
+        ShowSettingsPanel();
     if (ImGui::IsItemHovered()) { descriptionTitle = "D2RHUD Options"; descriptionText = "Explore and Control enabled D2RHUD Options\n\n- Values are retrieved and stored in D2RLAN/Launcher/config.json\n- Overrides can be applied by the author in data/D2RLAN/config_override.json\n- Expect implementation changes over the next updates"; }
     
-    if (ImGui::Button("Memory Edit Info", ImVec2(buttonWidth, buttonHeight)))
+    if (ThemeButton("Memory Edit Info", ImVec2(buttonWidth, buttonHeight)))
         showMemoryMenu = true;
     ShowMemoryMenu();
-    if (ImGui::IsItemHovered()) { descriptionTitle = "Memory Edit Info"; descriptionText = "View your currently active memory edits\n\n- Values are retrieved and stored in D2RLAN/Launcher/config.json\n- These edits provide additional 'hardcode only' options to the game\n- For some entries, game restart will be needed for them to apply\n- This panel is currently read-only during early development"; }
+    if (ImGui::IsItemHovered()) { descriptionTitle = "Memory Edit Info"; descriptionText = "View and edit your currently active memory edits\n\n- Values are loaded from D2RLAN/Launcher config when you open the panel\n- You can change Type, Length, and Value; edits are kept while the panel is open\n- These edits provide additional 'hardcode only' options to the game\n- For some entries, game restart will be needed for them to apply"; }
    
-    if (ImGui::Button("D2RLoot Settings", ImVec2(buttonWidth, buttonHeight)))
+    if (ThemeButton("D2RLoot Settings", ImVec2(buttonWidth, buttonHeight)))
         showLootMenu = true;
     ShowLootMenu();
     if (ImGui::IsItemHovered()) { descriptionTitle = "D2RLoot Settings"; descriptionText = "Explore and control your currently active loot filter\n\n- Filters operate in real-time with user-defined rules\n- Accessible in D2RLAN > Options > Loot Filter\n- Rules are defined in D2RLAN/D2R/lootfilter_config.lua"; }
     
-    if (ImGui::Button("Grail Tracker", ImVec2(buttonWidth, buttonHeight)))
+    if (ThemeButton("Grail Tracker", ImVec2(buttonWidth, buttonHeight)))
         showGrailMenu = true;
     ShowGrailMenu();
     if (ImGui::IsItemHovered()) { descriptionTitle = "Grail Tracker"; descriptionText = "View the progress of your Set/Unique item hunting\n\n- Grail Entries are manually stored for now\n- This feature works for all mods* (or TCP)\n(Mod must have included set/unique items.txt files)\n- Grail Progress/Settings are stored in D2RLAN/D2R/HUD_Settings_ModName.json"; }
 
-    if (ImGui::Button("Hotkey Controls", ImVec2(buttonWidth, buttonHeight)))
+    if (ThemeButton("Hotkey Controls", ImVec2(buttonWidth, buttonHeight)))
         showHotkeyMenu = true;
     ShowHotkeyMenu();
     if (ImGui::IsItemHovered()) { descriptionTitle = "Hotkey Controls"; descriptionText = "Manage your hotkeys used by various tools\n\n- Hotkeys are achieved by utilizing internal game functions\n- They can also be used to dynamically control your loot filter\n- Hotkeys are defined in D2RLAN/Launcher/D2RLAN_Config.txt"; }
 
-    if (ImGui::Button("Camera Controls", ImVec2(buttonWidth, buttonHeight)))
+    if (ThemeButton("Camera Controls", ImVec2(buttonWidth, buttonHeight)))
         showCameraMenu = true;
     ShowCameraMenu();
     if (ImGui::IsItemHovered()) { descriptionTitle = "Camera Controls"; descriptionText = "Modify the in-game camera angles and zoom\n\n- Scans memory to find camera control values\n- Angle/zoom scans required for every fresh session\n- Future versions likely to include more automation/controls"; }
@@ -10800,7 +12116,11 @@ void ShowMainMenu()
     }
     if (fontSize) ImGui::PopFont();
 
+        ImGui::PopStyleColor();
     ImGui::End();
+    }
+    else
+        ImGui::PopStyleColor();
 }
 
 #pragma endregion
@@ -11288,7 +12608,7 @@ void D2RHUD::OnDraw() {
 
     // Scale all menu UI by 200% on 4K resolution
     {
-        bool anyMenuOpen = showMainMenu || showHUDSettingsMenu || showD2RHUDMenu || showMemoryMenu || showLootMenu || showHotkeyMenu || showGrailMenu || showCameraMenu;
+        bool anyMenuOpen = showMainMenu || showHUDSettingsMenu || showD2RHUDMenu || showSettingsPanel || showMemoryMenu || showLootMenu || showHotkeyMenu || showGrailMenu || showCameraMenu;
         ImGuiIO& io = ImGui::GetIO();
         io.FontGlobalScale = anyMenuOpen ? GetMenuScaleFactor() : 1.0f;
     }

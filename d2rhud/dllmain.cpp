@@ -23,6 +23,8 @@ DWORD WINAPI CreateConsole(LPVOID lParam) {
 }
 
 DWORD WINAPI AttachThread(LPVOID lParam) {
+    HMODULE hModule = static_cast<HMODULE>(lParam);
+    D3D12::SetDllModule(hModule);
     D2Ptrs::Initialize();
     if (D3D12::Init() == D3D12::Status::Success) {
         D3D12::InstallHooks();
