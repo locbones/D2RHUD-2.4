@@ -5,3 +5,5 @@ C:\Users\djsch\Github\D2RHUD-2.4\d2rhud\plugin\ItemFilter\ItemFilter.cpp;C:\User
 C:\Users\djsch\Github\D2RHUD-2.4\d2rhud\plugin\KeyMappings.cpp;C:\Users\djsch\Github\D2RHUD-2.4\d2rhud\x64\Release\KeyMappings.obj
 C:\Users\djsch\Github\D2RHUD-2.4\d2rhud\plugin\PluginManager.cpp;C:\Users\djsch\Github\D2RHUD-2.4\d2rhud\x64\Release\PluginManager.obj
 C:\Users\djsch\Github\D2RHUD-2.4\d2rhud\plugin\D2RHUD\D2RHUD.cpp;C:\Users\djsch\Github\D2RHUD-2.4\d2rhud\x64\Release\D2RHUD.obj
+C:\Users\djsch\Github\D2RHUD-2.4\d2rhud\plugin\StashSearch\StashSearch.cpp;C:\Users\djsch\Github\D2RHUD-2.4\d2rhud\x64\Release\StashSearch.obj
+C:\Users\djsch\Github\D2RHUD-2.4\d2rhud\plugin\StashSearch\WndProcHook.cpp;C:\Users\djsch\Github\D2RHUD-2.4\d2rhud\x64\Release\WndProcHook.obj

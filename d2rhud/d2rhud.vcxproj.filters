@@ -12,7 +12,6 @@
     <ClCompile Include="plugin\KeyMappings.cpp" />
     <ClCompile Include="plugin\ItemFilter\ItemFilter.cpp" />
     <ClCompile Include="plugin\StashSearch\StashSearch.cpp" />
-    <ClCompile Include="plugin\StashSearch\DllMain.cpp" />
     <ClCompile Include="plugin\StashSearch\WndProcHook.cpp" />
   </ItemGroup>
   <ItemGroup>

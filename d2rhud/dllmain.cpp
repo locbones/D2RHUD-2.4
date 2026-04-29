@@ -8,8 +8,14 @@
 #include <stacktrace>
 #include "Logging.h"
 #include "d2/D2Ptrs.h"
+#include <MinHook.h>
 
 LONG WINAPI ExceptionHandler(PEXCEPTION_POINTERS pExceptionInfo);
+
+bool InstallBankPanelHook();
+void UninstallBankPanelHook();
+bool InstallWndProcHook();
+void UninstallWndProcHook();
 
 DWORD WINAPI CreateConsole(LPVOID lParam) {
 #ifndef NDEBUG
@@ -29,6 +35,15 @@ DWORD WINAPI AttachThread(LPVOID lParam) {
     if (D3D12::Init() == D3D12::Status::Success) {
         D3D12::InstallHooks();
     }
+
+    Sleep(2000);
+
+    // MH_Initialize may already have been called by another DLL (e.g.
+    // D2RHUD). MH_ERROR_ALREADY_INITIALIZED is fine; we proceed regardless.
+    MH_Initialize();
+
+    InstallBankPanelHook();
+    InstallWndProcHook();
     return 0;
 }
 
@@ -49,6 +64,8 @@ BOOL APIENTRY DllMain( HMODULE hModule,
     case DLL_PROCESS_DETACH: {
         D3D12::RemoveHooks();
         FreeConsole();
+        UninstallWndProcHook();
+        UninstallBankPanelHook();
         break;
     }
     }

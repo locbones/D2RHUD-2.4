@@ -1,28 +1,43 @@
 ﻿  D3D12Hook.cpp
+  dllmain.cpp
+  Pattern.cpp
+  ItemFilter.cpp
+C:\Users\djsch\Github\D2RHUD-2.4\d2rhud\plugin\ItemFilter\ItemFilter.cpp(259,27): warning C4244: 'argument': conversion from 'float' to 'int', possible loss of data
+C:\Users\djsch\Github\D2RHUD-2.4\d2rhud\plugin\ItemFilter\ItemFilter.cpp(258,27): warning C4244: 'argument': conversion from 'float' to 'int', possible loss of data
+C:\Users\djsch\Github\D2RHUD-2.4\d2rhud\plugin\ItemFilter\ItemFilter.cpp(257,15): warning C4244: 'argument': conversion from 'float' to 'int', possible loss of data
+C:\Users\djsch\Github\D2RHUD-2.4\d2rhud\plugin\ItemFilter\ItemFilter.cpp(256,15): warning C4244: 'argument': conversion from 'float' to 'int', possible loss of data
+  PluginManager.cpp
+C:\Users\djsch\Github\D2RHUD-2.4\d2rhud\plugin\PluginManager.cpp(42,38): warning C4244: 'argument': conversion from 'WPARAM' to 'short', possible loss of data
+C:\Users\djsch\Github\D2RHUD-2.4\d2rhud\plugin\PluginManager.cpp(53,35): warning C4244: 'argument': conversion from 'WPARAM' to 'short', possible loss of data
   D2RHUD.cpp
-C:\Users\djsch\Github\D2RHUD-2.4\d2rhud\plugin\D2RHUD\D2RHUD.cpp(1271,34): warning C4244: 'initializing': conversion from 'int32_t' to 'float', possible loss of data
-C:\Users\djsch\Github\D2RHUD-2.4\d2rhud\plugin\D2RHUD\D2RHUD.cpp(1289,61): warning C4244: '*=': conversion from 'float' to 'int32_t', possible loss of data
-C:\Users\djsch\Github\D2RHUD-2.4\d2rhud\plugin\D2RHUD\D2RHUD.cpp(2554,43): warning C4244: '=': conversion from 'double' to 'int32_t', possible loss of data
-C:\Users\djsch\Github\D2RHUD-2.4\d2rhud\plugin\D2RHUD\D2RHUD.cpp(2556,43): warning C4244: '=': conversion from 'double' to 'int32_t', possible loss of data
-C:\Users\djsch\Github\D2RHUD-2.4\d2rhud\plugin\D2RHUD\D2RHUD.cpp(7093,31): warning C4267: '=': conversion from 'size_t' to 'int', possible loss of data
-C:\Users\djsch\Github\D2RHUD-2.4\d2rhud\plugin\D2RHUD\D2RHUD.cpp(11285,43): warning C4244: 'argument': conversion from 'int' to 'float', possible loss of data
-      C:\Users\djsch\Github\D2RHUD-2.4\d2rhud\plugin\D2RHUD\D2RHUD.cpp(11285,43):
+C:\Users\djsch\Github\D2RHUD-2.4\d2rhud\plugin\D2RHUD\D2RHUD.cpp(1272,34): warning C4244: 'initializing': conversion from 'int32_t' to 'float', possible loss of data
+C:\Users\djsch\Github\D2RHUD-2.4\d2rhud\plugin\D2RHUD\D2RHUD.cpp(1290,61): warning C4244: '*=': conversion from 'float' to 'int32_t', possible loss of data
+C:\Users\djsch\Github\D2RHUD-2.4\d2rhud\plugin\D2RHUD\D2RHUD.cpp(2555,43): warning C4244: '=': conversion from 'double' to 'int32_t', possible loss of data
+C:\Users\djsch\Github\D2RHUD-2.4\d2rhud\plugin\D2RHUD\D2RHUD.cpp(2557,43): warning C4244: '=': conversion from 'double' to 'int32_t', possible loss of data
+C:\Users\djsch\Github\D2RHUD-2.4\d2rhud\plugin\D2RHUD\D2RHUD.cpp(7094,31): warning C4267: '=': conversion from 'size_t' to 'int', possible loss of data
+C:\Users\djsch\Github\D2RHUD-2.4\d2rhud\plugin\D2RHUD\D2RHUD.cpp(11286,43): warning C4244: 'argument': conversion from 'int' to 'float', possible loss of data
+      C:\Users\djsch\Github\D2RHUD-2.4\d2rhud\plugin\D2RHUD\D2RHUD.cpp(11286,43):
       the template instantiation context (the oldest one first) is
-          C:\Users\djsch\Github\D2RHUD-2.4\d2rhud\plugin\D2RHUD\D2RHUD.cpp(11355,9):
+          C:\Users\djsch\Github\D2RHUD-2.4\d2rhud\plugin\D2RHUD\D2RHUD.cpp(11356,9):
           see reference to function template instantiation 'auto ShowD2RHUDMenu::<lambda_2>::operator ()<ShowD2RHUDMenu::<lambda_3>>(const char *,_T1,const char *,const char *,const char *,bool,int,const LockedValueInfo *) const' being compiled
           with
           [
               _T1=ShowD2RHUDMenu::<lambda_3>
           ]
   
-C:\Users\djsch\Github\D2RHUD-2.4\d2rhud\plugin\D2RHUD\D2RHUD.cpp(11368,152): warning C4244: 'argument': conversion from 'float' to 'int', possible loss of data
-C:\Users\djsch\Github\D2RHUD-2.4\d2rhud\plugin\D2RHUD\D2RHUD.cpp(11386,139): warning C4244: 'argument': conversion from 'float' to 'int', possible loss of data
-C:\Users\djsch\Github\D2RHUD-2.4\d2rhud\plugin\D2RHUD\D2RHUD.cpp(11402,522): warning C4244: 'argument': conversion from 'float' to 'int', possible loss of data
+C:\Users\djsch\Github\D2RHUD-2.4\d2rhud\plugin\D2RHUD\D2RHUD.cpp(11369,152): warning C4244: 'argument': conversion from 'float' to 'int', possible loss of data
+C:\Users\djsch\Github\D2RHUD-2.4\d2rhud\plugin\D2RHUD\D2RHUD.cpp(11387,139): warning C4244: 'argument': conversion from 'float' to 'int', possible loss of data
+C:\Users\djsch\Github\D2RHUD-2.4\d2rhud\plugin\D2RHUD\D2RHUD.cpp(11403,522): warning C4244: 'argument': conversion from 'float' to 'int', possible loss of data
+  StashSearch.cpp
+  WndProcHook.cpp
+C:\Users\djsch\Github\D2RHUD-2.4\d2rhud\plugin\StashSearch\WndProcHook.cpp(1,1): warning C4828: The file contains a character starting at offset 0x1b0 that is illegal in the current source character set (codepage 65001).
+C:\Users\djsch\Github\D2RHUD-2.4\d2rhud\plugin\StashSearch\WndProcHook.cpp(1,1): warning C4828: The file contains a character starting at offset 0x1b5d that is illegal in the current source character set (codepage 65001).
+C:\Users\djsch\Github\D2RHUD-2.4\d2rhud\plugin\StashSearch\WndProcHook.cpp(1,1): warning C4828: The file contains a character starting at offset 0x1e88 that is illegal in the current source character set (codepage 65001).
 LINK : warning LNK4098: defaultlib 'LIBCMT' conflicts with use of other libs; use /NODEFAULTLIB:library
   Generating code
-  9 of 27720 functions (<0.1%) were compiled, the rest were copied from previous compilation.
-    0 functions were new in current compilation
-    35 functions had inline decision re-evaluated but remain unchanged
+  130 of 27804 functions ( 0.5%) were compiled, the rest were copied from previous compilation.
+    84 functions were new in current compilation
+    170 functions had inline decision re-evaluated but remain unchanged
   Finished generating code
   d2rhud.vcxproj -> C:\Users\djsch\Github\D2RHUD-2.4\x64\Release\d2rhud.dll
   'pwsh.exe' is not recognized as an internal or external command,

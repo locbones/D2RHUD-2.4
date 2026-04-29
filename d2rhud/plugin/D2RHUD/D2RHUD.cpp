@@ -48,6 +48,7 @@
 - Base Implementation by DannyisGreat
 - Camera patterns by Shizza
 - Monster Stats, Plugin Mods and extended features by Bonesy
+- Stash Searching by CelestialRay
 - Special Thanks to those who have helped ^^
 */
 
@@ -56,7 +57,7 @@
 #pragma region Global Static/Structs
 
 std::string lootFile = "../D2R/lootfilter.lua";
-std::string Version = "1.6.8";
+std::string Version = "1.6.9";
 
 using json = nlohmann::json;
 static MonsterStatsDisplaySettings cachedSettings;

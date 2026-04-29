@@ -7,6 +7,7 @@
 #include "../../Pattern.h"
 
 //This plugin was largely developed by CelestialRay. I only assisted with fixing/improving name resolvers and integration
+//Original source can be found at https://github.com/CelestialRayOne/d2rutils/tree/main/d2rutils/StashSearch
 
 namespace {
     constexpr uint32_t RVA_BankPanelDraw = 0x18EB90;
