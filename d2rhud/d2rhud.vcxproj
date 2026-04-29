@@ -91,6 +91,9 @@
     <ClCompile Include="plugin\KeyMappings.cpp" />
     <ClCompile Include="plugin\PluginManager.cpp" />
     <ClCompile Include="plugin\D2RHUD\D2RHUD.cpp" />
+    <ClCompile Include="plugin\StashSearch\DllMain.cpp" />
+    <ClCompile Include="plugin\StashSearch\StashSearch.cpp" />
+    <ClCompile Include="plugin\StashSearch\WndProcHook.cpp" />
   </ItemGroup>
   <ItemGroup>
     <None Include="vcpkg.json" />

@@ -27,26 +27,6 @@
 	name = reinterpret_cast<decltype(##name##)>(Pattern::ScanRef(mod, signature, opCodeByteOffset)); \
 	LOG("Found " #name " at {:#08x}", reinterpret_cast<uint64_t>(name) - Pattern::BaseAddress(mod));
 
-/*
-Sample Usage:
-Ptrs.h
-
-#include "../Pattern.h"
-
-FUNC_DEF(int64_t, __fastcall, STATLIST_GetUnitStatSigned, (D2UnitStrc* pUnit, uint32_t nStatId, uint16_t nLayer));
-FUNC_DEF(D2UnitStrc*, __fastcall, UNITS_GetByIdAndType, (uint32_t nUnitId, uint32_t nUnitType));
-VAR_DEF(D2MouseHoverStruct, MouseHover);
-
-class Ptrs {
-public:
-	static void Initialize() {
-		FUNC_PATTERN(STATLIST_GetUnitStatSigned, NULL, "48 83 EC 28 45 0F B7 C8 48 85 C9 74 42 48 8B 89 ? ? ? ? 48 85 C9 74 2F");
-		FUNC_PATTERNREF(UNITS_GetByIdAndType, NULL, "E8 ? ? ? ? 8B 4F 05", 1);
-		VAR_PATTERNREF(MouseHover, NULL, "48 8D 3D ? ? ? ? BB ? ? ? ? 48 8B CF E8 ? ? ? ? 48 83 C7 10 ", 3);
-	}
-};
-*/
-
 class Pattern
 {
 public:
@@ -58,5 +38,13 @@ public:
 	*/
 	static DWORD64 ScanRef(const wchar_t* szModule, const char* signature, int32_t nOpCodeByteOffset = 0);
 	static DWORD64 ScanProcess(const char* signature);
+
+	static uintptr_t BaseAddress_SS() {
+		static uintptr_t base = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+		return base;
+	}
+	static uintptr_t Address_SS(uint32_t rva) {
+		return BaseAddress_SS() + rva;
+	}
 };
 

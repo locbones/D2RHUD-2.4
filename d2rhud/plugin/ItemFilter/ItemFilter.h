@@ -18,3 +18,5 @@ public:
 };
 
 extern bool IsPlayerInGame();
+/** Local human's player unit from the client-side unit list (TCP/IP clients; not always unit id 1 on the game server). */
+D2UnitStrc* GetClientPlayerUnit();

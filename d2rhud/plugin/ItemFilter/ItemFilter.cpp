@@ -143,7 +143,7 @@ D2UnitStrc* GetClientPlayerUnit() {
 	if (!ppClientUnitList || !gpClientPlayerListIndex || *gpClientPlayerListIndex < 0)
 		return nullptr;
 
-	uint32_t playerId = gpClientPlayerIds[*gpClientPlayerListIndex];
+	uint32_t playerId = static_cast<uint32_t>(gpClientPlayerIds[*gpClientPlayerListIndex]);
 	return GetUnitByIdAndType(ppClientUnitList, playerId, UNIT_PLAYER);
 }
 

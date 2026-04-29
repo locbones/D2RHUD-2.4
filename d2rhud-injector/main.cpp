@@ -17,6 +17,9 @@ void InjectDLL(const int& pid, const std::wstring& path);
 #define ORIGINAL_DLL_NAME L"D2RHUD.dll"
 #define RENAMED_DLL_NAME  L"d2rhudb.dll"
 
+#define ORIGINAL_DLL2_NAME       L"StashSearch.dll"
+#define RENAMED_DLL2_NAME        L"stashsearchb.dll"
+
 int main(int argc, char* argv[])
 {
 	if (argc != 2) {
@@ -27,13 +30,33 @@ int main(int argc, char* argv[])
 	std::wcout << L"[+]Looking for to inject into \"" << wargv[1] << "\"" << std::endl;
 	std::vector<DWORD> pids = GetPIDs(wargv[1]);
 	for (auto& pid : pids) {
-		std::wstring originalDllPath = std::format(L"{}\\{}", ExePath(), ORIGINAL_DLL_NAME);
-		std::wstring dllPath = std::format(L"{}\\{}", ExePath(), RENAMED_DLL_NAME);
+
 		std::wcout << L"[+]Injecting into " << pid << std::endl;
-		EjectDLL(pid, RENAMED_DLL_NAME);
-		std::wcout << L"[+]Renaming DLL" << std::endl;
-		std::filesystem::copy(originalDllPath, dllPath, std::filesystem::copy_options::update_existing);
-		InjectDLL(pid, dllPath);
+
+		// List of DLL pairs (original -> renamed)
+		std::vector<std::pair<std::wstring, std::wstring>> dlls = {
+			{ ORIGINAL_DLL_NAME, RENAMED_DLL_NAME },
+			{ ORIGINAL_DLL2_NAME, RENAMED_DLL2_NAME }
+		};
+
+		for (const auto& [originalName, renamedName] : dlls) {
+
+			std::wstring originalDllPath = std::format(L"{}\\{}", ExePath(), originalName);
+			std::wstring dllPath = std::format(L"{}\\{}", ExePath(), renamedName);
+
+			std::wcout << L"[+] Processing " << originalName << std::endl;
+
+			// Eject existing instance (based on renamed name)
+			EjectDLL(pid, renamedName);
+
+			std::wcout << L"[+] Copying " << originalName << L" -> " << renamedName << std::endl;
+			std::filesystem::copy(originalDllPath, dllPath, std::filesystem::copy_options::update_existing);
+
+			// Inject
+			std::wcout << L"[DEBUG] Inject path: " << dllPath << std::endl;
+			InjectDLL(pid, dllPath);
+			Sleep(500);
+		}
 	}
 	exit(0);
 	//system("pause");

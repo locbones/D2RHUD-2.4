@@ -2261,7 +2261,7 @@ MonsterTreasureResult GetMonsterTreasure(const std::vector<MonsterTreasureClass>
     MonsterTreasureResult result{ -1, -1 };
 
     if (rowIndex >= monsters.size()) {
-        //LogDebug("Error: Row index out of range");
+        LogDebug("Error: Row index out of range");
         return result;
     }
 
@@ -2269,8 +2269,8 @@ MonsterTreasureResult GetMonsterTreasure(const std::vector<MonsterTreasureClass>
     std::string treasureClassValue;
     std::string tcCheck;
 
-    //LogDebug(std::format("---------------------\nMonster: {}", m.MonsterName));
-    //LogDebug(std::format("Monstats Row: {}, Difficulty: {}", rowIndex, diff));
+    LogDebug(std::format("---------------------\nMonster: {}", m.MonsterName));
+    LogDebug(std::format("Monstats Row: {}, Difficulty: {}", rowIndex, diff));
 
     if (rowIndex >= 410)
         rowIndex++;
@@ -2293,7 +2293,7 @@ MonsterTreasureResult GetMonsterTreasure(const std::vector<MonsterTreasureClass>
 
     for (size_t i = 0; i < tcexEntries.size(); ++i) {
         if (tcexEntries[i] == treasureClassValue) {
-            result.treasureIndex = static_cast<int>(i) + 1;
+            result.treasureIndex = static_cast<int>(i) - 1;
             break;
         }
     }
@@ -2305,9 +2305,9 @@ MonsterTreasureResult GetMonsterTreasure(const std::vector<MonsterTreasureClass>
         }
     }
 
-    //LogDebug(std::format("Treasure Class: {}", tcCheck));
-    //LogDebug(std::format("TZ Treasure Class: {}", treasureClassValue));
-    //LogDebug(std::format("Base TC Row: {}, Terror TC Row: {}", result.tcCheckIndex, result.treasureIndex));
+    LogDebug(std::format("Treasure Class: {}", tcCheck));
+    LogDebug(std::format("TZ Treasure Class: {}", treasureClassValue));
+    LogDebug(std::format("Base TC Row: {}, Terror TC Row: {}", result.tcCheckIndex, result.treasureIndex));
 
     return result;
 }
@@ -2325,8 +2325,8 @@ MonsterTreasureResult GetMonsterTreasureSU(const std::vector<MonsterTreasureClas
     std::string treasureClassValue;
     std::string tcCheck;
 
-    //LogDebug(std::format("---------------------\nSuperUnique: {}", m.BaseMonster));
-    //LogDebug(std::format("GetMonsterTreasureSU called with: rowIndex={}", rowIndex));
+    LogDebug(std::format("---------------------\nSuperUnique: {}", m.BaseMonster));
+    LogDebug(std::format("GetMonsterTreasureSU called with: rowIndex={}", rowIndex));
 
     if (diff == 0) {
         tcCheck = m.TCChecker1;
@@ -2358,9 +2358,9 @@ MonsterTreasureResult GetMonsterTreasureSU(const std::vector<MonsterTreasureClas
         }
     }
 
-    //LogDebug(std::format("SU Treasure Class: {}", tcCheck));
-    //LogDebug(std::format("SU TZ Treasure Class: {}", treasureClassValue));
-    //LogDebug(std::format("SuperUniques Base TC Row: {}, SuperUniques Terror TC Row: {}", result.tcCheckIndex, result.treasureIndex));
+    LogDebug(std::format("SU Treasure Class: {}", tcCheck));
+    LogDebug(std::format("SU TZ Treasure Class: {}", treasureClassValue));
+    LogDebug(std::format("SuperUniques Base TC Row: {}, SuperUniques Terror TC Row: {}", result.tcCheckIndex, result.treasureIndex));
 
     return result;
 }
@@ -2753,7 +2753,7 @@ void __fastcall ForceTCDrops(D2GameStrc* pGame, D2UnitStrc* pMonster, D2UnitStrc
     int indexUnique = (uniqResult.treasureIndex == -1) ? tcCheckUnique : uniqResult.treasureIndex;
     int indexSuperUnique = (superuniqResult.treasureIndex == -1) ? tcCheckSuperUnique : superuniqResult.treasureIndex;
 
-    //LogDebug(std::format("---------------------\nnTCId: {}, indexRegular: {}, indexChamp: {},  indexUnique: {}, indexSuperUnique: {},", nTCId, indexRegular, indexChamp, indexUnique, indexSuperUnique));
+    LogDebug(std::format("---------------------\nnTCId: {}, indexRegular: {}, indexChamp: {},  indexUnique: {}, indexSuperUnique: {},", nTCId, indexRegular, indexChamp, indexUnique, indexSuperUnique));
 
     if (nTCId == 0)
         oDropTCTest(pGame, pMonster, pPlayer, nTCId, nQuality, nItemLevel, a7, ppItems, pnItemsDropped, nMaxItems);
@@ -2768,7 +2768,7 @@ void __fastcall ForceTCDrops(D2GameStrc* pGame, D2UnitStrc* pMonster, D2UnitStrc
         {
             nTCId = nTCId + (uniqResult.treasureIndex - tcCheckUnique);
             oDropTCTest(pGame, pMonster, pPlayer, nTCId, nQuality, nItemLevel, a7, ppItems, pnItemsDropped, nMaxItems);
-            //LogDebug(std::format("nTCId Applied to Monster: {}\n---------------------\n", nTCId));
+            LogDebug(std::format("nTCId Applied to Monster: {}\n---------------------\n", nTCId));
         }
         else
         {
@@ -2780,7 +2780,7 @@ void __fastcall ForceTCDrops(D2GameStrc* pGame, D2UnitStrc* pMonster, D2UnitStrc
                 nTCId = nTCId + (uniqResult.treasureIndex - tcCheckUnique);
             else nTCId = nTCId + (regResult.treasureIndex - tcCheckRegular);
 
-            //LogDebug(std::format("nTCId Applied to Monster: {}\n---------------------\n", nTCId));
+            LogDebug(std::format("nTCId Applied to Monster: {}\n---------------------\n", nTCId));
             oDropTCTest(pGame, pMonster, pPlayer, nTCId, nQuality, nItemLevel, a7, ppItems, pnItemsDropped, nMaxItems);
         }
     }
@@ -12343,11 +12343,14 @@ void __fastcall HookedDropTCTest(D2GameStrc* pGame, D2UnitStrc* pMonster, D2Unit
 {
     if (isTerrorized == false)
     {
-        oDropTCTest(pGame, pMonster, pPlayer, nTCId, nQuality, nItemLevel, a7, ppItems, pnItemsDropped, nMaxItems);
+        LogDebug("debug logging: {}\n---------------------\n");
+        oDropTCTest(pGame, pMonster, pPlayer, nTCId, nQuality, nItemLevel, a7, ppItems, pnItemsDropped, nMaxItems);      
         return;
     }
     else
         ForceTCDrops(pGame, pMonster, pPlayer, nTCId, nQuality, nItemLevel, a7, ppItems, pnItemsDropped, nMaxItems);
+
+    LogDebug("debug logging: {}\n---------------------\n");
 }
 
 #pragma region Floating Damage
@@ -12793,21 +12796,26 @@ void D2RHUD::OnDraw() {
 
     do
     {
-        if (!gMouseHover->IsHovered) break;
-        if (gMouseHover->HoveredUnitType > UNIT_MONSTER) break;
+        //if (!gMouseHover->IsHovered) break;
+        //if (gMouseHover->HoveredUnitType > UNIT_MONSTER) break;
 
-        D2UnitStrc* pUnit, * pUnitServer, * pUnitPlayer;
+        D2UnitStrc* pUnit = nullptr;
+        D2UnitStrc* pUnitServer = nullptr;
         if (pGame != nullptr)
         {
             pUnit = UNITS_GetServerUnitByTypeAndId(pGame, gMouseHover->HoveredUnitType, gMouseHover->HoveredUnitId);
             pUnitServer = UNITS_GetServerUnitByTypeAndId(pGame, gMouseHover->HoveredUnitType, gMouseHover->HoveredUnitId);
-            pUnitPlayer = UNITS_GetServerUnitByTypeAndId(pGame, UNIT_PLAYER, 1);
         }
         else
         {
             pUnit = GetClientUnitPtrFunc(Pattern::Address(unitDataOffset + 0x400 * gMouseHover->HoveredUnitType), gMouseHover->HoveredUnitId & 0x7F, gMouseHover->HoveredUnitId, gMouseHover->HoveredUnitType);
             pUnitServer = GetClientUnitPtrFunc(Pattern::Address(unitDataOffset + 0x400 * gMouseHover->HoveredUnitType), gMouseHover->HoveredUnitId & 0x7F, gMouseHover->HoveredUnitId, gMouseHover->HoveredUnitType);
         }
+
+        // TCP/IP joiner is not server player id 1; use client list (same as item filter). Fallback keeps SP / host working if client list is not ready.
+        D2UnitStrc* pUnitPlayer = GetClientPlayerUnit();
+        if (!pUnitPlayer && pGame != nullptr)
+            pUnitPlayer = UNITS_GetServerUnitByTypeAndId(pGame, UNIT_PLAYER, 1);
 
         for (int i = 0; i < 8; ++i)
         {
@@ -12821,7 +12829,17 @@ void D2RHUD::OnDraw() {
             TerrorStat = STATLIST_GetUnitStatSigned(pPlayer, 361, 0);
         }
 
+        /* Debug Example - Retrieves stat references from D2Enums.h, Remove the // at start of line to use */
+        /*
+        if (pUnitPlayer)
+        {
+            std::string mystatname = std::format("My Stat Name: {}", STATLIST_GetUnitStatSigned(pUnitPlayer, 328, 0));
+            drawList->AddText({ 20, 10 }, IM_COL32(170, 50, 50, 255), mystatname.c_str());
+        }
+        */
+
         if (!pUnit || !pUnitServer) break;
+
         if (STATLIST_GetUnitStatSigned(pUnitServer, STAT_HITPOINTS, 0) == 0) break;
 
         if (pUnitServer && (cachedSettings.monsterStatsDisplay|| settings.monsterStatsDisplay))
@@ -12865,9 +12883,13 @@ void D2RHUD::OnDraw() {
                     auto hp = std::format("{} / {}", STATLIST_GetUnitStatSigned(pUnitServer, STAT_HITPOINTS, 0) >> 8, STATLIST_GetUnitStatSigned(pUnitServer, STAT_MAXHP, 0) >> 8);
                     auto width = ImGui::CalcTextSize(hp.c_str()).x;
                     drawList->AddText({ center - (width / 2.0f) + 1, ypercent2 }, IM_COL32(255, 255, 255, 255), hp.c_str());
+
+                    
                 }              
             }
         }
+
+        
 
     } while (false);
 
