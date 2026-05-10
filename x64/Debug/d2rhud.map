@@ -1,6 +1,6 @@
  d2rhud
 
- Timestamp is 69f25626 (Wed Apr 29 12:04:06 2026)
+ Timestamp is 6a003836 (Sun May 10 00:48:06 2026)
 
  Preferred load address is 0000000180000000
 
@@ -95,6 +95,7 @@
  0000:00000100       __guard_flags              0000000000000100     <absolute>
  0000:00000000       __ImageBase                0000000180000000     <linker-defined>
  0001:00055278       IsBadReadPtr               0000000180056278 f   kernel32:KERNEL32.dll
+ 0001:000552ba       GetActiveWindow            00000001800562ba f   user32:USER32.dll
  0001:00055310       ??$?6DU?$char_traits@D@std@@V?$allocator@D@1@@std@@YAAEAV?$basic_ostream@DU?$char_traits@D@std@@@0@AEAV10@AEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@0@@Z 0000000180056310 f i D3D12Hook.obj
  0001:00055330       ??$?6U?$char_traits@D@std@@@std@@YAAEAV?$basic_ostream@DU?$char_traits@D@std@@@0@AEAV10@PEBD@Z 0000000180056330 f i D3D12Hook.obj
  0001:00055590       ?GetSearchWidget@@YAPEAXXZ 0000000180056590 f   StashSearch.obj
@@ -18549,7 +18550,8 @@
  0005:00000ec8       __imp_GetCursorPos         000000018057cec8     user32:USER32.dll
  0005:00000ed0       __imp_GetWindow            000000018057ced0     user32:USER32.dll
  0005:00000ed8       __imp_GetForegroundWindow  000000018057ced8     user32:USER32.dll
- 0005:00000ee0       \177USER32_NULL_THUNK_DATA 000000018057cee0     user32:USER32.dll
+ 0005:00000ee0       __imp_GetActiveWindow      000000018057cee0     user32:USER32.dll
+ 0005:00000ee8       \177USER32_NULL_THUNK_DATA 000000018057cee8     user32:USER32.dll
  0005:00000f78       __imp___std_type_info_destroy_list 000000018057cf78     vcruntime:VCRUNTIME140.dll
  0005:00000f80       __imp___current_exception  000000018057cf80     vcruntime:VCRUNTIME140.dll
  0005:00000f88       __imp_longjmp              000000018057cf88     vcruntime:VCRUNTIME140.dll
@@ -21536,6 +21538,7 @@
  0000:ffa6f000       .debug$S                   0000000180000000     shell32:SHELL32.dll
  0000:ffa6f000       .debug$S                   0000000180000000     shell32:SHELL32.dll
  0000:ffa6f000       .debug$S                   0000000180000000     urlmon:urlmon.dll
+ 0000:ffa6f000       .debug$S                   0000000180000000     user32:USER32.dll
  0000:ffa6f000       .debug$S                   0000000180000000     user32:USER32.dll
  0000:ffa6f000       .debug$S                   0000000180000000     user32:USER32.dll
  0000:ffa6f000       .debug$S                   0000000180000000     user32:USER32.dll
@@ -34003,10 +34006,11 @@
  0001:0040dd20       ?dtor$65@?0??LoadDesecratedZones@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@@Z@4HA 000000018040ed20 f   D2RHUD.obj
  0001:0040dd30       ?catch$86@?0??LoadDesecratedZones@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@@Z@4HA 000000018040ed30 f   D2RHUD.obj
  0001:0040dd3d       __catch$?LoadDesecratedZones@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@@Z$2 000000018040ed3d f   D2RHUD.obj
- 0001:0040de80       ?dtor$0@?0??ReadMonsterTreasureFile@@YA?AV?$vector@UMonsterTreasureClass@@V?$allocator@UMonsterTreasureClass@@@std@@@std@@AEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@2@@Z@4HA 000000018040ee80 f   D2RHUD.obj
+ 0001:0040de90       ?dtor$1@?0??ReadMonsterTreasureFile@@YA?AV?$vector@UMonsterTreasureClass@@V?$allocator@UMonsterTreasureClass@@@std@@@std@@AEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@2@@Z@4HA 000000018040ee90 f   D2RHUD.obj
+ 0001:0040dea0       ?dtor$27@?0??ReadStartupCommandsFromJson@@YA?AV?$vector@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@V?$allocator@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@@2@@std@@AEBV?$basic_json@Uordered_map@json_abi_v3_12_0@nlohmann@@Vvector@std@@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@5@_N_J_KNVallocator@5@Uadl_serializer@23@V?$vector@EV?$allocator@E@std@@@5@X@json_abi_v3_12_0@nlohmann@@@Z@4HA 000000018040eea0 f   D2RHUD.obj
  0001:0040ded0       ?catch$87@?0??LoadDesecratedZones@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@@Z@4HA 000000018040eed0 f   D2RHUD.obj
  0001:0040dedd       __catch$?LoadDesecratedZones@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@@Z$0 000000018040eedd f   D2RHUD.obj
- 0001:0040dff0       ?dtor$9@?0??ReadMonsterTreasureFile@@YA?AV?$vector@UMonsterTreasureClass@@V?$allocator@UMonsterTreasureClass@@@std@@@std@@AEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@2@@Z@4HA 000000018040eff0 f   D2RHUD.obj
+ 0001:0040e000       ?dtor$28@?0??ReadStartupCommandsFromJson@@YA?AV?$vector@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@V?$allocator@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@@2@@std@@AEBV?$basic_json@Uordered_map@json_abi_v3_12_0@nlohmann@@Vvector@std@@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@5@_N_J_KNVallocator@5@Uadl_serializer@23@V?$vector@EV?$allocator@E@std@@@5@X@json_abi_v3_12_0@nlohmann@@@Z@4HA 000000018040f000 f   D2RHUD.obj
  0001:0040e030       ?dtor$0@?0??LoadExcludedGrailItems@@YAXAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@@Z@4HA 000000018040f030 f   D2RHUD.obj
  0001:0040e040       ?dtor$1@?0??LoadExcludedGrailItems@@YAXAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@@Z@4HA 000000018040f040 f   D2RHUD.obj
  0001:0040e050       ?dtor$2@?0??LoadExcludedGrailItems@@YAXAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@@Z@4HA 000000018040f050 f   D2RHUD.obj
@@ -34217,7 +34221,6 @@
  0001:0040f5d0       ?dtor$11@?0??OnClientStatusChange@@YAXXZ@4HA 00000001804105d0 f   D2RHUD.obj
  0001:0040f5e0       ?dtor$0@?0??OnDraw@D2RHUD@@UEAAXXZ@4HA 00000001804105e0 f   D2RHUD.obj
  0001:0040f5f0       ?dtor$1@?0??OnDraw@D2RHUD@@UEAAXXZ@4HA 00000001804105f0 f   D2RHUD.obj
- 0001:0040f610       ?dtor$7@?0??OnDraw@D2RHUD@@UEAAXXZ@4HA 0000000180410610 f   D2RHUD.obj
  0001:0040f620       ?dtor$0@?0??ReadMonsterTreasureFileSU@@YA?AV?$vector@UMonsterTreasureClassSU@@V?$allocator@UMonsterTreasureClassSU@@@std@@@std@@AEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@2@@Z@4HA 0000000180410620 f   D2RHUD.obj
  0001:0040f650       ?dtor$8@?0??OnDraw@D2RHUD@@UEAAXXZ@4HA 0000000180410650 f   D2RHUD.obj
  0001:0040f660       ?dtor$20@?0??OnDraw@D2RHUD@@UEAAXXZ@4HA 0000000180410660 f   D2RHUD.obj
@@ -34286,15 +34289,16 @@
  0001:0040fb50       ?dtor$33@?0??ReadKeybindsFromJson@@YAXAEBV?$basic_json@Uordered_map@json_abi_v3_12_0@nlohmann@@Vvector@std@@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@5@_N_J_KNVallocator@5@Uadl_serializer@23@V?$vector@EV?$allocator@E@std@@@5@X@json_abi_v3_12_0@nlohmann@@@Z@4HA 0000000180410b50 f   D2RHUD.obj
  0001:0040fb60       ?dtor$34@?0??ReadKeybindsFromJson@@YAXAEBV?$basic_json@Uordered_map@json_abi_v3_12_0@nlohmann@@Vvector@std@@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@5@_N_J_KNVallocator@5@Uadl_serializer@23@V?$vector@EV?$allocator@E@std@@@5@X@json_abi_v3_12_0@nlohmann@@@Z@4HA 0000000180410b60 f   D2RHUD.obj
  0001:0040fb70       ?dtor$40@?0??ReadKeybindsFromJson@@YAXAEBV?$basic_json@Uordered_map@json_abi_v3_12_0@nlohmann@@Vvector@std@@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@5@_N_J_KNVallocator@5@Uadl_serializer@23@V?$vector@EV?$allocator@E@std@@@5@X@json_abi_v3_12_0@nlohmann@@@Z@4HA 0000000180410b70 f   D2RHUD.obj
- 0001:0040fba0       ?dtor$1@?0??ReadMonsterTreasureFile@@YA?AV?$vector@UMonsterTreasureClass@@V?$allocator@UMonsterTreasureClass@@@std@@@std@@AEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@2@@Z@4HA 0000000180410ba0 f   D2RHUD.obj
+ 0001:0040fb80       ?dtor$0@?0??SanitizeFilterName@@YA?AV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@V12@@Z@4HA 0000000180410b80 f   D2RHUD.obj
  0001:0040fbb0       ?dtor$0@?0??ReadStartupCommandsFromJson@@YA?AV?$vector@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@V?$allocator@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@@2@@std@@AEBV?$basic_json@Uordered_map@json_abi_v3_12_0@nlohmann@@Vvector@std@@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@5@_N_J_KNVallocator@5@Uadl_serializer@23@V?$vector@EV?$allocator@E@std@@@5@X@json_abi_v3_12_0@nlohmann@@@Z@4HA 0000000180410bb0 f   D2RHUD.obj
  0001:0040fbe0       ?dtor$2@?0??ReadMonsterTreasureFile@@YA?AV?$vector@UMonsterTreasureClass@@V?$allocator@UMonsterTreasureClass@@@std@@@std@@AEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@2@@Z@4HA 0000000180410be0 f   D2RHUD.obj
  0001:0040fbf0       ?dtor$3@?0??ReadMonsterTreasureFile@@YA?AV?$vector@UMonsterTreasureClass@@V?$allocator@UMonsterTreasureClass@@@std@@@std@@AEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@2@@Z@4HA 0000000180410bf0 f   D2RHUD.obj
  0001:0040fc00       ?dtor$4@?0??ReadMonsterTreasureFile@@YA?AV?$vector@UMonsterTreasureClass@@V?$allocator@UMonsterTreasureClass@@@std@@@std@@AEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@2@@Z@4HA 0000000180410c00 f   D2RHUD.obj
  0001:0040fc10       ?dtor$5@?0??ReadMonsterTreasureFile@@YA?AV?$vector@UMonsterTreasureClass@@V?$allocator@UMonsterTreasureClass@@@std@@@std@@AEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@2@@Z@4HA 0000000180410c10 f   D2RHUD.obj
  0001:0040fc20       ?dtor$6@?0??ReadMonsterTreasureFile@@YA?AV?$vector@UMonsterTreasureClass@@V?$allocator@UMonsterTreasureClass@@@std@@@std@@AEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@2@@Z@4HA 0000000180410c20 f   D2RHUD.obj
- 0001:0040fc40       ?dtor$10@?0??ReadMonsterTreasureFile@@YA?AV?$vector@UMonsterTreasureClass@@V?$allocator@UMonsterTreasureClass@@@std@@@std@@AEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@2@@Z@4HA 0000000180410c40 f   D2RHUD.obj
- 0001:0040fc60       ?dtor$10@?0??ReadMonsterTreasureFileSU@@YA?AV?$vector@UMonsterTreasureClassSU@@V?$allocator@UMonsterTreasureClassSU@@@std@@@std@@AEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@2@@Z@4HA 0000000180410c60 f   D2RHUD.obj
+ 0001:0040fc30       ?dtor$5@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180410c30 f   D2RHUD.obj
+ 0001:0040fc40       ?dtor$198@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180410c40 f   D2RHUD.obj
+ 0001:0040fc70       ?dtor$30@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180410c70 f   D2RHUD.obj
  0001:0040fca0       ?dtor$1@?0??ReadMonsterTreasureFileSU@@YA?AV?$vector@UMonsterTreasureClassSU@@V?$allocator@UMonsterTreasureClassSU@@@std@@@std@@AEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@2@@Z@4HA 0000000180410ca0 f   D2RHUD.obj
  0001:0040fcd0       ?dtor$2@?0??ReadMonsterTreasureFileSU@@YA?AV?$vector@UMonsterTreasureClassSU@@V?$allocator@UMonsterTreasureClassSU@@@std@@@std@@AEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@2@@Z@4HA 0000000180410cd0 f   D2RHUD.obj
  0001:0040fce0       ?dtor$3@?0??ReadMonsterTreasureFileSU@@YA?AV?$vector@UMonsterTreasureClassSU@@V?$allocator@UMonsterTreasureClassSU@@@std@@@std@@AEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@2@@Z@4HA 0000000180410ce0 f   D2RHUD.obj
@@ -34314,7 +34318,7 @@
  0001:0040fea0       ?dtor$3@?0??ReadStartupCommandsFromJson@@YA?AV?$vector@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@V?$allocator@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@@2@@std@@AEBV?$basic_json@Uordered_map@json_abi_v3_12_0@nlohmann@@Vvector@std@@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@5@_N_J_KNVallocator@5@Uadl_serializer@23@V?$vector@EV?$allocator@E@std@@@5@X@json_abi_v3_12_0@nlohmann@@@Z@4HA 0000000180410ea0 f   D2RHUD.obj
  0001:0040feb0       ?dtor$4@?0??ReadStartupCommandsFromJson@@YA?AV?$vector@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@V?$allocator@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@@2@@std@@AEBV?$basic_json@Uordered_map@json_abi_v3_12_0@nlohmann@@Vvector@std@@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@5@_N_J_KNVallocator@5@Uadl_serializer@23@V?$vector@EV?$allocator@E@std@@@5@X@json_abi_v3_12_0@nlohmann@@@Z@4HA 0000000180410eb0 f   D2RHUD.obj
  0001:0040fec0       ?dtor$9@?0??ReadStartupCommandsFromJson@@YA?AV?$vector@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@V?$allocator@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@@2@@std@@AEBV?$basic_json@Uordered_map@json_abi_v3_12_0@nlohmann@@Vvector@std@@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@5@_N_J_KNVallocator@5@Uadl_serializer@23@V?$vector@EV?$allocator@E@std@@@5@X@json_abi_v3_12_0@nlohmann@@@Z@4HA 0000000180410ec0 f   D2RHUD.obj
- 0001:0040fee0       ?dtor$28@?0??ReadStartupCommandsFromJson@@YA?AV?$vector@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@V?$allocator@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@@2@@std@@AEBV?$basic_json@Uordered_map@json_abi_v3_12_0@nlohmann@@Vvector@std@@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@5@_N_J_KNVallocator@5@Uadl_serializer@23@V?$vector@EV?$allocator@E@std@@@5@X@json_abi_v3_12_0@nlohmann@@@Z@4HA 0000000180410ee0 f   D2RHUD.obj
+ 0001:0040fed0       ?dtor$34@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180410ed0 f   D2RHUD.obj
  0001:0040ff00       ?dtor$0@?0??ReadTCexFile@@YA?AV?$vector@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@V?$allocator@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@@2@@std@@AEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@2@@Z@4HA 0000000180410f00 f   D2RHUD.obj
  0001:0040ff40       ?dtor$1@?0??ReadTCexFile@@YA?AV?$vector@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@V?$allocator@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@@2@@std@@AEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@2@@Z@4HA 0000000180410f40 f   D2RHUD.obj
  0001:0040ff70       ?dtor$2@?0??ReadTCexFile@@YA?AV?$vector@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@V?$allocator@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@@2@@std@@AEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@2@@Z@4HA 0000000180410f70 f   D2RHUD.obj
@@ -34325,12 +34329,10 @@
  0001:00410010       ?dtor$17@?0??RegisterModOverrides@@YAXXZ@4HA 0000000180411010 f   D2RHUD.obj
  0001:00410030       ?catch$0@?0??SafeStringToInt@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@AEAH@Z@4HA 0000000180411030 f   D2RHUD.obj
  0001:0041003d       __catch$?SafeStringToInt@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@AEAH@Z$0 000000018041103d f   D2RHUD.obj
- 0001:00410060       ?dtor$0@?0??SanitizeFilterName@@YA?AV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@V12@@Z@4HA 0000000180411060 f   D2RHUD.obj
  0001:00410070       ?dtor$1@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180411070 f   D2RHUD.obj
  0001:004100a0       ?dtor$0@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 00000001804110a0 f   D2RHUD.obj
  0001:004100c0       ?dtor$2@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 00000001804110c0 f   D2RHUD.obj
  0001:00410100       ?dtor$3@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180411100 f   D2RHUD.obj
- 0001:00410140       ?dtor$5@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180411140 f   D2RHUD.obj
  0001:00410150       ?dtor$29@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180411150 f   D2RHUD.obj
  0001:00410180       ?dtor$6@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180411180 f   D2RHUD.obj
  0001:00410190       ?dtor$7@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180411190 f   D2RHUD.obj
@@ -34354,36 +34356,26 @@
  0001:004102b0       ?dtor$25@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 00000001804112b0 f   D2RHUD.obj
  0001:004102c0       ?dtor$26@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 00000001804112c0 f   D2RHUD.obj
  0001:004102d0       ?dtor$27@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 00000001804112d0 f   D2RHUD.obj
- 0001:004102f0       ?dtor$30@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 00000001804112f0 f   D2RHUD.obj
  0001:00410300       ?dtor$33@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180411300 f   D2RHUD.obj
  0001:00410330       ?dtor$31@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180411330 f   D2RHUD.obj
- 0001:00410350       ?dtor$34@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180411350 f   D2RHUD.obj
  0001:00410360       ?dtor$37@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180411360 f   D2RHUD.obj
  0001:00410390       ?dtor$35@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180411390 f   D2RHUD.obj
- 0001:004103b0       ?dtor$38@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 00000001804113b0 f   D2RHUD.obj
  0001:004103c0       ?dtor$41@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 00000001804113c0 f   D2RHUD.obj
  0001:004103f0       ?dtor$39@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 00000001804113f0 f   D2RHUD.obj
- 0001:00410410       ?dtor$42@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180411410 f   D2RHUD.obj
  0001:00410420       ?dtor$45@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180411420 f   D2RHUD.obj
  0001:00410450       ?dtor$43@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180411450 f   D2RHUD.obj
  0001:00410470       ?dtor$47@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180411470 f   D2RHUD.obj
- 0001:004104b0       ?dtor$48@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 00000001804114b0 f   D2RHUD.obj
  0001:004104c0       ?dtor$51@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 00000001804114c0 f   D2RHUD.obj
  0001:004104f0       ?dtor$49@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 00000001804114f0 f   D2RHUD.obj
- 0001:00410510       ?dtor$52@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180411510 f   D2RHUD.obj
  0001:00410520       ?dtor$55@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180411520 f   D2RHUD.obj
  0001:00410550       ?dtor$53@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180411550 f   D2RHUD.obj
- 0001:00410570       ?dtor$56@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180411570 f   D2RHUD.obj
  0001:00410580       ?dtor$59@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180411580 f   D2RHUD.obj
  0001:004105b0       ?dtor$57@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 00000001804115b0 f   D2RHUD.obj
- 0001:004105d0       ?dtor$60@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 00000001804115d0 f   D2RHUD.obj
  0001:004105e0       ?dtor$63@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 00000001804115e0 f   D2RHUD.obj
  0001:00410610       ?dtor$61@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180411610 f   D2RHUD.obj
- 0001:00410630       ?dtor$64@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180411630 f   D2RHUD.obj
  0001:00410640       ?dtor$67@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180411640 f   D2RHUD.obj
  0001:00410670       ?dtor$65@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180411670 f   D2RHUD.obj
  0001:00410690       ?dtor$69@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180411690 f   D2RHUD.obj
- 0001:004106d0       ?dtor$70@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 00000001804116d0 f   D2RHUD.obj
  0001:004106e0       ?dtor$94@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 00000001804116e0 f   D2RHUD.obj
  0001:00410710       ?dtor$71@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180411710 f   D2RHUD.obj
  0001:00410720       ?dtor$72@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180411720 f   D2RHUD.obj
@@ -34407,7 +34399,6 @@
  0001:00410840       ?dtor$90@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180411840 f   D2RHUD.obj
  0001:00410850       ?dtor$91@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180411850 f   D2RHUD.obj
  0001:00410860       ?dtor$92@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180411860 f   D2RHUD.obj
- 0001:00410880       ?dtor$95@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180411880 f   D2RHUD.obj
  0001:00410890       ?dtor$103@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180411890 f   D2RHUD.obj
  0001:004108c0       ?dtor$96@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 00000001804118c0 f   D2RHUD.obj
  0001:004108d0       ?dtor$97@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 00000001804118d0 f   D2RHUD.obj
@@ -34415,7 +34406,6 @@
  0001:004108f0       ?dtor$99@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 00000001804118f0 f   D2RHUD.obj
  0001:00410900       ?dtor$100@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180411900 f   D2RHUD.obj
  0001:00410910       ?dtor$101@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180411910 f   D2RHUD.obj
- 0001:00410930       ?dtor$104@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180411930 f   D2RHUD.obj
  0001:00410940       ?dtor$115@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180411940 f   D2RHUD.obj
  0001:00410970       ?dtor$105@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180411970 f   D2RHUD.obj
  0001:00410980       ?dtor$106@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180411980 f   D2RHUD.obj
@@ -34426,14 +34416,11 @@
  0001:004109d0       ?dtor$111@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 00000001804119d0 f   D2RHUD.obj
  0001:004109e0       ?dtor$112@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 00000001804119e0 f   D2RHUD.obj
  0001:004109f0       ?dtor$113@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 00000001804119f0 f   D2RHUD.obj
- 0001:00410a10       ?dtor$116@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180411a10 f   D2RHUD.obj
  0001:00410a20       ?dtor$119@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180411a20 f   D2RHUD.obj
  0001:00410a50       ?dtor$117@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180411a50 f   D2RHUD.obj
- 0001:00410a70       ?dtor$120@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180411a70 f   D2RHUD.obj
  0001:00410a80       ?dtor$123@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180411a80 f   D2RHUD.obj
  0001:00410ab0       ?dtor$121@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180411ab0 f   D2RHUD.obj
  0001:00410ad0       ?dtor$125@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180411ad0 f   D2RHUD.obj
- 0001:00410b10       ?dtor$126@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180411b10 f   D2RHUD.obj
  0001:00410b20       ?dtor$148@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180411b20 f   D2RHUD.obj
  0001:00410b50       ?dtor$127@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180411b50 f   D2RHUD.obj
  0001:00410b60       ?dtor$128@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180411b60 f   D2RHUD.obj
@@ -34454,11 +34441,9 @@
  0001:00410c50       ?dtor$143@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180411c50 f   D2RHUD.obj
  0001:00410c60       ?dtor$144@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180411c60 f   D2RHUD.obj
  0001:00410c70       ?dtor$146@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180411c70 f   D2RHUD.obj
- 0001:00410c90       ?dtor$149@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180411c90 f   D2RHUD.obj
  0001:00410ca0       ?dtor$152@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180411ca0 f   D2RHUD.obj
  0001:00410cd0       ?dtor$150@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180411cd0 f   D2RHUD.obj
  0001:00410cf0       ?dtor$154@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180411cf0 f   D2RHUD.obj
- 0001:00410d30       ?dtor$155@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180411d30 f   D2RHUD.obj
  0001:00410d40       ?dtor$165@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180411d40 f   D2RHUD.obj
  0001:00410d70       ?dtor$157@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180411d70 f   D2RHUD.obj
  0001:00410d80       ?dtor$158@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180411d80 f   D2RHUD.obj
@@ -34466,11 +34451,9 @@
  0001:00410da0       ?dtor$161@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180411da0 f   D2RHUD.obj
  0001:00410db0       ?dtor$162@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180411db0 f   D2RHUD.obj
  0001:00410dc0       ?dtor$163@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180411dc0 f   D2RHUD.obj
- 0001:00410de0       ?dtor$166@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180411de0 f   D2RHUD.obj
  0001:00410df0       ?dtor$169@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180411df0 f   D2RHUD.obj
  0001:00410e20       ?dtor$167@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180411e20 f   D2RHUD.obj
  0001:00410e40       ?dtor$171@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180411e40 f   D2RHUD.obj
- 0001:00410e80       ?dtor$172@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180411e80 f   D2RHUD.obj
  0001:00410e90       ?dtor$185@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180411e90 f   D2RHUD.obj
  0001:00410ec0       ?dtor$173@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180411ec0 f   D2RHUD.obj
  0001:00410ed0       ?dtor$174@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180411ed0 f   D2RHUD.obj
@@ -34480,16 +34463,15 @@
  0001:00410f10       ?dtor$178@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180411f10 f   D2RHUD.obj
  0001:00410f20       ?dtor$180@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180411f20 f   D2RHUD.obj
  0001:00410f30       ?dtor$181@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180411f30 f   D2RHUD.obj
- 0001:00410f50       ?dtor$189@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180411f50 f   D2RHUD.obj
- 0001:00410f60       ?dtor$198@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180411f60 f   D2RHUD.obj
- 0001:00410fa0       ?dtor$202@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180411fa0 f   D2RHUD.obj
+ 0001:00410f40       ?dtor$21@?0??SaveGrailProgress@@YAXAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180411f40 f   D2RHUD.obj
+ 0001:00410f70       ?dtor$202@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180411f70 f   D2RHUD.obj
+ 0001:00410f80       ?dtor$25@?0??SaveGrailProgress@@YAXAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180411f80 f   D2RHUD.obj
  0001:00410fb0       ?dtor$264@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180411fb0 f   D2RHUD.obj
  0001:00410fe0       ?dtor$241@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180411fe0 f   D2RHUD.obj
  0001:00410ff0       ?dtor$242@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180411ff0 f   D2RHUD.obj
  0001:00411000       ?dtor$248@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180412000 f   D2RHUD.obj
  0001:00411010       ?dtor$249@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180412010 f   D2RHUD.obj
  0001:00411020       ?dtor$261@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180412020 f   D2RHUD.obj
- 0001:00411040       ?dtor$268@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180412040 f   D2RHUD.obj
  0001:00411050       ?dtor$288@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180412050 f   D2RHUD.obj
  0001:00411080       ?dtor$272@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180412080 f   D2RHUD.obj
  0001:004110a0       ?catch$300@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 00000001804120a0 f   D2RHUD.obj
@@ -34506,18 +34488,17 @@
  0001:00411190       ?dtor$12@?0??SaveGrailProgress@@YAXAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180412190 f   D2RHUD.obj
  0001:004111a0       ?dtor$13@?0??SaveGrailProgress@@YAXAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 00000001804121a0 f   D2RHUD.obj
  0001:004111b0       ?dtor$14@?0??SaveGrailProgress@@YAXAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 00000001804121b0 f   D2RHUD.obj
- 0001:004111d0       ?dtor$18@?0??SaveGrailProgress@@YAXAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 00000001804121d0 f   D2RHUD.obj
- 0001:004111e0       ?dtor$21@?0??SaveGrailProgress@@YAXAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 00000001804121e0 f   D2RHUD.obj
- 0001:00411220       ?dtor$22@?0??SaveGrailProgress@@YAXAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180412220 f   D2RHUD.obj
- 0001:00411230       ?dtor$25@?0??SaveGrailProgress@@YAXAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180412230 f   D2RHUD.obj
- 0001:00411270       ?dtor$26@?0??SaveGrailProgress@@YAXAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180412270 f   D2RHUD.obj
+ 0001:004111c0       ?dtor$6@?0??ShowLootMenu@@YAXXZ@4HA 00000001804121c0 f   D2RHUD.obj
+ 0001:004111f0       ?dtor$22@?0??SaveGrailProgress@@YAXAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 00000001804121f0 f   D2RHUD.obj
+ 0001:00411200       ?catch$98@?0??SaveGrailProgress@@YAXAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180412200 f   D2RHUD.obj
+ 0001:0041120d       __catch$?SaveGrailProgress@@YAXAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z$1 000000018041220d f   D2RHUD.obj
+ 0001:00411240       ?dtor$26@?0??SaveGrailProgress@@YAXAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180412240 f   D2RHUD.obj
+ 0001:00411250       ?dtor$5@?0??from_json@@YAXAEBV?$basic_json@Vmap@std@@Vvector@2@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@2@_N_J_KNVallocator@2@Uadl_serializer@json_abi_v3_12_0@nlohmann@@V?$vector@EV?$allocator@E@std@@@2@X@json_abi_v3_12_0@nlohmann@@AEAUDesecratedZone@@@Z@4HA 0000000180412250 f   D2RHUD.obj
  0001:00411280       ?dtor$29@?0??SaveGrailProgress@@YAXAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180412280 f   D2RHUD.obj
  0001:004112b0       ?dtor$27@?0??SaveGrailProgress@@YAXAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 00000001804122b0 f   D2RHUD.obj
- 0001:004112d0       ?dtor$30@?0??SaveGrailProgress@@YAXAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 00000001804122d0 f   D2RHUD.obj
  0001:004112e0       ?dtor$33@?0??SaveGrailProgress@@YAXAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 00000001804122e0 f   D2RHUD.obj
  0001:00411310       ?dtor$31@?0??SaveGrailProgress@@YAXAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180412310 f   D2RHUD.obj
  0001:00411330       ?dtor$35@?0??SaveGrailProgress@@YAXAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180412330 f   D2RHUD.obj
- 0001:00411370       ?dtor$36@?0??SaveGrailProgress@@YAXAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180412370 f   D2RHUD.obj
  0001:00411380       ?dtor$30@?0??SaveLootFilterConfig@@YAXAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@@Z@4HA 0000000180412380 f   D2RHUD.obj
  0001:004113b0       ?dtor$37@?0??SaveGrailProgress@@YAXAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 00000001804123b0 f   D2RHUD.obj
  0001:004113c0       ?dtor$38@?0??SaveGrailProgress@@YAXAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 00000001804123c0 f   D2RHUD.obj
@@ -34534,14 +34515,16 @@
  0001:00411470       ?dtor$81@?0??SaveGrailProgress@@YAXAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180412470 f   D2RHUD.obj
  0001:00411480       ?dtor$82@?0??SaveGrailProgress@@YAXAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180412480 f   D2RHUD.obj
  0001:00411490       ?dtor$36@?0??ScanStashPages@@YAXXZ@4HA 0000000180412490 f   D2RHUD.obj
- 0001:004114e0       ?dtor$0@?0??SaveHotkeys@@YAXAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@@Z@4HA 00000001804124e0 f   D2RHUD.obj
+ 0001:004114c0       ?dtor$31@?0??SaveLootFilterConfig@@YAXAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@@Z@4HA 00000001804124c0 f   D2RHUD.obj
  0001:004114f0       ?dtor$5@?0??ShowHUDSettingsMenu@@YAXXZ@4HA 00000001804124f0 f   D2RHUD.obj
  0001:00411520       ?dtor$11@?0??ShowHUDSettingsMenu@@YAXXZ@4HA 0000000180412520 f   D2RHUD.obj
  0001:00411550       ?dtor$24@?0??ShowHUDSettingsMenu@@YAXXZ@4HA 0000000180412550 f   D2RHUD.obj
  0001:00411580       ?dtor$18@?0??ShowHotkeyMenu@@YAXXZ@4HA 0000000180412580 f   D2RHUD.obj
  0001:004115b0       ?dtor$37@?0??ShowHotkeyMenu@@YAXXZ@4HA 00000001804125b0 f   D2RHUD.obj
- 0001:004115e0       ?dtor$6@?0??ShowLootMenu@@YAXXZ@4HA 00000001804125e0 f   D2RHUD.obj
- 0001:00411620       ?dtor$27@?0??ReadStartupCommandsFromJson@@YA?AV?$vector@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@V?$allocator@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@@2@@std@@AEBV?$basic_json@Uordered_map@json_abi_v3_12_0@nlohmann@@Vvector@std@@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@5@_N_J_KNVallocator@5@Uadl_serializer@23@V?$vector@EV?$allocator@E@std@@@5@X@json_abi_v3_12_0@nlohmann@@@Z@4HA 0000000180412620 f   D2RHUD.obj
+ 0001:004115f0       ?dtor$10@?0??ShowLootMenu@@YAXXZ@4HA 00000001804125f0 f   D2RHUD.obj
+ 0001:00411600       ?dtor$27@?0??from_json@@YAXAEBV?$basic_json@Vmap@std@@Vvector@2@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@2@_N_J_KNVallocator@2@Uadl_serializer@json_abi_v3_12_0@nlohmann@@V?$vector@EV?$allocator@E@std@@@2@X@json_abi_v3_12_0@nlohmann@@AEAUDesecratedZone@@@Z@4HA 0000000180412600 f   D2RHUD.obj
+ 0001:00411630       ?dtor$38@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180412630 f   D2RHUD.obj
+ 0001:00411640       ?dtor$31@?0??from_json@@YAXAEBV?$basic_json@Vmap@std@@Vvector@2@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@2@_N_J_KNVallocator@2@Uadl_serializer@json_abi_v3_12_0@nlohmann@@V?$vector@EV?$allocator@E@std@@@2@X@json_abi_v3_12_0@nlohmann@@AEAUDesecratedZone@@@Z@4HA 0000000180412640 f   D2RHUD.obj
  0001:00411670       ?dtor$1@?0??SaveHotkeys@@YAXAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@@Z@4HA 0000000180412670 f   D2RHUD.obj
  0001:00411680       ?dtor$4@?0??SaveHotkeys@@YAXAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@@Z@4HA 0000000180412680 f   D2RHUD.obj
  0001:00411690       ?dtor$5@?0??SaveHotkeys@@YAXAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@@Z@4HA 0000000180412690 f   D2RHUD.obj
@@ -34577,7 +34560,6 @@
  0001:004118a0       ?dtor$26@?0??SaveLootFilterConfig@@YAXAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@@Z@4HA 00000001804128a0 f   D2RHUD.obj
  0001:004118b0       ?dtor$27@?0??SaveLootFilterConfig@@YAXAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@@Z@4HA 00000001804128b0 f   D2RHUD.obj
  0001:004118c0       ?dtor$28@?0??SaveLootFilterConfig@@YAXAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@@Z@4HA 00000001804128c0 f   D2RHUD.obj
- 0001:004118e0       ?dtor$31@?0??SaveLootFilterConfig@@YAXAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@@Z@4HA 00000001804128e0 f   D2RHUD.obj
  0001:004118f0       ?dtor$12@?0??ShowLootMenu@@YAXXZ@4HA 00000001804128f0 f   D2RHUD.obj
  0001:00411920       ?dtor$32@?0??SaveLootFilterConfig@@YAXAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@@Z@4HA 0000000180412920 f   D2RHUD.obj
  0001:00411930       ?dtor$33@?0??SaveLootFilterConfig@@YAXAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@@Z@4HA 0000000180412930 f   D2RHUD.obj
@@ -34607,7 +34589,6 @@
  0001:00411ab0       ?dtor$16@?0??ScanStashPages@@YAXXZ@4HA 0000000180412ab0 f   D2RHUD.obj
  0001:00411ac0       ?dtor$17@?0??ScanStashPages@@YAXXZ@4HA 0000000180412ac0 f   D2RHUD.obj
  0001:00411ad0       ?dtor$18@?0??ScanStashPages@@YAXXZ@4HA 0000000180412ad0 f   D2RHUD.obj
- 0001:00411af0       ?dtor$84@?0??ScanStashPages@@YAXXZ@4HA 0000000180412af0 f   D2RHUD.obj
  0001:00411b00       ?dtor$25@?0??ShowLootMenu@@YAXXZ@4HA 0000000180412b00 f   D2RHUD.obj
  0001:00411b30       ?dtor$1@?0??ShowCameraMenu@@YAXXZ@4HA 0000000180412b30 f   D2RHUD.obj
  0001:00411b40       ?dtor$3@?0??ShowCameraMenu@@YAXXZ@4HA 0000000180412b40 f   D2RHUD.obj
@@ -34653,10 +34634,8 @@
  0001:00411dc0       ?dtor$4@?0??ShowHUDSettingsMenu@@YAXXZ@4HA 0000000180412dc0 f   D2RHUD.obj
  0001:00411de0       ?dtor$6@?0??ShowHUDSettingsMenu@@YAXXZ@4HA 0000000180412de0 f   D2RHUD.obj
  0001:00411e20       ?dtor$7@?0??ShowHUDSettingsMenu@@YAXXZ@4HA 0000000180412e20 f   D2RHUD.obj
- 0001:00411e60       ?dtor$9@?0??ShowHUDSettingsMenu@@YAXXZ@4HA 0000000180412e60 f   D2RHUD.obj
  0001:00411e70       ?dtor$43@?0??ShowLootMenu@@YAXXZ@4HA 0000000180412e70 f   D2RHUD.obj
  0001:00411ea0       ?dtor$10@?0??ShowHUDSettingsMenu@@YAXXZ@4HA 0000000180412ea0 f   D2RHUD.obj
- 0001:00411ec0       ?dtor$13@?0??ShowHUDSettingsMenu@@YAXXZ@4HA 0000000180412ec0 f   D2RHUD.obj
  0001:00411ed0       ?dtor$126@?0??ShowLootMenu@@YAXXZ@4HA 0000000180412ed0 f   D2RHUD.obj
  0001:00411f00       ?dtor$14@?0??ShowHUDSettingsMenu@@YAXXZ@4HA 0000000180412f00 f   D2RHUD.obj
  0001:00411f10       ?dtor$15@?0??ShowHUDSettingsMenu@@YAXXZ@4HA 0000000180412f10 f   D2RHUD.obj
@@ -34667,7 +34646,6 @@
  0001:00411f60       ?dtor$20@?0??ShowHUDSettingsMenu@@YAXXZ@4HA 0000000180412f60 f   D2RHUD.obj
  0001:00411f70       ?dtor$21@?0??ShowHUDSettingsMenu@@YAXXZ@4HA 0000000180412f70 f   D2RHUD.obj
  0001:00411f80       ?dtor$22@?0??ShowHUDSettingsMenu@@YAXXZ@4HA 0000000180412f80 f   D2RHUD.obj
- 0001:00411fa0       ?dtor$25@?0??ShowHUDSettingsMenu@@YAXXZ@4HA 0000000180412fa0 f   D2RHUD.obj
  0001:00411fb0       ?dtor$8@?0??ShowMemoryMenu@@YAXXZ@4HA 0000000180412fb0 f   D2RHUD.obj
  0001:00411fe0       ?dtor$26@?0??ShowHUDSettingsMenu@@YAXXZ@4HA 0000000180412fe0 f   D2RHUD.obj
  0001:00411ff0       ?dtor$27@?0??ShowHUDSettingsMenu@@YAXXZ@4HA 0000000180412ff0 f   D2RHUD.obj
@@ -34705,7 +34683,6 @@
  0001:004121f0       ?dtor$14@?0??ShowHotkeyMenu@@YAXXZ@4HA 00000001804131f0 f   D2RHUD.obj
  0001:00412200       ?dtor$15@?0??ShowHotkeyMenu@@YAXXZ@4HA 0000000180413200 f   D2RHUD.obj
  0001:00412210       ?dtor$16@?0??ShowHotkeyMenu@@YAXXZ@4HA 0000000180413210 f   D2RHUD.obj
- 0001:00412230       ?dtor$19@?0??ShowHotkeyMenu@@YAXXZ@4HA 0000000180413230 f   D2RHUD.obj
  0001:00412240       ?dtor$16@?0??ShowSettingsPanel@@YAXXZ@4HA 0000000180413240 f   D2RHUD.obj
  0001:00412270       ?dtor$20@?0??ShowHotkeyMenu@@YAXXZ@4HA 0000000180413270 f   D2RHUD.obj
  0001:00412280       ?dtor$21@?0??ShowHotkeyMenu@@YAXXZ@4HA 0000000180413280 f   D2RHUD.obj
@@ -34723,7 +34700,6 @@
  0001:00412340       ?dtor$35@?0??ShowHotkeyMenu@@YAXXZ@4HA 0000000180413340 f   D2RHUD.obj
  0001:00412350       ?dtor$36@?0??ShowHotkeyMenu@@YAXXZ@4HA 0000000180413350 f   D2RHUD.obj
  0001:00412370       ?dtor$38@?0??ShowHotkeyMenu@@YAXXZ@4HA 0000000180413370 f   D2RHUD.obj
- 0001:004123b0       ?dtor$40@?0??ShowHotkeyMenu@@YAXXZ@4HA 00000001804133b0 f   D2RHUD.obj
  0001:004123c0       ?dtor$21@?0??ShowSettingsPanel@@YAXXZ@4HA 00000001804133c0 f   D2RHUD.obj
  0001:004123f0       ?dtor$94@?0??ShowHotkeyMenu@@YAXXZ@4HA 00000001804133f0 f   D2RHUD.obj
  0001:00412400       ?dtor$120@?0??ShowHotkeyMenu@@YAXXZ@4HA 0000000180413400 f   D2RHUD.obj
@@ -34736,10 +34712,8 @@
  0001:00412470       ?dtor$5@?0??ShowLootMenu@@YAXXZ@4HA 0000000180413470 f   D2RHUD.obj
  0001:00412490       ?dtor$7@?0??ShowLootMenu@@YAXXZ@4HA 0000000180413490 f   D2RHUD.obj
  0001:004124d0       ?dtor$8@?0??ShowLootMenu@@YAXXZ@4HA 00000001804134d0 f   D2RHUD.obj
- 0001:00412510       ?dtor$10@?0??ShowLootMenu@@YAXXZ@4HA 0000000180413510 f   D2RHUD.obj
  0001:00412520       ?dtor$33@?0??ShowSettingsPanel@@YAXXZ@4HA 0000000180413520 f   D2RHUD.obj
  0001:00412550       ?dtor$11@?0??ShowLootMenu@@YAXXZ@4HA 0000000180413550 f   D2RHUD.obj
- 0001:00412570       ?dtor$14@?0??ShowLootMenu@@YAXXZ@4HA 0000000180413570 f   D2RHUD.obj
  0001:00412580       ?dtor$37@?0??ShowSettingsPanel@@YAXXZ@4HA 0000000180413580 f   D2RHUD.obj
  0001:004125b0       ?dtor$15@?0??ShowLootMenu@@YAXXZ@4HA 00000001804135b0 f   D2RHUD.obj
  0001:004125c0       ?dtor$16@?0??ShowLootMenu@@YAXXZ@4HA 00000001804135c0 f   D2RHUD.obj
@@ -34750,7 +34724,6 @@
  0001:00412610       ?dtor$21@?0??ShowLootMenu@@YAXXZ@4HA 0000000180413610 f   D2RHUD.obj
  0001:00412620       ?dtor$22@?0??ShowLootMenu@@YAXXZ@4HA 0000000180413620 f   D2RHUD.obj
  0001:00412630       ?dtor$23@?0??ShowLootMenu@@YAXXZ@4HA 0000000180413630 f   D2RHUD.obj
- 0001:00412650       ?dtor$26@?0??ShowLootMenu@@YAXXZ@4HA 0000000180413650 f   D2RHUD.obj
  0001:00412660       ?dtor$49@?0??ShowSettingsPanel@@YAXXZ@4HA 0000000180413660 f   D2RHUD.obj
  0001:00412690       ?dtor$28@?0??ShowLootMenu@@YAXXZ@4HA 0000000180413690 f   D2RHUD.obj
  0001:004126a0       ?dtor$29@?0??ShowLootMenu@@YAXXZ@4HA 00000001804136a0 f   D2RHUD.obj
@@ -34767,7 +34740,6 @@
  0001:00412750       ?dtor$40@?0??ShowLootMenu@@YAXXZ@4HA 0000000180413750 f   D2RHUD.obj
  0001:00412760       ?dtor$41@?0??ShowLootMenu@@YAXXZ@4HA 0000000180413760 f   D2RHUD.obj
  0001:00412770       ?dtor$42@?0??ShowLootMenu@@YAXXZ@4HA 0000000180413770 f   D2RHUD.obj
- 0001:00412790       ?dtor$45@?0??ShowLootMenu@@YAXXZ@4HA 0000000180413790 f   D2RHUD.obj
  0001:004127a0       ?dtor$3@?0??SplitTab@@YA?AV?$vector@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@V?$allocator@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@@2@@std@@AEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@2@@Z@4HA 00000001804137a0 f   D2RHUD.obj
  0001:004127d0       ?dtor$51@?0??ShowLootMenu@@YAXXZ@4HA 00000001804137d0 f   D2RHUD.obj
  0001:004127e0       ?dtor$52@?0??ShowLootMenu@@YAXXZ@4HA 00000001804137e0 f   D2RHUD.obj
@@ -34791,7 +34763,6 @@
  0001:00412900       ?dtor$74@?0??ShowLootMenu@@YAXXZ@4HA 0000000180413900 f   D2RHUD.obj
  0001:00412910       ?dtor$75@?0??ShowLootMenu@@YAXXZ@4HA 0000000180413910 f   D2RHUD.obj
  0001:00412920       ?dtor$77@?0??ShowLootMenu@@YAXXZ@4HA 0000000180413920 f   D2RHUD.obj
- 0001:00412940       ?dtor$127@?0??ShowLootMenu@@YAXXZ@4HA 0000000180413940 f   D2RHUD.obj
  0001:00412950       ?dtor$14@?0??StripComments@@YA?AV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@AEBV12@@Z@4HA 0000000180413950 f   D2RHUD.obj
  0001:00412980       ?dtor$128@?0??ShowLootMenu@@YAXXZ@4HA 0000000180413980 f   D2RHUD.obj
  0001:00412990       ?dtor$191@?0??ShowLootMenu@@YAXXZ@4HA 0000000180413990 f   D2RHUD.obj
@@ -34808,14 +34779,13 @@
  0001:00412a40       ?dtor$6@?0??ShowMemoryMenu@@YAXXZ@4HA 0000000180413a40 f   D2RHUD.obj
  0001:00412a50       ?dtor$7@?0??ShowMemoryMenu@@YAXXZ@4HA 0000000180413a50 f   D2RHUD.obj
  0001:00412a70       ?dtor$9@?0??ShowMemoryMenu@@YAXXZ@4HA 0000000180413a70 f   D2RHUD.obj
- 0001:00412ab0       ?dtor$11@?0??ShowMemoryMenu@@YAXXZ@4HA 0000000180413ab0 f   D2RHUD.obj
  0001:00412ac0       ?dtor$0@?0??Trim@@YA?AV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@AEBV12@@Z@4HA 0000000180413ac0 f   D2RHUD.obj
  0001:00412af0       ?dtor$12@?0??ShowMemoryMenu@@YAXXZ@4HA 0000000180413af0 f   D2RHUD.obj
  0001:00412b00       ?dtor$13@?0??ShowMemoryMenu@@YAXXZ@4HA 0000000180413b00 f   D2RHUD.obj
  0001:00412b10       ?dtor$14@?0??ShowMemoryMenu@@YAXXZ@4HA 0000000180413b10 f   D2RHUD.obj
  0001:00412b20       ?dtor$15@?0??ShowMemoryMenu@@YAXXZ@4HA 0000000180413b20 f   D2RHUD.obj
  0001:00412b30       ?dtor$16@?0??ShowMemoryMenu@@YAXXZ@4HA 0000000180413b30 f   D2RHUD.obj
- 0001:00412b50       ?dtor$51@?0??ShowMemoryMenu@@YAXXZ@4HA 0000000180413b50 f   D2RHUD.obj
+ 0001:00412b40       ?dtor$18@?0??ShowSettingsPanel@@YAXXZ@4HA 0000000180413b40 f   D2RHUD.obj
  0001:00412b70       ?dtor$2@?0??_Add_equiv@?$_Builder@PEBDDV?$regex_traits@D@std@@@std@@QEAAXPEBD0_J@Z@4HA 0000000180413b70 f   D2RHUD.obj
  0001:00412ba0       ?dtor$0@?0??ShowSettingsPanel@@YAXXZ@4HA 0000000180413ba0 f   D2RHUD.obj
  0001:00412bc0       ?dtor$1@?0??ShowSettingsPanel@@YAXXZ@4HA 0000000180413bc0 f   D2RHUD.obj
@@ -34832,12 +34802,10 @@
  0001:00412c70       ?dtor$13@?0??ShowSettingsPanel@@YAXXZ@4HA 0000000180413c70 f   D2RHUD.obj
  0001:00412c80       ?dtor$15@?0??ShowSettingsPanel@@YAXXZ@4HA 0000000180413c80 f   D2RHUD.obj
  0001:00412ca0       ?dtor$17@?0??ShowSettingsPanel@@YAXXZ@4HA 0000000180413ca0 f   D2RHUD.obj
- 0001:00412ce0       ?dtor$18@?0??ShowSettingsPanel@@YAXXZ@4HA 0000000180413ce0 f   D2RHUD.obj
  0001:00412cf0       ?dtor$0@?0??do_transform@?$collate@D@std@@MEBA?AV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@2@PEBD0@Z@4HA 0000000180413cf0 f   D2RHUD.obj
  0001:00412d20       ?dtor$19@?0??ShowSettingsPanel@@YAXXZ@4HA 0000000180413d20 f   D2RHUD.obj
  0001:00412d30       ?dtor$20@?0??ShowSettingsPanel@@YAXXZ@4HA 0000000180413d30 f   D2RHUD.obj
  0001:00412d50       ?dtor$22@?0??ShowSettingsPanel@@YAXXZ@4HA 0000000180413d50 f   D2RHUD.obj
- 0001:00412d90       ?dtor$23@?0??ShowSettingsPanel@@YAXXZ@4HA 0000000180413d90 f   D2RHUD.obj
  0001:00412da0       ?dtor$0@?0??dump@?$basic_json@Vmap@std@@Vvector@2@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@2@_N_J_KNVallocator@2@Uadl_serializer@json_abi_v3_12_0@nlohmann@@V?$vector@EV?$allocator@E@std@@@2@X@json_abi_v3_12_0@nlohmann@@QEBA?AV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@HD_NW4error_handler_t@detail@23@@Z@4HA 0000000180413da0 f   D2RHUD.obj
  0001:00412dd0       ?dtor$24@?0??ShowSettingsPanel@@YAXXZ@4HA 0000000180413dd0 f   D2RHUD.obj
  0001:00412de0       ?dtor$26@?0??ShowSettingsPanel@@YAXXZ@4HA 0000000180413de0 f   D2RHUD.obj
@@ -34846,11 +34814,9 @@
  0001:00412e10       ?dtor$30@?0??ShowSettingsPanel@@YAXXZ@4HA 0000000180413e10 f   D2RHUD.obj
  0001:00412e20       ?dtor$31@?0??ShowSettingsPanel@@YAXXZ@4HA 0000000180413e20 f   D2RHUD.obj
  0001:00412e30       ?dtor$32@?0??ShowSettingsPanel@@YAXXZ@4HA 0000000180413e30 f   D2RHUD.obj
- 0001:00412e50       ?dtor$35@?0??ShowSettingsPanel@@YAXXZ@4HA 0000000180413e50 f   D2RHUD.obj
  0001:00412e60       ?dtor$0@?0??exception_message@?$parser@V?$basic_json@Uordered_map@json_abi_v3_12_0@nlohmann@@Vvector@std@@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@5@_N_J_KNVallocator@5@Uadl_serializer@23@V?$vector@EV?$allocator@E@std@@@5@X@json_abi_v3_12_0@nlohmann@@Vinput_stream_adapter@detail@23@@detail@json_abi_v3_12_0@nlohmann@@AEAA?AV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@W4token_type@?$lexer_base@V?$basic_json@Uordered_map@json_abi_v3_12_0@nlohmann@@Vvector@std@@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@5@_N_J_KNVallocator@5@Uadl_serializer@23@V?$vector@EV?$allocator@E@std@@@5@X@json_abi_v3_12_0@nlohmann@@@234@AEBV56@@Z@4HA 0000000180413e60 f   D2RHUD.obj
  0001:00412e90       ?dtor$36@?0??ShowSettingsPanel@@YAXXZ@4HA 0000000180413e90 f   D2RHUD.obj
  0001:00412eb0       ?dtor$38@?0??ShowSettingsPanel@@YAXXZ@4HA 0000000180413eb0 f   D2RHUD.obj
- 0001:00412ef0       ?dtor$39@?0??ShowSettingsPanel@@YAXXZ@4HA 0000000180413ef0 f   D2RHUD.obj
  0001:00412f00       ?dtor$8@?0??exception_message@?$parser@V?$basic_json@Uordered_map@json_abi_v3_12_0@nlohmann@@Vvector@std@@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@5@_N_J_KNVallocator@5@Uadl_serializer@23@V?$vector@EV?$allocator@E@std@@@5@X@json_abi_v3_12_0@nlohmann@@Vinput_stream_adapter@detail@23@@detail@json_abi_v3_12_0@nlohmann@@AEAA?AV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@W4token_type@?$lexer_base@V?$basic_json@Uordered_map@json_abi_v3_12_0@nlohmann@@Vvector@std@@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@5@_N_J_KNVallocator@5@Uadl_serializer@23@V?$vector@EV?$allocator@E@std@@@5@X@json_abi_v3_12_0@nlohmann@@@234@AEBV56@@Z@4HA 0000000180413f00 f   D2RHUD.obj
  0001:00412f30       ?dtor$40@?0??ShowSettingsPanel@@YAXXZ@4HA 0000000180413f30 f   D2RHUD.obj
  0001:00412f40       ?dtor$42@?0??ShowSettingsPanel@@YAXXZ@4HA 0000000180413f40 f   D2RHUD.obj
@@ -34860,7 +34826,6 @@
  0001:00412f80       ?dtor$47@?0??ShowSettingsPanel@@YAXXZ@4HA 0000000180413f80 f   D2RHUD.obj
  0001:00412f90       ?dtor$48@?0??ShowSettingsPanel@@YAXXZ@4HA 0000000180413f90 f   D2RHUD.obj
  0001:00412fb0       ?dtor$70@?0??ShowSettingsPanel@@YAXXZ@4HA 0000000180413fb0 f   D2RHUD.obj
- 0001:00412ff0       ?dtor$150@?0??ShowSettingsPanel@@YAXXZ@4HA 0000000180413ff0 f   D2RHUD.obj
  0001:00413000       ?dtor$17@?0??StripComments@@YA?AV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@AEBV12@@Z@4HA 0000000180414000 f   D2RHUD.obj
  0001:00413040       ?catch$175@?0??ShowSettingsPanel@@YAXXZ@4HA 0000000180414040 f   D2RHUD.obj
  0001:0041304d       __catch$?ShowSettingsPanel@@YAXXZ$2 000000018041404d f   D2RHUD.obj
@@ -34875,13 +34840,15 @@
  0001:00413110       ?dtor$32@?0??ShowVersionMessage@D2RHUD@@AEAAXXZ@4HA 0000000180414110 f   D2RHUD.obj
  0001:00413120       ?dtor$34@?0??ShowVersionMessage@D2RHUD@@AEAAXXZ@4HA 0000000180414120 f   D2RHUD.obj
  0001:00413130       ?dtor$8@?0??exception_message@?$parser@V?$basic_json@Vmap@std@@Vvector@2@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@2@_N_J_KNVallocator@2@Uadl_serializer@json_abi_v3_12_0@nlohmann@@V?$vector@EV?$allocator@E@std@@@2@X@json_abi_v3_12_0@nlohmann@@V?$iterator_input_adapter@V?$_String_const_iterator@V?$_String_val@U?$_Simple_types@D@std@@@std@@@std@@@detail@23@@detail@json_abi_v3_12_0@nlohmann@@AEAA?AV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@W4token_type@?$lexer_base@V?$basic_json@Vmap@std@@Vvector@2@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@2@_N_J_KNVallocator@2@Uadl_serializer@json_abi_v3_12_0@nlohmann@@V?$vector@EV?$allocator@E@std@@@2@X@json_abi_v3_12_0@nlohmann@@@234@AEBV56@@Z@4HA 0000000180414130 f   D2RHUD.obj
- 0001:00413160       ?dtor$0@?0??SplitTab@@YA?AV?$vector@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@V?$allocator@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@@2@@std@@AEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@2@@Z@4HA 0000000180414160 f   D2RHUD.obj
- 0001:00413190       ?dtor$23@?0??UpdateActiveZoneInfoText@@YAX_J@Z@4HA 0000000180414190 f   D2RHUD.obj
- 0001:004131d0       ?catch$2@?0??_Call_immediate@?$_Packaged_state@$$A6A_KXZ@std@@QEAAXXZ@4HA 00000001804141d0 f   D2RHUD.obj
- 0001:004131dd       __catch$?_Call_immediate@?$_Packaged_state@$$A6A_KXZ@std@@QEAAXXZ$0 00000001804141dd f   D2RHUD.obj
- 0001:00413210       ?catch$5@?0??_ScheduleTask@_Task_impl_base@details@Concurrency@@QEAAXPEAU_TaskProcHandle@23@W4_TaskInliningMode@23@@Z@4HA 0000000180414210 f   D2RHUD.obj
- 0001:0041321e       __catch$?_ScheduleTask@_Task_impl_base@details@Concurrency@@QEAAXPEAU_TaskProcHandle@23@W4_TaskInliningMode@23@@Z$2 000000018041421e f   D2RHUD.obj
- 0001:00413280       ?dtor$5@?0??ReadTCexFile@@YA?AV?$vector@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@V?$allocator@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@@2@@std@@AEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@2@@Z@4HA 0000000180414280 f   D2RHUD.obj
+ 0001:00413160       ?dtor$15@?0??StripComments@@YA?AV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@AEBV12@@Z@4HA 0000000180414160 f   D2RHUD.obj
+ 0001:004131a0       ?dtor$2@?0??exception_message@?$parser@V?$basic_json@Uordered_map@json_abi_v3_12_0@nlohmann@@Vvector@std@@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@5@_N_J_KNVallocator@5@Uadl_serializer@23@V?$vector@EV?$allocator@E@std@@@5@X@json_abi_v3_12_0@nlohmann@@Vinput_stream_adapter@detail@23@@detail@json_abi_v3_12_0@nlohmann@@AEAA?AV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@W4token_type@?$lexer_base@V?$basic_json@Uordered_map@json_abi_v3_12_0@nlohmann@@Vvector@std@@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@5@_N_J_KNVallocator@5@Uadl_serializer@23@V?$vector@EV?$allocator@E@std@@@5@X@json_abi_v3_12_0@nlohmann@@@234@AEBV56@@Z@4HA 00000001804141a0 f   D2RHUD.obj
+ 0001:004131b0       ?dtor$2@?0??from_json@@YAXAEBV?$basic_json@Vmap@std@@Vvector@2@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@2@_N_J_KNVallocator@2@Uadl_serializer@json_abi_v3_12_0@nlohmann@@V?$vector@EV?$allocator@E@std@@@2@X@json_abi_v3_12_0@nlohmann@@AEAUZoneGroup@@@Z@4HA 00000001804141b0 f   D2RHUD.obj
+ 0001:004131e0       ?dtor$2@?0??exception_message@?$parser@V?$basic_json@Vmap@std@@Vvector@2@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@2@_N_J_KNVallocator@2@Uadl_serializer@json_abi_v3_12_0@nlohmann@@V?$vector@EV?$allocator@E@std@@@2@X@json_abi_v3_12_0@nlohmann@@V?$iterator_input_adapter@V?$_String_const_iterator@V?$_String_val@U?$_Simple_types@D@std@@@std@@@std@@@detail@23@@detail@json_abi_v3_12_0@nlohmann@@AEAA?AV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@W4token_type@?$lexer_base@V?$basic_json@Vmap@std@@Vvector@2@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@2@_N_J_KNVallocator@2@Uadl_serializer@json_abi_v3_12_0@nlohmann@@V?$vector@EV?$allocator@E@std@@@2@X@json_abi_v3_12_0@nlohmann@@@234@AEBV56@@Z@4HA 00000001804141e0 f   D2RHUD.obj
+ 0001:004131f0       ?dtor$13@?0??from_json@@YAXAEBV?$basic_json@Vmap@std@@Vvector@2@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@2@_N_J_KNVallocator@2@Uadl_serializer@json_abi_v3_12_0@nlohmann@@V?$vector@EV?$allocator@E@std@@@2@X@json_abi_v3_12_0@nlohmann@@AEAUZoneLevel@@@Z@4HA 00000001804141f0 f   D2RHUD.obj
+ 0001:00413230       ?dtor$0@?0??absolute@filesystem@std@@YA?AVpath@12@AEBV312@@Z@4HA 0000000180414230 f   D2RHUD.obj
+ 0001:00413260       ?dtor$22@?0??getMonsterStatsDisplaySetting@@YA?AUMonsterStatsDisplaySettings@@AEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@@Z@4HA 0000000180414260 f   D2RHUD.obj
+ 0001:00413290       ?dtor$42@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180414290 f   D2RHUD.obj
+ 0001:004132a0       ?dtor$15@?0??mapColorToInt@@YAHAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@@Z@4HA 00000001804142a0 f   D2RHUD.obj
  0001:004132d0       ?dtor$1@?0??SplitTab@@YA?AV?$vector@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@V?$allocator@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@@2@@std@@AEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@2@@Z@4HA 00000001804142d0 f   D2RHUD.obj
  0001:00413300       ?dtor$2@?0??SplitTab@@YA?AV?$vector@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@V?$allocator@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@@2@@std@@AEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@2@@Z@4HA 0000000180414300 f   D2RHUD.obj
  0001:00413320       ?dtor$4@?0??SplitTab@@YA?AV?$vector@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@V?$allocator@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@@2@@std@@AEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@2@@Z@4HA 0000000180414320 f   D2RHUD.obj
@@ -34891,8 +34858,8 @@
  0001:004133a0       ?dtor$1@?0??StripComments@@YA?AV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@AEBV12@@Z@4HA 00000001804143a0 f   D2RHUD.obj
  0001:004133b0       ?dtor$2@?0??StripComments@@YA?AV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@AEBV12@@Z@4HA 00000001804143b0 f   D2RHUD.obj
  0001:004133c0       ?dtor$3@?0??StripComments@@YA?AV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@AEBV12@@Z@4HA 00000001804143c0 f   D2RHUD.obj
- 0001:004133e0       ?dtor$15@?0??StripComments@@YA?AV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@AEBV12@@Z@4HA 00000001804143e0 f   D2RHUD.obj
- 0001:00413400       ?dtor$5@?0??from_json@@YAXAEBV?$basic_json@Vmap@std@@Vvector@2@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@2@_N_J_KNVallocator@2@Uadl_serializer@json_abi_v3_12_0@nlohmann@@V?$vector@EV?$allocator@E@std@@@2@X@json_abi_v3_12_0@nlohmann@@AEAUDesecratedZone@@@Z@4HA 0000000180414400 f   D2RHUD.obj
+ 0001:004133d0       ?dtor$9@?0??from_json@@YAXAEBV?$basic_json@Vmap@std@@Vvector@2@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@2@_N_J_KNVallocator@2@Uadl_serializer@json_abi_v3_12_0@nlohmann@@V?$vector@EV?$allocator@E@std@@@2@X@json_abi_v3_12_0@nlohmann@@AEAUDesecratedZone@@@Z@4HA 00000001804143d0 f   D2RHUD.obj
+ 0001:00413410       ?dtor$17@?0??from_json@@YAXAEBV?$basic_json@Vmap@std@@Vvector@2@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@2@_N_J_KNVallocator@2@Uadl_serializer@json_abi_v3_12_0@nlohmann@@V?$vector@EV?$allocator@E@std@@@2@X@json_abi_v3_12_0@nlohmann@@AEAUDesecratedZone@@@Z@4HA 0000000180414410 f   D2RHUD.obj
  0001:00413440       ?dtor$18@?0??StripComments@@YA?AV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@AEBV12@@Z@4HA 0000000180414440 f   D2RHUD.obj
  0001:00413480       ?dtor$0@?0??ToggleManualZoneGroupInternal@@YAX_N@Z@4HA 0000000180414480 f   D2RHUD.obj
  0001:004134a0       ?dtor$1@?0??ToggleManualZoneGroupInternal@@YAX_N@Z@4HA 00000001804144a0 f   D2RHUD.obj
@@ -34926,8 +34893,7 @@
  0001:00413760       ?dtor$0@?0??_Begin_assert_group@?$_Builder@PEB_W_WV?$regex_traits@_W@std@@@std@@QEAAPEAV_Node_base@2@_N@Z@4HA 0000000180414760 f   D2RHUD.obj
  0001:00413770       ?dtor$0@?0??_Bridge@_TaskProcThunk@details@Concurrency@@SAXPEAX@Z@4HA 0000000180414770 f   D2RHUD.obj
  0001:00413780       ?dtor$1@?0??_Call_immediate@?$_Packaged_state@$$A6A_KXZ@std@@QEAAXXZ@4HA 0000000180414780 f   D2RHUD.obj
- 0001:004137a0       ?dtor$0@?0??_Callback@_PPLTaskChore@_DefaultPPLTaskScheduler@details@Concurrency@@CAXPEAX@Z@4HA 00000001804147a0 f   D2RHUD.obj
- 0001:004137b0       ?dtor$27@?0??from_json@@YAXAEBV?$basic_json@Vmap@std@@Vvector@2@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@2@_N_J_KNVallocator@2@Uadl_serializer@json_abi_v3_12_0@nlohmann@@V?$vector@EV?$allocator@E@std@@@2@X@json_abi_v3_12_0@nlohmann@@AEAUDesecratedZone@@@Z@4HA 00000001804147b0 f   D2RHUD.obj
+ 0001:004137c0       ?dtor$28@?0??from_json@@YAXAEBV?$basic_json@Vmap@std@@Vvector@2@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@2@_N_J_KNVallocator@2@Uadl_serializer@json_abi_v3_12_0@nlohmann@@V?$vector@EV?$allocator@E@std@@@2@X@json_abi_v3_12_0@nlohmann@@AEAUDesecratedZone@@@Z@4HA 00000001804147c0 f   D2RHUD.obj
  0001:004137f0       ?dtor$0@?0??_CancelAndRunContinuations@?$_Task_impl@E@details@Concurrency@@UEAA_N_N00AEBV?$shared_ptr@U_ExceptionHolder@details@Concurrency@@@std@@@Z@4HA 00000001804147f0 f   D2RHUD.obj
  0001:00413800       ?dtor$1@?0??_CancelAndRunContinuations@?$_Task_impl@E@details@Concurrency@@UEAA_N_N00AEBV?$shared_ptr@U_ExceptionHolder@details@Concurrency@@@std@@@Z@4HA 0000000180414800 f   D2RHUD.obj
  0001:00413810       ?dtor$0@?0??_CancelWithException@_Task_impl_base@details@Concurrency@@QEAA_NAEBVexception_ptr@std@@@Z@4HA 0000000180414810 f   D2RHUD.obj
@@ -34988,10 +34954,10 @@
  0001:00413bf0       ?dtor$1@?0??_ScheduleTask@_Task_impl_base@details@Concurrency@@QEAAXPEAU_TaskProcHandle@23@W4_TaskInliningMode@23@@Z@4HA 0000000180414bf0 f   D2RHUD.obj
  0001:00413c10       ?catch$4@?0??_ScheduleTask@_Task_impl_base@details@Concurrency@@QEAAXPEAU_TaskProcHandle@23@W4_TaskInliningMode@23@@Z@4HA 0000000180414c10 f   D2RHUD.obj
  0001:00413c1d       __catch$?_ScheduleTask@_Task_impl_base@details@Concurrency@@QEAAXPEAU_TaskProcHandle@23@W4_TaskInliningMode@23@@Z$1 0000000180414c1d f   D2RHUD.obj
- 0001:00413c30       ?dtor$31@?0??from_json@@YAXAEBV?$basic_json@Vmap@std@@Vvector@2@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@2@_N_J_KNVallocator@2@Uadl_serializer@json_abi_v3_12_0@nlohmann@@V?$vector@EV?$allocator@E@std@@@2@X@json_abi_v3_12_0@nlohmann@@AEAUDesecratedZone@@@Z@4HA 0000000180414c30 f   D2RHUD.obj
- 0001:00413c70       ?dtor$0@?0??_Set_exception@?$_Associated_state@_K@std@@QEAAXVexception_ptr@2@_N@Z@4HA 0000000180414c70 f   D2RHUD.obj
- 0001:00413c80       ?catch$3@?0??_Wait@_Task_impl_base@details@Concurrency@@QEAA?AW4task_group_status@3@XZ@4HA 0000000180414c80 f   D2RHUD.obj
- 0001:00413c8e       __catch$?_Wait@_Task_impl_base@details@Concurrency@@QEAA?AW4task_group_status@3@XZ$2 0000000180414c8e f   D2RHUD.obj
+ 0001:00413c40       ?dtor$32@?0??from_json@@YAXAEBV?$basic_json@Vmap@std@@Vvector@2@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@2@_N_J_KNVallocator@2@Uadl_serializer@json_abi_v3_12_0@nlohmann@@V?$vector@EV?$allocator@E@std@@@2@X@json_abi_v3_12_0@nlohmann@@AEAUDesecratedZone@@@Z@4HA 0000000180414c40 f   D2RHUD.obj
+ 0001:00413c50       ?catch$8@?0??invoke@?$_PPLTaskHandle@EU?$_InitialTaskHandle@XV<lambda_1>@?1???$?0V?$_Fake_no_copy_callable_adapter@V<lambda_1>@?1???R1?1??ShowCameraMenu@@YAXXZ@QEBA@XZ@@std@@@?$_Task_async_state@_K@std@@QEAA@$$QEAV?$_Fake_no_copy_callable_adapter@V<lambda_1>@?1???R1?1??ShowCameraMenu@@YAXXZ@QEBA@XZ@@3@@Z@U_TypeSelectorNoAsync@details@Concurrency@@@?$task@E@Concurrency@@U_TaskProcHandle@details@3@@details@Concurrency@@UEBAXXZ@4HA 0000000180414c50 f   D2RHUD.obj
+ 0001:00413c5d       __catch$?invoke@?$_PPLTaskHandle@EU?$_InitialTaskHandle@XV<lambda_1>@?1???$?0V?$_Fake_no_copy_callable_adapter@V<lambda_1>@?1???R1?1??ShowCameraMenu@@YAXXZ@QEBA@XZ@@std@@@?$_Task_async_state@_K@std@@QEAA@$$QEAV?$_Fake_no_copy_callable_adapter@V<lambda_1>@?1???R1?1??ShowCameraMenu@@YAXXZ@QEBA@XZ@@3@@Z@U_TypeSelectorNoAsync@details@Concurrency@@@?$task@E@Concurrency@@U_TaskProcHandle@details@3@@details@Concurrency@@UEBAXXZ$0 0000000180414c5d f   D2RHUD.obj
+ 0001:00413ca0       ?dtor$0@?0??get@?$future@_K@std@@QEAA_KXZ@4HA 0000000180414ca0 f   D2RHUD.obj
  0001:00413cf0       ?dtor$1@?0??_Set_exception@?$_Associated_state@_K@std@@QEAAXVexception_ptr@2@_N@Z@4HA 0000000180414cf0 f   D2RHUD.obj
  0001:00413d00       ?dtor$3@?0??_Set_exception@?$_Associated_state@_K@std@@QEAAXVexception_ptr@2@_N@Z@4HA 0000000180414d00 f   D2RHUD.obj
  0001:00413d10       ?dtor$0@?0??_Throw_fs_error@filesystem@std@@YAXPEBDW4__std_win_error@@@Z@4HA 0000000180414d10 f   D2RHUD.obj
@@ -35001,9 +34967,9 @@
  0001:00413d50       ?dtor$0@?0??_Wait@_Task_impl_base@details@Concurrency@@QEAA?AW4task_group_status@3@XZ@4HA 0000000180414d50 f   D2RHUD.obj
  0001:00413d70       ?catch$2@?0??_Wait@_Task_impl_base@details@Concurrency@@QEAA?AW4task_group_status@3@XZ@4HA 0000000180414d70 f   D2RHUD.obj
  0001:00413d7d       __catch$?_Wait@_Task_impl_base@details@Concurrency@@QEAA?AW4task_group_status@3@XZ$1 0000000180414d7d f   D2RHUD.obj
- 0001:00413d90       ?dtor$2@?0??from_json@@YAXAEBV?$basic_json@Vmap@std@@Vvector@2@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@2@_N_J_KNVallocator@2@Uadl_serializer@json_abi_v3_12_0@nlohmann@@V?$vector@EV?$allocator@E@std@@@2@X@json_abi_v3_12_0@nlohmann@@AEAUZoneGroup@@@Z@4HA 0000000180414d90 f   D2RHUD.obj
- 0001:00413dd0       ?dtor$0@?0??absolute@filesystem@std@@YA?AVpath@12@AEBV312@@Z@4HA 0000000180414dd0 f   D2RHUD.obj
- 0001:00413e00       ?dtor$13@?0??from_json@@YAXAEBV?$basic_json@Vmap@std@@Vvector@2@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@2@_N_J_KNVallocator@2@Uadl_serializer@json_abi_v3_12_0@nlohmann@@V?$vector@EV?$allocator@E@std@@@2@X@json_abi_v3_12_0@nlohmann@@AEAUZoneLevel@@@Z@4HA 0000000180414e00 f   D2RHUD.obj
+ 0001:00413da0       ?dtor$16@?0??getMonsterStatsDisplaySetting@@YA?AUMonsterStatsDisplaySettings@@AEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@@Z@4HA 0000000180414da0 f   D2RHUD.obj
+ 0001:00413dd0       ?dtor$20@?0??getMonsterStatsDisplaySetting@@YA?AUMonsterStatsDisplaySettings@@AEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@@Z@4HA 0000000180414dd0 f   D2RHUD.obj
+ 0001:00413e10       ?dtor$24@?0??getMonsterStatsDisplaySetting@@YA?AUMonsterStatsDisplaySettings@@AEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@@Z@4HA 0000000180414e10 f   D2RHUD.obj
  0001:00413e40       ?dtor$0@?0??create_directories@filesystem@std@@YA_NAEBVpath@12@AEAVerror_code@2@@Z@4HA 0000000180414e40 f   D2RHUD.obj
  0001:00413e70       ?dtor$0@?0??destroy@json_value@?$basic_json@Uordered_map@json_abi_v3_12_0@nlohmann@@Vvector@std@@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@5@_N_J_KNVallocator@5@Uadl_serializer@23@V?$vector@EV?$allocator@E@std@@@5@X@json_abi_v3_12_0@nlohmann@@QEAAXW4value_t@detail@34@@Z@4HA 0000000180414e70 f   D2RHUD.obj
  0001:00413e80       ?dtor$1@?0??destroy@json_value@?$basic_json@Uordered_map@json_abi_v3_12_0@nlohmann@@Vvector@std@@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@5@_N_J_KNVallocator@5@Uadl_serializer@23@V?$vector@EV?$allocator@E@std@@@5@X@json_abi_v3_12_0@nlohmann@@QEAAXW4value_t@detail@34@@Z@4HA 0000000180414e80 f   D2RHUD.obj
@@ -35026,29 +34992,23 @@
  0001:00414030       ?dtor$3@?0??dump_escaped@?$serializer@V?$basic_json@Vmap@std@@Vvector@2@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@2@_N_J_KNVallocator@2@Uadl_serializer@json_abi_v3_12_0@nlohmann@@V?$vector@EV?$allocator@E@std@@@2@X@json_abi_v3_12_0@nlohmann@@@detail@json_abi_v3_12_0@nlohmann@@AEAAXAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180415030 f   D2RHUD.obj
  0001:00414040       ?dtor$4@?0??dump_escaped@?$serializer@V?$basic_json@Vmap@std@@Vvector@2@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@2@_N_J_KNVallocator@2@Uadl_serializer@json_abi_v3_12_0@nlohmann@@V?$vector@EV?$allocator@E@std@@@2@X@json_abi_v3_12_0@nlohmann@@@detail@json_abi_v3_12_0@nlohmann@@AEAAXAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180415040 f   D2RHUD.obj
  0001:00414050       ?dtor$1@?0??end_object@?$json_sax_dom_callback_parser@V?$basic_json@Uordered_map@json_abi_v3_12_0@nlohmann@@Vvector@std@@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@5@_N_J_KNVallocator@5@Uadl_serializer@23@V?$vector@EV?$allocator@E@std@@@5@X@json_abi_v3_12_0@nlohmann@@Vinput_stream_adapter@detail@23@@detail@json_abi_v3_12_0@nlohmann@@QEAA_NXZ@4HA 0000000180415050 f   D2RHUD.obj
- 0001:00414070       ?dtor$2@?0??exception_message@?$parser@V?$basic_json@Uordered_map@json_abi_v3_12_0@nlohmann@@Vvector@std@@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@5@_N_J_KNVallocator@5@Uadl_serializer@23@V?$vector@EV?$allocator@E@std@@@5@X@json_abi_v3_12_0@nlohmann@@Vinput_stream_adapter@detail@23@@detail@json_abi_v3_12_0@nlohmann@@AEAA?AV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@W4token_type@?$lexer_base@V?$basic_json@Uordered_map@json_abi_v3_12_0@nlohmann@@Vvector@std@@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@5@_N_J_KNVallocator@5@Uadl_serializer@23@V?$vector@EV?$allocator@E@std@@@5@X@json_abi_v3_12_0@nlohmann@@@234@AEBV56@@Z@4HA 0000000180415070 f   D2RHUD.obj
  0001:00414080       ?dtor$15@?0??getMonsterStatsDisplaySetting@@YA?AUMonsterStatsDisplaySettings@@AEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@@Z@4HA 0000000180415080 f   D2RHUD.obj
  0001:004140b0       ?dtor$13@?0??exception_message@?$parser@V?$basic_json@Uordered_map@json_abi_v3_12_0@nlohmann@@Vvector@std@@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@5@_N_J_KNVallocator@5@Uadl_serializer@23@V?$vector@EV?$allocator@E@std@@@5@X@json_abi_v3_12_0@nlohmann@@Vinput_stream_adapter@detail@23@@detail@json_abi_v3_12_0@nlohmann@@AEAA?AV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@W4token_type@?$lexer_base@V?$basic_json@Uordered_map@json_abi_v3_12_0@nlohmann@@Vvector@std@@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@5@_N_J_KNVallocator@5@Uadl_serializer@23@V?$vector@EV?$allocator@E@std@@@5@X@json_abi_v3_12_0@nlohmann@@@234@AEBV56@@Z@4HA 00000001804150b0 f   D2RHUD.obj
  0001:004140e0       ?dtor$19@?0??exception_message@?$parser@V?$basic_json@Uordered_map@json_abi_v3_12_0@nlohmann@@Vvector@std@@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@5@_N_J_KNVallocator@5@Uadl_serializer@23@V?$vector@EV?$allocator@E@std@@@5@X@json_abi_v3_12_0@nlohmann@@Vinput_stream_adapter@detail@23@@detail@json_abi_v3_12_0@nlohmann@@AEAA?AV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@W4token_type@?$lexer_base@V?$basic_json@Uordered_map@json_abi_v3_12_0@nlohmann@@Vvector@std@@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@5@_N_J_KNVallocator@5@Uadl_serializer@23@V?$vector@EV?$allocator@E@std@@@5@X@json_abi_v3_12_0@nlohmann@@@234@AEBV56@@Z@4HA 00000001804150e0 f   D2RHUD.obj
  0001:00414110       ?dtor$24@?0??exception_message@?$parser@V?$basic_json@Uordered_map@json_abi_v3_12_0@nlohmann@@Vvector@std@@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@5@_N_J_KNVallocator@5@Uadl_serializer@23@V?$vector@EV?$allocator@E@std@@@5@X@json_abi_v3_12_0@nlohmann@@Vinput_stream_adapter@detail@23@@detail@json_abi_v3_12_0@nlohmann@@AEAA?AV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@W4token_type@?$lexer_base@V?$basic_json@Uordered_map@json_abi_v3_12_0@nlohmann@@Vvector@std@@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@5@_N_J_KNVallocator@5@Uadl_serializer@23@V?$vector@EV?$allocator@E@std@@@5@X@json_abi_v3_12_0@nlohmann@@@234@AEBV56@@Z@4HA 0000000180415110 f   D2RHUD.obj
  0001:00414140       ?dtor$0@?0??exception_message@?$parser@V?$basic_json@Vmap@std@@Vvector@2@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@2@_N_J_KNVallocator@2@Uadl_serializer@json_abi_v3_12_0@nlohmann@@V?$vector@EV?$allocator@E@std@@@2@X@json_abi_v3_12_0@nlohmann@@V?$iterator_input_adapter@V?$_String_const_iterator@V?$_String_val@U?$_Simple_types@D@std@@@std@@@std@@@detail@23@@detail@json_abi_v3_12_0@nlohmann@@AEAA?AV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@W4token_type@?$lexer_base@V?$basic_json@Vmap@std@@Vvector@2@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@2@_N_J_KNVallocator@2@Uadl_serializer@json_abi_v3_12_0@nlohmann@@V?$vector@EV?$allocator@E@std@@@2@X@json_abi_v3_12_0@nlohmann@@@234@AEBV56@@Z@4HA 0000000180415140 f   D2RHUD.obj
- 0001:00414170       ?dtor$2@?0??exception_message@?$parser@V?$basic_json@Vmap@std@@Vvector@2@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@2@_N_J_KNVallocator@2@Uadl_serializer@json_abi_v3_12_0@nlohmann@@V?$vector@EV?$allocator@E@std@@@2@X@json_abi_v3_12_0@nlohmann@@V?$iterator_input_adapter@V?$_String_const_iterator@V?$_String_val@U?$_Simple_types@D@std@@@std@@@std@@@detail@23@@detail@json_abi_v3_12_0@nlohmann@@AEAA?AV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@W4token_type@?$lexer_base@V?$basic_json@Vmap@std@@Vvector@2@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@2@_N_J_KNVallocator@2@Uadl_serializer@json_abi_v3_12_0@nlohmann@@V?$vector@EV?$allocator@E@std@@@2@X@json_abi_v3_12_0@nlohmann@@@234@AEBV56@@Z@4HA 0000000180415170 f   D2RHUD.obj
  0001:00414180       ?dtor$18@?0??getMonsterStatsDisplaySetting@@YA?AUMonsterStatsDisplaySettings@@AEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@@Z@4HA 0000000180415180 f   D2RHUD.obj
  0001:004141b0       ?dtor$13@?0??exception_message@?$parser@V?$basic_json@Vmap@std@@Vvector@2@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@2@_N_J_KNVallocator@2@Uadl_serializer@json_abi_v3_12_0@nlohmann@@V?$vector@EV?$allocator@E@std@@@2@X@json_abi_v3_12_0@nlohmann@@V?$iterator_input_adapter@V?$_String_const_iterator@V?$_String_val@U?$_Simple_types@D@std@@@std@@@std@@@detail@23@@detail@json_abi_v3_12_0@nlohmann@@AEAA?AV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@W4token_type@?$lexer_base@V?$basic_json@Vmap@std@@Vvector@2@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@2@_N_J_KNVallocator@2@Uadl_serializer@json_abi_v3_12_0@nlohmann@@V?$vector@EV?$allocator@E@std@@@2@X@json_abi_v3_12_0@nlohmann@@@234@AEBV56@@Z@4HA 00000001804151b0 f   D2RHUD.obj
  0001:004141e0       ?dtor$19@?0??exception_message@?$parser@V?$basic_json@Vmap@std@@Vvector@2@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@2@_N_J_KNVallocator@2@Uadl_serializer@json_abi_v3_12_0@nlohmann@@V?$vector@EV?$allocator@E@std@@@2@X@json_abi_v3_12_0@nlohmann@@V?$iterator_input_adapter@V?$_String_const_iterator@V?$_String_val@U?$_Simple_types@D@std@@@std@@@std@@@detail@23@@detail@json_abi_v3_12_0@nlohmann@@AEAA?AV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@W4token_type@?$lexer_base@V?$basic_json@Vmap@std@@Vvector@2@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@2@_N_J_KNVallocator@2@Uadl_serializer@json_abi_v3_12_0@nlohmann@@V?$vector@EV?$allocator@E@std@@@2@X@json_abi_v3_12_0@nlohmann@@@234@AEBV56@@Z@4HA 00000001804151e0 f   D2RHUD.obj
  0001:00414210       ?dtor$24@?0??exception_message@?$parser@V?$basic_json@Vmap@std@@Vvector@2@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@2@_N_J_KNVallocator@2@Uadl_serializer@json_abi_v3_12_0@nlohmann@@V?$vector@EV?$allocator@E@std@@@2@X@json_abi_v3_12_0@nlohmann@@V?$iterator_input_adapter@V?$_String_const_iterator@V?$_String_val@U?$_Simple_types@D@std@@@std@@@std@@@detail@23@@detail@json_abi_v3_12_0@nlohmann@@AEAA?AV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@W4token_type@?$lexer_base@V?$basic_json@Vmap@std@@Vvector@2@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@2@_N_J_KNVallocator@2@Uadl_serializer@json_abi_v3_12_0@nlohmann@@V?$vector@EV?$allocator@E@std@@@2@X@json_abi_v3_12_0@nlohmann@@@234@AEBV56@@Z@4HA 0000000180415210 f   D2RHUD.obj
  0001:00414240       ?dtor$0@?0??from_json@@YAXAEBV?$basic_json@Vmap@std@@Vvector@2@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@2@_N_J_KNVallocator@2@Uadl_serializer@json_abi_v3_12_0@nlohmann@@V?$vector@EV?$allocator@E@std@@@2@X@json_abi_v3_12_0@nlohmann@@AEAUDesecratedZone@@@Z@4HA 0000000180415240 f   D2RHUD.obj
  0001:00414270       ?dtor$1@?0??from_json@@YAXAEBV?$basic_json@Vmap@std@@Vvector@2@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@2@_N_J_KNVallocator@2@Uadl_serializer@json_abi_v3_12_0@nlohmann@@V?$vector@EV?$allocator@E@std@@@2@X@json_abi_v3_12_0@nlohmann@@AEAUDesecratedZone@@@Z@4HA 0000000180415270 f   D2RHUD.obj
- 0001:00414290       ?dtor$9@?0??from_json@@YAXAEBV?$basic_json@Vmap@std@@Vvector@2@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@2@_N_J_KNVallocator@2@Uadl_serializer@json_abi_v3_12_0@nlohmann@@V?$vector@EV?$allocator@E@std@@@2@X@json_abi_v3_12_0@nlohmann@@AEAUDesecratedZone@@@Z@4HA 0000000180415290 f   D2RHUD.obj
- 0001:004142a0       ?dtor$22@?0??getMonsterStatsDisplaySetting@@YA?AUMonsterStatsDisplaySettings@@AEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@@Z@4HA 00000001804152a0 f   D2RHUD.obj
- 0001:004142e0       ?dtor$17@?0??from_json@@YAXAEBV?$basic_json@Vmap@std@@Vvector@2@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@2@_N_J_KNVallocator@2@Uadl_serializer@json_abi_v3_12_0@nlohmann@@V?$vector@EV?$allocator@E@std@@@2@X@json_abi_v3_12_0@nlohmann@@AEAUDesecratedZone@@@Z@4HA 00000001804152e0 f   D2RHUD.obj
+ 0001:004142b0       ?dtor$50@?0??getMonsterStatsDisplaySetting@@YA?AUMonsterStatsDisplaySettings@@AEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@@Z@4HA 00000001804152b0 f   D2RHUD.obj
  0001:004142f0       ?dtor$26@?0??getMonsterStatsDisplaySetting@@YA?AUMonsterStatsDisplaySettings@@AEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@@Z@4HA 00000001804152f0 f   D2RHUD.obj
  0001:00414320       ?dtor$20@?0??from_json@@YAXAEBV?$basic_json@Vmap@std@@Vvector@2@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@2@_N_J_KNVallocator@2@Uadl_serializer@json_abi_v3_12_0@nlohmann@@V?$vector@EV?$allocator@E@std@@@2@X@json_abi_v3_12_0@nlohmann@@AEAUDesecratedZone@@@Z@4HA 0000000180415320 f   D2RHUD.obj
  0001:00414330       ?dtor$21@?0??from_json@@YAXAEBV?$basic_json@Vmap@std@@Vvector@2@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@2@_N_J_KNVallocator@2@Uadl_serializer@json_abi_v3_12_0@nlohmann@@V?$vector@EV?$allocator@E@std@@@2@X@json_abi_v3_12_0@nlohmann@@AEAUDesecratedZone@@@Z@4HA 0000000180415330 f   D2RHUD.obj
  0001:00414340       ?dtor$22@?0??from_json@@YAXAEBV?$basic_json@Vmap@std@@Vvector@2@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@2@_N_J_KNVallocator@2@Uadl_serializer@json_abi_v3_12_0@nlohmann@@V?$vector@EV?$allocator@E@std@@@2@X@json_abi_v3_12_0@nlohmann@@AEAUDesecratedZone@@@Z@4HA 0000000180415340 f   D2RHUD.obj
- 0001:00414360       ?dtor$28@?0??from_json@@YAXAEBV?$basic_json@Vmap@std@@Vvector@2@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@2@_N_J_KNVallocator@2@Uadl_serializer@json_abi_v3_12_0@nlohmann@@V?$vector@EV?$allocator@E@std@@@2@X@json_abi_v3_12_0@nlohmann@@AEAUDesecratedZone@@@Z@4HA 0000000180415360 f   D2RHUD.obj
- 0001:00414370       ?dtor$15@?0??mapColorToInt@@YAHAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@@Z@4HA 0000000180415370 f   D2RHUD.obj
- 0001:004143a0       ?dtor$32@?0??from_json@@YAXAEBV?$basic_json@Vmap@std@@Vvector@2@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@2@_N_J_KNVallocator@2@Uadl_serializer@json_abi_v3_12_0@nlohmann@@V?$vector@EV?$allocator@E@std@@@2@X@json_abi_v3_12_0@nlohmann@@AEAUDesecratedZone@@@Z@4HA 00000001804153a0 f   D2RHUD.obj
+ 0001:00414380       ?dtor$58@?0??mapColorToInt@@YAHAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@@Z@4HA 0000000180415380 f   D2RHUD.obj
  0001:004143b0       ?dtor$1@?0??parse_time_utc@@YA_JAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@@Z@4HA 00000001804153b0 f   D2RHUD.obj
  0001:004143e0       ?dtor$35@?0??from_json@@YAXAEBV?$basic_json@Vmap@std@@Vvector@2@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@2@_N_J_KNVallocator@2@Uadl_serializer@json_abi_v3_12_0@nlohmann@@V?$vector@EV?$allocator@E@std@@@2@X@json_abi_v3_12_0@nlohmann@@AEAUDesecratedZone@@@Z@4HA 00000001804153e0 f   D2RHUD.obj
  0001:004143f0       ?dtor$0@?0??from_json@@YAXAEBV?$basic_json@Vmap@std@@Vvector@2@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@2@_N_J_KNVallocator@2@Uadl_serializer@json_abi_v3_12_0@nlohmann@@V?$vector@EV?$allocator@E@std@@@2@X@json_abi_v3_12_0@nlohmann@@AEAUDifficultySettings@@@Z@4HA 00000001804153f0 f   D2RHUD.obj
@@ -35065,14 +35025,15 @@
  0001:004144d0       ?dtor$3@?0??from_json@@YAXAEBV?$basic_json@Vmap@std@@Vvector@2@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@2@_N_J_KNVallocator@2@Uadl_serializer@json_abi_v3_12_0@nlohmann@@V?$vector@EV?$allocator@E@std@@@2@X@json_abi_v3_12_0@nlohmann@@AEAUZoneLevel@@@Z@4HA 00000001804154d0 f   D2RHUD.obj
  0001:004144e0       ?dtor$9@?0??from_json@@YAXAEBV?$basic_json@Vmap@std@@Vvector@2@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@2@_N_J_KNVallocator@2@Uadl_serializer@json_abi_v3_12_0@nlohmann@@V?$vector@EV?$allocator@E@std@@@2@X@json_abi_v3_12_0@nlohmann@@AEAUZoneLevel@@@Z@4HA 00000001804154e0 f   D2RHUD.obj
  0001:004144f0       ?dtor$10@?0??from_json@@YAXAEBV?$basic_json@Vmap@std@@Vvector@2@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@2@_N_J_KNVallocator@2@Uadl_serializer@json_abi_v3_12_0@nlohmann@@V?$vector@EV?$allocator@E@std@@@2@X@json_abi_v3_12_0@nlohmann@@AEAUZoneLevel@@@Z@4HA 00000001804154f0 f   D2RHUD.obj
- 0001:00414510       ?dtor$0@?0??get@?$future@_K@std@@QEAA_KXZ@4HA 0000000180415510 f   D2RHUD.obj
+ 0001:00414520       ?dtor$7@?0??OnDraw@D2RHUD@@UEAAXXZ@4HA 0000000180415520 f   D2RHUD.obj
  0001:00414550       ?dtor$1@?0??getMonsterStatsDisplaySetting@@YA?AUMonsterStatsDisplaySettings@@AEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@@Z@4HA 0000000180415550 f   D2RHUD.obj
  0001:00414560       ?dtor$2@?0??getMonsterStatsDisplaySetting@@YA?AUMonsterStatsDisplaySettings@@AEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@@Z@4HA 0000000180415560 f   D2RHUD.obj
  0001:00414570       ?dtor$3@?0??getMonsterStatsDisplaySetting@@YA?AUMonsterStatsDisplaySettings@@AEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@@Z@4HA 0000000180415570 f   D2RHUD.obj
  0001:00414580       ?dtor$4@?0??getMonsterStatsDisplaySetting@@YA?AUMonsterStatsDisplaySettings@@AEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@@Z@4HA 0000000180415580 f   D2RHUD.obj
- 0001:004145a0       ?dtor$16@?0??getMonsterStatsDisplaySetting@@YA?AUMonsterStatsDisplaySettings@@AEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@@Z@4HA 00000001804155a0 f   D2RHUD.obj
- 0001:004145f0       ?dtor$20@?0??getMonsterStatsDisplaySetting@@YA?AUMonsterStatsDisplaySettings@@AEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@@Z@4HA 00000001804155f0 f   D2RHUD.obj
- 0001:00414640       ?dtor$24@?0??getMonsterStatsDisplaySetting@@YA?AUMonsterStatsDisplaySettings@@AEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@@Z@4HA 0000000180415640 f   D2RHUD.obj
+ 0001:004145b0       ?dtor$10@?0??ReadMonsterTreasureFile@@YA?AV?$vector@UMonsterTreasureClass@@V?$allocator@UMonsterTreasureClass@@@std@@@std@@AEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@2@@Z@4HA 00000001804155b0 f   D2RHUD.obj
+ 0001:00414600       ?dtor$48@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180415600 f   D2RHUD.obj
+ 0001:00414610       ?dtor$50@?0??ShowMemoryMenu@@YAXXZ@4HA 0000000180415610 f   D2RHUD.obj
+ 0001:00414650       ?dtor$52@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180415650 f   D2RHUD.obj
  0001:00414690       ?dtor$29@?0??getMonsterStatsDisplaySetting@@YA?AUMonsterStatsDisplaySettings@@AEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@@Z@4HA 0000000180415690 f   D2RHUD.obj
  0001:004146d0       ?dtor$31@?0??getMonsterStatsDisplaySetting@@YA?AUMonsterStatsDisplaySettings@@AEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@@Z@4HA 00000001804156d0 f   D2RHUD.obj
  0001:00414710       ?dtor$33@?0??getMonsterStatsDisplaySetting@@YA?AUMonsterStatsDisplaySettings@@AEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@@Z@4HA 0000000180415710 f   D2RHUD.obj
@@ -35084,16 +35045,14 @@
  0001:00414890       ?dtor$45@?0??getMonsterStatsDisplaySetting@@YA?AUMonsterStatsDisplaySettings@@AEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@@Z@4HA 0000000180415890 f   D2RHUD.obj
  0001:004148d0       ?dtor$47@?0??getMonsterStatsDisplaySetting@@YA?AUMonsterStatsDisplaySettings@@AEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@@Z@4HA 00000001804158d0 f   D2RHUD.obj
  0001:00414910       ?dtor$49@?0??getMonsterStatsDisplaySetting@@YA?AUMonsterStatsDisplaySettings@@AEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@@Z@4HA 0000000180415910 f   D2RHUD.obj
- 0001:00414950       ?dtor$50@?0??getMonsterStatsDisplaySetting@@YA?AUMonsterStatsDisplaySettings@@AEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@@Z@4HA 0000000180415950 f   D2RHUD.obj
+ 0001:00414960       ?dtor$56@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180415960 f   D2RHUD.obj
  0001:00414990       ?dtor$51@?0??getMonsterStatsDisplaySetting@@YA?AUMonsterStatsDisplaySettings@@AEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@@Z@4HA 0000000180415990 f   D2RHUD.obj
  0001:004149b0       ?dtor$53@?0??getMonsterStatsDisplaySetting@@YA?AUMonsterStatsDisplaySettings@@AEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@@Z@4HA 00000001804159b0 f   D2RHUD.obj
  0001:004149d0       ?dtor$54@?0??getMonsterStatsDisplaySetting@@YA?AUMonsterStatsDisplaySettings@@AEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@@Z@4HA 00000001804159d0 f   D2RHUD.obj
  0001:004149e0       ?dtor$90@?0??getMonsterStatsDisplaySetting@@YA?AUMonsterStatsDisplaySettings@@AEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@@Z@4HA 00000001804159e0 f   D2RHUD.obj
- 0001:00414a00       ?dtor$0@?0??get_token_string@?$lexer@V?$basic_json@Uordered_map@json_abi_v3_12_0@nlohmann@@Vvector@std@@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@5@_N_J_KNVallocator@5@Uadl_serializer@23@V?$vector@EV?$allocator@E@std@@@5@X@json_abi_v3_12_0@nlohmann@@Vinput_stream_adapter@detail@23@@detail@json_abi_v3_12_0@nlohmann@@QEBA?AV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@XZ@4HA 0000000180415a00 f   D2RHUD.obj
- 0001:00414a30       ?catch$8@?0??invoke@?$_PPLTaskHandle@EU?$_InitialTaskHandle@XV<lambda_1>@?1???$?0V?$_Fake_no_copy_callable_adapter@V<lambda_1>@?1???R1?1??ShowCameraMenu@@YAXXZ@QEBA@XZ@@std@@@?$_Task_async_state@_K@std@@QEAA@$$QEAV?$_Fake_no_copy_callable_adapter@V<lambda_1>@?1???R1?1??ShowCameraMenu@@YAXXZ@QEBA@XZ@@3@@Z@U_TypeSelectorNoAsync@details@Concurrency@@@?$task@E@Concurrency@@U_TaskProcHandle@details@3@@details@Concurrency@@UEBAXXZ@4HA 0000000180415a30 f   D2RHUD.obj
- 0001:00414a3d       __catch$?invoke@?$_PPLTaskHandle@EU?$_InitialTaskHandle@XV<lambda_1>@?1???$?0V?$_Fake_no_copy_callable_adapter@V<lambda_1>@?1???R1?1??ShowCameraMenu@@YAXXZ@QEBA@XZ@@std@@@?$_Task_async_state@_K@std@@QEAA@$$QEAV?$_Fake_no_copy_callable_adapter@V<lambda_1>@?1???R1?1??ShowCameraMenu@@YAXXZ@QEBA@XZ@@3@@Z@U_TypeSelectorNoAsync@details@Concurrency@@@?$task@E@Concurrency@@U_TaskProcHandle@details@3@@details@Concurrency@@UEBAXXZ$0 0000000180415a3d f   D2RHUD.obj
- 0001:00414a80       ?catch$8@?0??invoke@?$_PPLTaskHandle@EU?$_InitialTaskHandle@XV<lambda_1>@?1???$?0V?$_Fake_no_copy_callable_adapter@V<lambda_1>@?1???R<lambda_2>@?1??ShowCameraMenu@@YAXXZ@QEBA@XZ@@std@@@?$_Task_async_state@_K@std@@QEAA@$$QEAV?$_Fake_no_copy_callable_adapter@V<lambda_1>@?1???R<lambda_2>@?1??ShowCameraMenu@@YAXXZ@QEBA@XZ@@3@@Z@U_TypeSelectorNoAsync@details@Concurrency@@@?$task@E@Concurrency@@U_TaskProcHandle@details@3@@details@Concurrency@@UEBAXXZ@4HA 0000000180415a80 f   D2RHUD.obj
- 0001:00414a8d       __catch$?invoke@?$_PPLTaskHandle@EU?$_InitialTaskHandle@XV<lambda_1>@?1???$?0V?$_Fake_no_copy_callable_adapter@V<lambda_1>@?1???R<lambda_2>@?1??ShowCameraMenu@@YAXXZ@QEBA@XZ@@std@@@?$_Task_async_state@_K@std@@QEAA@$$QEAV?$_Fake_no_copy_callable_adapter@V<lambda_1>@?1???R<lambda_2>@?1??ShowCameraMenu@@YAXXZ@QEBA@XZ@@3@@Z@U_TypeSelectorNoAsync@details@Concurrency@@@?$task@E@Concurrency@@U_TaskProcHandle@details@3@@details@Concurrency@@UEBAXXZ$0 0000000180415a8d f   D2RHUD.obj
+ 0001:004149f0       ?dtor$0@?0??ReadMonsterTreasureFile@@YA?AV?$vector@UMonsterTreasureClass@@V?$allocator@UMonsterTreasureClass@@@std@@@std@@AEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@2@@Z@4HA 00000001804159f0 f   D2RHUD.obj
+ 0001:00414a40       ?dtor$9@?0??ReadMonsterTreasureFile@@YA?AV?$vector@UMonsterTreasureClass@@V?$allocator@UMonsterTreasureClass@@@std@@@std@@AEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@2@@Z@4HA 0000000180415a40 f   D2RHUD.obj
+ 0001:00414a90       ?dtor$10@?0??ReadMonsterTreasureFileSU@@YA?AV?$vector@UMonsterTreasureClassSU@@V?$allocator@UMonsterTreasureClassSU@@@std@@@std@@AEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@2@@Z@4HA 0000000180415a90 f   D2RHUD.obj
  0001:00414ae0       ?dtor$0@?0??get_token_string@?$lexer@V?$basic_json@Vmap@std@@Vvector@2@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@2@_N_J_KNVallocator@2@Uadl_serializer@json_abi_v3_12_0@nlohmann@@V?$vector@EV?$allocator@E@std@@@2@X@json_abi_v3_12_0@nlohmann@@V?$iterator_input_adapter@V?$_String_const_iterator@V?$_String_val@U?$_Simple_types@D@std@@@std@@@std@@@detail@23@@detail@json_abi_v3_12_0@nlohmann@@QEBA?AV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@XZ@4HA 0000000180415ae0 f   D2RHUD.obj
  0001:00414b10       ?dtor$0@?0??invoke@?$_PPLTaskHandle@EU?$_InitialTaskHandle@XV<lambda_1>@?1???$?0V?$_Fake_no_copy_callable_adapter@V<lambda_1>@?1???R1?1??ShowCameraMenu@@YAXXZ@QEBA@XZ@@std@@@?$_Task_async_state@_K@std@@QEAA@$$QEAV?$_Fake_no_copy_callable_adapter@V<lambda_1>@?1???R1?1??ShowCameraMenu@@YAXXZ@QEBA@XZ@@3@@Z@U_TypeSelectorNoAsync@details@Concurrency@@@?$task@E@Concurrency@@U_TaskProcHandle@details@3@@details@Concurrency@@UEBAXXZ@4HA 0000000180415b10 f   D2RHUD.obj
  0001:00414b40       ?dtor$3@?0??invoke@?$_PPLTaskHandle@EU?$_InitialTaskHandle@XV<lambda_1>@?1???$?0V?$_Fake_no_copy_callable_adapter@V<lambda_1>@?1???R1?1??ShowCameraMenu@@YAXXZ@QEBA@XZ@@std@@@?$_Task_async_state@_K@std@@QEAA@$$QEAV?$_Fake_no_copy_callable_adapter@V<lambda_1>@?1???R1?1??ShowCameraMenu@@YAXXZ@QEBA@XZ@@3@@Z@U_TypeSelectorNoAsync@details@Concurrency@@@?$task@E@Concurrency@@U_TaskProcHandle@details@3@@details@Concurrency@@UEBAXXZ@4HA 0000000180415b40 f   D2RHUD.obj
@@ -35102,14 +35061,16 @@
  0001:00414b7d       __catch$?invoke@?$_PPLTaskHandle@EU?$_InitialTaskHandle@XV<lambda_1>@?1???$?0V?$_Fake_no_copy_callable_adapter@V<lambda_1>@?1???R1?1??ShowCameraMenu@@YAXXZ@QEBA@XZ@@std@@@?$_Task_async_state@_K@std@@QEAA@$$QEAV?$_Fake_no_copy_callable_adapter@V<lambda_1>@?1???R1?1??ShowCameraMenu@@YAXXZ@QEBA@XZ@@3@@Z@U_TypeSelectorNoAsync@details@Concurrency@@@?$task@E@Concurrency@@U_TaskProcHandle@details@3@@details@Concurrency@@UEBAXXZ$1 0000000180415b7d f   D2RHUD.obj
  0001:00414bd0       ?catch$10@?0??invoke@?$_PPLTaskHandle@EU?$_InitialTaskHandle@XV<lambda_1>@?1???$?0V?$_Fake_no_copy_callable_adapter@V<lambda_1>@?1???R1?1??ShowCameraMenu@@YAXXZ@QEBA@XZ@@std@@@?$_Task_async_state@_K@std@@QEAA@$$QEAV?$_Fake_no_copy_callable_adapter@V<lambda_1>@?1???R1?1??ShowCameraMenu@@YAXXZ@QEBA@XZ@@3@@Z@U_TypeSelectorNoAsync@details@Concurrency@@@?$task@E@Concurrency@@U_TaskProcHandle@details@3@@details@Concurrency@@UEBAXXZ@4HA 0000000180415bd0 f   D2RHUD.obj
  0001:00414bde       __catch$?invoke@?$_PPLTaskHandle@EU?$_InitialTaskHandle@XV<lambda_1>@?1???$?0V?$_Fake_no_copy_callable_adapter@V<lambda_1>@?1???R1?1??ShowCameraMenu@@YAXXZ@QEBA@XZ@@std@@@?$_Task_async_state@_K@std@@QEAA@$$QEAV?$_Fake_no_copy_callable_adapter@V<lambda_1>@?1???R1?1??ShowCameraMenu@@YAXXZ@QEBA@XZ@@3@@Z@U_TypeSelectorNoAsync@details@Concurrency@@@?$task@E@Concurrency@@U_TaskProcHandle@details@3@@details@Concurrency@@UEBAXXZ$2 0000000180415bde f   D2RHUD.obj
- 0001:00414c30       ?dtor$0@?0??invoke@?$_PPLTaskHandle@EU?$_InitialTaskHandle@XV<lambda_1>@?1???$?0V?$_Fake_no_copy_callable_adapter@V<lambda_1>@?1???R<lambda_2>@?1??ShowCameraMenu@@YAXXZ@QEBA@XZ@@std@@@?$_Task_async_state@_K@std@@QEAA@$$QEAV?$_Fake_no_copy_callable_adapter@V<lambda_1>@?1???R<lambda_2>@?1??ShowCameraMenu@@YAXXZ@QEBA@XZ@@3@@Z@U_TypeSelectorNoAsync@details@Concurrency@@@?$task@E@Concurrency@@U_TaskProcHandle@details@3@@details@Concurrency@@UEBAXXZ@4HA 0000000180415c30 f   D2RHUD.obj
+ 0001:00414c40       ?dtor$60@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180415c40 f   D2RHUD.obj
+ 0001:00414c70       ?dtor$64@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180415c70 f   D2RHUD.obj
  0001:00414cb0       ?dtor$3@?0??invoke@?$_PPLTaskHandle@EU?$_InitialTaskHandle@XV<lambda_1>@?1???$?0V?$_Fake_no_copy_callable_adapter@V<lambda_1>@?1???R<lambda_2>@?1??ShowCameraMenu@@YAXXZ@QEBA@XZ@@std@@@?$_Task_async_state@_K@std@@QEAA@$$QEAV?$_Fake_no_copy_callable_adapter@V<lambda_1>@?1???R<lambda_2>@?1??ShowCameraMenu@@YAXXZ@QEBA@XZ@@3@@Z@U_TypeSelectorNoAsync@details@Concurrency@@@?$task@E@Concurrency@@U_TaskProcHandle@details@3@@details@Concurrency@@UEBAXXZ@4HA 0000000180415cb0 f   D2RHUD.obj
  0001:00414cc0       ?dtor$4@?0??invoke@?$_PPLTaskHandle@EU?$_InitialTaskHandle@XV<lambda_1>@?1???$?0V?$_Fake_no_copy_callable_adapter@V<lambda_1>@?1???R<lambda_2>@?1??ShowCameraMenu@@YAXXZ@QEBA@XZ@@std@@@?$_Task_async_state@_K@std@@QEAA@$$QEAV?$_Fake_no_copy_callable_adapter@V<lambda_1>@?1???R<lambda_2>@?1??ShowCameraMenu@@YAXXZ@QEBA@XZ@@3@@Z@U_TypeSelectorNoAsync@details@Concurrency@@@?$task@E@Concurrency@@U_TaskProcHandle@details@3@@details@Concurrency@@UEBAXXZ@4HA 0000000180415cc0 f   D2RHUD.obj
  0001:00414ce0       ?catch$9@?0??invoke@?$_PPLTaskHandle@EU?$_InitialTaskHandle@XV<lambda_1>@?1???$?0V?$_Fake_no_copy_callable_adapter@V<lambda_1>@?1???R<lambda_2>@?1??ShowCameraMenu@@YAXXZ@QEBA@XZ@@std@@@?$_Task_async_state@_K@std@@QEAA@$$QEAV?$_Fake_no_copy_callable_adapter@V<lambda_1>@?1???R<lambda_2>@?1??ShowCameraMenu@@YAXXZ@QEBA@XZ@@3@@Z@U_TypeSelectorNoAsync@details@Concurrency@@@?$task@E@Concurrency@@U_TaskProcHandle@details@3@@details@Concurrency@@UEBAXXZ@4HA 0000000180415ce0 f   D2RHUD.obj
  0001:00414ced       __catch$?invoke@?$_PPLTaskHandle@EU?$_InitialTaskHandle@XV<lambda_1>@?1???$?0V?$_Fake_no_copy_callable_adapter@V<lambda_1>@?1???R<lambda_2>@?1??ShowCameraMenu@@YAXXZ@QEBA@XZ@@std@@@?$_Task_async_state@_K@std@@QEAA@$$QEAV?$_Fake_no_copy_callable_adapter@V<lambda_1>@?1???R<lambda_2>@?1??ShowCameraMenu@@YAXXZ@QEBA@XZ@@3@@Z@U_TypeSelectorNoAsync@details@Concurrency@@@?$task@E@Concurrency@@U_TaskProcHandle@details@3@@details@Concurrency@@UEBAXXZ$1 0000000180415ced f   D2RHUD.obj
  0001:00414d40       ?catch$10@?0??invoke@?$_PPLTaskHandle@EU?$_InitialTaskHandle@XV<lambda_1>@?1???$?0V?$_Fake_no_copy_callable_adapter@V<lambda_1>@?1???R<lambda_2>@?1??ShowCameraMenu@@YAXXZ@QEBA@XZ@@std@@@?$_Task_async_state@_K@std@@QEAA@$$QEAV?$_Fake_no_copy_callable_adapter@V<lambda_1>@?1???R<lambda_2>@?1??ShowCameraMenu@@YAXXZ@QEBA@XZ@@3@@Z@U_TypeSelectorNoAsync@details@Concurrency@@@?$task@E@Concurrency@@U_TaskProcHandle@details@3@@details@Concurrency@@UEBAXXZ@4HA 0000000180415d40 f   D2RHUD.obj
  0001:00414d4e       __catch$?invoke@?$_PPLTaskHandle@EU?$_InitialTaskHandle@XV<lambda_1>@?1???$?0V?$_Fake_no_copy_callable_adapter@V<lambda_1>@?1???R<lambda_2>@?1??ShowCameraMenu@@YAXXZ@QEBA@XZ@@std@@@?$_Task_async_state@_K@std@@QEAA@$$QEAV?$_Fake_no_copy_callable_adapter@V<lambda_1>@?1???R<lambda_2>@?1??ShowCameraMenu@@YAXXZ@QEBA@XZ@@3@@Z@U_TypeSelectorNoAsync@details@Concurrency@@@?$task@E@Concurrency@@U_TaskProcHandle@details@3@@details@Concurrency@@UEBAXXZ$2 0000000180415d4e f   D2RHUD.obj
- 0001:00414da0       ?dtor$0@?0??key@?$iter_impl@V?$basic_json@Uordered_map@json_abi_v3_12_0@nlohmann@@Vvector@std@@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@5@_N_J_KNVallocator@5@Uadl_serializer@23@V?$vector@EV?$allocator@E@std@@@5@X@json_abi_v3_12_0@nlohmann@@@detail@json_abi_v3_12_0@nlohmann@@QEBAAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@XZ@4HA 0000000180415da0 f   D2RHUD.obj
+ 0001:00414db0       ?dtor$70@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180415db0 f   D2RHUD.obj
+ 0001:00414de0       ?dtor$95@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180415de0 f   D2RHUD.obj
  0001:00414e20       ?dtor$0@?0??key@?$json_sax_dom_callback_parser@V?$basic_json@Uordered_map@json_abi_v3_12_0@nlohmann@@Vvector@std@@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@5@_N_J_KNVallocator@5@Uadl_serializer@23@V?$vector@EV?$allocator@E@std@@@5@X@json_abi_v3_12_0@nlohmann@@Vinput_stream_adapter@detail@23@@detail@json_abi_v3_12_0@nlohmann@@QEAA_NAEAV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@@Z@4HA 0000000180415e20 f   D2RHUD.obj
  0001:00414e30       ?dtor$1@?0??key@?$json_sax_dom_callback_parser@V?$basic_json@Uordered_map@json_abi_v3_12_0@nlohmann@@Vvector@std@@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@5@_N_J_KNVallocator@5@Uadl_serializer@23@V?$vector@EV?$allocator@E@std@@@5@X@json_abi_v3_12_0@nlohmann@@Vinput_stream_adapter@detail@23@@detail@json_abi_v3_12_0@nlohmann@@QEAA_NAEAV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@@Z@4HA 0000000180415e30 f   D2RHUD.obj
  0001:00414e40       ?dtor$0@?0??key@?$json_sax_dom_callback_parser@V?$basic_json@Vmap@std@@Vvector@2@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@2@_N_J_KNVallocator@2@Uadl_serializer@json_abi_v3_12_0@nlohmann@@V?$vector@EV?$allocator@E@std@@@2@X@json_abi_v3_12_0@nlohmann@@V?$iterator_input_adapter@V?$_String_const_iterator@V?$_String_val@U?$_Simple_types@D@std@@@std@@@std@@@detail@23@@detail@json_abi_v3_12_0@nlohmann@@QEAA_NAEAV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@@Z@4HA 0000000180415e40 f   D2RHUD.obj
@@ -35128,7 +35089,7 @@
  0001:00414f10       ?dtor$11@?0??mapColorToInt@@YAHAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@@Z@4HA 0000000180415f10 f   D2RHUD.obj
  0001:00414f20       ?dtor$12@?0??mapColorToInt@@YAHAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@@Z@4HA 0000000180415f20 f   D2RHUD.obj
  0001:00414f30       ?dtor$13@?0??mapColorToInt@@YAHAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@@Z@4HA 0000000180415f30 f   D2RHUD.obj
- 0001:00414f50       ?dtor$58@?0??mapColorToInt@@YAHAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@@Z@4HA 0000000180415f50 f   D2RHUD.obj
+ 0001:00414f60       ?dtor$104@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180415f60 f   D2RHUD.obj
  0001:00414f90       ?dtor$59@?0??mapColorToInt@@YAHAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@@Z@4HA 0000000180415f90 f   D2RHUD.obj
  0001:00414fa0       ?dtor$60@?0??mapColorToInt@@YAHAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@@Z@4HA 0000000180415fa0 f   D2RHUD.obj
  0001:00414fc0       ?dtor$0@?0??open@?$basic_filebuf@DU?$char_traits@D@std@@@std@@QEAAPEAV12@PEB_WHH@Z@4HA 0000000180415fc0 f   D2RHUD.obj
@@ -35301,15 +35262,57 @@
  0001:00416201       ?filt$0@?0??dllmain_dispatch@@YAHQEAUHINSTANCE__@@KQEAX@Z@4HA 0000000180417201 f   MSVCRT:dll_dllmain.obj
  0001:00416240       ?dtor$0@?0??RemoveComments@@YA?AV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@AEBV12@@Z@4HA 0000000180417240 f   D2RHUD.obj
  0001:00416270       ?dtor$17@?0??SaveGrailProgress@@YAXAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180417270 f   D2RHUD.obj
- 0001:004162a0       ?catch$98@?0??SaveGrailProgress@@YAXAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 00000001804172a0 f   D2RHUD.obj
- 0001:004162ad       __catch$?SaveGrailProgress@@YAXAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z$1 00000001804172ad f   D2RHUD.obj
- 0001:004162e0       ?catch$99@?0??SaveGrailProgress@@YAXAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 00000001804172e0 f   D2RHUD.obj
- 0001:004162ee       __catch$?SaveGrailProgress@@YAXAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z$0 00000001804172ee f   D2RHUD.obj
- 0001:00416420       ?dtor$50@?0??ShowMemoryMenu@@YAXXZ@4HA 0000000180417420 f   D2RHUD.obj
- 0001:00416460       ?catch$55@?0??ShowVersionMessage@D2RHUD@@AEAAXXZ@4HA 0000000180417460 f   D2RHUD.obj
- 0001:00416477       __catch$?ShowVersionMessage@D2RHUD@@AEAAXXZ$0 0000000180417477 f   D2RHUD.obj
- 0001:00416580       ?catch$161@?0??getMonsterStatsDisplaySetting@@YA?AUMonsterStatsDisplaySettings@@AEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@@Z@4HA 0000000180417580 f   D2RHUD.obj
- 0001:0041658e       __catch$?getMonsterStatsDisplaySetting@@YA?AUMonsterStatsDisplaySettings@@AEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@@Z$0 000000018041758e f   D2RHUD.obj
+ 0001:004162b0       ?dtor$84@?0??ScanStashPages@@YAXXZ@4HA 00000001804172b0 f   D2RHUD.obj
+ 0001:004162c0       ?dtor$23@?0??UpdateActiveZoneInfoText@@YAX_J@Z@4HA 00000001804172c0 f   D2RHUD.obj
+ 0001:00416320       ?dtor$9@?0??ShowHUDSettingsMenu@@YAXXZ@4HA 0000000180417320 f   D2RHUD.obj
+ 0001:00416350       ?dtor$13@?0??ShowHUDSettingsMenu@@YAXXZ@4HA 0000000180417350 f   D2RHUD.obj
+ 0001:00416380       ?dtor$25@?0??ShowHUDSettingsMenu@@YAXXZ@4HA 0000000180417380 f   D2RHUD.obj
+ 0001:004163b0       ?dtor$19@?0??ShowHotkeyMenu@@YAXXZ@4HA 00000001804173b0 f   D2RHUD.obj
+ 0001:004163e0       ?dtor$40@?0??ShowHotkeyMenu@@YAXXZ@4HA 00000001804173e0 f   D2RHUD.obj
+ 0001:004163f0       ?catch$2@?0??_Call_immediate@?$_Packaged_state@$$A6A_KXZ@std@@QEAAXXZ@4HA 00000001804173f0 f   D2RHUD.obj
+ 0001:004163fd       __catch$?_Call_immediate@?$_Packaged_state@$$A6A_KXZ@std@@QEAAXXZ$0 00000001804173fd f   D2RHUD.obj
+ 0001:00416430       ?dtor$23@?0??ShowSettingsPanel@@YAXXZ@4HA 0000000180417430 f   D2RHUD.obj
+ 0001:00416470       ?dtor$0@?0??_Callback@_PPLTaskChore@_DefaultPPLTaskScheduler@details@Concurrency@@CAXPEAX@Z@4HA 0000000180417470 f   D2RHUD.obj
+ 0001:004164b0       ?dtor$0@?0??_Set_exception@?$_Associated_state@_K@std@@QEAAXVexception_ptr@2@_N@Z@4HA 00000001804174b0 f   D2RHUD.obj
+ 0001:004164c0       ?catch$3@?0??_Wait@_Task_impl_base@details@Concurrency@@QEAA?AW4task_group_status@3@XZ@4HA 00000001804174c0 f   D2RHUD.obj
+ 0001:004164ce       __catch$?_Wait@_Task_impl_base@details@Concurrency@@QEAA?AW4task_group_status@3@XZ$2 00000001804174ce f   D2RHUD.obj
+ 0001:00416510       ?dtor$0@?0??invoke@?$_PPLTaskHandle@EU?$_InitialTaskHandle@XV<lambda_1>@?1???$?0V?$_Fake_no_copy_callable_adapter@V<lambda_1>@?1???R<lambda_2>@?1??ShowCameraMenu@@YAXXZ@QEBA@XZ@@std@@@?$_Task_async_state@_K@std@@QEAA@$$QEAV?$_Fake_no_copy_callable_adapter@V<lambda_1>@?1???R<lambda_2>@?1??ShowCameraMenu@@YAXXZ@QEBA@XZ@@3@@Z@U_TypeSelectorNoAsync@details@Concurrency@@@?$task@E@Concurrency@@U_TaskProcHandle@details@3@@details@Concurrency@@UEBAXXZ@4HA 0000000180417510 f   D2RHUD.obj
+ 0001:00416520       ?catch$8@?0??invoke@?$_PPLTaskHandle@EU?$_InitialTaskHandle@XV<lambda_1>@?1???$?0V?$_Fake_no_copy_callable_adapter@V<lambda_1>@?1???R<lambda_2>@?1??ShowCameraMenu@@YAXXZ@QEBA@XZ@@std@@@?$_Task_async_state@_K@std@@QEAA@$$QEAV?$_Fake_no_copy_callable_adapter@V<lambda_1>@?1???R<lambda_2>@?1??ShowCameraMenu@@YAXXZ@QEBA@XZ@@3@@Z@U_TypeSelectorNoAsync@details@Concurrency@@@?$task@E@Concurrency@@U_TaskProcHandle@details@3@@details@Concurrency@@UEBAXXZ@4HA 0000000180417520 f   D2RHUD.obj
+ 0001:0041652d       __catch$?invoke@?$_PPLTaskHandle@EU?$_InitialTaskHandle@XV<lambda_1>@?1???$?0V?$_Fake_no_copy_callable_adapter@V<lambda_1>@?1???R<lambda_2>@?1??ShowCameraMenu@@YAXXZ@QEBA@XZ@@std@@@?$_Task_async_state@_K@std@@QEAA@$$QEAV?$_Fake_no_copy_callable_adapter@V<lambda_1>@?1???R<lambda_2>@?1??ShowCameraMenu@@YAXXZ@QEBA@XZ@@3@@Z@U_TypeSelectorNoAsync@details@Concurrency@@@?$task@E@Concurrency@@U_TaskProcHandle@details@3@@details@Concurrency@@UEBAXXZ$0 000000018041752d f   D2RHUD.obj
+ 0001:00416590       ?dtor$0@?0??key@?$iter_impl@V?$basic_json@Uordered_map@json_abi_v3_12_0@nlohmann@@Vvector@std@@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@5@_N_J_KNVallocator@5@Uadl_serializer@23@V?$vector@EV?$allocator@E@std@@@5@X@json_abi_v3_12_0@nlohmann@@@detail@json_abi_v3_12_0@nlohmann@@QEBAAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@XZ@4HA 0000000180417590 f   D2RHUD.obj
+ 0001:004165f0       ?dtor$5@?0??ReadTCexFile@@YA?AV?$vector@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@V?$allocator@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@@2@@std@@AEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@2@@Z@4HA 00000001804175f0 f   D2RHUD.obj
+ 0001:00416640       ?dtor$116@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180417640 f   D2RHUD.obj
+ 0001:00416670       ?dtor$120@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180417670 f   D2RHUD.obj
+ 0001:004166a0       ?dtor$126@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 00000001804176a0 f   D2RHUD.obj
+ 0001:004166d0       ?dtor$149@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 00000001804176d0 f   D2RHUD.obj
+ 0001:00416700       ?dtor$155@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180417700 f   D2RHUD.obj
+ 0001:00416730       ?dtor$166@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180417730 f   D2RHUD.obj
+ 0001:00416760       ?dtor$172@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180417760 f   D2RHUD.obj
+ 0001:00416790       ?dtor$189@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180417790 f   D2RHUD.obj
+ 0001:004167c0       ?dtor$268@?0??SaveFullGrailConfig@@YA_NAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 00000001804177c0 f   D2RHUD.obj
+ 0001:004167f0       ?dtor$18@?0??SaveGrailProgress@@YAXAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 00000001804177f0 f   D2RHUD.obj
+ 0001:00416820       ?dtor$30@?0??SaveGrailProgress@@YAXAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180417820 f   D2RHUD.obj
+ 0001:00416850       ?dtor$36@?0??SaveGrailProgress@@YAXAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180417850 f   D2RHUD.obj
+ 0001:00416880       ?dtor$0@?0??SaveHotkeys@@YAXAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@@Z@4HA 0000000180417880 f   D2RHUD.obj
+ 0001:00416890       ?catch$55@?0??ShowVersionMessage@D2RHUD@@AEAAXXZ@4HA 0000000180417890 f   D2RHUD.obj
+ 0001:004168a7       __catch$?ShowVersionMessage@D2RHUD@@AEAAXXZ$0 00000001804178a7 f   D2RHUD.obj
+ 0001:004169c0       ?dtor$14@?0??ShowLootMenu@@YAXXZ@4HA 00000001804179c0 f   D2RHUD.obj
+ 0001:004169f0       ?dtor$26@?0??ShowLootMenu@@YAXXZ@4HA 00000001804179f0 f   D2RHUD.obj
+ 0001:00416a20       ?dtor$45@?0??ShowLootMenu@@YAXXZ@4HA 0000000180417a20 f   D2RHUD.obj
+ 0001:00416a50       ?dtor$127@?0??ShowLootMenu@@YAXXZ@4HA 0000000180417a50 f   D2RHUD.obj
+ 0001:00416a80       ?dtor$11@?0??ShowMemoryMenu@@YAXXZ@4HA 0000000180417a80 f   D2RHUD.obj
+ 0001:00416ab0       ?dtor$51@?0??ShowMemoryMenu@@YAXXZ@4HA 0000000180417ab0 f   D2RHUD.obj
+ 0001:00416af0       ?dtor$35@?0??ShowSettingsPanel@@YAXXZ@4HA 0000000180417af0 f   D2RHUD.obj
+ 0001:00416b20       ?dtor$39@?0??ShowSettingsPanel@@YAXXZ@4HA 0000000180417b20 f   D2RHUD.obj
+ 0001:00416b50       ?dtor$150@?0??ShowSettingsPanel@@YAXXZ@4HA 0000000180417b50 f   D2RHUD.obj
+ 0001:00416b80       ?dtor$0@?0??SplitTab@@YA?AV?$vector@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@V?$allocator@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@@2@@std@@AEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@2@@Z@4HA 0000000180417b80 f   D2RHUD.obj
+ 0001:00416bb0       ?catch$5@?0??_ScheduleTask@_Task_impl_base@details@Concurrency@@QEAAXPEAU_TaskProcHandle@23@W4_TaskInliningMode@23@@Z@4HA 0000000180417bb0 f   D2RHUD.obj
+ 0001:00416bbe       __catch$?_ScheduleTask@_Task_impl_base@details@Concurrency@@QEAAXPEAU_TaskProcHandle@23@W4_TaskInliningMode@23@@Z$2 0000000180417bbe f   D2RHUD.obj
+ 0001:00416ca0       ?dtor$0@?0??get_token_string@?$lexer@V?$basic_json@Uordered_map@json_abi_v3_12_0@nlohmann@@Vvector@std@@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@5@_N_J_KNVallocator@5@Uadl_serializer@23@V?$vector@EV?$allocator@E@std@@@5@X@json_abi_v3_12_0@nlohmann@@Vinput_stream_adapter@detail@23@@detail@json_abi_v3_12_0@nlohmann@@QEBA?AV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@XZ@4HA 0000000180417ca0 f   D2RHUD.obj
+ 0001:00416d60       ?catch$99@?0??SaveGrailProgress@@YAXAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z@4HA 0000000180417d60 f   D2RHUD.obj
+ 0001:00416d6e       __catch$?SaveGrailProgress@@YAXAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@_N@Z$0 0000000180417d6e f   D2RHUD.obj
+ 0001:00416ea0       ?catch$161@?0??getMonsterStatsDisplaySetting@@YA?AUMonsterStatsDisplaySettings@@AEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@@Z@4HA 0000000180417ea0 f   D2RHUD.obj
+ 0001:00416eae       __catch$?getMonsterStatsDisplaySetting@@YA?AUMonsterStatsDisplaySettings@@AEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@@Z$0 0000000180417eae f   D2RHUD.obj
  0001:00419160       ??__F_AtlComModule@ATL@@YAXXZ 000000018041a160 f   D3D12Hook.obj
  0001:00419210       ??__F_AtlWinModule@ATL@@YAXXZ 000000018041a210 f   D3D12Hook.obj
  0001:00419330       ??__Fg_ButtonTexture@D3D12@@YAXXZ 000000018041a330 f   D3D12Hook.obj
@@ -36290,6 +36293,7 @@
  0002:00071bd8       $unwind$?Init@D3D12@@YA?AW4Status@1@XZ 000000018049cbd8     D3D12Hook.obj
  0002:00071c04       $cppxdata$?Init@D3D12@@YA?AW4Status@1@XZ 000000018049cc04     D3D12Hook.obj
  0002:00071c0d       $stateUnwindMap$?Init@D3D12@@YA?AW4Status@1@XZ 000000018049cc0d     D3D12Hook.obj
+ 0002:00071c94       $unwind$?InstallBankPanelHook@@YA_NXZ 000000018049cc94     StashSearch.obj
  0002:00071ca0       $ip2state$?Init@D3D12@@YA?AW4Status@1@XZ 000000018049cca0     D3D12Hook.obj
  0002:00071cc8       $unwind$?InstallHooks@D3D12@@YA?AW4Status@1@XZ 000000018049ccc8     D3D12Hook.obj
  0002:00071cd9       $cppxdata$?InstallHooks@D3D12@@YA?AW4Status@1@XZ 000000018049ccd9     D3D12Hook.obj
@@ -36570,6 +36574,7 @@
  0002:000734e0       $chain$8$?stbi__create_png_image@@YAHPEAUstbi__png@@PEAEIHHHH@Z 000000018049e4e0     D3D12Hook.obj
  0002:00073514       $chain$9$?stbi__create_png_image@@YAHPEAUstbi__png@@PEAEIHHHH@Z 000000018049e514     D3D12Hook.obj
  0002:00073528       $chain$11$?stbi__create_png_image@@YAHPEAUstbi__png@@PEAEIHHHH@Z 000000018049e528     D3D12Hook.obj
+ 0002:0007355c       $unwind$?UninstallBankPanelHook@@YAXXZ 000000018049e55c     StashSearch.obj
  0002:00073564       $chain$12$?stbi__create_png_image@@YAHPEAUstbi__png@@PEAEIHHHH@Z 000000018049e564     D3D12Hook.obj
  0002:0007357c       $unwind$?stbi__parse_png_file@@YAHPEAUstbi__png@@HH@Z 000000018049e57c     D3D12Hook.obj
  0002:000735a8       $unwind$?stbi__shiftsigned@@YAHIHH@Z 000000018049e5a8     D3D12Hook.obj
@@ -36716,8 +36721,10 @@
  0002:00073f24       $unwind$?HookPresent@D3D12@@YAJPEAUIDXGISwapChain3@@II@Z 000000018049ef24     D3D12Hook.obj
  0002:00073f50       $cppxdata$?HookPresent@D3D12@@YAJPEAUIDXGISwapChain3@@II@Z 000000018049ef50     D3D12Hook.obj
  0002:00073f59       $stateUnwindMap$?HookPresent@D3D12@@YAJPEAUIDXGISwapChain3@@II@Z 000000018049ef59     D3D12Hook.obj
- 0002:00074100       $unwind$?UninstallBankPanelHook@@YAXXZ 000000018049f100     StashSearch.obj
+ 0002:000740f4       $chain$1$?GetSearchWidget@@YAPEAXXZ 000000018049f0f4     StashSearch.obj
+ 0002:00074108       $unwind$?GetSearchWidgetIfExists@@YAPEAXXZ 000000018049f108     StashSearch.obj
  0002:00074119       $ip2state$?HookPresent@D3D12@@YAJPEAUIDXGISwapChain3@@II@Z 000000018049f119     D3D12Hook.obj
+ 0002:000741bc       $chain$1$?GetSearchWidgetIfExists@@YAPEAXXZ 000000018049f1bc     StashSearch.obj
  0002:000741cc       $unwind$?dtor$84@?0??HookPresent@D3D12@@YAJPEAUIDXGISwapChain3@@II@Z@4HA 000000018049f1cc     D3D12Hook.obj
  0002:000741d4       $unwind$?dtor$85@?0??HookPresent@D3D12@@YAJPEAUIDXGISwapChain3@@II@Z@4HA 000000018049f1d4     D3D12Hook.obj
  0002:000741dc       $unwind$?dtor$103@?0??HookPresent@D3D12@@YAJPEAUIDXGISwapChain3@@II@Z@4HA 000000018049f1dc     D3D12Hook.obj
@@ -37908,6 +37915,7 @@
  0002:0007968c       $unwind$??__EcolorMap@@YAXXZ 00000001804a468c     ItemFilter.obj
  0002:000796aa       $cppxdata$??__EcolorMap@@YAXXZ 00000001804a46aa     ItemFilter.obj
  0002:000796b3       $stateUnwindMap$??__EcolorMap@@YAXXZ 00000001804a46b3     ItemFilter.obj
+ 0002:00079794       $unwind$?GetSearchWidget@@YAPEAXXZ 00000001804a4794     StashSearch.obj
  0002:000797aa       $ip2state$??__EcolorMap@@YAXXZ 00000001804a47aa     ItemFilter.obj
  0002:000797d8       $unwind$?dtor$16@?0???__EcolorMap@@YAXXZ@4HA 00000001804a47d8     ItemFilter.obj
  0002:000797e0       $unwind$??1?$pair@$$CBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@V12@@std@@QEAA@XZ 00000001804a47e0     ItemFilter.obj
@@ -43679,8 +43687,12 @@
  0002:00090300       $unwind$??__EkeyMap@@YAXXZ 00000001804bb300     KeyMappings.obj
  0002:00090330       $cppxdata$??__EkeyMap@@YAXXZ 00000001804bb330     KeyMappings.obj
  0002:00090339       $stateUnwindMap$??__EkeyMap@@YAXXZ 00000001804bb339     KeyMappings.obj
- 0002:000908d8       $unwind$?InstallBankPanelHook@@YA_NXZ 00000001804bb8d8     StashSearch.obj
+ 0002:000908d8       $chain$0$?GetSearchWidget@@YAPEAXXZ 00000001804bb8d8     StashSearch.obj
+ 0002:000908fc       $unwind$?IsSearchWidgetActive@@YA_NXZ 00000001804bb8fc     StashSearch.obj
+ 0002:00090904       $chain$0$?GetSearchWidgetIfExists@@YAPEAXXZ 00000001804bb904     StashSearch.obj
+ 0002:00090948       $chain$9$?DarkenNonMatchingCells@?A0x2e6646b2@@YAXPEBDPEAX@Z 00000001804bb948     StashSearch.obj
  0002:00090964       $ip2state$??__EkeyMap@@YAXXZ 00000001804bb964     KeyMappings.obj
+ 0002:00090b3c       $chain$7$?DarkenNonMatchingCells@?A0x2e6646b2@@YAXPEBDPEAX@Z 00000001804bbb3c     StashSearch.obj
  0002:00090b68       $unwind$?dtor$205@?0???__EkeyMap@@YAXXZ@4HA 00000001804bbb68     KeyMappings.obj
  0002:00090b70       $unwind$??1?$pair@$$CBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@F@std@@QEAA@XZ 00000001804bbb70     KeyMappings.obj
  0002:00090b78       $unwind$??$?0AEAY0L@$$CBDH$0A@@?$pair@$$CBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@F@std@@QEAA@AEAY0L@$$CBD$$QEAH@Z 00000001804bbb78     KeyMappings.obj
@@ -45341,6 +45353,7 @@
  0002:00097e80       $unwind$??__Eg_StaticUniqueItemsRMD@@YAXXZ 00000001804c2e80     D2RHUD.obj
  0002:00097e91       $cppxdata$??__Eg_StaticUniqueItemsRMD@@YAXXZ 00000001804c2e91     D2RHUD.obj
  0002:00097e9a       $stateUnwindMap$??__Eg_StaticUniqueItemsRMD@@YAXXZ 00000001804c2e9a     D2RHUD.obj
+ 0002:0009a49c       $chain$1$?HookedBankPanelDraw@?A0x2e6646b2@@YAXPEAX@Z 00000001804c549c     StashSearch.obj
  0002:0009a84a       $ip2state$??__Eg_StaticUniqueItemsRMD@@YAXXZ 00000001804c584a     D2RHUD.obj
  0002:0009c0c0       $unwind$??__Eg_StaticSetItemsRMD@@YAXXZ 00000001804c70c0     D2RHUD.obj
  0002:0009c0d1       $cppxdata$??__Eg_StaticSetItemsRMD@@YAXXZ 00000001804c70d1     D2RHUD.obj
@@ -48677,23 +48690,13 @@
  0002:000b3048       $chain$4$?DarkenNonMatchingCells@?A0x2e6646b2@@YAXPEBDPEAX@Z 00000001804de048     StashSearch.obj
  0002:000b3064       $chain$5$?DarkenNonMatchingCells@?A0x2e6646b2@@YAXPEBDPEAX@Z 00000001804de064     StashSearch.obj
  0002:000b307c       $chain$6$?DarkenNonMatchingCells@?A0x2e6646b2@@YAXPEBDPEAX@Z 00000001804de07c     StashSearch.obj
- 0002:000b3090       $chain$7$?DarkenNonMatchingCells@?A0x2e6646b2@@YAXPEBDPEAX@Z 00000001804de090     StashSearch.obj
  0002:000b30a4       $chain$8$?DarkenNonMatchingCells@?A0x2e6646b2@@YAXPEBDPEAX@Z 00000001804de0a4     StashSearch.obj
- 0002:000b30b8       $chain$9$?DarkenNonMatchingCells@?A0x2e6646b2@@YAXPEBDPEAX@Z 00000001804de0b8     StashSearch.obj
  0002:000b30cc       $chain$10$?DarkenNonMatchingCells@?A0x2e6646b2@@YAXPEBDPEAX@Z 00000001804de0cc     StashSearch.obj
  0002:000b30e0       $unwind$?HookedBankPanelDraw@?A0x2e6646b2@@YAXPEAX@Z 00000001804de0e0     StashSearch.obj
  0002:000b30f8       $chain$0$?HookedBankPanelDraw@?A0x2e6646b2@@YAXPEAX@Z 00000001804de0f8     StashSearch.obj
- 0002:000b3110       $chain$1$?HookedBankPanelDraw@?A0x2e6646b2@@YAXPEAX@Z 00000001804de110     StashSearch.obj
  0002:000b3124       $chain$4$?HookedBankPanelDraw@?A0x2e6646b2@@YAXPEAX@Z 00000001804de124     StashSearch.obj
- 0002:000b3144       $unwind$?IsSearchWidgetActive@@YA_NXZ 00000001804de144     StashSearch.obj
  0002:000b314c       $chain$0$?IsSearchWidgetActive@@YA_NXZ 00000001804de14c     StashSearch.obj
  0002:000b3164       $chain$1$?IsSearchWidgetActive@@YA_NXZ 00000001804de164     StashSearch.obj
- 0002:000b3178       $unwind$?GetSearchWidget@@YAPEAXXZ 00000001804de178     StashSearch.obj
- 0002:000b3180       $chain$0$?GetSearchWidget@@YAPEAXXZ 00000001804de180     StashSearch.obj
- 0002:000b3198       $chain$1$?GetSearchWidget@@YAPEAXXZ 00000001804de198     StashSearch.obj
- 0002:000b31ac       $unwind$?GetSearchWidgetIfExists@@YAPEAXXZ 00000001804de1ac     StashSearch.obj
- 0002:000b31b4       $chain$0$?GetSearchWidgetIfExists@@YAPEAXXZ 00000001804de1b4     StashSearch.obj
- 0002:000b31cc       $chain$1$?GetSearchWidgetIfExists@@YAPEAXXZ 00000001804de1cc     StashSearch.obj
  0002:000b31f0       $unwind$?DeleteRange@?A0xa5a74362@@YA_KPEAD_KHHPEAH@Z 00000001804de1f0     WndProcHook.obj
  0002:000b3200       $unwind$?AppendCharToWidget@?A0xa5a74362@@YAXPEAXD@Z 00000001804de200     WndProcHook.obj
  0002:000b3208       $chain$1$?AppendCharToWidget@?A0xa5a74362@@YAXPEAXD@Z 00000001804de208     WndProcHook.obj

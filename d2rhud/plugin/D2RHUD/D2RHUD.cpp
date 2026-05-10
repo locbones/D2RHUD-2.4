@@ -57,7 +57,7 @@
 #pragma region Global Static/Structs
 
 std::string lootFile = "../D2R/lootfilter.lua";
-std::string Version = "1.6.9";
+std::string Version = "1.7.0";
 
 using json = nlohmann::json;
 static MonsterStatsDisplaySettings cachedSettings;
@@ -12797,8 +12797,8 @@ void D2RHUD::OnDraw() {
 
     do
     {
-        //if (!gMouseHover->IsHovered) break;
-        //if (gMouseHover->HoveredUnitType > UNIT_MONSTER) break;
+        if (!gMouseHover->IsHovered) break;
+        if (gMouseHover->HoveredUnitType > UNIT_MONSTER) break;
 
         D2UnitStrc* pUnit = nullptr;
         D2UnitStrc* pUnitServer = nullptr;
@@ -12830,11 +12830,11 @@ void D2RHUD::OnDraw() {
             TerrorStat = STATLIST_GetUnitStatSigned(pPlayer, 361, 0);
         }
 
-        /* Debug Example - Retrieves stat references from D2Enums.h, Remove the // at start of line to use */
-        /*
-        if (pUnitPlayer)
+        /* Debug Example - Retrieves stat references from D2Enums.h, Remove the // at start of line to use
+        
+        if (pUnitServer)
         {
-            std::string mystatname = std::format("My Stat Name: {}", STATLIST_GetUnitStatSigned(pUnitPlayer, 328, 0));
+            std::string mystatname = std::format("Defense: {}", STATLIST_GetUnitStatSigned(pUnitServer, 31, 0));
             drawList->AddText({ 20, 10 }, IM_COL32(170, 50, 50, 255), mystatname.c_str());
         }
         */
