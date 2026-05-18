@@ -91,6 +91,7 @@
     <ClCompile Include="plugin\KeyMappings.cpp" />
     <ClCompile Include="plugin\PluginManager.cpp" />
     <ClCompile Include="plugin\D2RHUD\D2RHUD.cpp" />
+    <ClCompile Include="plugin\GrailTracker.cpp" />
     <ClCompile Include="plugin\StashSearch\StashSearch.cpp" />
     <ClCompile Include="plugin\StashSearch\WndProcHook.cpp" />
   </ItemGroup>
@@ -109,6 +110,7 @@
     <ClInclude Include="Logging.h" />
     <ClInclude Include="Pattern.h" />
     <ClInclude Include="plugin\GrailStatus.h" />
+    <ClInclude Include="plugin\GrailTracker.h" />
     <ClInclude Include="plugin\ItemFilter\ItemFilter.h" />
     <ClInclude Include="plugin\KeyMappings.h" />
     <ClInclude Include="plugin\Plugin.h" />

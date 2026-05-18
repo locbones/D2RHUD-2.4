@@ -1,6 +1,7 @@
 #pragma region Includes
 
 #include "D2RHUD.h"
+#include "../GrailTracker.h"
 #include <imgui.h>
 #include "../../D2/D2Ptrs.h"
 #include <sstream>
@@ -57,7 +58,7 @@
 #pragma region Global Static/Structs
 
 std::string lootFile = "../D2R/lootfilter.lua";
-std::string Version = "1.7.0";
+std::string Version = "1.7.1";
 
 using json = nlohmann::json;
 static MonsterStatsDisplaySettings cachedSettings;
@@ -369,7 +370,7 @@ static ChatManager_PushChatEntryFptr ChatManager_PushChatEntry = reinterpret_cas
 typedef void(__fastcall* D2GAME_UModInit_t)(D2UnitStrc* pUnit, int32_t nUMod, int32_t bUnique);
 D2GAME_UModInit_t oD2GAME_UModInit = nullptr;
 
-typedef void(__fastcall* D2GAME_SpawnChampUnique_t)(D2GameStrc* pGame, D2ActiveRoomStrc* pRoom, void* pRoomCoordList, D2UnitStrc* pUnit, int32_t bSpawnMinions, int32_t nMinGroup, int32_t nMaxGroup );
+typedef void(__fastcall* D2GAME_SpawnChampUnique_t)(D2GameStrc* pGame, D2ActiveRoomStrc* pRoom, void* pRoomCoordList, D2UnitStrc* pUnit, int32_t bSpawnMinions, int32_t nMinGroup, int32_t nMaxGroup);
 D2GAME_SpawnChampUnique_t oD2GAME_SpawnChampUnique_1402fddd0 = nullptr;
 
 typedef void(__fastcall* D2GAME_SpawnMonsters_t)(D2GameStrc* pGame, D2ActiveRoomStrc* pRoom, void* pRoomCoordList, int32_t nX, int32_t nY, int32_t nUnitGUID, int32_t nClassId, void* a8);
@@ -997,7 +998,7 @@ MonsterStatsDisplaySettings getMonsterStatsDisplaySetting(const std::string& con
     // ---- Cache check ----
     if (isCached)
     {
-        std::cerr << "[DEBUG] Cache HIT — returning cached MonsterStatsDisplaySettings" << std::endl;
+        std::cerr << "[DEBUG] Cache HIT â€” returning cached MonsterStatsDisplaySettings" << std::endl;
         return cachedSettings;
     }
 
@@ -1265,7 +1266,7 @@ void __fastcall HookedMONSTER_GetPlayerCountBonus(D2GameStrc* pGame, D2PlayerCou
         // cap max hp bonus at 300%. once it gets to 500% + it can rollover quickly causing monsters to have negative hp.
         if (pPlayerCountBonus->nPlayerCount > 8 && pGame->nDifficulty > settings.HPRolloverDiff)
             pPlayerCountBonus->nHP = 300;
-    }   
+    }
 }
 
 const int32_t nMaxPlayerCount = 65535;
@@ -1302,10 +1303,15 @@ void __fastcall ScaleDamage(D2DamageInfoStrc* pDamageInfo, D2DamageStatTableStrc
     }
 }
 
+static void ApplySunderClampToMonster(D2GameStrc* pGame, D2UnitStrc* pUnit, bool requireUModSetting);
+
 void __fastcall HookedSUNITDMG_ApplyResistancesAndAbsorb(D2DamageInfoStrc* pDamageInfo, D2DamageStatTableStrc* pDamageStatTableRecord, int32_t bDontAbsorb) {
+    if (pDamageInfo && pDamageInfo->bDefenderIsMonster && pDamageInfo->pDefender)
+        ApplySunderClampToMonster(pDamageInfo->pGame, pDamageInfo->pDefender, true);
+
     oSUNITDMG_ApplyResistancesAndAbsorb(pDamageInfo, pDamageStatTableRecord, bDontAbsorb);
 
-    if (pDamageInfo->pGame->nDifficulty > settings.HPRolloverDiff) {
+    if ((settings.HPRollover || cachedSettings.HPRollover) && pDamageInfo && pDamageInfo->pGame && pDamageInfo->pGame->nDifficulty > settings.HPRolloverDiff) {
         ScaleDamage(pDamageInfo, pDamageStatTableRecord);
     }
 }
@@ -1333,6 +1339,18 @@ static void LogSunder(const std::string& msg)
     log << timebuf << msg << "\n";
 }
 
+struct SunderStatSnapshot
+{
+    int cold = 0;
+    int fire = 0;
+    int light = 0;
+    int poison = 0;
+    int damage = 0;
+    int magic = 0;
+};
+
+static D2GameStrc* g_lastSunderGame = nullptr;
+
 void StoreRemainder(D2UnitStrc* pUnit, const RemainderEntry& remainders)
 {
     if (!pUnit) return;
@@ -1350,9 +1368,98 @@ RemainderEntry GetRemainder(D2UnitStrc* pUnit)
     return {};
 }
 
-uint32_t SubtractResistances(D2UnitStrc* pUnit, D2C_ItemStats nStatId, uint32_t nValue, uint16_t nLayer = 0)
+static void MergeSunderStatsFromPlayer(SunderStatSnapshot& stats, D2UnitStrc* pPlayer)
 {
-    if (!pUnit) return 0;
+    if (!pPlayer) return;
+
+    int cold = STATLIST_GetUnitStatSigned(pPlayer, STAT_ITEM_PIERCE_COLD_IMMUNITY, 0);
+    int fire = STATLIST_GetUnitStatSigned(pPlayer, STAT_ITEM_PIERCE_FIRE_IMMUNITY, 0);
+    int light = STATLIST_GetUnitStatSigned(pPlayer, STAT_ITEM_PIERCE_LIGHT_IMMUNITY, 0);
+    int poison = STATLIST_GetUnitStatSigned(pPlayer, STAT_ITEM_PIERCE_POISON_IMMUNITY, 0);
+    int damage = STATLIST_GetUnitStatSigned(pPlayer, STAT_ITEM_PIERCE_DAMAGE_IMMUNITY, 0);
+    int magic = STATLIST_GetUnitStatSigned(pPlayer, STAT_ITEM_PIERCE_MAGIC_IMMUNITY, 0);
+
+    if (cold > stats.cold)     stats.cold = cold;
+    if (fire > stats.fire)     stats.fire = fire;
+    if (light > stats.light)   stats.light = light;
+    if (poison > stats.poison) stats.poison = poison;
+    if (damage > stats.damage) stats.damage = damage;
+    if (magic > stats.magic)   stats.magic = magic;
+}
+
+static SunderStatSnapshot GetActiveSunderStats(D2GameStrc* pGame)
+{
+    SunderStatSnapshot stats{};
+
+    if (pGame)
+    {
+        for (D2ClientStrc* pClient = pGame->pClientList; pClient; pClient = pClient->pNext)
+        {
+            if (pClient->pGame && pClient->pGame != pGame)
+                continue;
+
+            MergeSunderStatsFromPlayer(stats, pClient->pPlayer);
+
+            if (pClient->dwUnitGUID)
+                MergeSunderStatsFromPlayer(stats, UNITS_GetServerUnitByTypeAndId(pGame, UNIT_PLAYER, pClient->dwUnitGUID));
+        }
+    }
+
+    for (int i = 0; i < 8; ++i)
+    {
+        auto pClient = gpClientList[i];
+        if (!pClient) continue;
+
+        if (pGame && pClient->pGame && pClient->pGame != pGame)
+            continue;
+
+        MergeSunderStatsFromPlayer(stats, pClient->pPlayer);
+
+        if (pGame && pClient->dwUnitGUID)
+            MergeSunderStatsFromPlayer(stats, UNITS_GetServerUnitByTypeAndId(pGame, UNIT_PLAYER, pClient->dwUnitGUID));
+    }
+
+    return stats;
+}
+
+static void ApplySunderClampToMonster(D2GameStrc* pGame, D2UnitStrc* pUnit, bool requireUModSetting)
+{
+    if (!pGame || !pUnit || !pUnit->pStatListEx)
+        return;
+
+    if (requireUModSetting && settings.sunderedMonUMods != true)
+        return;
+
+    g_lastSunderGame = pGame;
+
+    SunderStatSnapshot sunderStats = GetActiveSunderStats(pGame);
+    RemainderEntry remainders{};
+
+    auto ApplyStat = [&](D2C_ItemStats statId, int sunderValue, int& remainder)
+        {
+            if (sunderValue < 100)
+                return;
+
+            remainder = sunderValue;
+
+            int nCurrentValue = STATLIST_GetUnitStatSigned(pUnit, statId, 0);
+            if (nCurrentValue >= 100)
+                STATLISTEX_SetStatListExStat(pUnit->pStatListEx, statId, settings.SunderValue, 0);
+        };
+
+    ApplyStat(STAT_COLDRESIST, sunderStats.cold, remainders.cold);
+    ApplyStat(STAT_FIRERESIST, sunderStats.fire, remainders.fire);
+    ApplyStat(STAT_LIGHTRESIST, sunderStats.light, remainders.light);
+    ApplyStat(STAT_POISONRESIST, sunderStats.poison, remainders.poison);
+    ApplyStat(STAT_DAMAGERESIST, sunderStats.damage, remainders.damage);
+    ApplyStat(STAT_MAGICRESIST, sunderStats.magic, remainders.magic);
+
+    StoreRemainder(pUnit, remainders);
+}
+
+uint32_t SubtractResistances(D2UnitStrc* pUnit, D2C_ItemStats nStatId, int nValue, uint16_t nLayer = 0)
+{
+    if (!pUnit || nValue <= 0) return 0;
 
     auto nCurrentValue = STATLIST_GetUnitStatSigned(pUnit, nStatId, nLayer);
     int newValue = nCurrentValue - nValue;
@@ -1442,42 +1549,8 @@ void __fastcall ApplyGhettoSunder(D2GameStrc* pGame, D2ActiveRoomStrc* pRoom, D2
 
     //LogSunder("=== Begin ApplyGhettoSunder ===");
 
-    int maxCold = INT_MIN, maxFire = INT_MIN, maxLight = INT_MIN;
-    int maxPoison = INT_MIN, maxDamage = INT_MIN, maxMagic = INT_MIN;
+    ApplySunderClampToMonster(pGame, pUnit, false);
 
-    for (int i = 0; i < 8; ++i)
-    {
-        auto pClient = gpClientList[i];
-        if (!pClient) continue;
-
-        uint32_t guid = pClient->dwUnitGUID;
-        D2UnitStrc* pPlayer = UNITS_GetServerUnitByTypeAndId(pGame, UNIT_PLAYER, guid);
-        if (!pPlayer) continue;
-
-        int cold = STATLIST_GetUnitStatSigned(pPlayer, 187, 0);
-        int fire = STATLIST_GetUnitStatSigned(pPlayer, 189, 0);
-        int light = STATLIST_GetUnitStatSigned(pPlayer, 190, 0);
-        int poison = STATLIST_GetUnitStatSigned(pPlayer, 191, 0);
-        int damage = STATLIST_GetUnitStatSigned(pPlayer, 192, 0);
-        int magic = STATLIST_GetUnitStatSigned(pPlayer, 193, 0);
-
-        if (cold > maxCold)     maxCold = cold;
-        if (fire > maxFire)     maxFire = fire;
-        if (light > maxLight)   maxLight = light;
-        if (poison > maxPoison) maxPoison = poison;
-        if (damage > maxDamage) maxDamage = damage;
-        if (magic > maxMagic)   maxMagic = magic;
-    }
-
-    RemainderEntry remainders{};
-    remainders.cold = SubtractResistances(pUnit, STAT_COLDRESIST, maxCold);
-    remainders.fire = SubtractResistances(pUnit, STAT_FIRERESIST, maxFire);
-    remainders.light = SubtractResistances(pUnit, STAT_LIGHTRESIST, maxLight);
-    remainders.poison = SubtractResistances(pUnit, STAT_POISONRESIST, maxPoison);
-    remainders.damage = SubtractResistances(pUnit, STAT_DAMAGERESIST, maxDamage);
-    remainders.magic = SubtractResistances(pUnit, STAT_MAGICRESIST, maxMagic);
-
-    StoreRemainder(pUnit, remainders);
     //LogSunder("=== End ApplyGhettoSunder ===");
 }
 
@@ -3191,1187 +3264,10 @@ std::string BuildTerrorZoneInfoText()
 
 #pragma endregion
 
-#pragma region Grail Tracker
-
-#pragma region - Static/Structs
-
-std::vector<UniqueItemEntry> g_UniqueItems;
-std::vector<SetItemEntry>    g_SetItems;
-static std::unordered_set<std::string> g_ExcludedGrailItems;
-static bool autoBackups = false;
-static bool backupWithTimestamps = false;
-static bool overwriteOldBackup = true;
-static int backupIntervalMinutes = 10;
-static bool triggerBackupNow = false;
-static std::mutex backupMutex;
-static char backupPath[260] = "C:\\MyGrailBackup";
-
-#pragma endregion
-
-#pragma region - RMD/Retail Grail Data
-
-static UniqueItemEntry g_StaticUniqueItemsRMD[] = {
-{ 0, 0, "Amulet of the Viper", "vip", "Amulet", false }, { 1, 1, "Staff of Kings", "msf", "Staff", false }, { 2, 2, "Horadric Staff", "hst", "Staff", false }, { 3, 3, "Hell Forge Hammer", "hfh", "Hammer", false }, { 4, 4, "KhalimFlail", "qf1", "Flail", false },
-{ 5, 5, "SuperKhalimFlail", "qf2", "Flail", false }, { 6, 6, "The Gnasher", "hax", "Hand Axe", false }, { 7, 7, "Deathspade", "axe", "Axe", false }, { 8, 8, "Bladebone", "2ax", "Double Axe", false }, { 9, 9, "Skull Splitter", "mpi", "Sickle (necro)", false },
-{ 10, 10, "Rakescar", "wax", "War Axe", false }, { 11, 11, "Fechmars Axe", "lax", "Large Axe", false }, { 12, 12, "Goreshovel", "bax", "Broad Axe", false }, { 13, 13, "The Chieftan", "btx", "Battle Axe", false }, { 14, 14, "Brainhew", "gax", "Great Axe (barb)", false },
-{ 15, 15, "The Humongous", "gix", "Giant Axe(Barb)", false }, { 16, 16, "Iros Torch", "wnd", "Wand", false }, { 17, 17, "Maelstromwrath", "ywn", "Yew Wand", false }, { 18, 18, "Gravenspine", "bwn", "Bone Wand", false }, { 19, 19, "Umes Lament", "gwn", "Grim Wand", false },
-{ 20, 20, "Felloak", "clb", "Branch (Druid)", false }, { 21, 21, "Knell Striker", "scp", "Scepter", false }, { 22, 22, "Rusthandle", "gsc", "Grand Scepter", false }, { 23, 23, "Stormeye", "wsp", "War Scepter", false }, { 24, 24, "Stoutnail", "spc", "Spiked Club", false },
-{ 25, 25, "Crushflange", "mac", "Mace", false }, { 26, 26, "Bloodrise", "mst", "Morning Star", false }, { 27, 27, "The Generals Tan Do Li Ga", "fla", "Flail", false }, { 28, 28, "Ironstone", "whm", "War Hammer", false }, { 29, 29, "Bonesnap", "mau", "Maul (Barb)", false },
-{ 30, 30, "Steeldriver", "gma", "Great Maul (Barb)", false }, { 31, 31, "Rixots Keen", "ssd", "Short Sword", false }, { 32, 32, "Blood Crescent", "scm", "Scimitar", false }, { 33, 33, "Krintizs Skewer", "sbr", "Saber", false }, { 34, 34, "Gleamscythe", "flc", "Falchion", false },
-{ 35, 35, "Light's Beacon", "crs", "Crystal Sword (Sorc)", false }, { 36, 36, "Griswold's Edge", "bsd", "Broad Sword", false }, { 37, 37, "Hellplague", "lsd", "Long Sword", false }, { 38, 38, "Culwens Point", "wsd", "War Sword", false }, { 39, 39, "Shadowfang", "2hs", "Katana (Assassin)", false },
-{ 40, 40, "Soulflay", "clm", "Claymore", false }, { 41, 41, "Kinemils Awl", "gis", "Giant Sword", false }, { 42, 42, "Blacktongue", "bsw", "Bastard Sword", false }, { 43, 43, "Ripsaw", "flb", "Flamberge", false }, { 44, 44, "The Patriarch", "gsd", "Great Sword", false },
-{ 45, 45, "Gull", "dgr", "Dagger", false }, { 46, 46, "The Diggler", "dir", "Dirk", false }, { 47, 47, "The Jade Tan Do", "kri", "Kris (Necro)", false }, { 48, 48, "Irices Shard", "bld", "Blade (Necro)", false }, { 49, 49, "Shadow Strike", "tkf", "Throwing Knife", false },
-{ 50, 50, "Madawc's First", "tax", "Throwing Axe", false }, { 51, 51, "Carefully", "bkf", "Balanced Knife", false }, { 52, 52, "Ancient's Assualt", "bal", "Balanced Axe", false }, { 53, 53, "Harpoonist's Training", "jav", "Javelin", false }, { 54, 54, "Glorious Point", "pil", "Pilum", false },
-{ 55, 55, "Not So", "ssp", "Short Spear", false }, { 56, 56, "Double Trouble", "glv", "Glaive", false }, { 57, 57, "Straight Shot", "tsp", "Throwing Spear", false }, { 58, 58, "The Dragon Chang", "spr", "Spear (Pole Now)", false }, { 59, 59, "Razortine", "tri", "Trident (Pole Now)", false },
-{ 60, 60, "Bloodthief", "brn", "Brandistock(Pole Now)", false }, { 61, 61, "Lance of Yaggai", "spt", "Spetum(Pole Now)", false }, { 62, 62, "The Tannr Gorerod", "pik", "Pike(Pole Now)", false }, { 63, 63, "Dimoaks Hew", "bar", "Bardiche", false }, { 64, 64, "Steelgoad", "vou", "Voulge", false },
-{ 65, 65, "Soul Harvest", "scy", "Scythe (Necro)", false }, { 66, 66, "The Battlebranch", "pax", "Poleaxe", false }, { 67, 67, "Woestave", "hal", "Halberd", false }, { 68, 68, "The Grim Reaper", "wsc", "Thresher (Necro)", false }, { 69, 69, "Bane Ash", "sst", "Short Staff", false },
-{ 70, 70, "Serpent Lord", "lst", "Long Staff", false }, { 71, 71, "Lazarus Spire", "cst", "Gnarled Staff", false }, { 72, 72, "The Salamander", "bst", "Battle Staff", false }, { 73, 73, "The Iron Jang Bong", "wst", "War Staff", false }, { 74, 74, "Pluckeye", "sbw", "Short Bow", false },
-{ 75, 75, "Witherstring", "hbw", "Hunter's Bow", false }, { 76, 76, "Rimeraven", "lbw", "Long Bow", false }, { 77, 77, "Piercerib", "cbw", "Composite Bow", false }, { 78, 78, "Pullspite", "sbb", "Short Battle Bow", false }, { 79, 79, "Wizendraw", "lbb", "Long Battle Bow", false },
-{ 80, 80, "Hellclap", "swb", "Short War Bow", false }, { 81, 81, "Blastbark", "lwb", "Long War Bow", false }, { 82, 82, "Leadcrow", "lxb", "Light Crossbow", false }, { 83, 83, "Ichorsting", "mxb", "Crossbow", false }, { 84, 84, "Hellcast", "hxb", "Heavy Crossbow", false },
-{ 85, 85, "Doomspittle", "rxb", "Repeating Crossbow", false }, { 86, 86, "Coldkill", "9ha", "Hatchet", false }, { 87, 87, "Butcher's Pupil", "9ax", "Cleaver", false }, { 88, 88, "Islestrike", "92a", "Twin Axe", false }, { 89, 89, "Pompeii's Wrath", "9mp", "Battle Sickle (Necro)", false },
-{ 90, 90, "Guardian Naga", "9wa", "Naga", false }, { 91, 91, "Warlord's Trust", "9la", "Military Axe", false }, { 92, 92, "Spellsteel", "9ba", "Bearded Axe", false }, { 93, 93, "Stormrider", "9bt", "Tabar", false }, { 94, 94, "Boneslayer Blade", "9ga", "Gothic Axe (Barb)", false },
-{ 95, 95, "The Minataur", "9gi", "Ancient Axe (Barb)", false }, { 96, 96, "Suicide Branch", "9wn", "Burnt Wand", false }, { 97, 97, "Carin Shard", "9yw", "Petrified Wand", false }, { 98, 98, "Arm of King Leoric", "9bw", "Tomb Wand", false }, { 99, 99, "Blackhand Key", "9gw", "Grave Wand", false },
-{ 100, 100, "Dark Clan Crusher", "9sp", "Limb(Druid)", false }, { 101, 101, "Zakarum's Hand", "9sc", "Rune Scepter", false }, { 102, 102, "The Fetid Sprinkler", "9qs", "Holy Water Sprinkler", false }, { 103, 103, "Hand of Blessed Light", "9ws", "Divine Scepter", false }, { 104, 104, "Fleshrender", "9cl", "Barbed Club", false },
-{ 105, 105, "Sureshrill Frost", "9ma", "Flanged Mace", false }, { 106, 106, "Moonfall", "9mt", "Jagged Star", false }, { 107, 107, "Baezil's Vortex", "9fl", "Knout", false }, { 108, 108, "Earthshaker", "9wh", "Battle Hammer", false }, { 109, 109, "Bloodtree Stump", "9m9", "War Club (Barb)", false },
-{ 110, 110, "The Gavel of Pain", "9gm", "Martel de Fer (Barb)", false }, { 111, 111, "Bloodletter", "9ss", "Gladius", false }, { 112, 112, "Coldsteel Eye", "9sm", "Cutlass", false }, { 113, 113, "Hexfire", "9sb", "Shamshir", false }, { 114, 114, "Blade of Ali Baba", "9fc", "Tulwar", false },
-{ 115, 115, "Ginther's Rift", "9cr", "Dimensional Blade (sorc)", false }, { 116, 116, "Headstriker", "9bs", "Battle Sword", false }, { 117, 117, "Plague Bearer", "9ls", "Rune Sword", false }, { 118, 118, "The Atlantian", "9wd", "Ancient Sword", false }, { 119, 119, "Crainte Vomir", "92h", "Katana (Assassin)", false },
-{ 120, 120, "Bing Sz Wang", "9cm", "Dacian Falx", false }, { 121, 121, "The Vile Husk", "9gs", "Tusk Sword", false }, { 122, 122, "Cloudcrack", "9b9", "Gothic Sword", false }, { 123, 123, "Todesfaelle Flamme", "9fb", "Zweihander", false }, { 124, 124, "Swordguard", "9gd", "Executioner Sword", false },
-{ 125, 125, "Spineripper", "9dg", "Poignard", false }, { 126, 126, "Heart Carver", "9di", "Rondel", false }, { 127, 127, "Blackbog's Sharp", "9kr", "Cinquedeas (Necro)", false }, { 128, 128, "Stormspike", "9bl", "Stilleto (Necro)", false }, { 129, 129, "Deathbit", "9tk", "battle dart (Assassin)", false },
-{ 130, 130, "The Scalper", "9ta", "Francisca (Barb)", false }, { 131, 131, "Constantly Waging", "9bk", "War Dart", false }, { 132, 132, "Realm Crusher", "9b8", "Hurlbat", false }, { 133, 133, "Quickening Strikes", "9ja", "War Javelin (Barb)", false }, { 134, 134, "Shrapnel Impact", "9pi", "Great Pilum (Barb)", false },
-{ 135, 135, "Tempest Flash", "9s9", "Simbilan (Barb)", false }, { 136, 136, "Untethered", "9gl", "Spiculum (Barb)", false }, { 137, 137, "Unrelenting Will", "9ts", "Harpoon (Barb)", false }, { 138, 138, "The Impaler", "9sr", "War Spear (Now Pole)", false }, { 139, 139, "Kelpie Snare", "9tr", "Fuscina (Now Pole)", false },
-{ 140, 140, "Soulfeast Tine", "9br", "War Fork (Now Pole)", false }, { 141, 141, "Hone Sundan", "9st", "Yari (Now Pole)", false }, { 142, 142, "Spire of Honor", "9p9", "Lance (Now Pole)", false }, { 143, 143, "The Meat Scraper", "9b7", "Lochaber Axe", false }, { 144, 144, "Blackleach Blade", "9vo", "Bill", false },
-{ 145, 145, "Athena's Wrath", "9s8", "Battle Scythe (Necro)", false }, { 146, 146, "Pierre Tombale Couant", "9pa", "Partizan", false }, { 147, 147, "Husoldal Evo", "9h9", "Bec-de-Corbin", false }, { 148, 148, "Grim's Burning Dead", "9wc", "Grim Scythe (Necro)", false }, { 149, 149, "Razorswitch", "8ss", "Jo Stalf", false },
-{ 150, 150, "Ribcracker", "8ls", "Quarterstaff", false }, { 151, 151, "Chromatic Ire", "8cs", "Cedar Staff", false }, { 152, 152, "Warpspear", "8bs", "Gothic Staff", false }, { 153, 153, "Skullcollector", "8ws", "Rune Staff", false }, { 154, 154, "Skystrike", "8sb", "Edge Bow", false },
-{ 155, 155, "Riphook", "8hb", "Razor Bow", false }, { 156, 156, "Kuko Shakaku", "8lb", "CedarBow", false }, { 157, 157, "Endlesshail", "8cb", "Double Bow", false }, { 158, 158, "Whichwild String", "8s8", "Short Siege Bow", false }, { 159, 159, "Cliffkiller", "8l8", "Long Siege Bow", false },
-{ 160, 160, "Magewrath", "8sw", "Rune Bow", false }, { 161, 161, "Godstrike Arch", "8lw", "Gothic Bow", false }, { 162, 162, "Langer Briser", "8lx", "Arbalest", false }, { 163, 163, "Pus Spiter", "8mx", "Siege Crossbow", false }, { 164, 164, "Buriza-Do Kyanon", "8hx", "Balista", false },
-{ 165, 165, "Demon Machine", "8rx", "Chu-Ko-Nu", false }, { 166, 166, "Untrained Eye", "ktr", "Katar", false }, { 167, 167, "Redemption", "wrb", "Wrist Blade", false }, { 168, 168, "Ancient Hand", "axf", "Hatchet Hands", false }, { 169, 169, "Willbreaker", "ces", "Cestus", false },
-{ 170, 170, "Skyfall Grip", "clw", "Claws", false }, { 171, 171, "Oathbinder", "btl", "Blade Talons", false }, { 172, 172, "Pride's Fan", "skr", "Scissors Katar", false }, { 173, 173, "Burning Sun", "9ar", "Quhab", false }, { 174, 174, "Severance", "9wb", "Wrist Spike", false },
-{ 175, 175, "Hand of Madness", "9xf", "Fascia", false }, { 176, 176, "Vanquisher", "9cs", "Hand Scythe", false }, { 177, 177, "Wind-Forged Blade", "9lw", "Greater Claws", false }, { 178, 178, "Bartuc's Cut-Throat", "9tw", "Greater Talons", false }, { 179, 179, "Void Ripper", "9qr", "Scissors Quhab", false },
-{ 180, 180, "Soul-Forged Grip", "7ar", "Suwayyah", false }, { 181, 181, "Jadetalon", "7wb", "wrist sword", false }, { 182, 182, "Malignant Touch", "7xf", "War Fist", false }, { 183, 183, "Shadowkiller", "7cs", "battle cestus", false }, { 184, 184, "Firelizard's Talons", "7lw", "feral claws", false },
-{ 185, 185, "Viz-Jaq'taar Order", "7tw", "Runic Talons", false }, { 186, 186, "Mage Crusher", "7qr", "Scissors Suwayyah", false }, { 187, 187, "Razoredge", "7ha", "tomahawk", false }, { 188, 188, "Glittering Crescent", "7ax", "Small Crescent", false }, { 189, 189, "Runemaster", "72a", "ettin axe", false },
-{ 190, 190, "Cranebeak", "7mp", "Reaper Sickle (Necro)", false }, { 191, 191, "Deathcleaver", "7wa", "berserker axe", false }, { 192, 192, "Blessed Beheader", "7la", "Feral Axe", false }, { 193, 193, "Ethereal Edge", "7ba", "silver-edged axe", false }, { 194, 194, "Hellslayer", "7bt", "Decapitator", false },
-{ 195, 195, "Messerschmidt's Reaver", "7ga", "Champion Axe (Barb)", false }, { 196, 196, "Executioner's Justice", "7gi", "glorious axe (Barb)", false }, { 197, 197, "Bane Glow", "7wn", "Polished Wand", false }, { 198, 198, "Malthael Touch", "7yw", "Ghost Wand", false }, { 199, 199, "Boneshade", "7bw", "lich wand", false },
-{ 200, 200, "Deaths's Web", "7gw", "unearthed wand", false }, { 201, 201, "Nord's Tenderizer", "7cl", "Bough (Druid)", false }, { 202, 202, "Heaven's Light", "7sc", "mighty scepter", false }, { 203, 203, "The Redeemer", "7qs", "Seraph Rod", false }, { 204, 204, "Ironward", "7ws", "caduceus", false },
-{ 205, 205, "Demonlimb", "7sp", "tyrant club", false }, { 206, 206, "Stormlash", "7ma", "Reinforced Mace", false }, { 207, 207, "Baranar's Star", "7mt", "Devil Star", false }, { 208, 208, "Horizon's Tornado", "7fl", "scourge", false }, { 209, 209, "Schaefer's Hammer", "7wh", "Legendary Mallet", false },
-{ 210, 210, "Windhammer", "7m7", "ogre maul (Barb)", false }, { 211, 211, "The Cranium Basher", "7gm", "Thunder Maul (Barb)", false }, { 212, 212, "Vows of Promise", "7ss", "Falcata", false }, { 213, 213, "Djinnslayer", "7sm", "ataghan", false }, { 214, 214, "Bloodmoon", "7sb", "elegant blade", false },
-{ 215, 215, "Starward Fencer", "7fc", "Hydra Edge", false }, { 216, 216, "Lightsabre", "7cr", "Phase Blade (Sorc)", false }, { 217, 217, "Azurewrath", "7bs", "Conquest Sword", false }, { 218, 218, "Frostwind", "7ls", "Cryptic Sword", false }, { 219, 219, "Last Legend", "7wd", "Mythical Sword", false },
-{ 220, 220, "Oashi", "72h", "Shinogi (Assassin)", false }, { 221, 221, "Gleam Rod", "7cm", "Highland Blade", false }, { 222, 222, "Flamebellow", "7gs", "balrog blade", false }, { 223, 223, "Doombringer", "7b7", "Champion Sword", false }, { 224, 224, "Burning Bane", "7fb", "Colossal Sword", false },
-{ 225, 225, "The Grandfather", "7gd", "Colossus Blade", false }, { 226, 226, "Wizardspike", "7dg", "Bone Knife", false }, { 227, 227, "Rapid Strike", "7di", "Mithral Point", false }, { 228, 228, "Fleshripper", "7kr", "fanged knife (Necro)", false }, { 229, 229, "Ghostflame", "7bl", "legend spike (necro)", false },
-{ 230, 230, "Sentinels Call", "7tk", "Flying Knife", false }, { 231, 231, "Gimmershred", "7ta", "flying axe (Barb)", false }, { 232, 232, "Warshrike", "7bk", "winged knife (Assassin)", false }, { 233, 233, "Lacerator", "7b8", "winged axe (Barb)", false }, { 234, 234, "Contemplation", "7ja", "Hyperion Javelin", false },
-{ 235, 235, "Main Hand", "7pi", "Stygian Pilum", false }, { 236, 236, "Demon's Arch", "7s7", "balrog spear", false }, { 237, 237, "Wraithflight", "7gl", "ghost glaive", false }, { 238, 238, "Gargoyle's Bite", "7ts", "winged harpoon", false }, { 239, 239, "Arioc's Needle", "7sr", "Hyperion Spear (Now Pole)", false },
-{ 240, 240, "Rock Piercer", "7tr", "Stygian Pike", false }, { 241, 241, "Viperfork", "7br", "Mancatcher", false }, { 242, 242, "Flash Forward", "7st", "Ghost Spear (Now Pole)", false }, { 243, 243, "Steelpillar", "7p7", "war pike (Now Pole)", false }, { 244, 244, "Bonehew", "7o7", "ogre axe", false },
-{ 245, 245, "Tundra Tamer", "7vo", "Colossus Voulge", false }, { 246, 246, "The Reaper's Toll", "7s8", "Reaper Scythe", false }, { 247, 247, "Tomb Reaver", "7pa", "cryptic axe", false }, { 248, 248, "Wind Shatter", "l17", "Glorious Axe - LB", false }, { 249, 249, "Bonespire", "7wc", "Reaper Thresher (Necro)", false },
-{ 250, 250, "Natures Intention", "6bs", "Walking Stick", false }, { 251, 251, "Thermite Quicksand", "6ls", "Stalagmite", false }, { 252, 252, "Ondal's Wisdom", "6cs", "elder staff", false }, { 253, 253, "Stone Crusher", "6bs", "Shillelagh", false }, { 254, 254, "Mang Song's Lesson", "6ws", "archon staff", false },
-{ 255, 255, "Cold Crow's Caw", "6sb", "Spider Bow", false }, { 256, 256, "Trembling Vortex", "6hb", "Blade Bow", false }, { 257, 257, "Corrupted String", "6lb", "Shadow Bow", false }, { 258, 258, "Gyro Blaster", "6cb", "Great Bow", false }, { 259, 259, "Underground", "6s7", "Diamond Bow", false },
-{ 260, 260, "Eaglehorn", "6l7", "Crusader Bow", false }, { 261, 261, "Widowmaker", "6sw", "ward bow", false }, { 262, 262, "Windforce", "6lw", "Hydra Bow", false }, { 263, 263, "Shadow Hunter", "6lx", "Pellet Bow", false }, { 264, 264, "Amnestys Glare", "6mx", "Gorgon Crossbow", false },
-{ 265, 265, "Hellrack", "6hx", "colossus crossbow", false }, { 266, 266, "Gutsiphon", "6rx", "demon crossbow", false }, { 267, 267, "Enlightener", "ob1", "Eagle Orb", false }, { 268, 268, "Endothermic Stone", "ob2", "Sacred Globe", false }, { 269, 269, "Sensor", "ob3", "Smoked Sphere", false },
-{ 270, 270, "Lightning Rod", "ob4", "Clasped Orb", false }, { 271, 271, "Energizer", "ob5", "Jared's Stone", false }, { 272, 272, "The Artemis String", "am1", "Stag Bow", false }, { 273, 273, "Pinaka", "am2", "Reflex Bow", false }, { 274, 274, "The Pain Producer", "am3", "Maiden Spear", false },
-{ 275, 275, "The Poking Pike", "am4", "Maiden Pike", false }, { 276, 276, "Skovos Striker", "am5", "Maiden Javelin", false }, { 277, 277, "Risen Phoenix", "ob6", "Glowing Orb", false }, { 278, 278, "Glacial Oasis", "ob7", "Crystalline Globe", false }, { 279, 279, "Thunderous", "ob8", "Cloudy Sphere", false },
-{ 280, 280, "Magic", "ob9", "Sparkling Ball", false }, { 281, 281, "The Oculus", "oba", "Swirling Crystal", false }, { 282, 282, "Windraven", "am6", "Ashwood Bow", false }, { 283, 285, "Lycander's Aim", "am7", "Ceremonial Bow", false }, { 284, 286, "Titan's Revenge", "ama", "Ceremonial Javelin", false },
-{ 285, 287, "Lycander's Flank", "am9", "Ceremonial Pike", false }, { 286, 288, "Above All", "obb", "Heavenly Stone", false }, { 287, 289, "Eschuta's Temper", "obc", "eldritch orb", false }, { 288, 290, "Belphegor's Beating", "obd", "Demon Heart", false }, { 289, 291, "Tempest Firey", "obe", "Vortex Orb", false },
-{ 290, 292, "Death's Fathom", "obf", "dimensional shard", false }, { 291, 293, "Bloodraven's Charge", "amb", "matriarchal bow", false }, { 292, 294, "Shredwind Hell", "amc", "Grand Matron Bow", false }, { 293, 295, "Thunderstroke", "amf", "matriarchal javelin", false }, { 294, 296, "Stoneraven", "amd", "matriarchal spear", false },
-{ 295, 297, "Biggin's Bonnet", "cap", "Cap", false }, { 296, 298, "Tarnhelm", "skp", "Skull Cap", false }, { 297, 299, "Coif of Glory", "hlm", "Helm", false }, { 298, 300, "Duskdeep", "fhl", "Full Helm", false }, { 299, 301, "Howltusk", "ghm", "Great Helm", false },
-{ 300, 302, "Undead Crown", "crn", "Crown (Paladin)", false }, { 301, 303, "The Face of Horror", "msk", "Mask", false }, { 302, 304, "Greyform", "qui", "Quilted Armor", false }, { 303, 305, "Blinkbats Form", "lea", "Leather Armor", false }, { 304, 306, "The Centurion", "hla", "Hard Leather", false },
-{ 305, 307, "Twitchthroe", "stu", "Studded Leather", false }, { 306, 308, "Darkglow", "rng", "Ring Mail", false }, { 307, 309, "Hawkmail", "scl", "Scale Mail", false }, { 308, 310, "Sparking Mail", "chn", "Chain Mail", false }, { 309, 311, "Venomsward", "brs", "Breast Plate", false },
-{ 310, 312, "Iceblink", "spl", "Splint Mail", false }, { 311, 313, "Boneflesh", "plt", "Plate Mail", false }, { 312, 314, "Rockfleece", "fld", "Field Plate", false }, { 313, 315, "Rattlecage", "gth", "Gothic Plate", false }, { 314, 316, "Goldskin", "ful", "Full Plate Mail", false },
-{ 315, 317, "Victors Silk", "aar", "AncientArmor", false }, { 316, 318, "Heavenly Garb", "ltp", "Light Plate", false }, { 317, 319, "Pelta Lunata", "buc", "Buckler", false }, { 318, 320, "Umbral Disk", "sml", "Small Shield", false }, { 319, 321, "Stormguild", "lrg", "Large Shield (Zon)", false },
-{ 320, 322, "Steelclash", "kit", "Kite Shield", false }, { 321, 323, "Bverrit Keep", "tow", "Tower Shield", false }, { 322, 324, "The Ward", "gts", "Gothic Shield", false }, { 323, 325, "The Hand of Broc", "lgl", "Gloves", false }, { 324, 326, "Bloodfist", "vgl", "Heavy Gloves", false },
-{ 325, 327, "Chance Guards", "mgl", "Bracers", false }, { 326, 328, "Magefist", "tgl", "Light Gauntlets", false }, { 327, 329, "Frostburn", "hgl", "Gauntlets", false }, { 328, 330, "Hotspur", "lbt", "Leather Boots", false }, { 329, 331, "Gorefoot", "vbt", "Heavy Boots", false },
-{ 330, 332, "Treads of Cthon", "mbt", "Chain Boots", false }, { 331, 333, "Goblin Toe", "tbt", "Light Plate Boots", false }, { 332, 334, "Tearhaunch", "hbt", "Plate Boots", false }, { 333, 335, "Lenyms Cord", "lbl", "Sash", false }, { 334, 336, "Snakecord", "vbl", "Light Belt", false },
-{ 335, 337, "Nightsmoke", "mbl", "Belt", false }, { 336, 338, "Goldwrap", "tbl", "Heavy Belt", false }, { 337, 339, "Bladebuckle", "hbl", "Girdle", false }, { 338, 340, "Wormskull", "bhm", "Bone Helm (Necro)", false }, { 339, 341, "Wall of the Eyeless", "bsh", "Bone Shield (Necro)", false },
-{ 340, 342, "Swordback Hold", "spk", "Spiked Shield", false }, { 341, 343, "Peasent Crown", "xap", "War Hat", false }, { 342, 344, "Rockstopper", "xkp", "Sallet", false }, { 343, 345, "Stealskull", "xlm", "Casque", false }, { 344, 346, "Darksight Helm", "xhl", "Basinet", false },
-{ 345, 347, "Valkyrie Wing", "xhm", "Winged Helm", false }, { 346, 348, "Crown of Thieves", "xrn", "Grand Crown (Paladin)", false }, { 347, 349, "Blackhorn's Face", "xsk", "Death Mask", false }, { 348, 350, "The Spirit Shroud", "xui", "Ghost Armor", false }, { 349, 351, "Skin of the Vipermagi", "xea", "Serpentskin Armor", false },
-{ 350, 352, "Skin of the Flayerd One", "xla", "Demonhide Armor", false }, { 351, 353, "Ironpelt", "xtu", "Tresllised Armor", false }, { 352, 354, "Spiritforge", "xng", "Linked Mail", false }, { 353, 355, "Crow Caw", "xcl", "Tigulated Mail", false }, { 354, 356, "Shaftstop", "xhn", "Mesh Armor", false },
-{ 355, 357, "Duriel's Shell", "xrs", "Cuirass", false }, { 356, 358, "Skullder's Ire", "xpl", "Russet Armor", false }, { 357, 359, "Guardian Angel", "xlt", "Templar Coat", false }, { 358, 360, "Toothrow", "xld", "Sharktooth Armor", false }, { 359, 361, "Atma's Wail", "xth", "Embossed Plate", false },
-{ 360, 362, "Black Hades", "xul", "Chaos Armor", false }, { 361, 363, "Corpsemourn", "xar", "Ornate Armor", false }, { 362, 364, "Que-Hegan's Wisdon", "xtp", "Mage Plate", false }, { 363, 365, "Visceratuant", "xuc", "Defender", false }, { 364, 366, "Mosers Blessed Circle", "xml", "Round Shield", false },
-{ 365, 367, "Stormchaser", "xrg", "Scutum (Zon)", false }, { 366, 368, "Tiamat's Rebuke", "xit", "Dragon Shield", false }, { 367, 369, "Kerke's Sanctuary", "xow", "Pavise", false }, { 368, 370, "Radimant's Sphere", "xts", "Ancient Shield", false }, { 369, 371, "Venom Grip", "xlg", "Demonhide Gloves", false },
-{ 370, 372, "Gravepalm", "xvg", "Sharkskin Gloves", false }, { 371, 373, "Ghoulhide", "xmg", "Heavy Bracers", false }, { 372, 374, "Lavagout", "xtg", "Battle Guantlets", false }, { 373, 375, "Hellmouth", "xhg", "War Gauntlets", false }, { 374, 376, "Infernostride", "xlb", "Demonhide Boots", false },
-{ 375, 377, "Waterwalk", "xvb", "Sharkskin Boots", false }, { 376, 378, "Silkweave", "xmb", "Mesh Boots", false }, { 377, 379, "Wartraveler", "xtb", "Battle Boots", false }, { 378, 380, "Gorerider", "xhb", "War Boots", false }, { 379, 381, "String of Ears", "zlb", "Demonhide Sash", false },
-{ 380, 382, "Razortail", "zvb", "Sharkskin Belt", false }, { 381, 383, "Gloomstrap", "zmb", "Mesh Belt", false }, { 382, 384, "Snowclash", "ztb", "Battle Belt", false }, { 383, 385, "Thudergod's Vigor", "zhb", "War Belt", false }, { 384, 386, "Vampiregaze", "xh9", "Grim Helm (Necro)", false },
-{ 385, 387, "Lidless Wall", "xsh", "Grim Shield (Necro)", false }, { 386, 388, "Lance Guard", "xpk", "Barbed Shield", false }, { 387, 389, "Primal Power", "dr1", "Wolf Head", false }, { 388, 390, "Murder of Crows", "dr2", "Hawk Helm", false }, { 389, 391, "Cheetah Stance", "dr3", "Antlers", false },
-{ 390, 392, "Uproar", "dr4", "Falcon Mask", false }, { 391, 393, "Flame Spirit", "dr5", "Spirit Mask", false }, { 392, 394, "Toothless Maw", "ba1", "Jawbone Cap", false }, { 393, 395, "Darkfear", "ba2", "Fanged Helm", false }, { 394, 396, "Thermal Shock", "ba3", "Horned Helm", false },
-{ 395, 397, "Nature's Protector", "ba4", "Assault Helmet", false }, { 396, 398, "Reckless Fury", "ba5", "Avenger Guard", false }, { 397, 399, "Sigurd's Staunch", "pa1", "Targe", false }, { 398, 400, "Caster's Courage", "pa2", "Rondache", false }, { 399, 401, "Briar Patch", "pa3", "Heraldic Shield", false },
-{ 400, 402, "Ricochet", "pa4", "Aerin Shield", false }, { 401, 403, "Favored Path", "pa5", "Crown Shield", false }, { 402, 404, "Old Friend", "ne1", "Preserved Head", false }, { 403, 405, "Decomposed Leader", "ne2", "Zombie Head", false }, { 404, 406, "Tangled Fellow", "ne3", "Unraveller Head", false },
-{ 405, 407, "Stubborn Stone", "ne4", "Gargoyle Head", false }, { 406, 408, "Spiked Dreamcatcher", "ne5", "Demon Head", false }, { 407, 409, "Journeyman's Band", "ci0", "Circlet", false }, { 408, 410, "Hygieia's Purity", "ci1", "Coronet", false }, { 409, 411, "Kira's Guardian", "ci2", "tiara", false },
-{ 410, 412, "Griffon's Eye", "ci3", "diadem", false }, { 411, 413, "Harlequin Crest", "uap", "Shako", false }, { 412, 414, "Tarnhelm's Revenge", "ukp", "Hydraskull", false }, { 413, 415, "Steelshade", "ulm", "armet", false }, { 414, 416, "Veil of Steel", "uhl", "Giant Conch", false },
-{ 415, 417, "Nightwing's Veil", "uhm", "spired helm", false }, { 416, 418, "Crown of Ages", "urn", "corona (Pali)", false }, { 417, 419, "Andariel's Visage", "usk", "demonhead", false }, { 418, 420, "Ormus' Robes", "uui", "dusk shroud", false }, { 419, 421, "Arcane Protector", "uea", "Wyrmhide", false },
-{ 420, 422, "Spell Splitter", "ula", "Scarab Husk", false }, { 421, 423, "The Gladiator's Bane", "utu", "Wire Fleece", false }, { 422, 424, "Balled Lightning", "ung", "Diamond Mail", false }, { 423, 425, "Giant Crusher", "ucl", "Loricated Mail", false }, { 424, 426, "Chained Lightning", "uhn", "Boneweave", false },
-{ 425, 427, "Savitr's Garb", "urs", "Great Hauberk", false }, { 426, 428, "Arkaine's Valor", "upl", "Balrog Skin", false }, { 427, 429, "Strength Unleashed", "ult", "Hellforge Plate", false }, { 428, 430, "Leviathan", "uld", "kraken shell", false }, { 429, 431, "Duality", "uth", "Lacquered Plate", false },
-{ 430, 432, "Steel Carapice", "uul", "shadow plate", false }, { 431, 433, "Tyrael's Might", "uar", "sacred armor", false }, { 432, 434, "Spiritual Protector", "utp", "Archon Plate", false }, { 433, 435, "Cleansing Ward", "uuc", "Heater", false }, { 434, 436, "Blackoak Shield", "uml", "Luna", false },
-{ 435, 437, "Astrogha's Web", "urg", "Hyperion", false }, { 436, 438, "Stormshield", "uit", "Monarch", false }, { 437, 439, "Medusa's Gaze", "uow", "aegis", false }, { 438, 440, "Spirit Ward", "uts", "ward", false }, { 439, 441, "Indra's Mark", "ulg", "Bramble Mitts", false },
-{ 440, 442, "Dracul's Grasp", "uvg", "vampirebone gloves", false }, { 441, 443, "Souldrain", "umg", "vambraces", false }, { 442, 444, "Carthas's Presence", "utg", "Crusader Gauntlets", false }, { 443, 445, "Steelrend", "uhg", "ogre gauntlets", false }, { 444, 446, "Mana Wyrm", "ulb", "Wyrmhide Boots", false },
-{ 445, 447, "Sandstorm Trek", "uvb", "scarabshell boots", false }, { 446, 448, "Marrowwalk", "umb", "boneweave boots", false }, { 447, 449, "Crimson Shift", "utb", "Mirrored Boots", false }, { 448, 450, "Lelantus's Frenzy", "uhb", "Myrmidon Greaves", false }, { 449, 451, "Arachnid Mesh", "ulc", "spiderweb sash", false },
-{ 450, 452, "Nosferatu's Coil", "uvc", "vampirefang belt", false }, { 451, 453, "Verdugo's Hearty Cord", "umc", "mithril coil", false }, { 452, 454, "Magni's Warband", "utc", "Troll Belt", false }, { 453, 455, "Arcanist's Safeguard", "uhc", "Colossus Girdle", false }, { 454, 456, "Giantskull", "uh9", "bone visage (NECRO)", false },
-{ 455, 457, "Headhunter's Glory", "ush", "troll nest (Necro)", false }, { 456, 458, "Spike Thorn", "upk", "blade barrier", false }, { 457, 459, "Flame of Combat", "dr6", "Alpha Helm", false }, { 458, 460, "Mystic Command", "dr7", "Griffon Headress", false }, { 459, 461, "Rama's Protector", "dr8", "Hunter's Guise", false },
-{ 460, 462, "Snow Spirit", "dr9", "Sacred Feathers", false }, { 461, 463, "Efreeti's Fury", "dra", "Totemic Mask", false }, { 462, 464, "Combat Visor", "ba6", "Jawbone Visor", false }, { 463, 465, "Strength of Pride", "ba7", "Lion Helm", false }, { 464, 466, "Fighter's Stance", "ba8", "Rage Mask", false },
-{ 465, 467, "Piercing Cold", "ba9", "Savage Helmet", false }, { 466, 468, "Arreat's Face", "baa", "Slayer Guard", false }, { 467, 469, "Fara's Defender", "pa6", "Akaran Targe", false }, { 468, 470, "Rakkis's Guard", "pa7", "Akaran Rondache", false }, { 469, 471, "Assaulter's Armament", "pa8", "Protector Shield", false },
-{ 470, 472, "Herald of Zakarum", "pa9", "Gilded Shield", false }, { 471, 473, "Blackheart's Barrage", "paa", "Royal Shield", false }, { 472, 474, "Mehtan's Carrion", "ne6", "Mummified Trophy", false }, { 473, 475, "Venom Storm", "ne7", "Fetish Trophy", false }, { 474, 476, "Bone Zone", "ne8", "Sexton Trophy", false },
-{ 475, 477, "Contagion", "ne9", "Cantor Trophy", false }, { 476, 478, "Homunculus", "nea", "Heirophant Trophy", false }, { 477, 479, "Cerebus", "drb", "blood spirit", false }, { 478, 480, "Pack Mentality", "drc", "Sun Spirit", false }, { 479, 481, "Spiritkeeper", "drd", "earth spirit", false },
-{ 480, 482, "Cavern Dweller", "dre", "sky spirit", false }, { 481, 483, "Jalal's Mane", "dra", "Dream Spirit", false }, { 482, 484, "Berserker's Stance", "bab", "Carnage Helm", false }, { 483, 485, "Wolfhowl", "bac", "fury visor", false }, { 484, 486, "Demonhorn's Edge", "bad", "destroyer helm", false },
-{ 485, 487, "Halaberd's Reign", "bae", "conqueror crown", false }, { 486, 488, "Warrior's Resolve", "baf", "Guardian Crown", false }, { 487, 489, "Primordial Punisher", "pab", "Sacred Targe", false }, { 488, 490, "Alma Negra", "pac", "sacred rondache", false }, { 489, 491, "Faithful Guardian", "pad", "Ancient Shield", false },
-{ 490, 492, "Dragonscale", "pae", "zakarum shield", false }, { 491, 493, "Shield of Forsaken Light", "paf", "Vortex Shield", false }, { 492, 494, "Onikuma", "neb", "Minion Skull", false }, { 493, 495, "Bone Parade", "neg", "Hellspawn Skull", false }, { 494, 496, "Elanuzuru", "ned", "Overseer Skull", false },
-{ 495, 497, "Boneflame", "nee", "succubae skull", false }, { 496, 498, "Darkforce Spawn", "nef", "bloodlord skull", false }, { 497, 504, "Earthshifter", "Wp3", "Fenris Fur", false }, { 498, 510, "Shadowdancer", "Ab3", "Bladed Boots", false }, { 499, 513, "Templar's Might", "Bp3", "Enlightened Plate", false },
-{ 500, 516, "Nature's Nurture", "Oa3", "Oaken Armor", false }, { 501, 519, "Firebelr", "Vg3", "Vizjerei Vestige", false }, { 502, 520, "Flightless", "aqv", "Arrows", false }, { 503, 521, "Pinpoint", "aqv", "Arrows", false }, { 504, 522, "Nokozan Relic", "amu", "Amulet", false },
-{ 505, 523, "The Eye of Etlich", "amu", "Amulet", false }, { 506, 524, "The Mahim-Oak Curio", "amu", "Amulet", false }, { 507, 525, "Nagelring", "rin", "Ring", false }, { 508, 526, "Manald Heal", "rin", "Ring", false }, { 509, 527, "The Stone of Jordan", "rin", "Ring", false },
-{ 510, 528, "Bul Katho's Wedding Band", "rin", "Ring", false }, { 511, 529, "The Cat's Eye", "amu", "Amulet", false }, { 512, 530, "The Rising Sun", "amu", "Amulet", false }, { 513, 531, "Crescent Moon", "amu", "Amulet", false }, { 514, 532, "Mara's Kaleidoscope", "amu", "Amulet", false },
-{ 515, 533, "Atma's Scarab", "amu", "Amulet", false }, { 516, 534, "Dwarf Star", "rin", "Ring", false }, { 517, 535, "Raven Frost", "rin", "Ring", false }, { 518, 536, "Highlord's Wrath", "amu", "Amulet", false }, { 519, 537, "Saracen's Chance", "amu", "Amulet", false },
-{ 520, 538, "Nature's Peace", "rin", "ring", false }, { 521, 539, "Seraph's Hymn", "amu", "amulet", false }, { 522, 540, "Wisp Projector", "rin", "ring", false }, { 523, 541, "Constricting Ring", "rin", "Ring", false }, { 524, 542, "Gheed's Fortune", "cm3", "charm", false },
-{ 525, 543, "Annihilus", "cm1", "charm", false }, { 526, 544, "Carrion Wind", "rin", "ring", false }, { 527, 545, "Metalgrid", "amu", "amulet", false }, { 528, 550, "Rainbow Facet1", "jew", "jewel", false }, { 529, 551, "Rainbow Facet2", "jew", "jewel", false },
-{ 530, 552, "Rainbow Facet3", "jew", "jewel", false }, { 531, 553, "Rainbow Facet4", "jew", "jewel", false }, { 532, 554, "Rainbow Facet5", "jew", "jewel", false }, { 533, 555, "Rainbow Facet6", "jew", "jewel", false }, { 534, 556, "Hellfire Torch", "cm2", "charm", false },
-{ 535, 557, "Beacon of Hope", "BoH", "Beacon", false }, { 536, 558, "MythosLog", "y08", "KillTracker", false }, { 537, 559, "Storage Bag", "Z01", "bag", false }, { 538, 560, "Magefist", "tgl", "Light Gauntlets", false }, { 539, 561, "Magefist", "tgl", "Light Gauntlets", false },
-{ 540, 562, "Magefist", "tgl", "Light Gauntlets", false }, { 541, 563, "Magefist", "tgl", "Light Gauntlets", false }, { 542, 564, "IceClone Armor", "St1", "", false }, { 543, 565, "IceClone Armor2", "St2", "", false }, { 544, 566, "Hydra Master", "6ls", "Stalagmite", false },
-{ 545, 567, "Spiritual Savior", "utp", "Archon Plate", false }, { 546, 568, "IceClone Armor3", "St3", "", false }, { 547, 569, "Fletcher's Fury", "Ag1", "Trainee Gloves", false }, { 548, 570, "Indra's Guidance", "Ag2", "Adept Gloves", false }, { 549, 572, "Robbin's Temple", "ci1", "Coronet", false },
-{ 550, 573, "Trials Charm c1", "a59", "Large Charm", false }, { 551, 574, "Trials Charm c2", "a60", "Large Charm", false }, { 552, 575, "Trials Charm c3", "a61", "Large Charm", false }, { 553, 576, "Trials Charm c4", "a62", "Large Charm", false }, { 554, 577, "Trials Charm c5", "a63", "Large Charm", false },
-{ 555, 578, "Trials Charm c6", "a64", "Large Charm", false }, { 556, 579, "Trials Charm c7", "a65", "Large Charm", false }, { 557, 580, "MegaCharm", "a66", "Large Charm", false }, { 558, 581, "Spirit Striker", "aqv", "Arrows", false }, { 559, 582, "Aim of Indra", "aqv", "Arrows", false },
-{ 560, 583, "Enchanted Flame", "aqv", "Arrows", false }, { 561, 584, "Mageflight", "aqv", "Arrows", false }, { 562, 585, "Energy Manipulator", "amu", "amulet", false }, { 563, 586, "Trinity", "amu", "amulet", false }, { 564, 587, "Quintessence", "amu", "amulet", false },
-{ 565, 588, "Life Everlasting", "rin", "ring", false }, { 566, 589, "Hunter's Mark", "rin", "ring", false }, { 567, 590, "Unholy Commander", "cm3", "charm", false }, { 568, 591, "Tommy's Enlightener", "7qs", "Seraph Rod", false }, { 569, 592, "Curtis's Fortifier", "uhc", "Colossus Girdle", false },
-{ 570, 593, "Kurec's Pride", "drd", "earth spirit", false }, { 571, 594, "Spiritual Guardian", "utp", "Archon Plate", false }, { 572, 595, "Blackmaw's Brutality", "xld", "Sharktooth Armor", false }, { 573, 596, "Spencer's Dispenser", "oba", "Swirling Crystal", false }, { 574, 597, "Fletching of Frostbite", "aqv", "Arrows", false },
-{ 575, 598, "Healthy Breakfast", "cm1", "charm", false }, { 576, 599, "MythosLogAmazon", "y01", "KillTracker", false }, { 577, 600, "MythosLogAssassin", "y02", "KillTracker", false }, { 578, 601, "MythosLogBarbarian", "y03", "KillTracker", false }, { 579, 602, "MythosLogDruid", "y04", "KillTracker", false },
-{ 580, 603, "MythosLogNecromancer", "y05", "KillTracker", false }, { 581, 604, "MythosLogPaladin", "y06", "KillTracker", false }, { 582, 605, "MythosLogSorceress", "y07", "KillTracker", false }, { 583, 606, "Cola Cube", "cm1", "charm", false }, { 584, 607, "Soul Stompers", "umb", "boneweave boots", false },
-{ 585, 608, "MapReceipt01", "m27", "map", false }, { 586, 609, "Kingdom's Heart", "uar", "Sacred Armor", false }, { 587, 610, "Prismatic Facet", "j00", "Sacred Jewel", false }, { 588, 611, "Null Charm", "cm3", "charm", false }, { 589, 612, "SS Full Plate", "St4", "shadow plate", false },
-{ 590, 613, "SS Full Plate", "St5", "shadow plate", false }, { 591, 614, "SS Full Plate", "St6", "shadow plate", false }, { 592, 615, "SS Full Plate", "St7", "shadow plate", false }, { 593, 616, "SS Full Plate", "St8", "shadow plate", false }, { 594, 617, "SS Full Plate", "St9", "shadow plate", false },
-{ 595, 618, "SS Full Plate", "St0", "shadow plate", false }, { 596, 619, "Messerschmidt's Reaver SS", "Ss1", "Champion Axe (Barb)", false }, { 597, 620, "Lightsabre SS", "Ss2", "Phase Blade (Sorc)", false }, { 598, 621, "Crainte Vomir", "Ss3", "Katana (Assassin)", false }, { 599, 622, "Crainte Vomir", "Ss4", "Katana (Assassin)", false },
-{ 600, 623, "Spiritual Sentinel", "utp", "Archon Plate", false }, { 601, 624, "Spiritual Warden", "utp", "Archon Plate", false }, { 602, 626, "Harlequin Crest Legacy", "uap", "Shako", false }, { 603, 627, "The Cat's Eye Legacy", "amu", "Amulet", false }, { 604, 628, "Arkaine's Valor Bugged", "upl", "Balrog Skin", false },
-{ 605, 629, "String of Ears Bugged", "zlb", "Demonhide Sash", false }, { 606, 630, "Wizardspike Fused", "tgl", "Light Gauntlets", false }, { 607, 631, "Exsanguinate", "vgl", "Heavy Gloves", false }, { 608, 632, "Monar's Gale", "xts", "Ancient Shield", false }, { 609, 633, "MythosLogAmazonA", "y34", "KillTracker", false },
-{ 610, 634, "MythosLogAssassinA", "y35", "KillTracker", false }, { 611, 635, "MythosLogBarbarianA", "y36", "KillTracker", false }, { 612, 636, "MythosLogDruidA", "y37", "KillTracker", false }, { 613, 637, "MythosLogNecromancerA", "y38", "KillTracker", false }, { 614, 638, "MythosLogPaladinA", "y39", "KillTracker", false },
-{ 615, 639, "MythosLogSorceressA", "y40", "KillTracker", false }, { 616, 640, "MythosLogAmazonB", "y34", "KillTracker", false }, { 617, 641, "MythosLogAssassinB", "y35", "KillTracker", false }, { 618, 642, "MythosLogBarbarianB", "y36", "KillTracker", false }, { 619, 643, "MythosLogDruidB", "y37", "KillTracker", false },
-{ 620, 644, "MythosLogNecromancerB", "y38", "KillTracker", false }, { 621, 645, "MythosLogPaladinB", "y39", "KillTracker", false }, { 622, 646, "MythosLogSorceressB", "y40", "KillTracker", false }, { 623, 647, "MythosLogAmazonC", "y34", "KillTracker", false }, { 624, 648, "MythosLogAssassinC", "y35", "KillTracker", false },
-{ 625, 649, "MythosLogBarbarianC", "y36", "KillTracker", false }, { 626, 650, "MythosLogDruidC", "y37", "KillTracker", false }, { 627, 651, "MythosLogNecromancerC", "y38", "KillTracker", false }, { 628, 652, "MythosLogPaladinC", "y39", "KillTracker", false }, { 629, 653, "MythosLogSorceressC", "y40", "KillTracker", false },
-{ 630, 654, "Black Cats Secret", "cm3", "charm", false }, { 631, 655, "Dustdevil", "l18", "Runic Talons - LB", false }, { 632, 656, "Improvise", "6sw", "ward bow", false }, { 633, 657, "Ken'Juk's Blighted Visage", "usk", "demonhead", false }, { 634, 658, "Philios Prophecy", "amc", "Pellet Bow", false },
-{ 635, 659, "Whisper", "cqv", "Bolts", false }, { 636, 660, "Dragon's Cinder", "cqv", "Bolts", false }, { 637, 661, "Serpent's Fangs", "cqv", "Bolts", false }, { 638, 662, "Valkyrie Wing Legacy", "xhm", "Winged Helm", false }, { 639, 663, "War Traveler Bugged", "xtb", "Battle Boots", false },
-{ 640, 664, "Undead Crown Fused", "rin", "Ring", false }, { 641, 665, "Soul of Edyrem", "m37", "Charm", false }, { 642, 668, "Black Suede", "lbt", "Leather Boots", false }, { 643, 669, "Allebasi", "amu", "Amulet", false }, { 644, 673, "Bigfoot", "xhb", "War Boots", false },
-{ 645, 674, "Static Calling", "7mp", "Reaper Sickle", false }, { 646, 677, "Akara's Blessing", "amu", "Amulet", false },
-};
-
-static SetItemEntry g_StaticSetItemsRMD[] = {
-    { "Civerb's Ward", 0, "Civerb's Vestments", "Large Shield", "lrg", false },
-    { "Civerb's Icon", 1, "Civerb's Vestments", "Amulet", "amu", false },
-    { "Civerb's Cudgel", 2, "Civerb's Vestments", "Grand Scepter", "gsc", false },
-    { "Hsarus' Iron Heel", 3, "Hsarus' Defense", "Chain Boots", "mbt", false },
-    { "Hsarus' Iron Fist", 4, "Hsarus' Defense", "Buckler", "buc", false },
-    { "Hsarus' Iron Stay", 5, "Hsarus' Defense", "Belt", "mbl", false },
-    { "Cleglaw's Tooth", 6, "Cleglaw's Brace", "Long Sword", "lsd", false },
-    { "Cleglaw's Claw", 7, "Cleglaw's Brace", "Small Shield", "sml", false },
-    { "Cleglaw's Pincers", 8, "Cleglaw's Brace", "Chain Gloves", "mgl", false },
-    { "Iratha's Collar", 9, "Iratha's Finery", "Amulet", "amu", false },
-    { "Iratha's Cuff", 10, "Iratha's Finery", "Light Gauntlets", "tgl", false },
-    { "Iratha's Coil", 11, "Iratha's Finery", "Crown", "crn", false },
-    { "Iratha's Cord", 12, "Iratha's Finery", "Heavy Belt", "tbl", false },
-    { "Isenhart's Lightbrand", 13, "Isenhart's Armory", "Broad Sword", "bsd", false },
-    { "Isenhart's Parry", 14, "Isenhart's Armory", "Gothic Shield", "gts", false },
-    { "Isenhart's Case", 15, "Isenhart's Armory", "Breast Plate", "brs", false },
-    { "Isenhart's Horns", 16, "Isenhart's Armory", "Full Helm", "fhl", false },
-    { "Vidala's Barb", 17, "Vidala's Rig", "Long Battle Bow", "lbb", false },
-    { "Vidala's Fetlock", 18, "Vidala's Rig", "Light Plated Boots", "tbt", false },
-    { "Vidala's Ambush", 19, "Vidala's Rig", "Leather Armor", "lea", false },
-    { "Vidala's Snare", 20, "Vidala's Rig", "Amulet", "amu", false },
-    { "Milabrega's Orb", 21, "Milabrega's Regalia", "Kite Shield", "kit", false },
-    { "Milabrega's Rod", 22, "Milabrega's Regalia", "War Scepter", "wsp", false },
-    { "Milabrega's Diadem", 23, "Milabrega's Regalia", "Crown", "crn", false },
-    { "Milabrega's Robe", 24, "Milabrega's Regalia", "Ancient Armor", "aar", false },
-    { "Cathan's Rule", 25, "Cathan's Traps", "Battle Staff", "bst", false },
-    { "Cathan's Mesh", 26, "Cathan's Traps", "Chain Mail", "chn", false },
-    { "Cathan's Visage", 27, "Cathan's Traps", "Mask", "msk", false },
-    { "Cathan's Sigil", 28, "Cathan's Traps", "Amulet", "amu", false },
-    { "Cathan's Seal", 29, "Cathan's Traps", "Ring", "rin", false },
-    { "Tancred's Crowbill", 30, "Tancred's Battlegear", "Sickle", "mpi", false },
-    { "Tancred's Spine", 31, "Tancred's Battlegear", "Full Plate Mail", "ful", false },
-    { "Tancred's Hobnails", 32, "Tancred's Battlegear", "Boots", "lbt", false },
-    { "Tancred's Weird", 33, "Tancred's Battlegear", "Amulet", "amu", false },
-    { "Tancred's Skull", 34, "Tancred's Battlegear", "Bone Helm", "bhm", false },
-    { "Sigon's Gage", 35, "Sigon's Complete Steel", "Gauntlets", "hgl", false },
-    { "Sigon's Visor", 36, "Sigon's Complete Steel", "Great Helm", "ghm", false },
-    { "Sigon's Shelter", 37, "Sigon's Complete Steel", "Gothic Plate", "gth", false },
-    { "Sigon's Sabot", 38, "Sigon's Complete Steel", "Greaves", "hbt", false },
-    { "Sigon's Wrap", 39, "Sigon's Complete Steel", "Plated Belt", "hbl", false },
-    { "Sigon's Guard", 40, "Sigon's Complete Steel", "Tower Shield", "tow", false },
-    { "Infernal Cranium", 41, "Infernal Tools", "Cap", "cap", false },
-    { "Infernal Torch", 42, "Infernal Tools", "Grim Wand", "gwn", false },
-    { "Infernal Sign", 43, "Infernal Tools", "Heavy Belt", "tbl", false },
-    { "Berserker's Headgear", 44, "Berserker's Garb", "Helm", "hlm", false },
-    { "Berserker's Hauberk", 45, "Berserker's Garb", "Splint Mail", "spl", false },
-    { "Berserker's Hatchet", 46, "Berserker's Garb", "Double Axe", "2ax", false },
-    { "Death's Hand", 47, "Death's Disguise", "Leather Gloves", "lgl", false },
-    { "Death's Guard", 48, "Death's Disguise", "Sash", "lbl", false },
-    { "Death's Touch", 49, "Death's Disguise", "War Sword", "wsd", false },
-    { "Angelic Sickle", 50, "Angelical Raiment", "Sabre", "sbr", false },
-    { "Angelic Mantle", 51, "Angelical Raiment", "Ring Mail", "rng", false },
-    { "Angelic Halo", 52, "Angelical Raiment", "Ring", "rin", false },
-    { "Angelic Wings", 53, "Angelical Raiment", "Amulet", "amu", false },
-    { "Arctic Horn", 54, "Arctic Gear", "Short War Bow", "swb", false },
-    { "Arctic Furs", 55, "Arctic Gear", "Quilted Armor", "qui", false },
-    { "Arctic Binding", 56, "Arctic Gear", "Light Belt", "vbl", false },
-    { "Arctic Mitts", 57, "Arctic Gear", "Light Gauntlets", "tgl", false },
-    { "Arcanna's Sign", 58, "Arcanna's Tricks", "Amulet", "amu", false },
-    { "Arcanna's Deathwand", 59, "Arcanna's Tricks", "War Staff", "wst", false },
-    { "Arcanna's Head", 60, "Arcanna's Tricks", "Skull Cap", "skp", false },
-    { "Arcanna's Flesh", 61, "Arcanna's Tricks", "Light Plate", "ltp", false },
-    { "Natalya's Totem", 62, "Natalya's Odium", "Casque", "xlm", false },
-    { "Natalya's Mark", 63, "Natalya's Odium", "Scissors Suwayyah", "7qr", false },
-    { "Natalya's Shadow", 64, "Natalya's Odium", "Mantle", "Ca2", false },
-    { "Natalya's Soul", 65, "Natalya's Odium", "Mesh Boots", "xmb", false },
-    { "Aldur's Stony Gaze", 66, "Aldur's Watchtower", "Hunter's Guise", "dr8", false },
-    { "Aldur's Deception", 67, "Aldur's Watchtower", "Shadow Plate", "uul", false },
-    { "Aldur's Gauntlet", 68, "Aldur's Watchtower", "Jagged Star", "9mt", false },
-    { "Aldur's Advance", 69, "Aldur's Watchtower", "Battle Boots", "xtb", false },
-    { "Immortal King's Will", 70, "Immortal King", "Avenger Guard", "ba5", false },
-    { "Immortal King's Soul Cage", 71, "Immortal King", "Sacred Armor", "uar", false },
-    { "Immortal King's Detail", 72, "Immortal King", "War Belt", "zhb", false },
-    { "Immortal King's Forge", 73, "Immortal King", "War Gauntlets", "xhg", false },
-    { "Immortal King's Pillar", 74, "Immortal King", "War Boots", "xhb", false },
-    { "Immortal King's Stone Crusher", 75, "Immortal King", "Ogre Maul", "7m7", false },
-    { "Tal Rasha's Fire-Spun Cloth", 76, "Tal Rasha's Wrappings", "Mesh Belt", "zmb", false },
-    { "Tal Rasha's Adjudication", 77, "Tal Rasha's Wrappings", "Amulet", "amu", false },
-    { "Tal Rasha's Lidless Eye", 78, "Tal Rasha's Wrappings", "Swirling Crystal", "oba", false },
-    { "Tal Rasha's Howling Wind", 79, "Tal Rasha's Wrappings", "Lacquered Plate", "uth", false },
-    { "Tal Rasha's Horadric Crest", 80, "Tal Rasha's Wrappings", "Death Mask", "xsk", false },
-    { "Griswold's Valor", 81, "Griswold's Legacy", "Treasured Headdress", "Pc3", false },
-    { "Griswold's Heart", 82, "Griswold's Legacy", "Ornate Plate", "xar", false },
-    { "Griswolds's Redemption", 83, "Griswold's Legacy", "Caduceus", "7ws", false },
-    { "Griswold's Honor", 84, "Griswold's Legacy", "Vortex Shield", "paf", false },
-    { "Trang-Oul's Guise", 85, "Trang-Oul's Avatar", "Bone Visage", "uh9", false },
-    { "Trang-Oul's Scales", 86, "Trang-Oul's Avatar", "Chaos Armor", "xul", false },
-    { "Trang-Oul's Wing", 87, "Trang-Oul's Avatar", "Cantor Trophy", "ne9", false },
-    { "Trang-Oul's Claws", 88, "Trang-Oul's Avatar", "Heavy Bracers", "xmg", false },
-    { "Trang-Oul's Girth", 89, "Trang-Oul's Avatar", "Troll Belt", "utc", false },
-    { "M'avina's True Sight", 90, "M'avina's Battle Hymn", "Diadem", "ci3", false },
-    { "M'avina's Embrace", 91, "M'avina's Battle Hymn", "Kraken Shell", "uld", false },
-    { "M'avina's Icy Clutch", 92, "M'avina's Battle Hymn", "Battle Gauntlets", "xtg", false },
-    { "M'avina's Tenet", 93, "M'avina's Battle Hymn", "Sharkskin Belt", "zvb", false },
-    { "M'avina's Caster", 94, "M'avina's Battle Hymn", "Grand Matron Bow", "amc", false },
-    { "Telling of Beads", 95, "The Disciple", "Amulet", "amu", false },
-    { "Laying of Hands", 96, "The Disciple", "Bramble Mitts", "ulg", false },
-    { "Rite of Passage", 97, "The Disciple", "Demonhide Boots", "xlb", false },
-    { "Spiritual Custodian", 98, "The Disciple", "Dusk Shroud", "uui", false },
-    { "Credendum", 99, "The Disciple", "Mithril Coil", "umc", false },
-    { "Dangoon's Teaching", 100, "Heaven's Brethren", "Reinforced Mace", "7ma", false },
-    { "Heaven's Taebaek", 101, "Heaven's Brethren", "Ward", "uts", false },
-    { "Haemosu's Adament", 102, "Heaven's Brethren", "Cuirass", "xrs", false },
-    { "Ondal's Almighty", 103, "Heaven's Brethren", "Spired Helm", "uhm", false },
-    { "Guillaume's Face", 104, "Orphan's Call", "Winged Helm", "xhm", false },
-    { "Wilhelm's Pride", 105, "Orphan's Call", "Battle Belt", "ztb", false },
-    { "Magnus' Skin", 106, "Orphan's Call", "Sharkskin Gloves", "xvg", false },
-    { "Wihtstan's Guard", 107, "Orphan's Call", "Round Shield", "xml", false },
-    { "Hwanin's Splendor", 108, "Hwanin's Majesty", "Grand Crown", "xrn", false },
-    { "Hwanin's Refuge", 109, "Hwanin's Majesty", "Tigulated Mail", "xcl", false },
-    { "Hwanin's Seal", 110, "Hwanin's Majesty", "Belt", "mbl", false },
-    { "Hwanin's Justice", 111, "Hwanin's Majesty", "Bill", "9vo", false },
-    { "Sazabi's Cobalt Redeemer", 112, "Sazabi's Grand Tribute", "Cryptic Sword", "7ls", false },
-    { "Sazabi's Ghost Liberator", 113, "Sazabi's Grand Tribute", "Balrog Skin", "upl", false },
-    { "Sazabi's Mental Sheath", 114, "Sazabi's Grand Tribute", "Basinet", "xhl", false },
-    { "Bul-Kathos' Sacred Charge", 115, "Bul-Kathos' Children", "Colossus Blade", "7gd", false },
-    { "Bul-Kathos' Tribal Guardian", 116, "Bul-Kathos' Children", "Mythical Sword", "7wd", false },
-    { "Cow King's Horns", 117, "Cow King's Leathers", "War Hat", "xap", false },
-    { "Cow King's Hide", 118, "Cow King's Leathers", "Studded Leather", "stu", false },
-    { "Cow King's Hoofs", 119, "Cow King's Leathers", "Heavy Boots", "vbt", false },
-    { "Naj's Puzzler", 120, "Naj's Ancient Set", "Elder Staff", "6cs", false },
-    { "Naj's Light Plate", 121, "Naj's Ancient Set", "Hellforge Plate", "ult", false },
-    { "Naj's Circlet", 122, "Naj's Ancient Set", "Circlet", "ci0", false },
-    { "McAuley's Paragon", 123, "McAuley's Folly", "Cap", "cap", false },
-    { "McAuley's Riprap", 124, "McAuley's Folly", "Heavy Boots", "vbt", false },
-    { "McAuley's Taboo", 125, "McAuley's Folly", "Heavy Gloves", "vgl", false },
-    { "McAuley's Superstition", 126, "McAuley's Folly", "Bone Wand", "bwn", false },
-    { "Vessel's Atonment", 127, "Holy Vessel", "Blessed Plate", "Bp1", false },
-    { "Vessel's Fufillment", 128, "Holy Vessel", "Heraldic Shield", "pa3", false },
-    { "Vessel's Anointment", 129, "Holy Vessel", "Palisade Crown", "Pc1", false },
-    { "Vessel's Armament", 130, "Holy Vessel", "Scepter", "scp", false },
-    { "Pointed Justice", 131, "Majestic Lancer", "Maiden Javelins", "am5", false },
-    { "True Parry", 132, "Majestic Lancer", "Large Shield", "lrg", false },
-    { "Solidarity", 133, "Majestic Lancer", "Skovos Circle", "Zc1", false },
-    { "Island Shore", 134, "Skovos Storm", "Stag Bow", "am1", false },
-    { "Raging Seas", 135, "Skovos Storm", "Heavy Gloves", "vgl", false },
-    { "Eye of the Storm", 136, "Skovos Storm", "Arrows", "aqv", false },
-    { "Sturdy Garment", 137, "Wonder Wear", "Mesh Belt", "zmb", false },
-    { "True Deflector", 138, "Wonder Wear", "Sallet", "xkp", false },
-    { "Encased Corset", 139, "Wonder Wear", "Trellised Armor", "xtu", false },
-    { "Silver Bracers", 140, "Wonder Wear", "Battle Gauntlets", "xtg", false },
-    { "Outreach", 141, "Vizjerei Vocation", "Arcanic Touch", "Vg1", false },
-    { "Masterful Teachings", 142, "Vizjerei Vocation", "Sacred Globe", "ob2", false },
-    { "Inner Focus", 143, "Vizjerei Vocation", "Circlet", "ci0", false },
-    { "Disruptor", 144, "Beyond Battlemage", "Dimensional Blade", "9cr", false },
-    { "Bursting Desire", 145, "Beyond Battlemage", "Dragon Shield", "xit", false },
-    { "Underestimated", 146, "Beyond Battlemage", "Serpentskin Armor", "xea", false },
-    { "Tundra Storm", 147, "Glacial Plains", "Death Mast", "xsk", false },
-    { "Enduring Onslaught", 148, "Glacial Plains", "Demonhide Sash", "zlb", false },
-    { "Frozen Goliath", 149, "Glacial Plains", "Barbed Shield", "xpk", false },
-    { "Rathma's Reaper", 150, "Rathma's Calling", "Battle Sickle", "9mp", false },
-    { "Rathma's Shelter", 151, "Rathma's Calling", "Troll Nest", "ush", false },
-    { "Rathma's Vestage", 152, "Rathma's Calling", "Bone Visage", "uh9", false },
-    { "Rathma's Fortress", 153, "Rathma's Calling", "Wyrmhide", "uea", false },
-    { "Stacato's Sigil", 154, "Stacatomamba's Guidance", "Ring", "rin", false },
-    { "Mamba's Circle", 155, "Stacatomamba's Guidance", "Ring", "rin", false },
-    { "Kreigur's Will", 156, "Kreigur's Mastery", "Shinogi", "72h", false },
-    { "Kreigur's Judgement", 157, "Kreigur's Mastery", "Shinogi", "72h", false },
-    { "Kami", 158, "Scarlet Sukami", "Colossal Sword", "7fb", false },
-    { "Su", 159, "Scarlet Sukami", "Champion Sword", "7b7", false },
-    { "Ysenob's Blood", 160, "Mirrored Flames", "Myrmidon Greaves", "uhb", false },
-    { "Noertap's Pride", 161, "Mirrored Flames", "Colossus Girdle", "uhc", false },
-    { "Olbaid's Deceipt", 162, "Mirrored Flames", "Ogre Gauntlets", "uhg", false },
-    { "Gale Strength", 163, "Unstoppable Force", "Winged Harpoon", "7ts", false },
-    { "Assault Prowess", 164, "Unstoppable Force", "Winged Harpoon", "7ts", false },
-    { "Thirst for Blood", 165, "Underworld's Unrest", "Boneweave Boots", "umb", false },
-    { "Rotting Reaper", 166, "Underworld's Unrest", "Reaper Sickle", "mpi", false },
-    { "Siphon String", 167, "Underworld's Unrest", "Vampirefang Belt", "uvc", false },
-    { "Crown of Cold", 168, "Elemental Blueprints", "Diadem", "ci3", false },
-    { "Blazing Band", 169, "Elemental Blueprints", "Ring", "rin", false },
-    { "Lightning Locket", 170, "Elemental Blueprints", "Amulet", "amu", false },
-    { "Brewing Storm", 171, "Raijin's Rebellion", "Ward", "uts", false },
-    { "Charged Chaos", 172, "Raijin's Rebellion", "Kraken Shell", "uld", false },
-    { "Electron Emitter", 173, "Raijin's Rebellion", "Corona", "urn", false },
-    { "Achyls' Armament", 174, "Mikael's Toxicity", "Boneweave", "uhn", false },
-    { "Pendant of Pestilence", 175, "Mikael's Toxicity", "Amulet", "amu", false },
-    { "Plague Protector", 176, "Mikael's Toxicity", "Troll Nest", "ush", false },
-    { "Meat Masher", 177, "Warrior's Wrath", "Thunder Maul", "7gm", false },
-    { "Supreme Strength", 178, "Warrior's Wrath", "Crusader Gauntlets", "utg", false },
-    { "Repeating Reaper", 179, "Blessings of Artemis", "Hydra Bow", "6lw", false },
-    { "Fletcher's Friend", 180, "Blessings of Artemis", "Huntress Gloves", "Ag3", false },
-    { "Band of Brothers", 181, "Artio's Calling", "Ring", "rin", false },
-    { "Grizzlepaw's Hide", 182, "Artio's Calling", "Grizzly Gear", "Gg3", false },
-    { "Animal Instinct", 183, "Artio's Calling", "Mithril Coil", "umc", false },
-    { "Justitia's Anger", 184, "Justitia's Divinity", "Cadaceus", "7ws", false },
-    { "Justitia's Embrace", 185, "Justitia's Divinity", "Vortex Shield", "paf", false },
-    { "Hand of Efreeti", 186, "Pulsing Presence", "Bramble Mitts", "ulg", false },
-    { "Morning Frost", 187, "Pulsing Presence", "Scarabshell Boots", "uvb", false },
-    { "Thunderlord's Vision", 188, "Pulsing Presence", "Demonhead", "usk", false },
-    { "Coil of Heaven", 189, "Celestial Caress", "Ring", "rin", false },
-    { "Band of Divinity", 190, "Celestial Caress", "Ring", "rin", false },
-    { "Godly Locket", 191, "Celestial Caress", "Amulet", "amu", false },
-    { "Chains of Bondage", 192, "Breaker of Chains", "Diadem", "ci3", false },
-    { "Chains of Force", 193, "Breaker of Chains", "Archon Plate", "utp", false },
-    { "Night's Disguise", 194, "Silhouette of Silence", "Cloak", "Ca3", false },
-    { "Silent Stalkers", 195, "Silhouette of Silence", "Bladed Boots", "Ab3", false },
-    { "Toxic Grasp", 196, "Silhouette of Silence", "Vampirebone Gloves", "uvg", false },
-    { "Blade Binding", 197, "Mangala's Teachings", "Vampirefang Belt", "uvc", false },
-    { "Murderous Intent", 198, "Mangala's Teachings", "Shako", "uap", false },
-    { "Band of Suffering", 199, "Sacrificial Trinity", "Ring", "rin", false },
-    { "Loop of Regret", 200, "Sacrificial Trinity", "Ring", "rin", false },
-    { "Locket of Burden", 201, "Sacrificial Trinity", "Amulet", "amu", false },
-    { "Bulwark of Defiance", 202, "Plates of Protection", "Aegis", "uow", false },
-    { "Marauder's Mark", 203, "Plates of Protection", "Berserker Axe", "7wa", false },
-    { "Girdle of Resilience", 204, "Plates of Protection", "Colossus Girdle", "uhc", false },
-    { "Crippling Conch", 205, "Black Tempest", "Giant Conch", "uhl", false },
-    { "Sub-Zero Sash", 206, "Black Tempest", "Spiderweb Sash", "ulc", false },
-    { "Band of Permafrost", 207, "Black Tempest", "Ring", "rin", false },
-    { "Morality", 208, "Memento Mori", "Cryptic Axe", "7pa", false },
-    { "Remembrance", 209, "Memento Mori", "Bone Visage", "uh9", false },
-    { "Harbinger", 210, "Memento Mori", "Boneweave", "uhn", false },
-    { "Promethium", 211, "Cascading Caldera", "Amulet", "amu", false },
-    { "Searing Step", 212, "Cascading Caldera", "Scarabshell Boots", "uvb", false },
-    { "Flameward", 213, "Cascading Caldera", "Gothic Shield", "gts", false },
-    { "Vortex1", 214, "Path of the Vortex", "Scissors Suwayyah", "7qr", false },
-    { "Maelstrom1", 215, "Path of the Vortex", "Scissors Suwayyah", "7qr", false },
-    { "Vortex2", 216, "Path of the Vortex2", "Glorious Axe", "7gi", false },
-    { "Maelstrom2", 217, "Path of the Vortex2", "Glorious Axe", "7gi", false },
-    { "Great Warrior", 218, "Blacklight", "Guardian Crown", "baf", false },
-    { "Great Defender", 219, "Blacklight", "Blade Barrier", "upk", false },
-    { "Great Warrior2", 220, "Blacklight2", "Conqueror Crown", "urn", false },
-    { "Great Defender2", 221, "Blacklight2", "Zakarum Shield", "pae", false },
-
-};
-
-static UniqueItemEntry g_StaticUniqueItems[] = {
-{ 0, 0, "The Gnasher", "hax", "Hand Axe", false }, { 1, 1, "Deathspade", "axe", "Axe", false }, { 2, 2, "Bladebone", "2ax", "Double Axe", false }, { 3, 3, "Mindrend", "mpi", "Military Pick", false }, { 4, 4, "Rakescar", "wax", "War Axe", false },
-{ 5, 5, "Fechmars Axe", "lax", "Large Axe", false }, { 6, 6, "Goreshovel", "bax", "Broad Axe", false }, { 7, 7, "The Chieftan", "btx", "Battle Axe", false }, { 8, 8, "Brainhew", "gax", "Great Axe", false }, { 9, 9, "The Humongous", "gix", "Giant Axe", false },
-{ 10, 10, "Iros Torch", "wnd", "Wand", false }, { 11, 11, "Maelstromwrath", "ywn", "Yew Wand", false }, { 12, 12, "Gravenspine", "bwn", "Bone Wand", false }, { 13, 13, "Umes Lament", "gwn", "Grim Wand", false }, { 14, 14, "Felloak", "clb", "Club", false },
-{ 15, 15, "Knell Striker", "scp", "Scepter", false }, { 16, 16, "Rusthandle", "gsc", "Grand Scepter", false }, { 17, 17, "Stormeye", "wsp", "War Scepter", false }, { 18, 18, "Stoutnail", "spc", "Spiked Club", false }, { 19, 19, "Crushflange", "mac", "Mace", false },
-{ 20, 20, "Bloodrise", "mst", "Morning Star", false }, { 21, 21, "The Generals Tan Do Li Ga", "fla", "Flail", false }, { 22, 22, "Ironstone", "whm", "War Hammer", false }, { 23, 23, "Bonesob", "mau", "Maul", false }, { 24, 24, "Steeldriver", "gma", "Great Maul", false },
-{ 25, 25, "Rixots Keen", "ssd", "Short Sword", false }, { 26, 26, "Blood Crescent", "scm", "Scimitar", false }, { 27, 27, "Krintizs Skewer", "sbr", "Saber", false }, { 28, 28, "Gleamscythe", "flc", "Falchion", false }, { 29, 30, "Griswolds Edge", "bsd", "Broad Sword", false },
-{ 30, 31, "Hellplague", "lsd", "Long Sword", false }, { 31, 32, "Culwens Point", "wsd", "War Sword", false }, { 32, 33, "Shadowfang", "2hs", "2-Handed Sword", false }, { 33, 34, "Soulflay", "clm", "Claymore", false }, { 34, 35, "Kinemils Awl", "gis", "Giant Sword", false },
-{ 35, 36, "Blacktongue", "bsw", "Bastard Sword", false }, { 36, 37, "Ripsaw", "flb", "Flamberge", false }, { 37, 38, "The Patriarch", "gsd", "Great Sword", false }, { 38, 39, "Gull", "dgr", "Dagger", false }, { 39, 40, "The Diggler", "dir", "Dirk", false },
-{ 40, 41, "The Jade Tan Do", "kri", "Kris", false }, { 41, 42, "Irices Shard", "bld", "Blade", false }, { 42, 43, "The Dragon Chang", "spr", "Spear", false }, { 43, 44, "Razortine", "tri", "Trident", false }, { 44, 45, "Bloodthief", "brn", "Brandistock", false },
-{ 45, 46, "Lance of Yaggai", "spt", "Spetum", false }, { 46, 47, "The Tannr Gorerod", "pik", "Pike", false }, { 47, 48, "Dimoaks Hew", "bar", "Bardiche", false }, { 48, 49, "Steelgoad", "vou", "Voulge", false }, { 49, 50, "Soul Harvest", "scy", "Scythe", false },
-{ 50, 51, "The Battlebranch", "pax", "Poleaxe", false }, { 51, 52, "Woestave", "hal", "Halberd", false }, { 52, 53, "The Grim Reaper", "wsc", "War Scythe", false }, { 53, 54, "Bane Ash", "sst", "Short Staff", false }, { 54, 55, "Serpent Lord", "lst", "Long Staff", false },
-{ 55, 56, "Lazarus Spire", "cst", "Gnarled Staff", false }, { 56, 57, "The Salamander", "bst", "Battle Staff", false }, { 57, 58, "The Iron Jang Bong", "wst", "War Staff", false }, { 58, 59, "Pluckeye", "sbw", "Short Bow", false }, { 59, 60, "Witherstring", "hbw", "Hunter's Bow", false },
-{ 60, 61, "Rimeraven", "lbw", "Long Bow", false }, { 61, 62, "Piercerib", "cbw", "Composite Bow", false }, { 62, 63, "Pullspite", "sbb", "Short Battle Bow", false }, { 63, 64, "Wizendraw", "lbb", "Long Battle Bow", false }, { 64, 65, "Hellclap", "swb", "Short War Bow", false },
-{ 65, 66, "Blastbark", "lwb", "Long War Bow", false }, { 66, 67, "Leadcrow", "lxb", "Light Crossbow", false }, { 67, 68, "Ichorsting", "mxb", "Crossbow", false }, { 68, 69, "Hellcast", "hxb", "Heavy Crossbow", false }, { 69, 70, "Doomspittle", "rxb", "Repeating Crossbow", false },
-{ 70, 71, "War Bonnet", "cap", "Cap", false }, { 71, 72, "Tarnhelm", "skp", "Skull Cap", false }, { 72, 73, "Coif of Glory", "hlm", "Helm", false }, { 73, 74, "Duskdeep", "fhl", "Full Helm", false }, { 74, 75, "Wormskull", "bhm", "Bone Helm", false },
-{ 75, 76, "Howltusk", "ghm", "Great Helm", false }, { 76, 77, "Undead Crown", "crn", "Crown", false }, { 77, 78, "The Face of Horror", "msk", "Mask", false }, { 78, 79, "Greyform", "qui", "Quilted Armor", false }, { 79, 80, "Blinkbats Form", "lea", "Leather Armor", false },
-{ 80, 81, "The Centurion", "hla", "Hard Leather", false }, { 81, 82, "Twitchthroe", "stu", "Studded Leather", false }, { 82, 83, "Darkglow", "rng", "Ring Mail", false }, { 83, 84, "Hawkmail", "scl", "Scale Mail", false }, { 84, 85, "Sparking Mail", "chn", "Chain Mail", false },
-{ 85, 86, "Venomsward", "brs", "Breast Plate", false }, { 86, 87, "Iceblink", "spl", "Splint Mail", false }, { 87, 88, "Boneflesh", "plt", "Plate Mail", false }, { 88, 89, "Rockfleece", "fld", "Field Plate", false }, { 89, 90, "Rattlecage", "gth", "Gothic Plate", false },
-{ 90, 91, "Goldskin", "ful", "Full Plate Mail", false }, { 91, 92, "Victors Silk", "aar", "AncientArmor", false }, { 92, 93, "Heavenly Garb", "ltp", "Light Plate", false }, { 93, 94, "Pelta Lunata", "buc", "Buckler", false }, { 94, 95, "Umbral Disk", "sml", "Small Shield", false },
-{ 95, 96, "Stormguild", "lrg", "Large Shield", false }, { 96, 97, "Wall of the Eyeless", "bsh", "Bone Shield", false }, { 97, 98, "Swordback Hold", "spk", "Spiked Shield", false }, { 98, 99, "Steelclash", "kit", "Kite Shield", false }, { 99, 100, "Bverrit Keep", "tow", "Tower Shield", false },
-{ 100, 101, "The Ward", "gts", "Gothic Shield", false }, { 101, 102, "The Hand of Broc", "lgl", "Gloves", false }, { 102, 103, "Bloodfist", "vgl", "Heavy Gloves", false }, { 103, 104, "Chance Guards", "mgl", "Bracers", false }, { 104, 105, "Magefist", "tgl", "Light Gauntlets", false },
-{ 105, 106, "Frostburn", "hgl", "Gauntlets", false }, { 106, 107, "Hotspur", "lbt", "Leather Boots", false }, { 107, 108, "Gorefoot", "vbt", "Heavy Boots", false }, { 108, 109, "Treads of Cthon", "mbt", "Chain Boots", false }, { 109, 110, "Goblin Toe", "tbt", "Light Plate Boots", false },
-{ 110, 111, "Tearhaunch", "hbt", "Plate Boots", false }, { 111, 112, "Lenyms Cord", "lbl", "Sash", false }, { 112, 113, "Snakecord", "vbl", "Light Belt", false }, { 113, 114, "Nightsmoke", "mbl", "Belt", false }, { 114, 115, "Goldwrap", "tbl", "Heavy Belt", false },
-{ 115, 116, "Bladebuckle", "hbl", "Girdle", false }, { 116, 117, "Nokozan Relic", "amu", "Amulet", false }, { 117, 118, "The Eye of Etlich", "amu", "Amulet", false }, { 118, 119, "The Mahim-Oak Curio", "amu", "Amulet", false }, { 119, 120, "Nagelring", "rin", "Ring", false },
-{ 120, 121, "Manald Heal", "rin", "Ring", false }, { 121, 122, "The Stone of Jordan", "rin", "Ring", false }, { 122, 123, "Amulet of the Viper", "vip", "Amulet", false }, { 123, 124, "Staff of Kings", "msf", "Staff", false }, { 124, 125, "Horadric Staff", "hst", "Staff", false },
-{ 125, 126, "Hell Forge Hammer", "hfh", "Hammer", false }, { 126, 127, "KhalimFlail", "qf1", "Flail", false }, { 127, 128, "SuperKhalimFlail", "qf2", "Flail", false }, { 128, 129, "Coldkill", "9ha", "Hatchet", false }, { 129, 130, "Butcher's Pupil", "9ax", "Cleaver", false },
-{ 130, 131, "Islestrike", "92a", "Twin Axe", false }, { 131, 132, "Pompe's Wrath", "9mp", "Crowbill", false }, { 132, 133, "Guardian Naga", "9wa", "Naga", false }, { 133, 134, "Warlord's Trust", "9la", "Military Axe", false }, { 134, 135, "Spellsteel", "9ba", "Bearded Axe", false },
-{ 135, 136, "Stormrider", "9bt", "Tabar", false }, { 136, 137, "Boneslayer Blade", "9ga", "Gothic Axe", false }, { 137, 138, "The Minataur", "9gi", "Ancient Axe", false }, { 138, 139, "Suicide Branch", "9wn", "Burnt Wand", false }, { 139, 140, "Carin Shard", "9yw", "Petrified Wand", false },
-{ 140, 141, "Arm of King Leoric", "9bw", "Tomb Wand", false }, { 141, 142, "Blackhand Key", "9gw", "Grave Wand", false }, { 142, 143, "Dark Clan Crusher", "9cl", "Cudgel", false }, { 143, 144, "Zakarum's Hand", "9sc", "Rune Scepter", false }, { 144, 145, "The Fetid Sprinkler", "9qs", "Holy Water Sprinkler", false },
-{ 145, 146, "Hand of Blessed Light", "9ws", "Divine Scepter", false }, { 146, 147, "Fleshrender", "9sp", "Barbed Club", false }, { 147, 148, "Sureshrill Frost", "9ma", "Flanged Mace", false }, { 148, 149, "Moonfall", "9mt", "Jagged Star", false }, { 149, 150, "Baezil's Vortex", "9fl", "Knout", false },
-{ 150, 151, "Earthshaker", "9wh", "Battle Hammer", false }, { 151, 152, "Bloodtree Stump", "9m9", "War Club", false }, { 152, 153, "The Gavel of Pain", "9gm", "Martel de Fer", false }, { 153, 154, "Bloodletter", "9ss", "Gladius", false }, { 154, 155, "Coldsteel Eye", "9sm", "Cutlass", false },
-{ 155, 156, "Hexfire", "9sb", "Shamshir", false }, { 156, 157, "Blade of Ali Baba", "9fc", "Tulwar", false }, { 157, 158, "Ginther's Rift", "9cr", "Dimensional Blade", false }, { 158, 159, "Headstriker", "9bs", "Battle Sword", false }, { 159, 160, "Plague Bearer", "9ls", "Rune Sword", false },
-{ 160, 161, "The Atlantian", "9wd", "Ancient Sword", false }, { 161, 162, "Crainte Vomir", "92h", "Espadon", false }, { 162, 163, "Bing Sz Wang", "9cm", "Dacian Falx", false }, { 163, 164, "The Vile Husk", "9gs", "Tusk Sword", false }, { 164, 165, "Cloudcrack", "9b9", "Gothic Sword", false },
-{ 165, 166, "Todesfaelle Flamme", "9fb", "Zweihander", false }, { 166, 167, "Swordguard", "9gd", "Executioner Sword", false }, { 167, 168, "Spineripper", "9dg", "Poignard", false }, { 168, 169, "Heart Carver", "9di", "Rondel", false }, { 169, 170, "Blackbog's Sharp", "9kr", "Cinquedeas", false },
-{ 170, 171, "Stormspike", "9bl", "Stilleto", false }, { 171, 172, "The Impaler", "9sr", "War Spear", false }, { 172, 173, "Kelpie Snare", "9tr", "Fuscina", false }, { 173, 174, "Soulfeast Tine", "9br", "War Fork", false }, { 174, 175, "Hone Sundan", "9st", "Yari", false },
-{ 175, 176, "Spire of Honor", "9p9", "Lance", false }, { 176, 177, "The Meat Scraper", "9b7", "Lochaber Axe", false }, { 177, 178, "Blackleach Blade", "9vo", "Bill", false }, { 178, 179, "Athena's Wrath", "9s8", "Battle Scythe", false }, { 179, 180, "Pierre Tombale Couant", "9pa", "Partizan", false },
-{ 180, 181, "Husoldal Evo", "9h9", "Bec-de-Corbin", false }, { 181, 182, "Grim's Burning Dead", "9wc", "Grim Scythe", false }, { 182, 183, "Razorswitch", "8ss", "Jo Stalf", false }, { 183, 184, "Ribcracker", "8ls", "Quarterstaff", false }, { 184, 185, "Chromatic Ire", "8cs", "Cedar Staff", false },
-{ 185, 186, "Warpspear", "8bs", "Gothic Staff", false }, { 186, 187, "Skullcollector", "8ws", "Rune Staff", false }, { 187, 188, "Skystrike", "8sb", "Edge Bow", false }, { 188, 189, "Riphook", "8hb", "Razor Bow", false }, { 189, 190, "Kuko Shakaku", "8lb", "CedarBow", false },
-{ 190, 191, "Endlesshail", "8cb", "Double Bow", false }, { 191, 192, "Whichwild String", "8s8", "Short Siege Bow", false }, { 192, 193, "Cliffkiller", "8l8", "Long Siege Bow", false }, { 193, 194, "Magewrath", "8sw", "Rune Bow", false }, { 194, 195, "Godstrike Arch", "8lw", "Gothic Bow", false },
-{ 195, 196, "Langer Briser", "8lx", "Arbalest", false }, { 196, 197, "Pus Spiter", "8mx", "Siege Crossbow", false }, { 197, 198, "Buriza-Do Kyanon", "8hx", "Balista", false }, { 198, 199, "Demon Machine", "8rx", "Chu-Ko-Nu", false }, { 199, 201, "Peasent Crown", "xap", "War Hat", false },
-{ 200, 202, "Rockstopper", "xkp", "Sallet", false }, { 201, 203, "Stealskull", "xlm", "Casque", false }, { 202, 204, "Darksight Helm", "xhl", "Basinet", false }, { 203, 205, "Valkiry Wing", "xhm", "Winged Helm", false }, { 204, 206, "Crown of Thieves", "xrn", "Grand Crown", false },
-{ 205, 207, "Blackhorn's Face", "xsk", "Death Mask", false }, { 206, 208, "Vampiregaze", "xh9", "Grim Helm", false }, { 207, 209, "The Spirit Shroud", "xui", "Ghost Armor", false }, { 208, 210, "Skin of the Vipermagi", "xea", "SerpentSkin Armor", false }, { 209, 211, "Skin of the Flayerd One", "xla", "Demonhide Armor", false },
-{ 210, 212, "Ironpelt", "xtu", "Tresllised Armor", false }, { 211, 213, "Spiritforge", "xng", "Linked Mail", false }, { 212, 214, "Crow Caw", "xcl", "Tigulated Mail", false }, { 213, 215, "Shaftstop", "xhn", "Mesh Armor", false }, { 214, 216, "Duriel's Shell", "xrs", "Cuirass", false },
-{ 215, 217, "Skullder's Ire", "xpl", "Russet Armor", false }, { 216, 218, "Guardian Angel", "xlt", "Templar Coat", false }, { 217, 219, "Toothrow", "xld", "Sharktooth Armor", false }, { 218, 220, "Atma's Wail", "xth", "Embossed Plate", false }, { 219, 221, "Black Hades", "xul", "Chaos Armor", false },
-{ 220, 222, "Corpsemourn", "xar", "Ornate Armor", false }, { 221, 223, "Que-Hegan's Wisdon", "xtp", "Mage Plate", false }, { 222, 224, "Visceratuant", "xuc", "Defender", false }, { 223, 225, "Mosers Blessed Circle", "xml", "Round Shield", false }, { 224, 226, "Stormchaser", "xrg", "Scutum", false },
-{ 225, 227, "Tiamat's Rebuke", "xit", "Dragon Shield", false }, { 226, 228, "Kerke's Sanctuary", "xow", "Pavise", false }, { 227, 229, "Radimant's Sphere", "xts", "Ancient Shield", false }, { 228, 230, "Lidless Wall", "xsh", "Grim Shield", false }, { 229, 231, "Lance Guard", "xpk", "Barbed Shield", false },
-{ 230, 232, "Venom Grip", "xlg", "Demonhide Gloves", false }, { 231, 233, "Gravepalm", "xvg", "Sharkskin Gloves", false }, { 232, 234, "Ghoulhide", "xmg", "Heavy Bracers", false }, { 233, 235, "Lavagout", "xtg", "Battle Guantlets", false }, { 234, 236, "Hellmouth", "xhg", "War Gauntlets", false },
-{ 235, 237, "Infernostride", "xlb", "Demonhide Boots", false }, { 236, 238, "Waterwalk", "xvb", "Sharkskin Boots", false }, { 237, 239, "Silkweave", "xmb", "Mesh Boots", false }, { 238, 240, "Wartraveler", "xtb", "Battle Boots", false }, { 239, 241, "Gorerider", "xhb", "War Boots", false },
-{ 240, 242, "String of Ears", "zlb", "Demonhide Sash", false }, { 241, 243, "Razortail", "zvb", "Sharkskin Belt", false }, { 242, 244, "Gloomstrap", "zmb", "Mesh Belt", false }, { 243, 245, "Snowclash", "ztb", "Battle Belt", false }, { 244, 246, "Thudergod's Vigor", "zhb", "War Belt", false },
-{ 245, 248, "Harlequin Crest", "uap", "Shako", false }, { 246, 249, "Veil of Steel", "uhm", "Spired Helm", false }, { 247, 250, "The Gladiator's Bane", "utu", "Wire Fleece", false }, { 248, 251, "Arkaine's Valor", "upl", "Balrog Skin", false }, { 249, 252, "Blackoak Shield", "uml", "Luna", false },
-{ 250, 253, "Stormshield", "uit", "Monarch", false }, { 251, 254, "Hellslayer", "7bt", "Decapitator", false }, { 252, 255, "Messerschmidt's Reaver", "7ga", "Champion Axe", false }, { 253, 256, "Baranar's Star", "7mt", "Devil Star", false }, { 254, 257, "Schaefer's Hammer", "7wh", "Legendary Mallet", false },
-{ 255, 258, "The Cranium Basher", "7gm", "Thunder Maul", false }, { 256, 259, "Lightsabre", "7cr", "Phase Blade", false }, { 257, 260, "Doombringer", "7b7", "Champion Sword", false }, { 258, 261, "The Grandfather", "7gd", "Colossus Blade", false }, { 259, 262, "Wizardspike", "7dg", "Bone Knife", false },
-{ 260, 264, "Stormspire", "7wc", "Giant Thresher", false }, { 261, 265, "Eaglehorn", "6l7", "Crusader Bow", false }, { 262, 266, "Windforce", "6lw", "Hydra Bow", false }, { 263, 268, "Bul Katho's Wedding Band", "rin", "Ring", false }, { 264, 269, "The Cat's Eye", "amu", "Amulet", false },
-{ 265, 270, "The Rising Sun", "amu", "Amulet", false }, { 266, 271, "Crescent Moon", "amu", "Amulet", false }, { 267, 272, "Mara's Kaleidoscope", "amu", "Amulet", false }, { 268, 273, "Atma's Scarab", "amu", "Amulet", false }, { 269, 274, "Dwarf Star", "rin", "Ring", false },
-{ 270, 275, "Raven Frost", "rin", "Ring", false }, { 271, 276, "Highlord's Wrath", "amu", "Amulet", false }, { 272, 277, "Saracen's Chance", "amu", "Amulet", false }, { 273, 279, "Arreat's Face", "baa", "Slayer Guard", false }, { 274, 280, "Homunculus", "nea", "Heirophant Trophy", false },
-{ 275, 281, "Titan's Revenge", "ama", "Ceremonial Javelin", false }, { 276, 282, "Lycander's Aim", "am7", "Ceremonial Bow", false }, { 277, 283, "Lycander's Flank", "am9", "Ceremonial Pike", false }, { 278, 284, "The Oculus", "oba", "Swirling Crystal", false }, { 279, 285, "Herald of Zakarum", "pa9", "Aerin Shield", false },
-{ 280, 286, "Cutthroat1", "9tw", "Runic Talons", false }, { 281, 287, "Jalal's Mane", "dra", "Dream Spirit", false }, { 282, 288, "The Scalper", "9ta", "Francisca", false }, { 283, 289, "Bloodmoon", "7sb", "elegant blade", false }, { 284, 290, "Djinnslayer", "7sm", "ataghan", false },
-{ 285, 291, "Deathbit", "9tk", "battle dart", false }, { 286, 292, "Warshrike", "7bk", "winged knife", false }, { 287, 293, "Gutsiphon", "6rx", "demon crossbow", false }, { 288, 294, "Razoredge", "7ha", "tomahawk", false }, { 289, 296, "Demonlimb", "7sp", "tyrant club", false },
-{ 290, 297, "Steelshade", "ulm", "armet", false }, { 291, 298, "Tomb Reaver", "7pa", "cryptic axe", false }, { 292, 299, "Deaths's Web", "7gw", "unearthed wand", false }, { 293, 300, "Nature's Peace", "rin", "ring", false }, { 294, 301, "Azurewrath", "7cr", "phase blade", false },
-{ 295, 302, "Seraph's Hymn", "amu", "amulet", false }, { 296, 304, "Fleshripper", "7kr", "fanged knife", false }, { 297, 306, "Horizon's Tornado", "7fl", "scourge", false }, { 298, 307, "Stone Crusher", "7wh", "legendary mallet", false }, { 299, 308, "Jadetalon", "7wb", "wrist sword", false },
-{ 300, 309, "Shadowdancer", "uhb", "myrmidon greaves", false }, { 301, 310, "Cerebus", "drb", "blood spirit", false }, { 302, 311, "Tyrael's Might", "uar", "sacred armor", false }, { 303, 312, "Souldrain", "umg", "vambraces", false }, { 304, 313, "Runemaster", "72a", "ettin axe", false },
-{ 305, 314, "Deathcleaver", "7wa", "berserker axe", false }, { 306, 315, "Executioner's Justice", "7gi", "glorious axe", false }, { 307, 316, "Stoneraven", "amd", "matriarchal spear", false }, { 308, 317, "Leviathan", "uld", "kraken shell", false }, { 309, 319, "Wisp", "rin", "ring", false },
-{ 310, 320, "Gargoyle's Bite", "7ts", "winged harpoon", false }, { 311, 321, "Lacerator", "7b8", "winged axe", false }, { 312, 322, "Mang Song's Lesson", "6ws", "archon staff", false }, { 313, 323, "Viperfork", "7br", "war fork", false }, { 314, 324, "Ethereal Edge", "7ba", "silver-edged axe", false },
-{ 315, 325, "Demonhorn's Edge", "bad", "destroyer helm", false }, { 316, 326, "The Reaper's Toll", "7s8", "thresher", false }, { 317, 327, "Spiritkeeper", "drd", "earth spirit", false }, { 318, 328, "Hellrack", "6hx", "colossus crossbow", false }, { 319, 329, "Alma Negra", "pac", "sacred rondache", false },
-{ 320, 330, "Darkforge Spawn", "nef", "bloodlord skull", false }, { 321, 331, "Widowmaker", "6sw", "ward bow", false }, { 322, 332, "Bloodraven's Charge", "amb", "matriarchal bow", false }, { 323, 333, "Ghostflame", "7bl", "legend spike", false }, { 324, 334, "Shadowkiller", "7cs", "battle cestus", false },
-{ 325, 335, "Gimmershred", "7ta", "flying axe", false }, { 326, 336, "Griffon's Eye", "ci3", "diadem", false }, { 327, 337, "Windhammer", "7m7", "ogre maul", false }, { 328, 338, "Thunderstroke", "amf", "matriarchal javelin", false }, { 329, 340, "Demon's Arch", "7s7", "balrog spear", false },
-{ 330, 341, "Boneflame", "nee", "succubae skull", false }, { 331, 342, "Steelpillar", "7p7", "war pike", false }, { 332, 343, "Nightwing's Veil", "uhm", "spired helm", false }, { 333, 344, "Crown of Ages", "urn", "corona", false }, { 334, 345, "Andariel's Visage", "usk", "demonhead", false },
-{ 335, 347, "Dragonscale", "pae", "zakarum shield", false }, { 336, 348, "Steel Carapice", "uul", "shadow plate", false }, { 337, 349, "Medusa's Gaze", "uow", "aegis", false }, { 338, 350, "Ravenlore", "dre", "sky spirit", false }, { 339, 351, "Boneshade", "7bw", "lich wand", false },
-{ 340, 353, "Flamebellow", "7gs", "balrog blade", false }, { 341, 354, "Fathom", "obf", "dimensional shard", false }, { 342, 355, "Wolfhowl", "bac", "fury visor", false }, { 343, 356, "Spirit Ward", "uts", "ward", false }, { 344, 357, "Kira's Guardian", "ci2", "tiara", false },
-{ 345, 358, "Ormus' Robes", "uui", "dusk shroud", false }, { 346, 359, "Gheed's Fortune", "cm3", "charm", false }, { 347, 360, "Stormlash", "7fl", "scourge", false }, { 348, 361, "Halaberd's Reign", "bae", "conqueror crown", false }, { 349, 363, "Spike Thorn", "upk", "blade barrier", false },
-{ 350, 364, "Dracul's Grasp", "uvg", "vampirebone gloves", false }, { 351, 365, "Frostwind", "7ls", "cryptic sword", false }, { 352, 366, "Templar's Might", "uar", "sacred armor", false }, { 353, 367, "Eschuta's temper", "obc", "eldritch orb", false }, { 354, 368, "Firelizard's Talons", "7lw", "feral claws", false },
-{ 355, 369, "Sandstorm Trek", "uvb", "scarabshell boots", false }, { 356, 370, "Marrowwalk", "umb", "boneweave boots", false }, { 357, 371, "Heaven's Light", "7sc", "mighty scepter", false }, { 358, 373, "Arachnid Mesh", "ulc", "spiderweb sash", false }, { 359, 374, "Nosferatu's Coil", "uvc", "vampirefang belt", false },
-{ 360, 375, "Metalgrid", "amu", "amulet", false }, { 361, 376, "Verdugo's Hearty Cord", "umc", "mithril coil", false }, { 362, 378, "Carrion Wind", "rin", "ring", false }, { 363, 379, "Giantskull", "uh9", "bone visage", false }, { 364, 380, "Ironward", "7ws", "caduceus", false },
-{ 365, 381, "Annihilus", "cm1", "charm", false }, { 366, 382, "Arioc's Needle", "7sr", "hyperion spear", false }, { 367, 383, "Cranebeak", "7mp", "war spike", false }, { 368, 384, "Nord's Tenderizer", "7cl", "truncheon", false }, { 369, 385, "Earthshifter", "7gm", "thunder maul", false },
-{ 370, 386, "Wraithflight", "7gl", "ghost glaive", false }, { 371, 387, "Bonehew", "7o7", "ogre axe", false }, { 372, 388, "Ondal's Wisdom", "6cs", "elder staff", false }, { 373, 389, "The Reedeemer", "7sc", "mighty scepter", false }, { 374, 390, "Headhunter's Glory", "ush", "troll nest", false },
-{ 375, 391, "Steelrend", "uhg", "ogre gauntlets", false }, { 376, 392, "Rainbow Facet", "jew", "jewel", false }, { 377, 393, "Rainbow Facet", "jew", "jewel", false }, { 378, 394, "Rainbow Facet", "jew", "jewel", false }, { 379, 395, "Rainbow Facet", "jew", "jewel", false },
-{ 380, 396, "Rainbow Facet", "jew", "jewel", false }, { 381, 397, "Rainbow Facet", "jew", "jewel", false }, { 382, 398, "Rainbow Facet", "jew", "jewel", false }, { 383, 399, "Rainbow Facet", "jew", "jewel", false }, { 384, 400, "Hellfire Torch", "cm2", "charm", false },
-{ 385, 401, "Cold Rupture", "cm3", "charm", false }, { 386, 402, "Flame Rift", "cm3", "charm", false }, { 387, 403, "Crack of the Heavens", "cm3", "charm", false }, { 388, 404, "Rotting Fissure", "cm3", "charm", false }, { 389, 405, "Bone Break", "cm3", "charm", false },
-{ 390, 406, "Black Cleft", "cm3", "charm", false },
-};
-
-static SetItemEntry g_StaticSetItems[] = {
-    { "Civerb's Ward", 0, "Civerb's Vestments", "Large Shield", "lrg", false },
-    { "Civerb's Icon", 1, "Civerb's Vestments", "Amulet", "amu", false },
-    { "Civerb's Cudgel", 2, "Civerb's Vestments", "Grand Scepter", "gsc", false },
-    { "Hsarus' Iron Heel", 3, "Hsarus' Defense", "Chain Boots", "mbt", false },
-    { "Hsarus' Iron Fist", 4, "Hsarus' Defense", "Buckler", "buc", false },
-    { "Hsarus' Iron Stay", 5, "Hsarus' Defense", "Belt", "mbl", false },
-    { "Cleglaw's Tooth", 6, "Cleglaw's Brace", "Long Sword", "lsd", false },
-    { "Cleglaw's Claw", 7, "Cleglaw's Brace", "Small Shield", "sml", false },
-    { "Cleglaw's Pincers", 8, "Cleglaw's Brace", "Chain Gloves", "mgl", false },
-    { "Iratha's Collar", 9, "Iratha's Finery", "Amulet", "amu", false },
-    { "Iratha's Cuff", 10, "Iratha's Finery", "Light Gauntlets", "tgl", false },
-    { "Iratha's Coil", 11, "Iratha's Finery", "Crown", "crn", false },
-    { "Iratha's Cord", 12, "Iratha's Finery", "Heavy Belt", "tbl", false },
-    { "Isenhart's Lightbrand", 13, "Isenhart's Armory", "Broad Sword", "bsd", false },
-    { "Isenhart's Parry", 14, "Isenhart's Armory", "Gothic Shield", "gts", false },
-    { "Isenhart's Case", 15, "Isenhart's Armory", "Breast Plate", "brs", false },
-    { "Isenhart's Horns", 16, "Isenhart's Armory", "Full Helm", "fhl", false },
-    { "Vidala's Barb", 17, "Vidala's Rig", "Long Battle Bow", "lbb", false },
-    { "Vidala's Fetlock", 18, "Vidala's Rig", "Light Plated Boots", "tbt", false },
-    { "Vidala's Ambush", 19, "Vidala's Rig", "Leather Armor", "lea", false },
-    { "Vidala's Snare", 20, "Vidala's Rig", "Amulet", "amu", false },
-    { "Milabrega's Orb", 21, "Milabrega's Regalia", "Kite Shield", "kit", false },
-    { "Milabrega's Rod", 22, "Milabrega's Regalia", "War Scepter", "wsp", false },
-    { "Milabrega's Diadem", 23, "Milabrega's Regalia", "Crown", "crn", false },
-    { "Milabrega's Robe", 24, "Milabrega's Regalia", "Ancient Armor", "aar", false },
-    { "Cathan's Rule", 25, "Cathan's Traps", "Battle Staff", "bst", false },
-    { "Cathan's Mesh", 26, "Cathan's Traps", "Chain Mail", "chn", false },
-    { "Cathan's Visage", 27, "Cathan's Traps", "Mask", "msk", false },
-    { "Cathan's Sigil", 28, "Cathan's Traps", "Amulet", "amu", false },
-    { "Cathan's Seal", 29, "Cathan's Traps", "Ring", "rin", false },
-    { "Tancred's Crowbill", 30, "Tancred's Battlegear", "Military Pick", "mpi", false },
-    { "Tancred's Spine", 31, "Tancred's Battlegear", "Full Plate Mail", "ful", false },
-    { "Tancred's Hobnails", 32, "Tancred's Battlegear", "Boots", "lbt", false },
-    { "Tancred's Weird", 33, "Tancred's Battlegear", "Amulet", "amu", false },
-    { "Tancred's Skull", 34, "Tancred's Battlegear", "Bone Helm", "bhm", false },
-    { "Sigon's Gage", 35, "Sigon's Complete Steel", "Gauntlets", "hgl", false },
-    { "Sigon's Visor", 36, "Sigon's Complete Steel", "Great Helm", "ghm", false },
-    { "Sigon's Shelter", 37, "Sigon's Complete Steel", "Gothic Plate", "gth", false },
-    { "Sigon's Sabot", 38, "Sigon's Complete Steel", "Greaves", "hbt", false },
-    { "Sigon's Wrap", 39, "Sigon's Complete Steel", "Plated Belt", "hbl", false },
-    { "Sigon's Guard", 40, "Sigon's Complete Steel", "Tower Shield", "tow", false },
-    { "Infernal Cranium", 41, "Infernal Tools", "Cap", "cap", false },
-    { "Infernal Torch", 42, "Infernal Tools", "Grim Wand", "gwn", false },
-    { "Infernal Sign", 43, "Infernal Tools", "Heavy Belt", "tbl", false },
-    { "Berserker's Headgear", 44, "Berserker's Garb", "Helm", "hlm", false },
-    { "Berserker's Hauberk", 45, "Berserker's Garb", "Splint Mail", "spl", false },
-    { "Berserker's Hatchet", 46, "Berserker's Garb", "Double Axe", "2ax", false },
-    { "Death's Hand", 47, "Death's Disguise", "Leather Gloves", "lgl", false },
-    { "Death's Guard", 48, "Death's Disguise", "Sash", "lbl", false },
-    { "Death's Touch", 49, "Death's Disguise", "War Sword", "wsd", false },
-    { "Angelic Sickle", 50, "Angelical Raiment", "Sabre", "sbr", false },
-    { "Angelic Mantle", 51, "Angelical Raiment", "Ring Mail", "rng", false },
-    { "Angelic Halo", 52, "Angelical Raiment", "Ring", "rin", false },
-    { "Angelic Wings", 53, "Angelical Raiment", "Amulet", "amu", false },
-    { "Arctic Horn", 54, "Arctic Gear", "Short War Bow", "swb", false },
-    { "Arctic Furs", 55, "Arctic Gear", "Quilted Armor", "qui", false },
-    { "Arctic Binding", 56, "Arctic Gear", "Light Belt", "vbl", false },
-    { "Arctic Mitts", 57, "Arctic Gear", "Light Gauntlets", "tgl", false },
-    { "Arcanna's Sign", 58, "Arcanna's Tricks", "Amulet", "amu", false },
-    { "Arcanna's Deathwand", 59, "Arcanna's Tricks", "War Staff", "wst", false },
-    { "Arcanna's Head", 60, "Arcanna's Tricks", "Skull Cap", "skp", false },
-    { "Arcanna's Flesh", 61, "Arcanna's Tricks", "Light Plate", "ltp", false },
-    { "Natalya's Totem", 62, "Natalya's Odium", "Grim Helm", "xh9", false },
-    { "Natalya's Mark", 63, "Natalya's Odium", "Scissors Suwayyah", "7qr", false },
-    { "Natalya's Shadow", 64, "Natalya's Odium", "Loricated Mail", "ucl", false },
-    { "Natalya's Soul", 65, "Natalya's Odium", "Mesh Boots", "xmb", false },
-    { "Aldur's Stony Gaze", 66, "Aldur's Watchtower", "Hunter's Guise", "dr8", false },
-    { "Aldur's Deception", 67, "Aldur's Watchtower", "Shadow Plate", "uul", false },
-    { "Aldur's Gauntlet", 68, "Aldur's Watchtower", "Jagged Star", "9mt", false },
-    { "Aldur's Advance", 69, "Aldur's Watchtower", "Battle Boots", "xtb", false },
-    { "Immortal King's Will", 70, "Immortal King", "Avenger Guard", "ba5", false },
-    { "Immortal King's Soul Cage", 71, "Immortal King", "Sacred Armor", "uar", false },
-    { "Immortal King's Detail", 72, "Immortal King", "War Belt", "zhb", false },
-    { "Immortal King's Forge", 73, "Immortal King", "War Gauntlets", "xhg", false },
-    { "Immortal King's Pillar", 74, "Immortal King", "War Boots", "xhb", false },
-    { "Immortal King's Stone Crusher", 75, "Immortal King", "Ogre Maul", "7m7", false },
-    { "Tal Rasha's Fire-Spun Cloth", 76, "Tal Rasha's Wrappings", "Mesh Belt", "zmb", false },
-    { "Tal Rasha's Adjudication", 77, "Tal Rasha's Wrappings", "Amulet", "amu", false },
-    { "Tal Rasha's Lidless Eye", 78, "Tal Rasha's Wrappings", "Swirling Crystal", "oba", false },
-    { "Tal Rasha's Howling Wind", 79, "Tal Rasha's Wrappings", "Lacquered Plate", "uth", false },
-    { "Tal Rasha's Horadric Crest", 80, "Tal Rasha's Wrappings", "Death Mask", "xsk", false },
-    { "Griswold's Valor", 81, "Griswold's Legacy", "Corona", "urn", false },
-    { "Griswold's Heart", 82, "Griswold's Legacy", "Ornate Plate", "xar", false },
-    { "Griswolds's Redemption", 83, "Griswold's Legacy", "Caduceus", "7ws", false },
-    { "Griswold's Honor", 84, "Griswold's Legacy", "Vortex Shield", "paf", false },
-    { "Trang-Oul's Guise", 85, "Trang-Oul's Avatar", "Bone Visage", "uh9", false },
-    { "Trang-Oul's Scales", 86, "Trang-Oul's Avatar", "Chaos Armor", "xul", false },
-    { "Trang-Oul's Wing", 87, "Trang-Oul's Avatar", "Cantor Trophy", "ne9", false },
-    { "Trang-Oul's Claws", 88, "Trang-Oul's Avatar", "Heavy Bracers", "xmg", false },
-    { "Trang-Oul's Girth", 89, "Trang-Oul's Avatar", "Troll Belt", "utc", false },
-    { "M'avina's True Sight", 90, "M'avina's Battle Hymn", "Diadem", "ci3", false },
-    { "M'avina's Embrace", 91, "M'avina's Battle Hymn", "Kraken Shell", "uld", false },
-    { "M'avina's Icy Clutch", 92, "M'avina's Battle Hymn", "Battle Gauntlets", "xtg", false },
-    { "M'avina's Tenet", 93, "M'avina's Battle Hymn", "Sharkskin Belt", "zvb", false },
-    { "M'avina's Caster", 94, "M'avina's Battle Hymn", "Grand Matron Bow", "amc", false },
-    { "Telling of Beads", 95, "The Disciple", "Amulet", "amu", false },
-    { "Laying of Hands", 96, "The Disciple", "Bramble Mitts", "ulg", false },
-    { "Rite of Passage", 97, "The Disciple", "Demonhide Boots", "xlb", false },
-    { "Spiritual Custodian", 98, "The Disciple", "Dusk Shroud", "uui", false },
-    { "Credendum", 99, "The Disciple", "Mithril Coil", "umc", false },
-    { "Dangoon's Teaching", 100, "Heaven's Brethren", "Reinforced Mace", "7ma", false },
-    { "Heaven's Taebaek", 101, "Heaven's Brethren", "Ward", "uts", false },
-    { "Haemosu's Adament", 102, "Heaven's Brethren", "Cuirass", "xrs", false },
-    { "Ondal's Almighty", 103, "Heaven's Brethren", "Spired Helm", "uhm", false },
-    { "Guillaume's Face", 104, "Orphan's Call", "Winged Helm", "xhm", false },
-    { "Wilhelm's Pride", 105, "Orphan's Call", "Battle Belt", "ztb", false },
-    { "Magnus' Skin", 106, "Orphan's Call", "Sharkskin Gloves", "xvg", false },
-    { "Wihtstan's Guard", 107, "Orphan's Call", "Round Shield", "xml", false },
-    { "Hwanin's Splendor", 108, "Hwanin's Majesty", "Grand Crown", "xrn", false },
-    { "Hwanin's Refuge", 109, "Hwanin's Majesty", "Tigulated Mail", "xcl", false },
-    { "Hwanin's Seal", 110, "Hwanin's Majesty", "Belt", "mbl", false },
-    { "Hwanin's Justice", 111, "Hwanin's Majesty", "Bill", "9vo", false },
-    { "Sazabi's Cobalt Redeemer", 112, "Sazabi's Grand Tribute", "Cryptic Sword", "7ls", false },
-    { "Sazabi's Ghost Liberator", 113, "Sazabi's Grand Tribute", "Balrog Skin", "upl", false },
-    { "Sazabi's Mental Sheath", 114, "Sazabi's Grand Tribute", "Basinet", "xhl", false },
-    { "Bul-Kathos' Sacred Charge", 115, "Bul-Kathos' Children", "Colossus Blade", "7gd", false },
-    { "Bul-Kathos' Tribal Guardian", 116, "Bul-Kathos' Children", "Mythical Sword", "7wd", false },
-    { "Cow King's Horns", 117, "Cow King's Leathers", "War Hat", "xap", false },
-    { "Cow King's Hide", 118, "Cow King's Leathers", "Studded Leather", "stu", false },
-    { "Cow King's Hoofs", 119, "Cow King's Leathers", "Heavy Boots", "vbt", false },
-    { "Naj's Puzzler", 120, "Naj's Ancient Set", "Elder Staff", "6cs", false },
-    { "Naj's Light Plate", 121, "Naj's Ancient Set", "Hellforge Plate", "ult", false },
-    { "Naj's Circlet", 122, "Naj's Ancient Set", "Circlet", "ci0", false },
-    { "McAuley's Paragon", 123, "McAuley's Folly", "Cap", "cap", false },
-    { "McAuley's Riprap", 124, "McAuley's Folly", "Heavy Boots", "vbt", false },
-    { "McAuley's Taboo", 125, "McAuley's Folly", "Heavy Gloves", "vgl", false },
-    { "McAuley's Superstition", 126, "McAuley's Folly", "Bone Wand", "bwn", false },
-
-};
-
-#pragma endregion
-
-#pragma region - Helper Functions
-
-static std::vector<std::string> SplitTab(const std::string& line)
-{
-    std::vector<std::string> result;
-    std::stringstream ss(line);
-    std::string field;
-
-    while (std::getline(ss, field, '\t'))
-        result.push_back(field);
-
-    return result;
-}
-
-static int FindColumn(const std::vector<std::string>& header, const std::string& name)
-{
-    for (size_t i = 0; i < header.size(); i++)
-        if (header[i] == name)
-            return (int)i;
-    return -1;
-}
-
-static int MaxInt(int a, int b)
-{
-    return (a > b) ? a : b;
-}
-
-static int MaxInt3(int a, int b, int c)
-{
-    return MaxInt(a, MaxInt(b, c));
-}
-
-static int MaxInt4(int a, int b, int c, int d)
-{
-    return MaxInt(a, MaxInt(b, MaxInt(c, d)));
-}
-
-static int MaxInt5(int a, int b, int c, int d, int e)
-{
-    return MaxInt(a, MaxInt(b, MaxInt(c, MaxInt(d, e))));
-}
-
-static bool SafeStringToInt(const std::string& s, int& out)
-{
-    try {
-        size_t idx = 0;
-        out = std::stoi(s, &idx);
-        return idx == s.size(); // ensure entire string was numeric
-    }
-    catch (...) {
-        out = -1;
-        return false;
-    }
-}
-
-std::string EscapeString(const std::string& input) {
-    std::string out;
-    for (char c : input) {
-        switch (c) {
-        case '\\': out += "\\\\"; break;
-        case '"': out += "\\\""; break;
-        default: out += c;
-        }
-    }
-    return out;
-}
-
-bool GenerateStaticArrays(const std::string& filepath, int itemsPerLine = 5)
-{
-    std::ifstream file(filepath);
-    if (!file.is_open())
-        return false;
-
-    std::ofstream outFile("StaticGrailArrays.txt");
-    if (!outFile.is_open())
-        return false;
-
-    std::string line;
-    std::getline(file, line); // header
-    auto header = SplitTab(line);
-
-    int colUniqueName = FindColumn(header, "index");
-    int colUniqueID = FindColumn(header, "*ID");
-    int colUniqueCode = FindColumn(header, "code");
-    int colUniqueEnabled = FindColumn(header, "enabled");
-    int colUniqueItemName = FindColumn(header, "*ItemName");
-
-    int colSetName = FindColumn(header, "set");
-    int colSetItemCode = FindColumn(header, "item");
-
-    // ------------------------
-    // Unique items
-    // ------------------------
-    outFile << "static UniqueItemEntry g_StaticUniqueItems[] = {\n";
-    int count = 0;
-    int runningIndex = 0;
-    while (std::getline(file, line))
-    {
-        auto cols = SplitTab(line);
-
-        if (colUniqueName >= 0 && colUniqueID >= 0 && colUniqueCode >= 0 && colUniqueEnabled >= 0 && colUniqueItemName >= 0)
-        {
-            int maxCol = MaxInt5(colUniqueName, colUniqueID, colUniqueCode, colUniqueEnabled, colUniqueItemName);
-            if (cols.size() <= maxCol) continue;
-
-            int idVal;
-            if (!SafeStringToInt(cols[colUniqueID], idVal)) continue;
-
-            std::string enabledStr = cols[colUniqueEnabled];
-            bool enabled = (enabledStr == "1" || enabledStr == "true");
-            if (!enabled) continue;
-
-            outFile << "{ " << runningIndex << ", "  // index
-                << idVal << ", \""                     // id
-                << cols[colUniqueName] << "\", \""     // name
-                << cols[colUniqueCode] << "\", \""      // code
-                << cols[colUniqueItemName] << "\","      // ItemName
-                << "false" << " }, ";             // always default to false
-            count++;
-            runningIndex++;  // increment index
-
-            if (count % itemsPerLine == 0)
-                outFile << "\n"; // newline after X items
-        }
-    }
-    outFile << "\n};\n\n";
-
-    // ------------------------
-    // Set items
-    // ------------------------
-    file.clear();
-    file.seekg(0, std::ios::beg);
-    std::getline(file, line);
-
-    outFile << "static SetItemEntry g_StaticSetItems[] = {\n";
-    count = 0;
-    while (std::getline(file, line))
-    {
-        auto cols = SplitTab(line);
-
-        if (colSetName >= 0 && colUniqueID >= 0 && colUniqueName >= 0 && colSetItemCode >= 0 && colUniqueItemName >= 0)
-        {
-            int maxCol = MaxInt5(colUniqueName, colUniqueID, colSetName, colSetItemCode, colUniqueItemName);
-            if (cols.size() <= maxCol) continue;
-
-            int idVal;
-            if (!SafeStringToInt(cols[colUniqueID], idVal)) continue;
-
-            outFile << "    { \"" << cols[colUniqueName] << "\", "
-                << idVal << ", \"" << cols[colSetName] << "\", \""
-                << cols[colUniqueItemName] << "\", \""      // ItemName
-                << cols[colSetItemCode] << "\", false }, ";
-            if (count % itemsPerLine == 0)
-                outFile << "\n";
-        }
-    }
-    outFile << "\n};\n";
-
-    outFile.close();
-    file.close();
-
-    std::cout << "Static arrays generated in StaticGrailArrays.txt with " << itemsPerLine << " items per line.\n";
-    return true;
-}
-
-void SortItemLists()
-{
-    std::sort(g_UniqueItems.begin(), g_UniqueItems.end(),
-        [](const UniqueItemEntry& a, const UniqueItemEntry& b)
-        {
-            return a.name < b.name;
-        });
-
-    std::sort(g_SetItems.begin(), g_SetItems.end(),
-        [](const SetItemEntry& a, const SetItemEntry& b)
-        {
-            return a.setName < b.setName;
-        });
-}
-
-void WriteResultsToFile(const std::string& output)
-{
-    std::ofstream out(output);
-
-    // --- Unique Items ---
-    out << "=== UNIQUE ITEMS ===\n";
-    for (auto& u : g_UniqueItems)
-        out << u.id << "\t" << u.name << "\t" << u.code << "\t" << u.enabled << "\n";
-
-    // --- Set Items ---
-    out << "\n=== SET ITEMS ===\n";
-    for (auto& s : g_SetItems)
-        out << s.id << "\t" << s.setName << "\t" << s.name << "\t" << s.code << "\t" << s.enabled << "\n";
-}
-
-#pragma endregion
-
-#pragma region - Load/Save Functions
-
-void SaveGrailProgress(const std::string& userPath, bool isAutoBackup)
-{
-    std::filesystem::path path;
-    json j;
-    std::string uniqueJsonStr;
-
-    try
-    {
-        std::vector<UniqueItemEntry> uniqueCopy = g_UniqueItems;
-        std::vector<SetItemEntry> setCopy = g_SetItems;
-        std::unordered_set<std::string> excludedCopy = g_ExcludedGrailItems;
-
-        // --- Determine base path ---
-        if (userPath.empty())
-            path = std::filesystem::current_path();
-        else
-            path = userPath;
-
-        std::string filename = configFilePath;
-
-        if (isAutoBackup)
-        {
-            if (!path.has_extension())
-            {
-                if (backupWithTimestamps)
-                {
-                    auto t = std::chrono::system_clock::to_time_t(
-                        std::chrono::system_clock::now());
-                    std::tm tm{};
-#if defined(_WIN32)
-                    localtime_s(&tm, &t);
-#else
-                    localtime_r(&t, &tm);
-#endif
-                    char buf[64];
-                    strftime(buf, sizeof(buf), "GrailBackup_%Y%m%d_%H%M%S.json", &tm);
-                    filename = buf;
-                }
-                else if (!overwriteOldBackup)
-                {
-                    filename = "GrailBackup.json";
-                }
-                path /= filename;
-            }
-        }
-        else
-        {
-            path = filename;
-        }
-
-        auto parent = path.parent_path();
-        if (!parent.empty())
-            std::filesystem::create_directories(parent);
-
-        // --- Build JSON ---
-        // UNIQUE ITEMS
-        {
-            std::stringstream uniqueStream;
-            uniqueStream << "[";
-
-            bool first = true;
-            int count = 0;
-
-            for (auto& u : uniqueCopy)
-            {
-                if (!u.collected) continue;
-
-                if (!first) uniqueStream << ", ";
-                first = false;
-
-                uniqueStream << "\"" << u.name << "\"";
-                count++;
-
-                if (count % 10 == 0)
-                    uniqueStream << "\n  ";
-            }
-
-            uniqueStream << "]";
-            uniqueJsonStr = uniqueStream.str();
-            j["Unique Items"] = json::parse(uniqueJsonStr);
-        }
-
-        // EXCLUDED ITEMS
-        j["Excluded Grail Items"] = json::array();
-        for (auto& x : excludedCopy)
-            j["Excluded Grail Items"].push_back(x);
-
-        // AUTO BACKUP SETTINGS
-        j["AutoBackups"] = {
-            { "On", autoBackups },
-            { "Timestamps", backupWithTimestamps },
-            { "Overwrite", overwriteOldBackup },
-            { "Interval", backupIntervalMinutes },
-            { "Path", backupPath }
-        };
-
-        // --- Write file ---
-        std::ofstream out(path);
-        if (!out.is_open())
-        {
-            std::cout << "[Backup ERROR] Failed to open file: " << path << std::endl;
-            return;
-        }
-
-        out << j.dump(4);
-        std::cout << "[Backup] Grail saved to: " << path << std::endl;
-    }
-    catch (const std::exception& e)
-    {
-        std::cout << "\n[Backup ERROR] Exception encountered.\n";
-        std::cout << "  Path: " << path << "\n";
-        std::cout << "  Error: " << e.what() << "\n";
-        std::cout << "  Unique JSON string was:\n" << uniqueJsonStr << "\n";
-
-        try
-        {
-            std::cout << "\n  JSON dump so far:\n" << j.dump(4) << "\n";
-        }
-        catch (...)
-        {
-            std::cout << "  JSON dump failed.\n";
-        }
-    }
-}
-
-void LoadGrailProgress(const std::string& filepath)
-{
-    std::ifstream file(filepath);
-    if (!file.is_open()) return;
-
-    json j;
-    try { file >> j; }
-    catch (...) { return; }
-
-    // --- Load excluded ---
-    g_ExcludedGrailItems.clear();
-    if (j.contains("Excluded Grail Items"))
-    {
-        for (auto& x : j["Excluded Grail Items"])
-            g_ExcludedGrailItems.insert(x.get<std::string>());
-    }
-
-    // --- Load AutoBackup settings ---
-    if (j.contains("AutoBackups"))
-    {
-        auto& a = j["AutoBackups"];
-        autoBackups = a.value("On", false);
-        backupWithTimestamps = a.value("Timestamps", false);
-        overwriteOldBackup = a.value("Overwrite", false);
-        backupIntervalMinutes = a.value("Interval", 10);
-
-        std::string pathStr = a.value("Path", "GrailBackup.json");
-        std::strncpy(backupPath, pathStr.c_str(), sizeof(backupPath));
-        backupPath[sizeof(backupPath) - 1] = '\0';
-    }
-}
-
-bool LoadUniqueItems(const std::string& filepath)
-{
-    g_UniqueItems.clear();
-
-    // Use static array for RMD
-    if (modName == "RMD-MP")
-    {
-        int arraySize = sizeof(g_StaticUniqueItemsRMD) / sizeof(g_StaticUniqueItemsRMD[0]);
-        for (int i = 0; i < arraySize; ++i)
-        {
-            g_UniqueItems.push_back(g_StaticUniqueItemsRMD[i]);
-        }
-        return true;
-    }
-
-    // Use static array for Retail Mods if file doesn't exist
-    if (!std::filesystem::exists("Mods/" + modName + "/" + modName + ".mpq/data/global/excel/uniqueitems.txt") && modName != "RMD-MP")
-    {
-        int arraySize = sizeof(g_StaticUniqueItems) / sizeof(g_StaticUniqueItems[0]);
-        for (int i = 0; i < arraySize; ++i)
-        {
-            g_UniqueItems.push_back(g_StaticUniqueItems[i]);
-        }
-        return true;
-    }
-
-    std::ifstream file(filepath);
-    if (!file.is_open())
-        return false;
-
-    std::string line;
-    std::getline(file, line); // read header
-    auto header = SplitTab(line);
-
-    int colIndex = FindColumn(header, "index");
-    int colID = FindColumn(header, "*ID");
-    int colEnabled = FindColumn(header, "enabled");
-    int colCode = FindColumn(header, "code");
-    int colItemName = FindColumn(header, "*ItemName");
-
-    if (colIndex < 0 || colID < 0 || colEnabled < 0 || colCode < 0)
-        return false;
-
-    while (std::getline(file, line))
-    {
-        auto cols = SplitTab(line);
-        int maxCol = MaxInt4(colIndex, colID, colEnabled, colCode);
-        if (cols.size() <= maxCol)
-            continue;
-
-        UniqueItemEntry entry;
-
-        int indexVal;
-        if (!SafeStringToInt(cols[colID], indexVal)) // ID
-            continue;
-        entry.id = indexVal;
-
-        entry.name = cols[colIndex];   // Name from index column
-        entry.code = cols[colCode];    // Code
-        entry.itemName = cols[colItemName];
-
-        std::string enabledStr = cols[colEnabled];
-        entry.enabled = (enabledStr == "1" || enabledStr == "true");
-
-        // Skip items not enabled in the file
-        if (!(enabledStr == "1" || enabledStr == "true"))
-            continue;
-
-        g_UniqueItems.push_back(entry);
-    }
-
-    return true;
-}
-
-bool LoadSetItems(const std::string& filepath)
-{
-    g_SetItems.clear();
-
-    // Use static array for RMD
-    if (modName == "RMD-MP")
-    {
-        int arraySize = sizeof(g_StaticSetItemsRMD) / sizeof(g_StaticSetItemsRMD[0]);
-        for (int i = 0; i < arraySize; ++i)
-        {
-            g_SetItems.push_back(g_StaticSetItemsRMD[i]);
-        }
-        return true;
-    }
-
-    // Use static array for Retail Mods if file doesn't exist
-    if (!std::filesystem::exists("Mods/" + modName + "/" + modName + ".mpq/data/global/excel/setitems.txt") && modName != "RMD-MP")
-    {
-        int arraySize = sizeof(g_StaticSetItems) / sizeof(g_StaticSetItems[0]);
-        for (int i = 0; i < arraySize; ++i)
-        {
-            g_SetItems.push_back(g_StaticSetItems[i]);
-        }
-        return true;
-    }
-
-    std::ifstream file(filepath);
-    if (!file.is_open())
-        return false;
-
-    std::string line;
-    std::getline(file, line);
-    auto header = SplitTab(line);
-
-    int colIndex = FindColumn(header, "index");
-    int colID = FindColumn(header, "*ID");
-    int colSet = FindColumn(header, "set");
-    int colItem = FindColumn(header, "item");
-    int colItemName = FindColumn(header, "*ItemName");
-
-    if (colIndex < 0 || colID < 0 || colSet < 0 || colItem < 0)
-        return false;
-
-    while (std::getline(file, line))
-    {
-        auto cols = SplitTab(line);
-
-        int maxCol = MaxInt4(colIndex, colID, colSet, colItem);
-        if (cols.size() <= maxCol)
-            continue;
-
-        SetItemEntry entry;
-        entry.name = cols[colIndex];
-
-        int idVal;
-        if (!SafeStringToInt(cols[colID], idVal))
-            continue;
-        entry.id = idVal;
-        entry.setName = cols[colSet];
-        entry.code = cols[colItem];
-        entry.enabled = false;
-        entry.itemName = cols[colItemName];
-        g_SetItems.push_back(entry);
-    }
-
-    return true;
-}
-
-void LoadExcludedGrailItems(const std::string& filepath)
-{
-    g_ExcludedGrailItems.clear();
-
-    std::ifstream file(filepath);
-    if (!file.is_open())
-        return;
-
-    try
-    {
-        nlohmann::json j;
-        file >> j;
-
-        if (j.contains("Excluded Grail Items") && j["Excluded Grail Items"].is_array())
-        {
-            for (auto& item : j["Excluded Grail Items"])
-            {
-                if (item.is_string())
-                    g_ExcludedGrailItems.insert(item.get<std::string>());
-            }
-        }
-    }
-    catch (...)
-    {
-        // failed to parse, just skip
-    }
-}
-
-void LoadAllItemData()
-{
-    g_UniqueItems.clear();
-    g_SetItems.clear();
-    
-    // Load Functions  
-    LoadUniqueItems("Mods/" + modName + "/" + modName + ".mpq/data/global/excel/uniqueitems.txt");
-    LoadSetItems("Mods/" + modName + "/" + modName + ".mpq/data/global/excel/setitems.txt");
-    SortItemLists();
-    LoadGrailProgress(configFilePath);
-    
-
-    //GenerateStaticArrays("Mods/" + modName + "/" + modName + ".mpq/data/global/excel/uniqueitems.txt", 5);
-    //GenerateStaticArrays("Mods/" + modName + "/" + modName + ".mpq/data/global/excel/setitems.txt", 2);
-    //WriteResultsToFile("ParsedItemData_Output.txt");
-    
-}
-
-#pragma endregion
-
-#pragma endregion
-
-#pragma endregion
 
 #pragma region D2I Parser
 
 #pragma region Static/Structs
-
-GrailStatus GetGrailStatus(uint32_t id, bool isSetItem)
-{
-    GrailStatus g;
-    g.isGrail = false;
-
-    if (isSetItem)
-    {
-        for (auto& s : g_SetItems)
-        {
-            if (s.id == id)
-            {
-                g.isGrail = true;
-                if (s.collected) g.collected = true;
-                g.located += static_cast<int>(s.locations.size());
-                break;
-            }
-        }
-    }
-    else
-    {
-        for (auto& u : g_UniqueItems)
-        {
-            if (u.id == id)
-            {
-                g.isGrail = true;
-                if (u.collected) g.collected = true;
-                g.located += static_cast<int>(u.locations.size());
-                break;
-            }
-        }
-    }
-
-    return g;
-}
 
 std::wstring GetSavePath()
 {
@@ -4563,6 +3459,29 @@ struct Item {
     std::vector<Item> socketed_items;
 };
 
+struct StashParsedItemDebug {
+    int page = 0;
+    int tab = 0;
+    int x = 0;
+    int y = 0;
+    std::string code;
+    uint8_t quality = 0;
+    uint16_t setId = 0;
+    uint16_t uniqueId = 0;
+    bool identified = false;
+    bool grailMatched = false;
+    std::string grailName;
+    std::string note;
+};
+
+static bool showStashParseDebug = false;
+static bool g_ForceStashRescan = false;
+static bool g_StashScanInProgress = false;
+static double g_DeferStashScanUntil = 0.0;
+static int g_StashScanPageFilter = 0; // 0 = all pages, 1-64 = single page (debug only)
+static std::vector<int> g_AvailableStashPages;
+static std::vector<StashParsedItemDebug> g_StashDebugEntries;
+
 std::unordered_map<uint32_t, std::string> g_SetItemLookup;
 std::unordered_map<uint32_t, std::string> g_UniqueItemLookup;
 
@@ -4689,23 +3608,290 @@ std::string DecodeHuffmanString(BitReader& reader, HuffmanNode* root) {
     return s;
 }
 
-std::vector<size_t> FindItemOffsets(const std::vector<uint8_t>& buf, size_t start, size_t end) {
-    std::vector<size_t> offsets;
-    for (size_t i = start; i + 4 < end; i++) {
-        // D2R item flags have multiple patterns depending on item properties
-        // Common patterns: 10 00 80 00, 10 20 a0 00, 10 08 80 00, etc.
-        // Byte 0: lower nibble is typically 0 (0x10, 0x00)
-        // Byte 2: has bit 7 set (0x80, 0xa0, 0xc0)
-        // Byte 3: is 0x00
-        bool byte0_valid = (buf[i] & 0x0F) == 0;      // lower nibble is 0
-        bool byte2_valid = (buf[i + 2] & 0x80) != 0;    // bit 7 set
-        bool byte3_valid = buf[i + 3] == 0x00;          // must be 0
+struct StatCostRow {
+    int saveBits = 0;
+    int saveAdd = 0;
+    int saveParamBits = 0;
+};
 
-        if (byte0_valid && byte2_valid && byte3_valid) {
-            offsets.push_back(i);
+struct ItemTypeRow {
+    bool isArmor = false;
+    bool isWeapon = false;
+    bool stackable = false;
+};
+
+static bool g_ItemParseTablesLoaded = false;
+static std::unordered_map<int, StatCostRow> g_StatCostById;
+static std::unordered_map<std::string, ItemTypeRow> g_ItemTypeByCode;
+
+static bool SafeStringToInt(const std::string& s, int& out)
+{
+    if (s.empty())
+        return false;
+    try {
+        size_t idx = 0;
+        out = std::stoi(s, &idx);
+        return idx == s.size();
+    }
+    catch (...) {
+        out = -1;
+        return false;
+    }
+}
+
+static std::vector<std::string> SplitTabLine(const std::string& line)
+{
+    std::vector<std::string> result;
+    std::stringstream ss(line);
+    std::string field;
+    while (std::getline(ss, field, '\t'))
+        result.push_back(field);
+    return result;
+}
+
+static int FindTabColumn(const std::vector<std::string>& header, const std::string& name)
+{
+    for (size_t i = 0; i < header.size(); i++)
+        if (header[i] == name)
+            return static_cast<int>(i);
+    return -1;
+}
+
+static std::string TrimItemCode(std::string code)
+{
+    while (!code.empty() && (code.back() == ' ' || code.back() == '\0'))
+        code.pop_back();
+    return code;
+}
+
+static void LoadItemStatCostTable(const std::string& filepath)
+{
+    std::ifstream file(filepath);
+    if (!file.is_open())
+        return;
+
+    std::string line;
+    std::getline(file, line);
+    auto header = SplitTabLine(line);
+
+    int colId = FindTabColumn(header, "ID");
+    if (colId < 0)
+        colId = FindTabColumn(header, "*ID");
+    const int colSaveBits = FindTabColumn(header, "Save Bits");
+    const int colSaveAdd = FindTabColumn(header, "Save Add");
+    const int colSaveParam = FindTabColumn(header, "Save Param Bits");
+
+    if (colId < 0 || colSaveBits < 0)
+        return;
+
+    while (std::getline(file, line))
+    {
+        auto cols = SplitTabLine(line);
+        if (cols.size() <= static_cast<size_t>(colSaveBits))
+            continue;
+
+        int id = 0;
+        if (!SafeStringToInt(cols[colId], id))
+            continue;
+
+        StatCostRow row;
+        if (!SafeStringToInt(cols[colSaveBits], row.saveBits))
+            continue;
+        if (colSaveAdd >= 0 && static_cast<int>(cols.size()) > colSaveAdd)
+            SafeStringToInt(cols[colSaveAdd], row.saveAdd);
+        if (colSaveParam >= 0 && static_cast<int>(cols.size()) > colSaveParam)
+            SafeStringToInt(cols[colSaveParam], row.saveParamBits);
+
+        g_StatCostById[id] = row;
+    }
+}
+
+static void LoadCodesFromExcel(const std::string& filepath, bool armor, bool weapon)
+{
+    std::ifstream file(filepath);
+    if (!file.is_open())
+        return;
+
+    std::string line;
+    std::getline(file, line);
+    auto header = SplitTabLine(line);
+    int colCode = FindTabColumn(header, "code");
+    if (colCode < 0)
+        colCode = 0;
+
+    while (std::getline(file, line))
+    {
+        auto cols = SplitTabLine(line);
+        if (cols.size() <= static_cast<size_t>(colCode))
+            continue;
+
+        std::string code = TrimItemCode(cols[colCode]);
+        if (code.empty())
+            continue;
+
+        ItemTypeRow& row = g_ItemTypeByCode[code];
+        if (armor)
+            row.isArmor = true;
+        if (weapon)
+            row.isWeapon = true;
+    }
+}
+
+static void LoadItemTypeTable(const std::string& filepath)
+{
+    std::ifstream file(filepath);
+    if (!file.is_open())
+        return;
+
+    std::string line;
+    std::getline(file, line);
+    auto header = SplitTabLine(line);
+
+    const int colCode = FindTabColumn(header, "code");
+    const int colStack = FindTabColumn(header, "stackable");
+
+    if (colCode < 0)
+        return;
+
+    while (std::getline(file, line))
+    {
+        auto cols = SplitTabLine(line);
+        if (cols.size() <= static_cast<size_t>(colCode))
+            continue;
+
+        std::string code = TrimItemCode(cols[colCode]);
+        if (code.empty())
+            continue;
+
+        ItemTypeRow& row = g_ItemTypeByCode[code];
+        if (colStack >= 0 && static_cast<int>(cols.size()) > colStack)
+        {
+            const std::string& st = cols[colStack];
+            row.stackable = (st == "1" || st == "true");
         }
     }
-    return offsets;
+}
+
+static void EnsureItemParseTablesLoaded()
+{
+    if (g_ItemParseTablesLoaded)
+        return;
+    g_ItemParseTablesLoaded = true;
+
+    const std::string excelBase = "Mods/" + modName + "/" + modName + ".mpq/data/global/excel/";
+    LoadItemStatCostTable(excelBase + "ItemStatCost.txt");
+    LoadItemTypeTable(excelBase + "items.txt");
+    LoadCodesFromExcel(excelBase + "armor.txt", true, false);
+    LoadCodesFromExcel(excelBase + "weapons.txt", false, true);
+}
+
+static const StatCostRow* GetStatCostRow(int id)
+{
+    auto it = g_StatCostById.find(id);
+    return it != g_StatCostById.end() ? &it->second : nullptr;
+}
+
+static void SkipItemStatBits(BitReader& reader, int id)
+{
+    const StatCostRow* row = GetStatCostRow(id);
+    if (!row)
+        throw std::runtime_error("unknown stat id");
+
+    if (row->saveParamBits > 0)
+        reader.SkipBits(static_cast<size_t>(row->saveParamBits));
+
+    reader.SkipBits(static_cast<size_t>(row->saveBits));
+}
+
+static void SkipPropertyList(BitReader& reader)
+{
+    while (reader.HasBits(9))
+    {
+        const uint16_t id = reader.ReadUInt16(9);
+        if (id == 0x1ff)
+            break;
+
+        SkipItemStatBits(reader, id);
+
+        // Min/max paired stats (D2MOO Items.cpp)
+        if (id == 52 || id == 17 || id == 48 || id == 50)
+            SkipItemStatBits(reader, id + 1);
+        else if (id == 54 || id == 57)
+        {
+            SkipItemStatBits(reader, id + 1);
+            SkipItemStatBits(reader, id + 2);
+        }
+    }
+}
+
+static const ItemTypeRow* GetItemTypeRow(const std::string& code)
+{
+    auto it = g_ItemTypeByCode.find(code);
+    return it != g_ItemTypeByCode.end() ? &it->second : nullptr;
+}
+
+static void SkipItemRemainder(BitReader& reader, const Item& item)
+{
+    const std::string code = TrimItemCode(item.type);
+    const ItemTypeRow* typeRow = GetItemTypeRow(code);
+
+    uint16_t propertyLists = 0;
+
+    if (item.given_runeword)
+    {
+        reader.SkipBits(12);
+        propertyLists |= static_cast<uint16_t>(1 << (reader.ReadUInt16(4) + 1));
+    }
+
+    if (item.personalized)
+    {
+        for (int i = 0; i < 15; ++i)
+        {
+            const uint8_t ch = reader.ReadUInt8(7);
+            if (ch == 0)
+                break;
+        }
+    }
+
+    if (code == "tbk" || code == "ibk")
+        reader.SkipBits(5);
+
+    if (reader.ReadBit())
+    {
+        const bool longRealm = typeRow && !typeRow->isArmor && !typeRow->isWeapon;
+        reader.SkipBits(longRealm ? 96 : 3);
+    }
+
+    if (typeRow && typeRow->isArmor)
+        reader.SkipBits(11);
+
+    if (typeRow && (typeRow->isArmor || typeRow->isWeapon))
+    {
+        const int maxDurBits = 8;
+        const uint16_t maxDur = reader.ReadUInt16(maxDurBits);
+        if (maxDur > 0)
+        {
+            reader.SkipBits(8); // current durability
+            reader.SkipBits(1); // unknown
+        }
+    }
+
+    if (typeRow && typeRow->stackable)
+        reader.SkipBits(9);
+
+    if (item.socketed)
+        reader.SkipBits(4);
+
+    if (item.quality == 5)
+        propertyLists |= reader.ReadUInt8(5);
+
+    SkipPropertyList(reader);
+
+    for (int mask = 1; mask <= 64; mask <<= 1)
+    {
+        if (propertyLists & mask)
+            SkipPropertyList(reader);
+    }
 }
 
 #pragma endregion
@@ -4763,114 +3949,132 @@ const char* GetQualityName(uint32_t q) {
 
 #pragma region Stash Parsing
 
-Item ParseItem(const uint8_t* data, size_t size, HuffmanNode* huffmanRoot, uint32_t fileVersion) {
-    Item item;
-    BitReader reader(data, size);
+static bool ParseItemFromReader(BitReader& reader, Item& item, uint32_t fileVersion, HuffmanNode* huffmanRoot, bool consumeTail)
+{
+    if (!reader.HasBits(32))
+        return false;
 
     // === FLAG BITS (32 bits) ===
-    reader.SkipBits(4);                       // bits 0-3: unknown
-    item.identified = reader.ReadBit();       // bit 4
-    reader.SkipBits(1);                       // bit 5
-    item.socketed = reader.ReadBit();         // bit 6
-    reader.SkipBits(2);                       // bits 7-8
-    item.new_flag = reader.ReadBit();         // bit 9
-    reader.SkipBits(1);                       // bit 10
-    item.is_ear = reader.ReadBit();           // bit 11
-    item.starter_item = reader.ReadBit();     // bit 12
-    reader.SkipBits(8);                       // bits 13-20
-    item.simple_item = reader.ReadBit();      // bit 21
-    item.ethereal = reader.ReadBit();         // bit 22
-    reader.SkipBits(1);                       // bit 23
-    item.personalized = reader.ReadBit();     // bit 24
-    reader.SkipBits(1);                       // bit 25
-    item.given_runeword = reader.ReadBit();   // bit 26
-    reader.SkipBits(5);                       // bits 27-31
+    reader.SkipBits(4);
+    item.identified = reader.ReadBit();
+    reader.SkipBits(1);
+    item.socketed = reader.ReadBit();
+    reader.SkipBits(2);
+    item.new_flag = reader.ReadBit();
+    reader.SkipBits(1);
+    item.is_ear = reader.ReadBit();
+    item.starter_item = reader.ReadBit();
+    reader.SkipBits(8);
+    item.simple_item = reader.ReadBit();
+    item.ethereal = reader.ReadBit();
+    reader.SkipBits(1);
+    item.personalized = reader.ReadBit();
+    reader.SkipBits(1);
+    item.given_runeword = reader.ReadBit();
+    reader.SkipBits(5);
 
-    // === VERSION ===
     if (fileVersion >= 0x61)
         item.version = reader.ReadUInt16(3);
     else
         item.version = reader.ReadUInt16(10);
 
-    // === LOCATION DATA ===
     item.location_id = reader.ReadUInt8(3);
     item.equipped_id = reader.ReadUInt8(4);
     item.position_x = reader.ReadUInt8(4);
     item.position_y = reader.ReadUInt8(4);
     item.alt_position_id = reader.ReadUInt8(3);
 
-    // === EAR SPECIAL CASE ===
-    // Ears must have BOTH is_ear=1 AND simple_item=1
-    // If is_ear is set but simple_item is not, it's a regular item with different flags
-    if (item.is_ear && item.simple_item) {
+    if (item.is_ear)
+    {
         item.ear_attributes.clazz = reader.ReadUInt8(3);
         item.ear_attributes.level = reader.ReadUInt8(7);
-        for (int i = 0; i < 15; i++) {
-            uint8_t ch = reader.ReadUInt8(7);
-            if (ch == 0) break;
-            item.ear_attributes.name.push_back((char)ch);
+        for (int i = 0; i < 15; i++)
+        {
+            const uint8_t ch = reader.ReadUInt8(7);
+            if (ch == 0)
+                break;
+            item.ear_attributes.name.push_back(static_cast<char>(ch));
         }
-        return item;
+        if (consumeTail)
+            reader.AlignToByte();
+        return true;
     }
 
-    // === ITEM TYPE (Huffman for D2R, ASCII for older) ===
-    if (fileVersion >= 0x61) {
+    if (fileVersion >= 0x61)
         item.type = DecodeHuffmanString(reader, huffmanRoot);
-    }
-    else {
-        for (int i = 0; i < 4; ++i) {
-            char c = reader.ReadUInt8(8);
-            if (c && c != ' ') item.type += c;
+    else
+    {
+        for (int i = 0; i < 4; ++i)
+        {
+            const char c = static_cast<char>(reader.ReadUInt8(8));
+            if (c && c != ' ')
+                item.type += c;
         }
     }
+    item.type = TrimItemCode(item.type);
 
-    // === SOCKET COUNT ===
     item.nr_of_items_in_sockets = reader.ReadUInt8(item.simple_item ? 1 : 3);
 
-    if (item.simple_item) return item;
+    if (item.simple_item)
+    {
+        if (consumeTail)
+            reader.AlignToByte();
+        return true;
+    }
 
-    // === EXTENDED ITEM DATA ===
     item.id = reader.ReadUInt32(32);
     item.level = reader.ReadUInt8(7);
     item.quality = reader.ReadUInt8(4);
 
-    // Variable picture
     item.multiple_pictures = reader.ReadBit();
-    if (item.multiple_pictures) item.picture_id = reader.ReadUInt8(3);
+    if (item.multiple_pictures)
+        item.picture_id = reader.ReadUInt8(3);
 
-    // Class specific
     item.class_specific = reader.ReadBit();
-    if (item.class_specific) item.auto_affix_id = reader.ReadUInt16(11);
+    if (item.class_specific)
+        item.auto_affix_id = reader.ReadUInt16(11);
 
-    // === QUALITY-SPECIFIC DATA ===
-    switch (item.quality) {
-    case 1:  // Inferior
+    switch (item.quality)
+    {
+    case 1:
         item.low_quality_id = reader.ReadUInt8(3);
         break;
-    case 3:  // Superior
+    case 3:
         item.file_index = reader.ReadUInt8(3);
         break;
-    case 4:  // Magic
+    case 4:
         item.magic_prefix = reader.ReadUInt16(11);
         item.magic_suffix = reader.ReadUInt16(11);
         break;
-    case 5:  // Set
+    case 5:
         item.set_id = reader.ReadUInt16(12);
         break;
-    case 6:  // Rare
-    case 8:  // Crafted
+    case 6:
+    case 8:
         item.rare_name_id = reader.ReadUInt8(8);
         item.rare_name_id2 = reader.ReadUInt8(8);
-        for (int i = 0; i < 6; ++i) {
-            if (reader.ReadBit()) item.magical_name_ids[i] = reader.ReadUInt16(11);
+        for (int i = 0; i < 3; ++i)
+        {
+            if (reader.ReadBit())
+                item.magical_name_ids[i] = reader.ReadUInt16(11);
+            if (reader.ReadBit())
+                item.magical_name_ids[i + 3] = reader.ReadUInt16(11);
         }
         break;
-    case 7:  // Unique
+    case 7:
         item.unique_id = reader.ReadUInt16(12);
+        break;
+  default:
         break;
     }
 
-    return item;
+    if (consumeTail && !g_StatCostById.empty())
+        SkipItemRemainder(reader, item);
+
+    if (consumeTail)
+        reader.AlignToByte();
+
+    return true;
 }
 
 static void ShowItemLocationTooltip(int id, bool isSet)
@@ -4954,7 +4158,7 @@ static void ShowItemLocationTooltip(int id, bool isSet)
             else
                 ImGui::TextColored(ImVec4(0.9f, 0.15f, 0.15f, 1.0f), "Found %d Items", located);
 
-            // ── Tooltip append (safe & scoped) ──
+            // â”€â”€ Tooltip append (safe & scoped) â”€â”€
             if (ImGui::IsItemHovered())
             {
                 ImGui::BeginTooltip();
@@ -5005,8 +4209,105 @@ static int ExtractPageFromPath(const std::string& path)
     return page;
 }
 
+static void ProcessStashItemForGrail(
+    const Item& item,
+    int page,
+    int tab,
+    std::unordered_map<int, SetItemEntry*>& setById,
+    std::unordered_map<int, UniqueItemEntry*>& uniqueById,
+    int& totalItems,
+    int& setCount,
+    int& uniqueCount)
+{
+    if (item.type.empty())
+        return;
+
+    for (char c : item.type)
+    {
+        if (!std::isalnum(static_cast<unsigned char>(c)))
+            return;
+    }
+
+    // Stash files only contain stored items (mode 0) in the shared stash panel (5).
+    if (item.location_id != 0 || item.alt_position_id != 5)
+        return;
+
+    ++totalItems;
+
+    SetItemEntry* matchedSet = nullptr;
+    UniqueItemEntry* matchedUnique = nullptr;
+
+    if (item.quality == 5)
+    {
+        auto it = setById.find(item.set_id);
+        if (it != setById.end())
+        {
+            matchedSet = it->second;
+            matchedSet->collected = true;
+            matchedSet->locations.push_back({
+                page,
+                tab,
+                item.position_x + 1,
+                item.position_y + 1
+                });
+            ++setCount;
+        }
+    }
+    else if (item.quality == 7)
+    {
+        auto it = uniqueById.find(item.unique_id);
+        if (it != uniqueById.end())
+        {
+            matchedUnique = it->second;
+            matchedUnique->collected = true;
+            matchedUnique->locations.push_back({
+                page,
+                tab,
+                item.position_x + 1,
+                item.position_y + 1
+                });
+            ++uniqueCount;
+        }
+    }
+
+    if (showStashParseDebug)
+    {
+        StashParsedItemDebug dbg;
+        dbg.page = page;
+        dbg.tab = tab;
+        dbg.x = item.position_x + 1;
+        dbg.y = item.position_y + 1;
+        dbg.code = item.type;
+        dbg.quality = item.quality;
+        dbg.setId = item.set_id;
+        dbg.uniqueId = item.unique_id;
+        dbg.identified = item.identified;
+
+        if (matchedSet)
+        {
+            dbg.grailMatched = true;
+            dbg.grailName = matchedSet->name;
+        }
+        else if (matchedUnique)
+        {
+            dbg.grailMatched = true;
+            dbg.grailName = matchedUnique->name;
+        }
+        else if (item.quality == 5)
+            dbg.note = "set_id not in grail table";
+        else if (item.quality == 7)
+            dbg.note = "unique_id not in grail table";
+        else
+            dbg.note = GetQualityName(item.quality);
+
+        g_StashDebugEntries.push_back(std::move(dbg));
+    }
+}
+
 static int ParseSharedStash(const std::string& filePath, int pageNum)
 {
+    EnsureItemParseTablesLoaded();
+
     std::ifstream file(filePath, std::ios::binary | std::ios::ate);
     if (!file)
         return 1;
@@ -5037,7 +4338,7 @@ static int ParseSharedStash(const std::string& filePath, int pageNum)
     int uniqueCount = 0;
     int setCount = 0;
 
-    // Build ID → Entry Lookup Tables
+    // Build ID â†’ Entry Lookup Tables
     static std::unordered_map<int, SetItemEntry*> setById;
     static std::unordered_map<int, UniqueItemEntry*> uniqueById;
 
@@ -5089,74 +4390,60 @@ static int ParseSharedStash(const std::string& filePath, int pageNum)
             buf[jmOffset + 3] == 0)
             continue;
 
-        // Find Item Offsets
-        auto itemOffsets = FindItemOffsets(buf, jmOffset + 4, tabEnd);
-        if (itemOffsets.empty())
+        if (jmOffset + 4 >= tabEnd)
             continue;
 
-        // Parse items
-        for (size_t i = 0; i < itemOffsets.size(); ++i) {
-            const size_t offset = itemOffsets[i];
-            const size_t nextOffset =
-                (i + 1 < itemOffsets.size()) ? itemOffsets[i + 1] : tabEnd;
+        const uint16_t rootItemCount =
+            static_cast<uint16_t>(buf[jmOffset + 2]) |
+            (static_cast<uint16_t>(buf[jmOffset + 3]) << 8);
 
-            try {
-                Item item = ParseItem(
-                    buf.data() + offset,
-                    nextOffset - offset,
-                    huffman.get(),
-                    version
-                );
+        const size_t dataStart = jmOffset + 4;
+        BitReader stream(buf.data() + dataStart, tabEnd - dataStart);
+        const bool canSkipTail = !g_StatCostById.empty();
+        const int tab = static_cast<int>(tabIdx) + 1;
 
-                if (item.type.empty())
-                    continue;
+        for (uint16_t n = 0; n < rootItemCount; ++n)
+        {
+            if (!stream.HasBits(32))
+                break;
 
-                // Inline validity check
-                bool valid = true;
-                for (char c : item.type) {
-                    if (!(std::isalnum(static_cast<unsigned char>(c)))) {
-                        valid = false;
+            try
+            {
+                Item item;
+                if (!ParseItemFromReader(stream, item, version, huffman.get(), canSkipTail))
+                    break;
+
+                ProcessStashItemForGrail(item, page, tab, setById, uniqueById, totalItems, setCount, uniqueCount);
+
+                for (uint8_t s = 0; s < item.nr_of_items_in_sockets; ++s)
+                {
+                    if (!stream.HasBits(32))
                         break;
-                    }
-                }
-                if (!valid)
-                    continue;
 
-                ++totalItems;
+                    Item socketItem;
+                    if (!ParseItemFromReader(stream, socketItem, version, huffman.get(), canSkipTail))
+                        break;
 
-                // Set Items
-                if (item.quality == 5) {
-                    auto it = setById.find(item.set_id);
-                    if (it != setById.end()) {
-                        auto* s = it->second;
-                        s->collected = true;
-                        s->locations.push_back({
-                            page,
-                            static_cast<int>(tabIdx) + 1,
-                            item.position_x + 1,
-                            item.position_y + 1
-                            });
-                        ++setCount;
-                    }
-                }
-                // Unique Items
-                else if (item.quality == 7) {
-                    auto it = uniqueById.find(item.unique_id);
-                    if (it != uniqueById.end()) {
-                        auto* u = it->second;
-                        u->collected = true;
-                        u->locations.push_back({
-                            page,
-                            static_cast<int>(tabIdx) + 1,
-                            item.position_x + 1,
-                            item.position_y + 1
-                            });
-                        ++uniqueCount;
+                    if (showStashParseDebug)
+                    {
+                        StashParsedItemDebug dbg;
+                        dbg.page = page;
+                        dbg.tab = tab;
+                        dbg.x = socketItem.position_x + 1;
+                        dbg.y = socketItem.position_y + 1;
+                        dbg.code = socketItem.type;
+                        dbg.quality = socketItem.quality;
+                        dbg.setId = socketItem.set_id;
+                        dbg.uniqueId = socketItem.unique_id;
+                        dbg.identified = socketItem.identified;
+                        dbg.note = "socketed item";
+                        g_StashDebugEntries.push_back(std::move(dbg));
                     }
                 }
             }
-            catch (...) {
-                // Swallow Errors
+            catch (...)
+            {
+                break;
             }
         }
     }
@@ -5168,24 +4455,19 @@ static int ParseSharedStash(const std::string& filePath, int pageNum)
 
 void ScanStashPages()
 {
-    using clock = std::chrono::steady_clock;
-    static clock::time_point lastScan{};
-    static bool hasScanned = false;
-    static bool lastHardcore = false;
-    auto now = clock::now();
-
-    // Cooldown (30s) AND mode unchanged → skip
-    bool hardcore = IsHardcore();
-    if (hasScanned &&
-        hardcore == lastHardcore &&
-        (now - lastScan < std::chrono::seconds(30)))
-    {
+    if (!IsPlayerInGame())
         return;
-    }
 
-    hasScanned = true;
-    lastScan = now;
-    lastHardcore = hardcore;
+    if (g_StashScanInProgress)
+        return;
+
+    g_StashScanInProgress = true;
+    struct StashScanScopeGuard {
+        ~StashScanScopeGuard() { g_StashScanInProgress = false; }
+    } stashScanGuard;
+
+    g_ForceStashRescan = false;
+    const bool hardcore = IsHardcore();
     isHardcore = hardcore;
 
     // Reset Collected State
@@ -5197,6 +4479,9 @@ void ScanStashPages()
         u.collected = false;
         u.locations.clear();
     }
+
+    if (showStashParseDebug)
+        g_StashDebugEntries.clear();
 
     namespace fs = std::filesystem;
     const std::wstring stashFolder = GetSavePath() + L"\\Diablo II Resurrected\\Mods\\" + std::wstring(modName.begin(), modName.end()) + L"\\";
@@ -5242,8 +4527,17 @@ void ScanStashPages()
             });
     }
 
+    g_AvailableStashPages.clear();
+    g_AvailableStashPages.reserve(pages.size());
+    for (const auto& [pageNum, path] : pages)
+        g_AvailableStashPages.push_back(pageNum);
+
+    const int pageFilter = showStashParseDebug ? g_StashScanPageFilter : 0;
+
     for (const auto& [pageNum, path] : pages)
     {
+        if (pageFilter != 0 && pageNum != pageFilter)
+            continue;
         ParseSharedStash(path, pageNum);
     }
 
@@ -5289,7 +4583,7 @@ struct D2RHUDConfig
     std::vector<std::string> DLLsToLoad = { "D2RHUD.dll" };
     std::array<CameraPreset, 3> CameraPresets{};
     bool CameraAutoloadLastPreset = false;
-    int CameraLastPresetIndex = 0;  // 0 = Default, 1–3 = preset slot
+    int CameraLastPresetIndex = 0;  // 0 = Default, 1â€“3 = preset slot
 };
 
 std::vector<std::string> priorityOrder = {
@@ -5623,15 +4917,15 @@ bool D2RHUD::IsAnyMenuOpen() {
 
 bool D2RHUD::TryCloseMenuOnEscape()
 {
-    if (showHotkeyMenu)      { showHotkeyMenu = false; return true; }
-    if (showGrailMenu)       { showGrailMenu = false; return true; }
-    if (showLootMenu)        { showLootMenu = false; return true; }
-    if (showCameraMenu)      { showCameraMenu = false; return true; }
-    if (showMemoryMenu)      { showMemoryMenu = false; return true; }
-    if (showD2RHUDMenu)      { showD2RHUDMenu = false; return true; }
-    if (showSettingsPanel)   { showSettingsPanel = false; return true; }
+    if (showHotkeyMenu) { showHotkeyMenu = false; return true; }
+    if (showGrailMenu) { showGrailMenu = false; return true; }
+    if (showLootMenu) { showLootMenu = false; return true; }
+    if (showCameraMenu) { showCameraMenu = false; return true; }
+    if (showMemoryMenu) { showMemoryMenu = false; return true; }
+    if (showD2RHUDMenu) { showD2RHUDMenu = false; return true; }
+    if (showSettingsPanel) { showSettingsPanel = false; return true; }
     if (showHUDSettingsMenu) { showHUDSettingsMenu = false; return true; }
-    if (showMainMenu)        { showMainMenu = false; return true; }
+    if (showMainMenu) { showMainMenu = false; return true; }
     return false;
 }
 
@@ -6056,7 +5350,7 @@ static std::string GetModD2RLANFiltersDir()
         if (std::filesystem::exists(p)) return p;
         p = GetExecutableDir() + "/Mods/" + modName + "/data/" + subpath + "/filters";
         return std::filesystem::exists(p) ? p : "";
-    };
+        };
     std::string p = tryPath("D2RLAN");
     if (!p.empty()) return p;
     return tryPath("d2rlan");
@@ -6123,7 +5417,7 @@ static std::vector<std::pair<std::string, std::string>> GetSoundFilesFromBothLoc
             std::string name = entry.path().filename().string();
             out.push_back({ entry.path().string(), name });
         }
-    };
+        };
     addFromDir(GetModSoundsDir());
     addFromDir(GetModD2RLANSoundsDir());
     std::sort(out.begin(), out.end(), [](const auto& a, const auto& b) { return a.second < b.second; });
@@ -6451,7 +5745,7 @@ static bool IsVersionNewer(const std::string& a, const std::string& b)
             parts.push_back(n);
         }
         return parts;
-    };
+        };
     std::vector<int> va = parse(a), vb = parse(b);
     size_t n = (va.size() >= vb.size()) ? va.size() : vb.size();
     for (size_t i = 0; i < n; i++)
@@ -6545,7 +5839,7 @@ static bool CopyModFilterToActive(const std::string& filterName)
         auto copyIfExists = [&](const fs::path& src) {
             if (fs::exists(src)) { fs::copy_file(src, dest, fs::copy_options::overwrite_existing); return true; }
             return false;
-        };
+            };
         fs::path sub = base / filterName;
         fs::path subConfig = base / (filterName + "_config.lua");
         fs::path subLua = base / (filterName + ".lua");
@@ -6553,7 +5847,7 @@ static bool CopyModFilterToActive(const std::string& filterName)
         if (copyIfExists(subConfig)) return true;
         if (copyIfExists(subLua)) return true;
         return false;
-    };
+        };
     if (tryDir(GetModFiltersDir())) return true;
     return tryDir(GetModD2RLANFiltersDir());
 }
@@ -6937,62 +6231,62 @@ void SaveLootFilterConfig(const std::string& path)
     // Build rules block content from g_LootFilterRules (use rawLua when present, else build from fields).
     // Re-apply rule/field indentation so edited content (which may have had spacing stripped in the UI) matches the original file style.
     auto BuildRulesLines = [&defaultIndent]() -> std::vector<std::string>
-    {
-        std::string ruleIndent = defaultIndent + "    ";
-        std::string fieldIndent = ruleIndent + "    ";
-        auto trimLead = [](std::string s) {
-            size_t start = s.find_first_not_of(" \t");
-            return start != std::string::npos ? s.substr(start) : s;
-        };
-        std::vector<std::string> out;
-        out.push_back(defaultIndent + "rules = {");
-        for (size_t r = 0; r < g_LootFilterRules.size(); r++)
         {
-            const auto& rule = g_LootFilterRules[r];
-            if (!rule.rawLua.empty())
+            std::string ruleIndent = defaultIndent + "    ";
+            std::string fieldIndent = ruleIndent + "    ";
+            auto trimLead = [](std::string s) {
+                size_t start = s.find_first_not_of(" \t");
+                return start != std::string::npos ? s.substr(start) : s;
+                };
+            std::vector<std::string> out;
+            out.push_back(defaultIndent + "rules = {");
+            for (size_t r = 0; r < g_LootFilterRules.size(); r++)
             {
-                std::vector<std::string> ruleLines;
-                size_t pos = 0;
-                while (pos < rule.rawLua.size())
+                const auto& rule = g_LootFilterRules[r];
+                if (!rule.rawLua.empty())
                 {
-                    size_t next = rule.rawLua.find('\n', pos);
-                    if (next == std::string::npos) next = rule.rawLua.size();
-                    ruleLines.push_back(rule.rawLua.substr(pos, next - pos));
-                    pos = next + 1;
+                    std::vector<std::string> ruleLines;
+                    size_t pos = 0;
+                    while (pos < rule.rawLua.size())
+                    {
+                        size_t next = rule.rawLua.find('\n', pos);
+                        if (next == std::string::npos) next = rule.rawLua.size();
+                        ruleLines.push_back(rule.rawLua.substr(pos, next - pos));
+                        pos = next + 1;
+                    }
+                    for (size_t i = 0; i < ruleLines.size(); i++)
+                    {
+                        std::string line = trimLead(ruleLines[i]);
+                        bool isRuleLevel = (i == 0 || i == ruleLines.size() - 1 || line == "{" || line == "}");
+                        if (isRuleLevel)
+                            out.push_back(ruleIndent + line);
+                        else
+                            out.push_back(fieldIndent + line);
+                    }
                 }
-                for (size_t i = 0; i < ruleLines.size(); i++)
-                {
-                    std::string line = trimLead(ruleLines[i]);
-                    bool isRuleLevel = (i == 0 || i == ruleLines.size() - 1 || line == "{" || line == "}");
-                    if (isRuleLevel)
-                        out.push_back(ruleIndent + line);
-                    else
-                        out.push_back(fieldIndent + line);
-                }
-            }
-            else
-            {
-                std::string ruleIndent = "        ";
-                std::string fieldIndent = "            ";
-                std::string commentTrim = rule.comment;
-                size_t cstart = commentTrim.find_first_not_of(" \t");
-                if (cstart != std::string::npos) commentTrim = commentTrim.substr(cstart);
-                if (!commentTrim.empty())
-                    out.push_back(ruleIndent + "{ -- " + commentTrim);
                 else
-                    out.push_back(ruleIndent + "{");
-                for (size_t f = 0; f < rule.fields.size(); f++)
                 {
-                    const std::string& k = rule.fields[f].first;
-                    std::string v = rule.fields[f].second;
-                    out.push_back(fieldIndent + k + " = " + v + ",");
+                    std::string ruleIndent = "        ";
+                    std::string fieldIndent = "            ";
+                    std::string commentTrim = rule.comment;
+                    size_t cstart = commentTrim.find_first_not_of(" \t");
+                    if (cstart != std::string::npos) commentTrim = commentTrim.substr(cstart);
+                    if (!commentTrim.empty())
+                        out.push_back(ruleIndent + "{ -- " + commentTrim);
+                    else
+                        out.push_back(ruleIndent + "{");
+                    for (size_t f = 0; f < rule.fields.size(); f++)
+                    {
+                        const std::string& k = rule.fields[f].first;
+                        std::string v = rule.fields[f].second;
+                        out.push_back(fieldIndent + k + " = " + v + ",");
+                    }
+                    out.push_back(ruleIndent + (r + 1 < g_LootFilterRules.size() ? "}," : "}"));
                 }
-                out.push_back(ruleIndent + (r + 1 < g_LootFilterRules.size() ? "}," : "}"));
             }
-        }
-        out.push_back(defaultIndent + "}");
-        return out;
-    };
+            out.push_back(defaultIndent + "}");
+            return out;
+        };
 
     // Replace existing rules block in place (only when we found it); never append a second block
     if (!g_LootFilterRules.empty() && firstRulesLineIndex != (size_t)-1 && rulesEndLineIndex != (size_t)-1 && rulesEndLineIndex >= firstRulesLineIndex)
@@ -7029,7 +6323,7 @@ void LoadLootFilterLogic(const std::string& path)
             }
         }
         return false;
-    };
+        };
 
     std::ifstream file(path);
     if (file.is_open() && tryLoadVersion(file))
@@ -7248,6 +6542,8 @@ void LoadD2RHUDConfig(const std::string& path)
         d2rHUDConfig.HPRolloverDifficulty = j.value("HPRolloverDifficulty", d2rHUDConfig.HPRolloverDifficulty);
         d2rHUDConfig.SunderedMonUMods = j.value("SunderedMonUMods", d2rHUDConfig.SunderedMonUMods);
         d2rHUDConfig.SunderValue = j.value("SunderValue", d2rHUDConfig.SunderValue);
+        settings.sunderedMonUMods = d2rHUDConfig.SunderedMonUMods;
+        settings.SunderValue = d2rHUDConfig.SunderValue;
         d2rHUDConfig.MinionEquality = j.value("MinionEquality", d2rHUDConfig.MinionEquality);
         d2rHUDConfig.GambleCostControl = j.value("GambleCostControl", d2rHUDConfig.GambleCostControl);
         d2rHUDConfig.CombatLog = j.value("CombatLog", d2rHUDConfig.CombatLog);
@@ -7267,12 +6563,12 @@ void LoadD2RHUDConfig(const std::string& path)
             {
                 const auto& pj = arr[i];
                 CameraPreset preset;
-                preset.Name   = pj.value("Name", std::string{});
-                preset.Pitch  = pj.value("Pitch", 0.0f);
+                preset.Name = pj.value("Name", std::string{});
+                preset.Pitch = pj.value("Pitch", 0.0f);
                 preset.Height = pj.value("Height", 0.0f);
-                preset.Pan    = pj.value("Pan", 0.0f);
-                preset.Roll   = pj.value("Roll", 0.0f);
-                preset.Zoom   = pj.value("Zoom", 0.0f);
+                preset.Pan = pj.value("Pan", 0.0f);
+                preset.Roll = pj.value("Roll", 0.0f);
+                preset.Zoom = pj.value("Zoom", 0.0f);
                 preset.HasValues = pj.value("HasValues", true);
                 d2rHUDConfig.CameraPresets[i] = preset;
             }
@@ -7408,13 +6704,15 @@ void LoadD2RHUDConfig(const std::string& path)
                 }
                 if (arr[8].is_array() && arr[8].size() >= 4)
                     s_WindowBgColors[7] = ImVec4((float)arr[8][0], (float)arr[8][1], (float)arr[8][2], (float)arr[8][3]);
-            } else if (srcCount == 8 && orderVer == 0) {
+            }
+            else if (srcCount == 8 && orderVer == 0) {
                 for (int w = 0; w < kWindowBgCount && w < srcCount; ++w) {
                     int o = oldToNew[w];
                     if (arr[o].is_array() && arr[o].size() >= 4)
                         s_WindowBgColors[w] = ImVec4((float)arr[o][0], (float)arr[o][1], (float)arr[o][2], (float)arr[o][3]);
                 }
-            } else {
+            }
+            else {
                 for (int w = 0; w < kWindowBgCount && w < srcCount; ++w) {
                     if (arr[w].is_array() && arr[w].size() >= 4)
                         s_WindowBgColors[w] = ImVec4((float)arr[w][0], (float)arr[w][1], (float)arr[w][2], (float)arr[w][3]);
@@ -7431,12 +6729,14 @@ void LoadD2RHUDConfig(const std::string& path)
                 for (int w = 0; w < 7 && w < srcCount; ++w)
                     s_WindowBgImageOverrides[w] = arr[w].is_string() ? arr[w].get<std::string>() : "";
                 s_WindowBgImageOverrides[7] = arr[8].is_string() ? arr[8].get<std::string>() : "";
-            } else if (srcCount == 8 && orderVer == 0) {
+            }
+            else if (srcCount == 8 && orderVer == 0) {
                 for (int w = 0; w < kWindowBgCount && w < srcCount; ++w) {
                     int o = oldToNew[w];
                     s_WindowBgImageOverrides[w] = arr[o].is_string() ? arr[o].get<std::string>() : "";
                 }
-            } else {
+            }
+            else {
                 for (int w = 0; w < kWindowBgCount && w < srcCount; ++w)
                     s_WindowBgImageOverrides[w] = arr[w].is_string() ? arr[w].get<std::string>() : "";
             }
@@ -7556,12 +6856,12 @@ bool SaveFullGrailConfig(const std::string& userPath, bool isAutoBackup)
                     continue;
 
                 ordered_json pj;
-                pj["Name"]      = preset.Name;
-                pj["Pitch"]     = preset.Pitch;
-                pj["Height"]    = preset.Height;
-                pj["Pan"]       = preset.Pan;
-                pj["Roll"]      = preset.Roll;
-                pj["Zoom"]      = preset.Zoom;
+                pj["Name"] = preset.Name;
+                pj["Pitch"] = preset.Pitch;
+                pj["Height"] = preset.Height;
+                pj["Pan"] = preset.Pan;
+                pj["Roll"] = preset.Roll;
+                pj["Zoom"] = preset.Zoom;
                 pj["HasValues"] = preset.HasValues;
                 presets.push_back(pj);
             }
@@ -7837,6 +7137,9 @@ void ApplyModOverrides(const std::string& modName)
 
     if (o.SunderValue.locked)
         d2rHUDConfig.SunderValue = o.ForcedSunderValue;
+
+    settings.sunderedMonUMods = d2rHUDConfig.SunderedMonUMods;
+    settings.SunderValue = d2rHUDConfig.SunderValue;
 }
 
 const LockedValueInfo* GetLockInfo(const std::string& modName, const LockedValueInfo ModOverrideSettings::* field)
@@ -7876,11 +7179,32 @@ void ShowGrailMenu()
         // Menu just closed? Save progress including AutoBackup settings
         if (wasOpen)
             SaveFullGrailConfig(configFilePath, false);
-            
+
         wasOpen = false;
         return;
     }
+
+    const bool justOpened = !wasOpen;
     wasOpen = true;
+
+    const bool playerInGame = IsPlayerInGame();
+    static bool prevPlayerInGame = false;
+    const bool enteredGame = playerInGame && !prevPlayerInGame;
+
+    auto RequestStashScanAfterSave = []()
+        {
+            g_ForceStashRescan = true;
+            // Stash .d2i files are written asynchronously after save; scan too early clears collected state from stale files.
+            g_DeferStashScanUntil = ImGui::GetTime() + 0.5;
+        };
+
+    if (playerInGame && (justOpened || enteredGame))
+    {
+        ExecuteDebugCheatFunc("save 1");
+        RequestStashScanAfterSave();
+    }
+    else if (!playerInGame)
+        g_ForceStashRescan = false;
 
     static bool itemsLoaded = false;
 
@@ -7890,7 +7214,27 @@ void ShowGrailMenu()
         itemsLoaded = true;
     }
 
-    ScanStashPages();
+    static bool prevStashParseDebug = false;
+    static int prevStashPageFilter = 0;
+    if (playerInGame && showStashParseDebug && !prevStashParseDebug)
+        g_ForceStashRescan = true;
+    if (playerInGame && showStashParseDebug && g_StashScanPageFilter != prevStashPageFilter)
+        g_ForceStashRescan = true;
+    if (!showStashParseDebug)
+        g_StashDebugEntries.clear();
+    prevStashParseDebug = showStashParseDebug;
+    prevStashPageFilter = g_StashScanPageFilter;
+
+    static bool stashScanHardcoreInit = false;
+    static bool stashScanLastHardcore = false;
+    const bool hardcoreNow = IsHardcore();
+    if (playerInGame && stashScanHardcoreInit && hardcoreNow != stashScanLastHardcore)
+        g_ForceStashRescan = true;
+    stashScanLastHardcore = hardcoreNow;
+    stashScanHardcoreInit = true;
+    prevPlayerInGame = playerInGame;
+
+    const bool stashScanPending = playerInGame && (g_ForceStashRescan || g_StashScanInProgress);
 
     float menuScale = GetMenuScaleFactor();
     // ------- Tooltip helper -------
@@ -7906,576 +7250,795 @@ void ShowGrailMenu()
             ImGui::EndTooltip();
         };
 
-    CenterWindow(ImVec2(850, 500));
+    constexpr float kGrailHeightNormal = 500.0f;
+    float debugTableH = 0.0f;
+    float debugSectionH = 0.0f;
+    if (showStashParseDebug)
+    {
+        const float debugChromeH = 4.0f * menuScale
+            + ImGui::GetFrameHeightWithSpacing()
+            + ImGui::GetStyle().ItemSpacing.y * 2.0f;
+        debugTableH = 300.0f * menuScale;
+        const float debugGap = 8.0f * menuScale;
+        debugSectionH = debugChromeH + debugTableH + debugGap;
+    }
+
+    const float grailBaseH = kGrailHeightNormal + (showStashParseDebug ? debugSectionH / menuScale : 0.0f);
+    CenterWindow(ImVec2(850, grailBaseH));
+    ImGui::SetNextWindowSize(
+        ImVec2(850.0f * menuScale, grailBaseH * menuScale),
+        ImGuiCond_Always);
 
     ImGui::PushStyleColor(ImGuiCol_WindowBg, ShouldDrawWindowBackgroundImage(kWindowBg_Grail) ? ImVec4(0, 0, 0, 0) : s_WindowBgColors[kWindowBg_Grail]);
     PushFontSafe(3);
-    if (ImGui::Begin("Grail Tracker", &showGrailMenu, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoTitleBar))
+    const ImGuiWindowFlags grailWindowFlags =
+        ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoScrollbar;
+    if (ImGui::Begin("Grail Tracker", &showGrailMenu, grailWindowFlags))
     {
         if (ShouldDrawWindowBackgroundImage(kWindowBg_Grail))
             DrawWindowBackgroundImage(kWindowBg_Grail);
         DrawWindowTitleAndClose("Grail Tracker", &showGrailMenu);
         PopFontSafe(3);
 
-    ImGui::Separator();
-    ImGui::Dummy(ImVec2(0, 6.0f * menuScale));
+        ImGui::Separator();
+        ImGui::Dummy(ImVec2(0, 6.0f * menuScale));
 
-    // Persistent State
-    static int selectedCategory = 0;  // 0 = Sets, 1 = Uniques
-    static int selectedType = -1;     // For types later (Goal 4)
-    static int selectedSet = -1;      // For future navigation
-    static int selectedUnique = -1;
-    static char searchBuffer[128] = "";
-    
-
-    // Layout: Left Panel / Right Panel
-    ImVec2 full = ImGui::GetContentRegionAvail();
-    float leftWidth = 240.0f * menuScale;
-
-    // LEFT PANEL
-    ImGui::BeginChild("left_panel", ImVec2(leftWidth, full.y), true);
-    ImVec4 darkRed = ImVec4(0.6f, 0.1f, 0.1f, 1.0f);
-
-    // --- Search ---
-    ImGui::PushStyleColor(ImGuiCol_Text, darkRed);
-    {
-        float avail = ImGui::GetContentRegionAvail().x;
-        float textWidth = ImGui::CalcTextSize("Item Search:").x;
-        ImGui::SetCursorPosX((avail - textWidth) * 0.5f + ImGui::GetCursorPosX());
-    }
-    ImGui::Text("Item Search:");
-    ImGui::PopStyleColor();
-
-    // Center the input box under the label
-    ImGui::PushItemWidth(leftWidth - 55.0f * menuScale);
-    {
-        float inputWidth = leftWidth - 55.0f * menuScale;
-        float avail = ImGui::GetContentRegionAvail().x;
-        ImGui::SetCursorPosX((avail - inputWidth) * 0.5f + ImGui::GetCursorPosX());
-    }
-    BeginFrameBgImageRegion();
-    ImGui::InputText("##Search", searchBuffer, IM_ARRAYSIZE(searchBuffer));
-    EndFrameBgImageRegion();
-    ImGui::PopItemWidth();
-    ImGui::Dummy(ImVec2(0, 5.0f * menuScale));
-
-    // --- Filter --- Centered checkbox ---
-    {
-        const char* label = "Hide Collected";
-        ImVec2 labelSize = ImGui::CalcTextSize(label);
-        float checkboxWidth = ImGui::GetFrameHeight();
-        float totalWidth = checkboxWidth + 4 + labelSize.x;
-        float avail = ImGui::GetContentRegionAvail().x;
-        ImGui::SetCursorPosX((avail - totalWidth) * 0.5f + ImGui::GetCursorPosX());
-    }
-    ThemeCheckbox("Hide Collected", &showCollected);
-
-    // --- Show Excluded --- Centered checkbox ---
-    {
-        const char* label = "Show Excluded";
-        ImVec2 labelSize = ImGui::CalcTextSize(label);
-        float checkboxWidth = ImGui::GetFrameHeight();
-        float totalWidth = checkboxWidth + 4 + labelSize.x;
-        float avail = ImGui::GetContentRegionAvail().x;
-
-        // center horizontally
-        ImGui::SetCursorPosX((avail - totalWidth) * 0.5f + ImGui::GetCursorPosX());
-    }
-    ThemeCheckbox("Show Excluded", &showExcluded);
-
-    if (ImGui::IsItemHovered())
-        ShowOffsetTooltip("displays excluded items in the list, but with grey text");
-
-    // --- Show Base Codes --- Centered ---
-    {
-        const char* label = "Show Base Codes";
-        ImVec2 labelSize = ImGui::CalcTextSize(label);
-        float checkboxWidth = ImGui::GetFrameHeight();
-        float totalWidth = checkboxWidth + 4 + labelSize.x;
-        float avail = ImGui::GetContentRegionAvail().x;
-
-        ImGui::SetCursorPosX((avail - totalWidth) * 0.5f + ImGui::GetCursorPosX());
-    }
-    ThemeCheckbox("Show Base Codes", &showBaseCodes);
-    if (ImGui::IsItemHovered())
-        ShowOffsetTooltip("Show the raw base item codes in the list.");
-
-    // --- Show Base Names --- Centered ---
-    {
-        const char* label = "Show Base Names";
-        ImVec2 labelSize = ImGui::CalcTextSize(label);
-        float checkboxWidth = ImGui::GetFrameHeight();
-        float totalWidth = checkboxWidth + 4 + labelSize.x;
-        float avail = ImGui::GetContentRegionAvail().x;
-
-        ImGui::SetCursorPosX((avail - totalWidth) * 0.5f + ImGui::GetCursorPosX());
-    }
-    ThemeCheckbox("Show Base Names", &showBaseNames);
-    if (ImGui::IsItemHovered())
-        ShowOffsetTooltip("Show the readable base item names in the list.");
-
-    // --- Show Duplicates --- Centered ---
-    {
-        const char* label = "Show Duplicates";
-        ImVec2 labelSize = ImGui::CalcTextSize(label);
-        float checkboxWidth = ImGui::GetFrameHeight();
-        float totalWidth = checkboxWidth + 4 + labelSize.x;
-
-        // center horizontally
-        float avail = ImGui::GetContentRegionAvail().x;
-        ImGui::SetCursorPosX((avail - totalWidth) * 0.5f + ImGui::GetCursorPosX());
-
-        // render checkbox
-        ThemeCheckbox(label, &showDuplicates);
-
-        // tooltip
-        if (ImGui::IsItemHovered())
-            ShowOffsetTooltip("Show duplicate items found in your stash");
-    }
+        // Persistent State
+        static int selectedCategory = 0;  // 0 = Sets, 1 = Uniques
+        static int selectedType = -1;     // For types later (Goal 4)
+        static int selectedSet = -1;      // For future navigation
+        static int selectedUnique = -1;
+        static char searchBuffer[128] = "";
 
 
-    // --- Backup Section ---
-    ImGui::Dummy(ImVec2(0, 3));
-    ImGui::Separator();
-    ImGui::Dummy(ImVec2(0, 3));
+        // Layout: Left Panel / Right Panel (+ optional debug strip at bottom)
+        ImVec2 full = ImGui::GetContentRegionAvail();
+        ImVec2 mainAvail = full;
+        if (showStashParseDebug)
+            mainAvail.y = (full.y > debugSectionH) ? (full.y - debugSectionH) : 0.0f;
+        float leftWidth = 240.0f * menuScale;
 
-    ImGui::PushStyleColor(ImGuiCol_Text, darkRed);
-    {
-        float avail = ImGui::GetContentRegionAvail().x;
-        float textWidth = ImGui::CalcTextSize("Backup Path:").x;
-        ImGui::SetCursorPosX((avail - textWidth) * 0.5f + ImGui::GetCursorPosX());
-    }
-    ImGui::Text("Backup Path:");
-    ImGui::PopStyleColor();
+        // LEFT PANEL
+        ImGui::BeginChild("left_panel", ImVec2(leftWidth, mainAvail.y), true);
+        ImVec4 darkRed = ImVec4(0.6f, 0.1f, 0.1f, 1.0f);
 
-    ImGui::PushItemWidth(leftWidth - 55.0f * menuScale);
-    {
-        float inputWidth = leftWidth - 55;
-        float avail = ImGui::GetContentRegionAvail().x;
-        ImGui::SetCursorPosX((avail - inputWidth) * 0.5f + ImGui::GetCursorPosX());
-    }
-    BeginFrameBgImageRegion();
-    ImGui::InputText("##BackupPath", backupPath, IM_ARRAYSIZE(backupPath));
-    EndFrameBgImageRegion();
-    ImGui::PopItemWidth();
-    ImGui::Dummy(ImVec2(0, 2));
-    ImGui::Separator();
-    ImGui::Dummy(ImVec2(0, 2));
-
-    // --- Centered Auto-Backup Checkboxes Block ---
-    const char* labels[] = { "Auto-Backups", "Use Timestamps", "Overwrite Old" };
-    float widest = 0.0f;
-    for (auto label : labels) {
-        float w = ImGui::CalcTextSize(label).x + ImGui::GetStyle().FramePadding.x * 2 + 20;
-        if (w > widest) widest = w;
-    }
-    float avail = ImGui::GetContentRegionAvail().x;
-    float startX = (avail - widest) * 0.5f + ImGui::GetCursorPosX();
-
-    ImGui::SetCursorPosX(startX);
-    ThemeCheckbox("Auto-Backups", &autoBackups);
-    ImGui::BeginDisabled(!autoBackups);
-    if (ImGui::IsItemHovered()) ShowOffsetTooltip("Enable automatic backups on the specified interval.");
-
-    ImGui::SetCursorPosX(startX);
-    if (ThemeCheckbox("Use Timestamps", &backupWithTimestamps))
-        if (backupWithTimestamps) overwriteOldBackup = false;
-    if (ImGui::IsItemHovered()) ShowOffsetTooltip("Append current date/time to backup filename to avoid overwriting.");
-
-    ImGui::SetCursorPosX(startX);
-    if (ThemeCheckbox("Overwrite Old", &overwriteOldBackup))
-        if (overwriteOldBackup) backupWithTimestamps = false;
-    if (ImGui::IsItemHovered()) ShowOffsetTooltip("Overwrite previous backup file instead of creating a new one.");
-
-    ImGui::Dummy(ImVec2(0, 2));
-    ImGui::Separator();
-    ImGui::Dummy(ImVec2(0, 2));
-
-    // --- Centered Backup Interval ---
-    ImGui::PushStyleColor(ImGuiCol_Text, darkRed);
-    const char* intervalLabel = "Backup Interval:";
-    ImVec2 labelSize = ImGui::CalcTextSize(intervalLabel);
-    avail = ImGui::GetContentRegionAvail().x;
-    ImGui::SetCursorPosX((avail - labelSize.x) * 0.5f + ImGui::GetCursorPosX());
-    ImGui::Text("%s", intervalLabel);
-    ImGui::PopStyleColor();
-
-    float inputWidth = 100;
-    avail = ImGui::GetContentRegionAvail().x;
-    ImGui::SetCursorPosX((avail - inputWidth) * 0.5f + ImGui::GetCursorPosX());
-    ImGui::SetNextItemWidth(inputWidth);
-    BeginFrameBgImageRegion();
-    ImGui::InputInt("##BackupInterval", &backupIntervalMinutes);
-    EndFrameBgImageRegion();
-    if (ImGui::IsItemHovered())
-        ShowOffsetTooltip("How often to save automatic backups.\nMeasured in minutes.");
-
-    ImGui::EndDisabled();
-    ImGui::Dummy(ImVec2(0, 3));
-    ImGui::Separator();
-    ImGui::Dummy(ImVec2(0, 3));
-    ImGui::EndChild();
-
-    // RIGHT PANEL
-    ImGui::SameLine();
-    ImGui::BeginChild("right_panel", ImVec2(0, full.y), true);
-
-    std::string searchStr = searchBuffer;
-    auto Trim = [](std::string s) {
-        s.erase(s.begin(), std::find_if(s.begin(), s.end(),
-            [](unsigned char c) { return !std::isspace(c); }));
-        s.erase(std::find_if(s.rbegin(), s.rend(),
-            [](unsigned char c) { return !std::isspace(c); }).base(), s.end());
-        return s;
-        };
-
-    // --- Category Buttons (Sets / Uniques) ---
-    auto CategoryButton = [&](const char* label, int id)
+        // --- Search ---
+        ImGui::PushStyleColor(ImGuiCol_Text, darkRed);
         {
-            bool selected = (selectedCategory == id);
-            ImVec4 textColor = (id == 0) ? ImVec4(0.4f, 1.0f, 0.4f, 1.0f) : ImVec4(1.0f, 0.84f, 0.2f, 1.0f);
+            float avail = ImGui::GetContentRegionAvail().x;
+            float textWidth = ImGui::CalcTextSize("Item Search:").x;
+            ImGui::SetCursorPosX((avail - textWidth) * 0.5f + ImGui::GetCursorPosX());
+        }
+        ImGui::Text("Item Search:");
+        ImGui::PopStyleColor();
 
-            ImGui::PushStyleColor(ImGuiCol_Text, textColor);
+        // Center the input box under the label
+        ImGui::PushItemWidth(leftWidth - 55.0f * menuScale);
+        {
+            float inputWidth = leftWidth - 55.0f * menuScale;
+            float avail = ImGui::GetContentRegionAvail().x;
+            ImGui::SetCursorPosX((avail - inputWidth) * 0.5f + ImGui::GetCursorPosX());
+        }
+        BeginFrameBgImageRegion();
+        ImGui::InputText("##Search", searchBuffer, IM_ARRAYSIZE(searchBuffer));
+        EndFrameBgImageRegion();
+        ImGui::PopItemWidth();
+        ImGui::Dummy(ImVec2(0, 5.0f * menuScale));
 
-            // Use Button instead of Selectable to avoid full-width
-            if (ThemeButton(label, ImVec2(0, 0)))
-                selectedCategory = id;
+        // --- Filter --- Centered checkbox ---
+        {
+            const char* label = "Hide Collected";
+            ImVec2 labelSize = ImGui::CalcTextSize(label);
+            float checkboxWidth = ImGui::GetFrameHeight();
+            float totalWidth = checkboxWidth + 4 + labelSize.x;
+            float avail = ImGui::GetContentRegionAvail().x;
+            ImGui::SetCursorPosX((avail - totalWidth) * 0.5f + ImGui::GetCursorPosX());
+        }
+        ThemeCheckbox("Hide Collected", &showCollected);
 
-            ImGui::PopStyleColor();
+        // --- Show Excluded --- Centered checkbox ---
+        {
+            const char* label = "Show Excluded";
+            ImVec2 labelSize = ImGui::CalcTextSize(label);
+            float checkboxWidth = ImGui::GetFrameHeight();
+            float totalWidth = checkboxWidth + 4 + labelSize.x;
+            float avail = ImGui::GetContentRegionAvail().x;
 
-            // Tooltip for collection progress
+            // center horizontally
+            ImGui::SetCursorPosX((avail - totalWidth) * 0.5f + ImGui::GetCursorPosX());
+        }
+        ThemeCheckbox("Show Excluded", &showExcluded);
+
+        if (ImGui::IsItemHovered())
+            ShowOffsetTooltip("displays excluded items in the list, but with grey text");
+
+        // --- Show Base Codes --- Centered ---
+        {
+            const char* label = "Show Base Codes";
+            ImVec2 labelSize = ImGui::CalcTextSize(label);
+            float checkboxWidth = ImGui::GetFrameHeight();
+            float totalWidth = checkboxWidth + 4 + labelSize.x;
+            float avail = ImGui::GetContentRegionAvail().x;
+
+            ImGui::SetCursorPosX((avail - totalWidth) * 0.5f + ImGui::GetCursorPosX());
+        }
+        ThemeCheckbox("Show Base Codes", &showBaseCodes);
+        if (ImGui::IsItemHovered())
+            ShowOffsetTooltip("Show the raw base item codes in the list.");
+
+        // --- Show Base Names --- Centered ---
+        {
+            const char* label = "Show Base Names";
+            ImVec2 labelSize = ImGui::CalcTextSize(label);
+            float checkboxWidth = ImGui::GetFrameHeight();
+            float totalWidth = checkboxWidth + 4 + labelSize.x;
+            float avail = ImGui::GetContentRegionAvail().x;
+
+            ImGui::SetCursorPosX((avail - totalWidth) * 0.5f + ImGui::GetCursorPosX());
+        }
+        ThemeCheckbox("Show Base Names", &showBaseNames);
+        if (ImGui::IsItemHovered())
+            ShowOffsetTooltip("Show the readable base item names in the list.");
+
+        // --- Show Duplicates --- Centered ---
+        {
+            const char* label = "Show Duplicates";
+            ImVec2 labelSize = ImGui::CalcTextSize(label);
+            float checkboxWidth = ImGui::GetFrameHeight();
+            float totalWidth = checkboxWidth + 4 + labelSize.x;
+
+            // center horizontally
+            float avail = ImGui::GetContentRegionAvail().x;
+            ImGui::SetCursorPosX((avail - totalWidth) * 0.5f + ImGui::GetCursorPosX());
+
+            // render checkbox
+            ThemeCheckbox(label, &showDuplicates);
+
+            // tooltip
             if (ImGui::IsItemHovered())
+                ShowOffsetTooltip("Show duplicate items found in your stash");
+        }
+
+        // --- Debug view ---
+        {
+            const char* label = "Debug View";
+            ImVec2 labelSize = ImGui::CalcTextSize(label);
+            float checkboxWidth = ImGui::GetFrameHeight();
+            float totalWidth = checkboxWidth + 4 + labelSize.x;
+            float avail = ImGui::GetContentRegionAvail().x;
+            ImGui::SetCursorPosX((avail - totalWidth) * 0.5f + ImGui::GetCursorPosX());
+        }
+        ThemeCheckbox("Debug View", &showStashParseDebug);
+        if (ImGui::IsItemHovered())
+            ShowOffsetTooltip("Show parsed stash item codes and set/unique IDs from .d2i files (for troubleshooting grail matching).");
+
+        // --- Backup Section ---
+        ImGui::Dummy(ImVec2(0, 3));
+        ImGui::Separator();
+        ImGui::Dummy(ImVec2(0, 3));
+
+        ImGui::PushStyleColor(ImGuiCol_Text, darkRed);
+        {
+            float avail = ImGui::GetContentRegionAvail().x;
+            float textWidth = ImGui::CalcTextSize("Backup Path:").x;
+            ImGui::SetCursorPosX((avail - textWidth) * 0.5f + ImGui::GetCursorPosX());
+        }
+        ImGui::Text("Backup Path:");
+        ImGui::PopStyleColor();
+
+        ImGui::PushItemWidth(leftWidth - 55.0f * menuScale);
+        {
+            float inputWidth = leftWidth - 55;
+            float avail = ImGui::GetContentRegionAvail().x;
+            ImGui::SetCursorPosX((avail - inputWidth) * 0.5f + ImGui::GetCursorPosX());
+        }
+        BeginFrameBgImageRegion();
+        ImGui::InputText("##BackupPath", backupPath, IM_ARRAYSIZE(backupPath));
+        EndFrameBgImageRegion();
+        ImGui::PopItemWidth();
+        ImGui::Dummy(ImVec2(0, 2));
+        ImGui::Separator();
+        ImGui::Dummy(ImVec2(0, 2));
+
+        // --- Centered Auto-Backup Checkboxes Block ---
+        const char* labels[] = { "Auto-Backups", "Use Timestamps", "Overwrite Old" };
+        float widest = 0.0f;
+        for (auto label : labels) {
+            float w = ImGui::CalcTextSize(label).x + ImGui::GetStyle().FramePadding.x * 2 + 20;
+            if (w > widest) widest = w;
+        }
+        float avail = ImGui::GetContentRegionAvail().x;
+        float startX = (avail - widest) * 0.5f + ImGui::GetCursorPosX();
+
+        ImGui::SetCursorPosX(startX);
+        ThemeCheckbox("Auto-Backups", &autoBackups);
+        ImGui::BeginDisabled(!autoBackups);
+        if (ImGui::IsItemHovered()) ShowOffsetTooltip("Enable automatic backups on the specified interval.");
+
+        ImGui::SetCursorPosX(startX);
+        if (ThemeCheckbox("Use Timestamps", &backupWithTimestamps))
+            if (backupWithTimestamps) overwriteOldBackup = false;
+        if (ImGui::IsItemHovered()) ShowOffsetTooltip("Append current date/time to backup filename to avoid overwriting.");
+
+        ImGui::SetCursorPosX(startX);
+        if (ThemeCheckbox("Overwrite Old", &overwriteOldBackup))
+            if (overwriteOldBackup) backupWithTimestamps = false;
+        if (ImGui::IsItemHovered()) ShowOffsetTooltip("Overwrite previous backup file instead of creating a new one.");
+
+        ImGui::Dummy(ImVec2(0, 2));
+        ImGui::Separator();
+        ImGui::Dummy(ImVec2(0, 2));
+
+        // --- Centered Backup Interval ---
+        ImGui::PushStyleColor(ImGuiCol_Text, darkRed);
+        const char* intervalLabel = "Backup Interval:";
+        ImVec2 labelSize = ImGui::CalcTextSize(intervalLabel);
+        avail = ImGui::GetContentRegionAvail().x;
+        ImGui::SetCursorPosX((avail - labelSize.x) * 0.5f + ImGui::GetCursorPosX());
+        ImGui::Text("%s", intervalLabel);
+        ImGui::PopStyleColor();
+
+        float inputWidth = 100;
+        avail = ImGui::GetContentRegionAvail().x;
+        ImGui::SetCursorPosX((avail - inputWidth) * 0.5f + ImGui::GetCursorPosX());
+        ImGui::SetNextItemWidth(inputWidth);
+        BeginFrameBgImageRegion();
+        ImGui::InputInt("##BackupInterval", &backupIntervalMinutes);
+        EndFrameBgImageRegion();
+        if (ImGui::IsItemHovered())
+            ShowOffsetTooltip("How often to save automatic backups.\nMeasured in minutes.");
+
+        ImGui::EndDisabled();
+        ImGui::Dummy(ImVec2(0, 3));
+        ImGui::Separator();
+        ImGui::Dummy(ImVec2(0, 3));
+        ImGui::EndChild();
+
+        // RIGHT PANEL
+        ImGui::SameLine();
+        ImGui::BeginChild("right_panel", ImVec2(0, mainAvail.y), true);
+
+        if (!playerInGame)
+        {
+            const char* offlineMsg = "Enter a game to scan your stash.";
+            ImVec2 panelAvail = ImGui::GetContentRegionAvail();
+            ImVec2 textSize = ImGui::CalcTextSize(offlineMsg);
+            ImGui::SetCursorPos(ImVec2(
+                (panelAvail.x - textSize.x) * 0.5f,
+                (panelAvail.y - textSize.y) * 0.5f));
+            ImGui::PushStyleColor(ImGuiCol_Text, darkRed);
+            ImGui::TextUnformatted(offlineMsg);
+            ImGui::PopStyleColor();
+        }
+        else if (stashScanPending)
+        {
+            const char* scanMsg = "Scanning Stash...";
+            ImVec2 panelAvail = ImGui::GetContentRegionAvail();
+            ImVec2 textSize = ImGui::CalcTextSize(scanMsg);
+            ImGui::SetCursorPos(ImVec2(
+                (panelAvail.x - textSize.x) * 0.5f,
+                (panelAvail.y - textSize.y) * 0.5f));
+            ImGui::PushStyleColor(ImGuiCol_Text, darkRed);
+            ImGui::TextUnformatted(scanMsg);
+            ImGui::PopStyleColor();
+        }
+        else
+        {
+
+        std::string searchStr = searchBuffer;
+        auto Trim = [](std::string s) {
+            s.erase(s.begin(), std::find_if(s.begin(), s.end(),
+                [](unsigned char c) { return !std::isspace(c); }));
+            s.erase(std::find_if(s.rbegin(), s.rend(),
+                [](unsigned char c) { return !std::isspace(c); }).base(), s.end());
+            return s;
+            };
+
+        // --- Category Buttons (Sets / Uniques) ---
+        auto CategoryButton = [&](const char* label, int id)
             {
-                ImVec2 mousePos = ImGui::GetIO().MousePos;
-                ImGui::SetNextWindowPos(ImVec2(mousePos.x + 70, mousePos.y), ImGuiCond_Always);
-                ImGui::BeginTooltip();
+                bool selected = (selectedCategory == id);
+                ImVec4 textColor = (id == 0) ? ImVec4(0.4f, 1.0f, 0.4f, 1.0f) : ImVec4(1.0f, 0.84f, 0.2f, 1.0f);
 
-                ImVec4 labelColor = ImVec4(0.6f, 0.8f, 1.0f, 1.0f);
-                ImVec4 valueColor = ImVec4(1.0f, 1.0f, 1.0f, 1.0f);
+                ImGui::PushStyleColor(ImGuiCol_Text, textColor);
 
-                if (id == 0) // Sets
+                // Use Button instead of Selectable to avoid full-width
+                if (ThemeButton(label, ImVec2(0, 0)))
+                    selectedCategory = id;
+
+                ImGui::PopStyleColor();
+
+                // Tooltip for collection progress
+                if (ImGui::IsItemHovered())
                 {
-                    std::unordered_map<std::string, std::pair<int, int>> setProgress;
-                    for (auto& s : g_SetItems)
+                    ImVec2 mousePos = ImGui::GetIO().MousePos;
+                    ImGui::SetNextWindowPos(ImVec2(mousePos.x + 70, mousePos.y), ImGuiCond_Always);
+                    ImGui::BeginTooltip();
+
+                    ImVec4 labelColor = ImVec4(0.6f, 0.8f, 1.0f, 1.0f);
+                    ImVec4 valueColor = ImVec4(1.0f, 1.0f, 1.0f, 1.0f);
+
+                    if (id == 0) // Sets
                     {
-                        auto& p = setProgress[s.setName];
-                        p.second++;
-                        if (s.collected) p.first++;
+                        std::unordered_map<std::string, std::pair<int, int>> setProgress;
+                        for (auto& s : g_SetItems)
+                        {
+                            auto& p = setProgress[s.setName];
+                            p.second++;
+                            if (s.collected) p.first++;
+                        }
+
+                        int collectedSets = 0;
+                        for (auto& [name, p] : setProgress)
+                            if (p.first == p.second)
+                                collectedSets++;
+
+                        int totalSets = (int)setProgress.size();
+                        int collectedItems = 0;
+                        for (auto& s : g_SetItems) if (s.collected) collectedItems++;
+                        int totalItems = (int)g_SetItems.size();
+
+                        ImGui::PushStyleColor(ImGuiCol_Text, labelColor);
+                        ImGui::Text("Items Collected:");
+                        ImGui::PopStyleColor();
+                        ImGui::SameLine();
+                        ImGui::PushStyleColor(ImGuiCol_Text, valueColor);
+                        ImGui::Text("%d/%d", collectedItems, totalItems);
+                        ImGui::PopStyleColor();
+
+                        ImGui::PushStyleColor(ImGuiCol_Text, labelColor);
+                        ImGui::Text("Sets Completed:");
+                        ImGui::PopStyleColor();
+                        ImGui::SameLine();
+                        ImGui::PushStyleColor(ImGuiCol_Text, valueColor);
+                        ImGui::Text("%d/%d", collectedSets, totalSets);
+                        ImGui::PopStyleColor();
+                    }
+                    else // Uniques
+                    {
+                        int collectedItems = 0;
+                        for (auto& u : g_UniqueItems) if (u.collected) collectedItems++;
+                        int totalItems = (int)g_UniqueItems.size();
+
+                        ImGui::PushStyleColor(ImGuiCol_Text, labelColor);
+                        ImGui::Text("Unique Items:");
+                        ImGui::PopStyleColor();
+                        ImGui::SameLine();
+                        ImGui::PushStyleColor(ImGuiCol_Text, valueColor);
+                        ImGui::Text("%d/%d", collectedItems, totalItems);
+                        ImGui::PopStyleColor();
                     }
 
-                    int collectedSets = 0;
-                    for (auto& [name, p] : setProgress)
-                        if (p.first == p.second)
-                            collectedSets++;
-
-                    int totalSets = (int)setProgress.size();
-                    int collectedItems = 0;
-                    for (auto& s : g_SetItems) if (s.collected) collectedItems++;
-                    int totalItems = (int)g_SetItems.size();
-
-                    ImGui::PushStyleColor(ImGuiCol_Text, labelColor);
-                    ImGui::Text("Items Collected:");
-                    ImGui::PopStyleColor();
-                    ImGui::SameLine();
-                    ImGui::PushStyleColor(ImGuiCol_Text, valueColor);
-                    ImGui::Text("%d/%d", collectedItems, totalItems);
-                    ImGui::PopStyleColor();
-
-                    ImGui::PushStyleColor(ImGuiCol_Text, labelColor);
-                    ImGui::Text("Sets Completed:");
-                    ImGui::PopStyleColor();
-                    ImGui::SameLine();
-                    ImGui::PushStyleColor(ImGuiCol_Text, valueColor);
-                    ImGui::Text("%d/%d", collectedSets, totalSets);
-                    ImGui::PopStyleColor();
+                    ImGui::EndTooltip();
                 }
-                else // Uniques
-                {
-                    int collectedItems = 0;
-                    for (auto& u : g_UniqueItems) if (u.collected) collectedItems++;
-                    int totalItems = (int)g_UniqueItems.size();
+            };
 
-                    ImGui::PushStyleColor(ImGuiCol_Text, labelColor);
-                    ImGui::Text("Unique Items:");
-                    ImGui::PopStyleColor();
-                    ImGui::SameLine();
-                    ImGui::PushStyleColor(ImGuiCol_Text, valueColor);
-                    ImGui::Text("%d/%d", collectedItems, totalItems);
-                    ImGui::PopStyleColor();
-                }
+        // Sets button
+        CategoryButton("Sets", 0);
 
-                ImGui::EndTooltip();
-            }
-        };
+        // Compute button widths
+        float setsWidth = ImGui::CalcTextSize("Sets").x + ImGui::GetStyle().FramePadding.x * 2;
+        float uniquesWidth = ImGui::CalcTextSize("Uniques").x + ImGui::GetStyle().FramePadding.x * 2;
+        float panelWidth = ImGui::GetContentRegionAvail().x;
 
-    // Sets button
-    CategoryButton("Sets", 0);
+        // Compute label width
+        std::string trackerLabel = "<  Choose your collection type  >";
+        float labelWidth = ImGui::CalcTextSize(trackerLabel.c_str()).x;
+        float spacing = (panelWidth - setsWidth - uniquesWidth - labelWidth - 25) / 2.0f;
 
-    // Compute button widths
-    float setsWidth = ImGui::CalcTextSize("Sets").x + ImGui::GetStyle().FramePadding.x * 2;
-    float uniquesWidth = ImGui::CalcTextSize("Uniques").x + ImGui::GetStyle().FramePadding.x * 2;
-    float panelWidth = ImGui::GetContentRegionAvail().x;
+        // Move cursor after Sets button + spacing
+        ImGui::SameLine();
+        ImGui::Dummy(ImVec2(spacing, 0));
+        ImGui::SameLine();
 
-    // Compute label width
-    std::string trackerLabel = "<  Choose your collection type  >";
-    float labelWidth = ImGui::CalcTextSize(trackerLabel.c_str()).x;
-    float spacing = (panelWidth - setsWidth - uniquesWidth - labelWidth - 25) / 2.0f;
-
-    // Move cursor after Sets button + spacing
-    ImGui::SameLine();
-    ImGui::Dummy(ImVec2(spacing, 0));
-    ImGui::SameLine();
-
-    // Draw the label
-    ImGui::PushStyleColor(ImGuiCol_Text, darkRed);
-    ImGui::Text("%s", trackerLabel.c_str());
-    ImGui::PopStyleColor();
-
-    // Keep Uniques button on same line, at the right
-    ImGui::SameLine(panelWidth - uniquesWidth + 10);
-    CategoryButton("Uniques", 1);
-
-    ImGui::Dummy(ImVec2(0, 5));
-    ImGui::Separator();
-    ImGui::Dummy(ImVec2(0, 5));
-
-    // --- Display the selected list ---
-    if (selectedCategory == 0)
-    {
-        // SET ITEM LIST (GROUPED BY SET NAME)
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.0f, 0.988f, 0.0f, 1.0f));
-        ImGui::Text("Set Items");
+        // Draw the label
+        ImGui::PushStyleColor(ImGuiCol_Text, darkRed);
+        ImGui::Text("%s", trackerLabel.c_str());
         ImGui::PopStyleColor();
 
-        // Right-aligned mode label on the SAME line
-        const char* modeText = IsHardcore() ? "[Hardcore]" : "[Softcore]";
-        float right = ImGui::GetWindowContentRegionMax().x;
-        float textWidth = ImGui::CalcTextSize(modeText).x;
+        // Keep Uniques button on same line, at the right
+        ImGui::SameLine(panelWidth - uniquesWidth + 10);
+        CategoryButton("Uniques", 1);
 
-        // Move cursor to right edge minus text width
-        ImGui::SameLine(right - textWidth);
-        ImGui::TextUnformatted(modeText);
-
+        ImGui::Dummy(ImVec2(0, 5));
         ImGui::Separator();
-        ImGui::Dummy(ImVec2(0, 4));
+        ImGui::Dummy(ImVec2(0, 5));
 
-        // Build map of sets with filters
-        std::unordered_map<std::string, std::vector<SetItemEntry*>> sets;
-        for (auto& s : g_SetItems)
+        // --- Display the selected list ---
+        if (selectedCategory == 0)
         {
-            // FILTERS
-            if (!searchStr.empty() &&
-                !CaseInsensitiveContains(s.name, searchStr) &&
-                !CaseInsensitiveContains(s.setName, searchStr))
-                continue;
+            // SET ITEM LIST (GROUPED BY SET NAME)
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.0f, 0.988f, 0.0f, 1.0f));
+            ImGui::Text("Set Items");
+            ImGui::PopStyleColor();
 
-            if (showCollected && s.collected)
-                continue;
+            // Right-aligned mode label on the SAME line
+            const char* modeText = IsHardcore() ? "[Hardcore]" : "[Softcore]";
+            float right = ImGui::GetWindowContentRegionMax().x;
+            float textWidth = ImGui::CalcTextSize(modeText).x;
 
-            sets[s.setName].push_back(&s);
-        }
+            // Move cursor to right edge minus text width
+            ImGui::SameLine(right - textWidth);
+            ImGui::TextUnformatted(modeText);
 
-        // Collect set names and sort alphabetically
-        std::vector<std::string> sortedSetNames;
-        for (auto& [setName, items] : sets)
-            sortedSetNames.push_back(setName);
+            ImGui::Separator();
+            ImGui::Dummy(ImVec2(0, 4));
 
-        std::sort(sortedSetNames.begin(), sortedSetNames.end());
-
-        // Display sets
-        for (auto& setName : sortedSetNames)
-        {
-            auto& items = sets[setName];
-
-            // Filter items within this set
-            std::vector<SetItemEntry*> visibleItems;
-            for (auto* s : items)
+            // Build map of sets with filters
+            std::unordered_map<std::string, std::vector<SetItemEntry*>> sets;
+            for (auto& s : g_SetItems)
             {
-                // Show Duplicates filter: only keep items with duplicates
-                if (showDuplicates && s->locations.size() <= 1)
+                // FILTERS
+                if (!searchStr.empty() &&
+                    !CaseInsensitiveContains(s.name, searchStr) &&
+                    !CaseInsensitiveContains(s.setName, searchStr))
                     continue;
 
-                visibleItems.push_back(s);
+                if (showCollected && s.collected)
+                    continue;
+
+                sets[s.setName].push_back(&s);
             }
 
-            // Skip this set if no items to display
-            if (visibleItems.empty())
-                continue;
+            // Collect set names and sort alphabetically
+            std::vector<std::string> sortedSetNames;
+            for (auto& [setName, items] : sets)
+                sortedSetNames.push_back(setName);
 
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.0f, 0.988f, 0.0f, 1.0f));
-            if (ImGui::TreeNode(setName.c_str()))
+            std::sort(sortedSetNames.begin(), sortedSetNames.end());
+
+            // Display sets
+            for (auto& setName : sortedSetNames)
             {
-                ImGui::PopStyleColor();
+                auto& items = sets[setName];
 
-                for (auto* s : visibleItems)
+                // Filter items within this set
+                std::vector<SetItemEntry*> visibleItems;
+                for (auto* s : items)
                 {
-                    std::string label;
-                    if (showBaseCodes && showBaseNames)
-                        label = s->name + " (" + s->code + ", " + s->itemName + ")";
-                    else if (showBaseCodes)
-                        label = s->name + " (" + s->code + ")";
-                    else if (showBaseNames)
-                        label = s->name + " (" + s->itemName + ")";
-                    else
-                        label = s->name;
+                    // Show Duplicates filter: only keep items with duplicates
+                    if (showDuplicates && s->locations.size() <= 1)
+                        continue;
 
-                    bool* checked = &s->collected;
-
-                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.0f, 0.988f, 0.0f, 1.0f));
-                    ThemeCheckbox(label.c_str(), checked);
-
-                    if (ImGui::IsItemHovered())
-                        ShowItemLocationTooltip(s->id, true);
-
-                    ImGui::PopStyleColor();
+                    visibleItems.push_back(s);
                 }
 
-                ImGui::TreePop();
-            }
-            else
-            {
-                ImGui::PopStyleColor();
+                // Skip this set if no items to display
+                if (visibleItems.empty())
+                    continue;
+
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.0f, 0.988f, 0.0f, 1.0f));
+                if (ImGui::TreeNode(setName.c_str()))
+                {
+                    ImGui::PopStyleColor();
+
+                    for (auto* s : visibleItems)
+                    {
+                        std::string label;
+                        if (showBaseCodes && showBaseNames)
+                            label = s->name + " (" + s->code + ", " + s->itemName + ")";
+                        else if (showBaseCodes)
+                            label = s->name + " (" + s->code + ")";
+                        else if (showBaseNames)
+                            label = s->name + " (" + s->itemName + ")";
+                        else
+                            label = s->name;
+
+                        bool* checked = &s->collected;
+
+                        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.0f, 0.988f, 0.0f, 1.0f));
+                        ThemeCheckbox(label.c_str(), checked);
+
+                        if (ImGui::IsItemHovered())
+                            ShowItemLocationTooltip(s->id, true);
+
+                        ImGui::PopStyleColor();
+                    }
+
+                    ImGui::TreePop();
+                }
+                else
+                {
+                    ImGui::PopStyleColor();
+                }
             }
         }
-    }
-    else
-    {
-        // UNIQUE ITEM LIST
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.780f, 0.702f, 0.467f, 1.0f));
-        ImGui::Text("Unique Items");
-
-        // Button for excluded items
-        ImGui::SameLine();
-        if (ImGui::SmallButton("Excluded"))
-            ImGui::OpenPopup("ExcludedItemsPopup");
-
-        ImGui::PopStyleColor();
-
-        // Right-aligned mode label on the SAME line
-        const char* modeText = IsHardcore() ? "[Hardcore]" : "[Softcore]";
-        float right = ImGui::GetWindowContentRegionMax().x;
-        float textWidth = ImGui::CalcTextSize(modeText).x;
-
-        // Move cursor to right edge minus text width
-        ImGui::SameLine(right - textWidth);
-        ImGui::TextUnformatted(modeText);
-
-        ImGui::Separator();
-        ImGui::Dummy(ImVec2(0, 4));
-
-        if (ImGui::BeginPopup("ExcludedItemsPopup"))
+        else
         {
-            ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.0f, 1.0f), "Excluded Items:");
-            ImGui::Separator();
-            for (const auto& item : g_ExcludedGrailItems)
-                ImGui::BulletText("%s", item.c_str());
-            ImGui::EndPopup();
-        }
+            // UNIQUE ITEM LIST
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.780f, 0.702f, 0.467f, 1.0f));
+            ImGui::Text("Unique Items");
 
-        // Build filtered list of visible items
-        std::vector<UniqueItemEntry*> visibleItems;
-        for (auto& u : g_UniqueItems)
-        {
-            std::string trimmedName = Trim(u.name);
-            bool isExcluded = g_ExcludedGrailItems.count(trimmedName) > 0;
-
-            // FILTERS
-            if (!showExcluded && isExcluded)
-                continue;
-
-            if (!searchStr.empty() && !CaseInsensitiveContains(u.name, searchStr))
-                continue;
-
-            if (showCollected && u.collected && !isExcluded)
-                continue;
-
-            // Show Duplicates filter
-            if (showDuplicates && u.locations.size() <= 1)
-                continue;
-
-            visibleItems.push_back(&u);
-        }
-
-        // Render only visible items
-        for (size_t i = 0; i < visibleItems.size(); ++i)
-        {
-            auto* u = visibleItems[i];
-            std::string trimmedName = Trim(u->name);
-            bool isExcluded = g_ExcludedGrailItems.count(trimmedName) > 0;
-
-            std::string label;
-            if (showBaseCodes && showBaseNames)
-                label = u->name + " (" + u->code + ", " + u->itemName + ")";
-            else if (showBaseCodes)
-                label = u->name + " (" + u->code + ")";
-            else if (showBaseNames)
-                label = u->name + " (" + u->itemName + ")";
-            else
-                label = u->name;
-
-            bool* checked = &u->collected;
-            std::string checkboxID = label + "##" + std::to_string(i);
-
-            // Begin horizontal line
-            ImGui::BeginGroup();
-
-            if (isExcluded)
-                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.55f, 0.55f, 0.55f, 1.0f)); // grey
-            else
-                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.780f, 0.702f, 0.467f, 1.0f)); // gold
-
-            if (ThemeCheckbox(checkboxID.c_str(), checked))
-            {
-                // TODO: save state if needed
-            }
-
-            if (ImGui::IsItemHovered())
-                ShowItemLocationTooltip(u->id, false);
+            // Button for excluded items
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Excluded"))
+                ImGui::OpenPopup("ExcludedItemsPopup");
 
             ImGui::PopStyleColor();
 
-            // ACTION BUTTON
-            float offsetX = ImGui::GetContentRegionAvail().x - 80.0f;
-            if (offsetX < 0) offsetX = 0;
+            // Right-aligned mode label on the SAME line
+            const char* modeText = IsHardcore() ? "[Hardcore]" : "[Softcore]";
+            float right = ImGui::GetWindowContentRegionMax().x;
+            float textWidth = ImGui::CalcTextSize(modeText).x;
 
-            ImGui::SameLine(offsetX);
-            std::string buttonID;
+            // Move cursor to right edge minus text width
+            ImGui::SameLine(right - textWidth);
+            ImGui::TextUnformatted(modeText);
 
-            if (isExcluded)
+            ImGui::Separator();
+            ImGui::Dummy(ImVec2(0, 4));
+
+            if (ImGui::BeginPopup("ExcludedItemsPopup"))
             {
-                buttonID = "Include##" + std::to_string(i);
-                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.2f, 0.9f, 0.2f, 1.0f)); // green
-                if (ImGui::SmallButton(buttonID.c_str()))
-                {
-                    g_ExcludedGrailItems.erase(trimmedName);
-                    SaveFullGrailConfig(configFilePath, false);
-                }
-                if (ImGui::IsItemHovered())
-                    ShowOffsetTooltip("Include this item back in your Grail hunt");
-                ImGui::PopStyleColor();
-            }
-            else
-            {
-                buttonID = "Exclude##" + std::to_string(i);
-                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.9f, 0.15f, 0.15f, 1.0f)); // red
-                if (ImGui::SmallButton(buttonID.c_str()))
-                {
-                    g_ExcludedGrailItems.insert(trimmedName);
-                    u->enabled = false;
-                    SaveFullGrailConfig(configFilePath, false);
-                }
-                if (ImGui::IsItemHovered())
-                    ShowOffsetTooltip("Exclude this item from your Grail hunt");
-                ImGui::PopStyleColor();
+                ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.0f, 1.0f), "Excluded Items:");
+                ImGui::Separator();
+                for (const auto& item : g_ExcludedGrailItems)
+                    ImGui::BulletText("%s", item.c_str());
+                ImGui::EndPopup();
             }
 
-            ImGui::EndGroup();
+            // Build filtered list of visible items
+            std::vector<UniqueItemEntry*> visibleItems;
+            for (auto& u : g_UniqueItems)
+            {
+                std::string trimmedName = Trim(u.name);
+                bool isExcluded = g_ExcludedGrailItems.count(trimmedName) > 0;
+
+                // FILTERS
+                if (!showExcluded && isExcluded)
+                    continue;
+
+                if (!searchStr.empty() && !CaseInsensitiveContains(u.name, searchStr))
+                    continue;
+
+                if (showCollected && u.collected && !isExcluded)
+                    continue;
+
+                // Show Duplicates filter
+                if (showDuplicates && u.locations.size() <= 1)
+                    continue;
+
+                visibleItems.push_back(&u);
+            }
+
+            // Render only visible items
+            for (size_t i = 0; i < visibleItems.size(); ++i)
+            {
+                auto* u = visibleItems[i];
+                std::string trimmedName = Trim(u->name);
+                bool isExcluded = g_ExcludedGrailItems.count(trimmedName) > 0;
+
+                std::string label;
+                if (showBaseCodes && showBaseNames)
+                    label = u->name + " (" + u->code + ", " + u->itemName + ")";
+                else if (showBaseCodes)
+                    label = u->name + " (" + u->code + ")";
+                else if (showBaseNames)
+                    label = u->name + " (" + u->itemName + ")";
+                else
+                    label = u->name;
+
+                bool* checked = &u->collected;
+                std::string checkboxID = label + "##" + std::to_string(i);
+
+                // Begin horizontal line
+                ImGui::BeginGroup();
+
+                if (isExcluded)
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.55f, 0.55f, 0.55f, 1.0f)); // grey
+                else
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.780f, 0.702f, 0.467f, 1.0f)); // gold
+
+                if (ThemeCheckbox(checkboxID.c_str(), checked))
+                {
+                    // TODO: save state if needed
+                }
+
+                if (ImGui::IsItemHovered())
+                    ShowItemLocationTooltip(u->id, false);
+
+                ImGui::PopStyleColor();
+
+                // ACTION BUTTON
+                float offsetX = ImGui::GetContentRegionAvail().x - 80.0f;
+                if (offsetX < 0) offsetX = 0;
+
+                ImGui::SameLine(offsetX);
+                std::string buttonID;
+
+                if (isExcluded)
+                {
+                    buttonID = "Include##" + std::to_string(i);
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.2f, 0.9f, 0.2f, 1.0f)); // green
+                    if (ImGui::SmallButton(buttonID.c_str()))
+                    {
+                        g_ExcludedGrailItems.erase(trimmedName);
+                        SaveFullGrailConfig(configFilePath, false);
+                    }
+                    if (ImGui::IsItemHovered())
+                        ShowOffsetTooltip("Include this item back in your Grail hunt");
+                    ImGui::PopStyleColor();
+                }
+                else
+                {
+                    buttonID = "Exclude##" + std::to_string(i);
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.9f, 0.15f, 0.15f, 1.0f)); // red
+                    if (ImGui::SmallButton(buttonID.c_str()))
+                    {
+                        g_ExcludedGrailItems.insert(trimmedName);
+                        u->enabled = false;
+                        SaveFullGrailConfig(configFilePath, false);
+                    }
+                    if (ImGui::IsItemHovered())
+                        ShowOffsetTooltip("Exclude this item from your Grail hunt");
+                    ImGui::PopStyleColor();
+                }
+
+                ImGui::EndGroup();
+            }
         }
-    }
 
-    ImGui::EndChild();
+        } // !stashScanPending
+
+        ImGui::EndChild();
+
+        if (playerInGame && showStashParseDebug && !stashScanPending)
+        {
+            static bool debugOnlyUnmatched = false;
+            static bool debugOnlySetUnique = false;
+
+            ImGui::Dummy(ImVec2(0, 4.0f * menuScale));
+            ImGui::Separator();
+
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.6f, 0.1f, 0.1f, 1.0f));
+            ImGui::Text("Debug View (%zu items)", g_StashDebugEntries.size());
+            ImGui::PopStyleColor();
+
+            ImGui::SameLine();
+            if (ThemeButton("Rescan Now"))
+            {
+                if (playerInGame)
+                {
+                    ExecuteDebugCheatFunc("save 1");
+                    g_DeferStashScanUntil = ImGui::GetTime() + 0.5;
+                    g_ForceStashRescan = true;
+                }
+            }
+            if (ImGui::IsItemHovered())
+                ShowOffsetTooltip("Re-read stash .d2i pages immediately.");
+
+            const char* pagePreview = (g_StashScanPageFilter == 0) ? "All Pages" : nullptr;
+            char pagePreviewBuf[16] = {};
+            if (!pagePreview)
+            {
+                snprintf(pagePreviewBuf, sizeof(pagePreviewBuf), "Page %d", g_StashScanPageFilter);
+                pagePreview = pagePreviewBuf;
+            }
+
+            ImGui::SetNextItemWidth(140.0f * menuScale);
+            if (ImGui::BeginCombo("##StashPageFilter", pagePreview))
+            {
+                const bool allSelected = (g_StashScanPageFilter == 0);
+                if (ImGui::Selectable("All Pages", allSelected))
+                {
+                    if (!allSelected)
+                    {
+                        g_StashScanPageFilter = 0;
+                        g_ForceStashRescan = true;
+                    }
+                    ImGui::SetItemDefaultFocus();
+                }
+
+                for (int page : g_AvailableStashPages)
+                {
+                    char label[24];
+                    snprintf(label, sizeof(label), "Page %d", page);
+                    const bool selected = (g_StashScanPageFilter == page);
+                    if (ImGui::Selectable(label, selected))
+                    {
+                        if (!selected)
+                        {
+                            g_StashScanPageFilter = page;
+                            g_ForceStashRescan = true;
+                        }
+                    }
+                }
+
+                if (g_AvailableStashPages.empty())
+                    ImGui::TextDisabled("No stash pages found");
+
+                ImGui::EndCombo();
+            }
+            if (ImGui::IsItemHovered())
+                ShowOffsetTooltip(
+                    "All Pages: scan every stash file for grail and debug.\n"
+                    "Single page: only parse that page (faster debug; grail reflects that page only).");
+
+            ImGui::SameLine();
+            ThemeCheckbox("Only unmatched Set/Unique", &debugOnlyUnmatched);
+            ImGui::SameLine();
+            ThemeCheckbox("Only Set/Unique quality", &debugOnlySetUnique);
+
+            ImGui::BeginChild("stash_debug_scroll", ImVec2(0, debugTableH), true);
+            const ImGuiTableFlags tableFlags =
+                ImGuiTableFlags_RowBg | ImGuiTableFlags_Borders | ImGuiTableFlags_Resizable |
+                ImGuiTableFlags_ScrollX | ImGuiTableFlags_ScrollY | ImGuiTableFlags_SizingFixedFit;
+
+            if (ImGui::BeginTable("stash_debug_table", 10, tableFlags))
+            {
+                ImGui::TableSetupColumn("Page");
+                ImGui::TableSetupColumn("Tab");
+                ImGui::TableSetupColumn("X");
+                ImGui::TableSetupColumn("Y");
+                ImGui::TableSetupColumn("Code");
+                ImGui::TableSetupColumn("Quality");
+                ImGui::TableSetupColumn("SetID");
+                ImGui::TableSetupColumn("UniqID");
+                ImGui::TableSetupColumn("Match");
+                ImGui::TableSetupColumn("Grail / Note", ImGuiTableColumnFlags_WidthStretch);
+                ImGui::TableHeadersRow();
+
+                for (const auto& e : g_StashDebugEntries)
+                {
+                    if (debugOnlyUnmatched && e.grailMatched)
+                        continue;
+                    if (debugOnlySetUnique && e.quality != 5 && e.quality != 7)
+                        continue;
+
+                    ImGui::TableNextRow();
+
+                    ImVec4 rowColor = ImVec4(0.75f, 0.75f, 0.75f, 1.0f);
+                    if (e.grailMatched)
+                        rowColor = ImVec4(0.45f, 1.0f, 0.55f, 1.0f);
+                    else if (e.quality == 5 || e.quality == 7)
+                        rowColor = ImVec4(1.0f, 0.85f, 0.35f, 1.0f);
+
+                    ImGui::PushStyleColor(ImGuiCol_Text, rowColor);
+
+                    ImGui::TableSetColumnIndex(0);
+                    ImGui::Text("%d", e.page);
+                    ImGui::TableSetColumnIndex(1);
+                    ImGui::Text("%d", e.tab);
+                    ImGui::TableSetColumnIndex(2);
+                    ImGui::Text("%d", e.x);
+                    ImGui::TableSetColumnIndex(3);
+                    ImGui::Text("%d", e.y);
+                    ImGui::TableSetColumnIndex(4);
+                    ImGui::TextUnformatted(e.code.c_str());
+                    ImGui::TableSetColumnIndex(5);
+                    ImGui::Text("%u %s", e.quality, GetQualityName(e.quality));
+                    ImGui::TableSetColumnIndex(6);
+                    if (e.quality == 5)
+                        ImGui::Text("%u", e.setId);
+                    else
+                        ImGui::TextUnformatted("-");
+                    ImGui::TableSetColumnIndex(7);
+                    if (e.quality == 7)
+                        ImGui::Text("%u", e.uniqueId);
+                    else
+                        ImGui::TextUnformatted("-");
+                    ImGui::TableSetColumnIndex(8);
+                    ImGui::TextUnformatted(e.grailMatched ? "yes" : "no");
+                    ImGui::TableSetColumnIndex(9);
+                    if (!e.grailName.empty())
+                        ImGui::TextUnformatted(e.grailName.c_str());
+                    else
+                        ImGui::TextUnformatted(e.note.c_str());
+
+                    ImGui::PopStyleColor();
+                }
+
+                ImGui::EndTable();
+            }
+
+            ImGui::EndChild();
+        }
+
+        if (playerInGame && g_ForceStashRescan && ImGui::GetTime() >= g_DeferStashScanUntil)
+            ScanStashPages();
+
         ImGui::PopStyleColor();
-    ImGui::End();
+        ImGui::End();
     }
     else
         ImGui::PopStyleColor();
@@ -8512,273 +8075,273 @@ void ShowHotkeyMenu()
         DrawWindowTitleAndClose("D2R Hotkeys", &showHotkeyMenu);
         if (GetFont(3)) ImGui::PopFont();
         ImGui::Separator();
-    ImGui::Dummy(ImVec2(0.0f, 5.0f * menuScale));
+        ImGui::Dummy(ImVec2(0.0f, 5.0f * menuScale));
 
-    // --- Split hotkeys (Keybinds ONLY) ---
-    std::vector<std::pair<std::string, std::pair<std::string, std::string>>> singleKeys;
-    for (auto& [name, pair] : g_Hotkeys)
-        singleKeys.push_back({ name, pair });
+        // --- Split hotkeys (Keybinds ONLY) ---
+        std::vector<std::pair<std::string, std::pair<std::string, std::string>>> singleKeys;
+        for (auto& [name, pair] : g_Hotkeys)
+            singleKeys.push_back({ name, pair });
 
-    static std::string hoveredHotkey;
-    hoveredHotkey.clear();
+        static std::string hoveredHotkey;
+        hoveredHotkey.clear();
 
-    // --- 2-column layout ---
-    ImGui::Columns(2, nullptr, true);
-    ImGui::SetColumnWidth(0, 450.0f * menuScale);
-    ImGui::SetColumnWidth(1, 450.0f * menuScale);
+        // --- 2-column layout ---
+        ImGui::Columns(2, nullptr, true);
+        ImGui::SetColumnWidth(0, 450.0f * menuScale);
+        ImGui::SetColumnWidth(1, 450.0f * menuScale);
 
-    ImFont* inputFont = GetFont(1);
+        ImFont* inputFont = GetFont(1);
 
-    // --- LEFT COLUMN: Single Hotkeys ---
-    float leftColumnStartY = ImGui::GetCursorPosY();
-    PushFontSafe(2);
-    const char* colTitle = "Standard Hotkeys";
-    float colWidth = ImGui::GetColumnWidth();
-    float textW = ImGui::CalcTextSize(colTitle).x;
-    ImGui::SetCursorPosX((colWidth - textW) * 0.5f);
-    ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.3f, 1.0f), "%s", colTitle);
-    ImGui::Dummy(ImVec2(0.0f, 3.0f));
-    ImGui::Separator();
-    ImGui::Dummy(ImVec2(0.0f, 3.0f));
-    PopFontSafe(2);
-
-    static std::string activeHotkeyInput; // currently editing hotkey
-    static std::vector<std::string> activeCombo;
-    static bool hotkeyReleased = true;
-    std::string keyDisplay;
-
-    // Define the order of hotkeys
-    static const std::vector<std::string> hotkeyOrder = {
-        "Open HUDCC Menu",
-        "Reload Game/Filter",
-        "Identify Items",
-        "Transmute",
-        "Force Save",
-        "Open Cube Panel",
-        "Remove Ground Items",
-        "Reset Skills",
-        "Reset Stats",
-        "Cycle Filter Level",
-        "Filtered Items Toggle",
-        "Cycle TZ Backward",
-        "Cycle TZ Forward",
-        "Toggle TZ Stats Display",
-    };
-
-    // Ensure every standard hotkey has an entry so it appears in the menu (e.g. after config load or new options)
-    for (const auto& name : hotkeyOrder)
-    {
-        if (g_Hotkeys.find(name) == g_Hotkeys.end())
-            g_Hotkeys[name] = { "", "" };
-    }
-
-    for (const auto& name : hotkeyOrder)
-    {
-        auto it = g_Hotkeys.find(name);
-        if (it == g_Hotkeys.end())
-            continue;
-
-        auto& pair = it->second;
-
-        ImGui::Text("%s:", name.c_str());
-        ImGui::SameLine();
-
-        // --- Capture multi-key input if this hotkey is active ---
-        if (activeHotkeyInput == name)
-        {
-            auto pressedKeys = GetPressedKeys();
-
-            // Handle DELETE key separately
-            if (std::find(pressedKeys.begin(), pressedKeys.end(), "VK_DELETE") != pressedKeys.end())
-            {
-                // Clear the hotkey immediately
-                pair.first.clear();
-                g_Hotkeys[name] = pair;
-                SaveFullGrailConfig("HUDConfig_" + modName + ".json", false);
-
-                activeCombo.clear();
-                hotkeyReleased = true;
-                pressedKeys.clear(); // ignore DELETE for combo logic
-            }
-
-            if (!pressedKeys.empty())
-                hotkeyReleased = false;
-
-            // If all keys released, finalize the combo
-            if (pressedKeys.empty() && !hotkeyReleased)
-            {
-                if (!activeCombo.empty())
-                {
-                    std::string combo;
-                    for (size_t i = 0; i < activeCombo.size(); ++i)
-                    {
-                        combo += activeCombo[i];
-                        if (i + 1 < activeCombo.size())
-                            combo += " + ";
-                    }
-
-                    if (combo != pair.first)
-                    {
-                        pair.first = combo;
-                        g_Hotkeys[name] = pair;
-                        SaveFullGrailConfig("HUDConfig_" + modName + ".json", false);
-                        LoadCommandsAndKeybinds("HUDConfig_" + modName + ".json");
-                    }
-                }
-
-                activeCombo.clear();
-                hotkeyReleased = true;
-            }
-            else if (!pressedKeys.empty())
-            {
-                // Add new keys to combo, ignoring duplicates
-                for (auto& k : pressedKeys)
-                {
-                    if (k != "VK_DELETE" && std::find(activeCombo.begin(), activeCombo.end(), k) == activeCombo.end())
-                        activeCombo.push_back(k);
-                }
-            }
-        }
-
-
-        // --- Display current hotkey ---
-        keyDisplay = DisplayKey(pair.first);
-
-        char buffer[128];
-        strncpy(buffer, keyDisplay.c_str(), sizeof(buffer));
-        buffer[sizeof(buffer) - 1] = '\0';
-
-        bool tzUnavailable = IsTZCycleUnavailable(name);
-
-        ImGui::PushItemWidth(180.0f * menuScale);
-        if (inputFont) ImGui::PushFont(inputFont);
-        BeginFrameBgImageRegion();
-        ImGui::InputText(("##key_" + name).c_str(), buffer, sizeof(buffer), ImGuiInputTextFlags_ReadOnly);
-        EndFrameBgImageRegion();
-
-        // Tooltip
-        if (ImGui::IsItemHovered() && tzUnavailable)
-        {
-            ImVec2 mousePos = ImGui::GetMousePos();
-
-            ImGui::SetNextWindowPos(ImVec2(mousePos.x + 80.0f, mousePos.y), ImGuiCond_Always);
-            ImGui::SetNextWindowSizeConstraints(ImVec2(0, 0), ImVec2(320.0f * GetMenuScaleFactor(), FLT_MAX));
-
-            ImGui::BeginTooltip();
-            ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.2f, 1.0f), "TZ Cycling Disabled!");
-            ImGui::Separator();
-            ImGui::PushTextWrapPos(300.0f);
-            ImGui::TextUnformatted("This hotkey is disabled until you complete a certain task in our mod\n\nI hope you enjoy riddles...");
-            ImGui::PopTextWrapPos();
-            ImGui::EndTooltip();
-        }
-
-        if (ImGui::IsItemClicked())
-        {
-            activeHotkeyInput = name;
-            activeCombo.clear();
-            hotkeyReleased = true;
-        }
-
-        if (!ImGui::IsItemFocused() && activeHotkeyInput == name)
-            activeHotkeyInput.clear();
-
-        if (inputFont) ImGui::PopFont();
-        ImGui::PopItemWidth();
-    }
-
-    // --- RIGHT COLUMN: Command Hotkeys ---
-    ImGui::NextColumn();
-    ImGui::SetCursorPosY(leftColumnStartY);
-    {
-        const char* colTitle = "Command Hotkeys";
+        // --- LEFT COLUMN: Single Hotkeys ---
+        float leftColumnStartY = ImGui::GetCursorPosY();
+        PushFontSafe(2);
+        const char* colTitle = "Standard Hotkeys";
         float colWidth = ImGui::GetColumnWidth();
-        float colStartX = ImGui::GetCursorPosX();
-
         float textW = ImGui::CalcTextSize(colTitle).x;
-        ImGui::SetCursorPosX(colStartX + (colWidth - textW) * 0.5f);
+        ImGui::SetCursorPosX((colWidth - textW) * 0.5f);
         ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.3f, 1.0f), "%s", colTitle);
-        ImGui::Dummy(ImVec2(0.0f, 15.0f));
+        ImGui::Dummy(ImVec2(0.0f, 3.0f));
+        ImGui::Separator();
+        ImGui::Dummy(ImVec2(0.0f, 3.0f));
+        PopFontSafe(2);
 
-        // ---- Custom Commands ----
-        for (size_t i = 0; i < g_CommandHotkeys.size(); ++i)
+        static std::string activeHotkeyInput; // currently editing hotkey
+        static std::vector<std::string> activeCombo;
+        static bool hotkeyReleased = true;
+        std::string keyDisplay;
+
+        // Define the order of hotkeys
+        static const std::vector<std::string> hotkeyOrder = {
+            "Open HUDCC Menu",
+            "Reload Game/Filter",
+            "Identify Items",
+            "Transmute",
+            "Force Save",
+            "Open Cube Panel",
+            "Remove Ground Items",
+            "Reset Skills",
+            "Reset Stats",
+            "Cycle Filter Level",
+            "Filtered Items Toggle",
+            "Cycle TZ Backward",
+            "Cycle TZ Forward",
+            "Toggle TZ Stats Display",
+        };
+
+        // Ensure every standard hotkey has an entry so it appears in the menu (e.g. after config load or new options)
+        for (const auto& name : hotkeyOrder)
         {
-            auto& cmd = g_CommandHotkeys[i];
-            std::string label = "Command " + std::to_string(i + 1);
+            if (g_Hotkeys.find(name) == g_Hotkeys.end())
+                g_Hotkeys[name] = { "", "" };
+        }
 
+        for (const auto& name : hotkeyOrder)
+        {
+            auto it = g_Hotkeys.find(name);
+            if (it == g_Hotkeys.end())
+                continue;
+
+            auto& pair = it->second;
+
+            ImGui::Text("%s:", name.c_str());
+            ImGui::SameLine();
+
+            // --- Capture multi-key input if this hotkey is active ---
+            if (activeHotkeyInput == name)
+            {
+                auto pressedKeys = GetPressedKeys();
+
+                // Handle DELETE key separately
+                if (std::find(pressedKeys.begin(), pressedKeys.end(), "VK_DELETE") != pressedKeys.end())
+                {
+                    // Clear the hotkey immediately
+                    pair.first.clear();
+                    g_Hotkeys[name] = pair;
+                    SaveFullGrailConfig("HUDConfig_" + modName + ".json", false);
+
+                    activeCombo.clear();
+                    hotkeyReleased = true;
+                    pressedKeys.clear(); // ignore DELETE for combo logic
+                }
+
+                if (!pressedKeys.empty())
+                    hotkeyReleased = false;
+
+                // If all keys released, finalize the combo
+                if (pressedKeys.empty() && !hotkeyReleased)
+                {
+                    if (!activeCombo.empty())
+                    {
+                        std::string combo;
+                        for (size_t i = 0; i < activeCombo.size(); ++i)
+                        {
+                            combo += activeCombo[i];
+                            if (i + 1 < activeCombo.size())
+                                combo += " + ";
+                        }
+
+                        if (combo != pair.first)
+                        {
+                            pair.first = combo;
+                            g_Hotkeys[name] = pair;
+                            SaveFullGrailConfig("HUDConfig_" + modName + ".json", false);
+                            LoadCommandsAndKeybinds("HUDConfig_" + modName + ".json");
+                        }
+                    }
+
+                    activeCombo.clear();
+                    hotkeyReleased = true;
+                }
+                else if (!pressedKeys.empty())
+                {
+                    // Add new keys to combo, ignoring duplicates
+                    for (auto& k : pressedKeys)
+                    {
+                        if (k != "VK_DELETE" && std::find(activeCombo.begin(), activeCombo.end(), k) == activeCombo.end())
+                            activeCombo.push_back(k);
+                    }
+                }
+            }
+
+
+            // --- Display current hotkey ---
+            keyDisplay = DisplayKey(pair.first);
+
+            char buffer[128];
+            strncpy(buffer, keyDisplay.c_str(), sizeof(buffer));
+            buffer[sizeof(buffer) - 1] = '\0';
+
+            bool tzUnavailable = IsTZCycleUnavailable(name);
+
+            ImGui::PushItemWidth(180.0f * menuScale);
+            if (inputFont) ImGui::PushFont(inputFont);
+            BeginFrameBgImageRegion();
+            ImGui::InputText(("##key_" + name).c_str(), buffer, sizeof(buffer), ImGuiInputTextFlags_ReadOnly);
+            EndFrameBgImageRegion();
+
+            // Tooltip
+            if (ImGui::IsItemHovered() && tzUnavailable)
+            {
+                ImVec2 mousePos = ImGui::GetMousePos();
+
+                ImGui::SetNextWindowPos(ImVec2(mousePos.x + 80.0f, mousePos.y), ImGuiCond_Always);
+                ImGui::SetNextWindowSizeConstraints(ImVec2(0, 0), ImVec2(320.0f * GetMenuScaleFactor(), FLT_MAX));
+
+                ImGui::BeginTooltip();
+                ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.2f, 1.0f), "TZ Cycling Disabled!");
+                ImGui::Separator();
+                ImGui::PushTextWrapPos(300.0f);
+                ImGui::TextUnformatted("This hotkey is disabled until you complete a certain task in our mod\n\nI hope you enjoy riddles...");
+                ImGui::PopTextWrapPos();
+                ImGui::EndTooltip();
+            }
+
+            if (ImGui::IsItemClicked())
+            {
+                activeHotkeyInput = name;
+                activeCombo.clear();
+                hotkeyReleased = true;
+            }
+
+            if (!ImGui::IsItemFocused() && activeHotkeyInput == name)
+                activeHotkeyInput.clear();
+
+            if (inputFont) ImGui::PopFont();
+            ImGui::PopItemWidth();
+        }
+
+        // --- RIGHT COLUMN: Command Hotkeys ---
+        ImGui::NextColumn();
+        ImGui::SetCursorPosY(leftColumnStartY);
+        {
+            const char* colTitle = "Command Hotkeys";
+            float colWidth = ImGui::GetColumnWidth();
+            float colStartX = ImGui::GetCursorPosX();
+
+            float textW = ImGui::CalcTextSize(colTitle).x;
+            ImGui::SetCursorPosX(colStartX + (colWidth - textW) * 0.5f);
+            ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.3f, 1.0f), "%s", colTitle);
+            ImGui::Dummy(ImVec2(0.0f, 15.0f));
+
+            // ---- Custom Commands ----
+            for (size_t i = 0; i < g_CommandHotkeys.size(); ++i)
+            {
+                auto& cmd = g_CommandHotkeys[i];
+                std::string label = "Command " + std::to_string(i + 1);
+
+                ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(2, 130, 199, 255));
+                ImGui::Text("%s:", label.c_str());
+                ImGui::PopStyleColor();
+                ImGui::SameLine();
+
+                char keyBuf[128];
+                strncpy(keyBuf, DisplayKey(cmd.key).c_str(), sizeof(keyBuf));
+                keyBuf[sizeof(keyBuf) - 1] = '\0';
+
+                ImGui::PushItemWidth(120.0f * menuScale);
+                if (inputFont) ImGui::PushFont(inputFont);
+                BeginFrameBgImageRegion();
+                if (ImGui::InputText(("##cmd_key_" + std::to_string(i)).c_str(), keyBuf, sizeof(keyBuf)))
+                    cmd.key = keyBuf;
+                EndFrameBgImageRegion();
+                if (inputFont) ImGui::PopFont();
+                ImGui::PopItemWidth();
+
+                ImGui::SameLine();
+
+                char cmdBuf[256];
+                strncpy(cmdBuf, cmd.command.c_str(), sizeof(cmdBuf));
+                cmdBuf[sizeof(cmdBuf) - 1] = '\0';
+
+                ImGui::PushItemWidth(220.0f * menuScale);
+                if (inputFont) ImGui::PushFont(inputFont);
+                BeginFrameBgImageRegion();
+                if (ImGui::InputText(("##cmd_txt_" + std::to_string(i)).c_str(), cmdBuf, sizeof(cmdBuf)))
+                    cmd.command = cmdBuf;
+                EndFrameBgImageRegion();
+                if (inputFont) ImGui::PopFont();
+                ImGui::PopItemWidth();
+
+                if (ImGui::IsItemHovered())
+                    hoveredHotkey = label;
+            }
+
+            // ---- Startup Commands ----
+            ImGui::Dummy(ImVec2(0.0f, 10.0f));
             ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(2, 130, 199, 255));
-            ImGui::Text("%s:", label.c_str());
+            ImGui::Text("Startup Commands");
             ImGui::PopStyleColor();
-            ImGui::SameLine();
 
-            char keyBuf[128];
-            strncpy(keyBuf, DisplayKey(cmd.key).c_str(), sizeof(keyBuf));
-            keyBuf[sizeof(keyBuf) - 1] = '\0';
+            static char startupBuf[512] = { 0 };
+            static bool startupBufInitialized = false;
 
-            ImGui::PushItemWidth(120.0f * menuScale);
+            if (!startupBufInitialized)
+            {
+                strncpy(startupBuf, g_StartupCommands.c_str(), sizeof(startupBuf));
+                startupBuf[sizeof(startupBuf) - 1] = '\0';
+                startupBufInitialized = true;
+            }
+
+            ImGui::PushItemWidth(-1);
             if (inputFont) ImGui::PushFont(inputFont);
             BeginFrameBgImageRegion();
-            if (ImGui::InputText(("##cmd_key_" + std::to_string(i)).c_str(), keyBuf, sizeof(keyBuf)))
-                cmd.key = keyBuf;
+            if (ImGui::InputTextMultiline("##startup_commands", startupBuf, sizeof(startupBuf), ImVec2(-1, 80)))
+            {
+                g_StartupCommands = startupBuf;
+            }
             EndFrameBgImageRegion();
             if (inputFont) ImGui::PopFont();
             ImGui::PopItemWidth();
 
-            ImGui::SameLine();
-
-            char cmdBuf[256];
-            strncpy(cmdBuf, cmd.command.c_str(), sizeof(cmdBuf));
-            cmdBuf[sizeof(cmdBuf) - 1] = '\0';
-
-            ImGui::PushItemWidth(220.0f * menuScale);
-            if (inputFont) ImGui::PushFont(inputFont);
-            BeginFrameBgImageRegion();
-            if (ImGui::InputText(("##cmd_txt_" + std::to_string(i)).c_str(), cmdBuf, sizeof(cmdBuf)))
-                cmd.command = cmdBuf;
-            EndFrameBgImageRegion();
-            if (inputFont) ImGui::PopFont();
-            ImGui::PopItemWidth();
-
-            if (ImGui::IsItemHovered())
-                hoveredHotkey = label;
         }
 
-        // ---- Startup Commands ----
-        ImGui::Dummy(ImVec2(0.0f, 10.0f));
-        ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(2, 130, 199, 255));
-        ImGui::Text("Startup Commands");
-        ImGui::PopStyleColor();
+        ImGui::Columns(1);
 
-        static char startupBuf[512] = { 0 };
-        static bool startupBufInitialized = false;
-
-        if (!startupBufInitialized)
-        {
-            strncpy(startupBuf, g_StartupCommands.c_str(), sizeof(startupBuf));
-            startupBuf[sizeof(startupBuf) - 1] = '\0';
-            startupBufInitialized = true;
-        }
-
-        ImGui::PushItemWidth(-1);
-        if (inputFont) ImGui::PushFont(inputFont);
-        BeginFrameBgImageRegion();
-        if (ImGui::InputTextMultiline("##startup_commands", startupBuf, sizeof(startupBuf), ImVec2(-1, 80)))
-        {
-            g_StartupCommands = startupBuf;
-        }
-        EndFrameBgImageRegion();
-        if (inputFont) ImGui::PopFont();
-        ImGui::PopItemWidth();
-
-    }
-
-    ImGui::Columns(1);
-
-    std::string desc = hoveredHotkey.empty() ? "Hover over a hotkey to see details." : "Set the hotkey for " + hoveredHotkey + ".";
-    DrawBottomDescription(desc);
+        std::string desc = hoveredHotkey.empty() ? "Hover over a hotkey to see details." : "Set the hotkey for " + hoveredHotkey + ".";
+        DrawBottomDescription(desc);
 
         ImGui::PopStyleColor();
-    ImGui::End();
+        ImGui::End();
     }
     else
         ImGui::PopStyleColor();
@@ -8821,92 +8384,92 @@ void ShowCameraMenu()
     static bool zoomPatternResolved = false;
 
     auto ScanAngleValues = []()
-    {
-        CameraState& camera = g_CameraState;
-        if (camera.valuesFound)
-            return;
-
-        camera.didScanAngles = true;
-        camera.lastAngleScanInGame = IsPlayerInGame();
-        if (!camera.lastAngleScanInGame)
-            return;
-
-        if (anglePatternResolved)
         {
-            if (gCameraPitchValue && gCameraHeightValue && gCameraPanValue && gCameraRollValue)
+            CameraState& camera = g_CameraState;
+            if (camera.valuesFound)
+                return;
+
+            camera.didScanAngles = true;
+            camera.lastAngleScanInGame = IsPlayerInGame();
+            if (!camera.lastAngleScanInGame)
+                return;
+
+            if (anglePatternResolved)
             {
-                camera.pitch  = *gCameraPitchValue;
-                camera.height = *gCameraHeightValue;
-                camera.pan    = *gCameraPanValue;
-                camera.roll   = *gCameraRollValue;
-                camera.defaultPitch  = camera.pitch;
-                camera.defaultHeight = camera.height;
-                camera.defaultPan    = camera.pan;
-                camera.defaultRoll   = camera.roll;
-                camera.valuesFound = true;
+                if (gCameraPitchValue && gCameraHeightValue && gCameraPanValue && gCameraRollValue)
+                {
+                    camera.pitch = *gCameraPitchValue;
+                    camera.height = *gCameraHeightValue;
+                    camera.pan = *gCameraPanValue;
+                    camera.roll = *gCameraRollValue;
+                    camera.defaultPitch = camera.pitch;
+                    camera.defaultHeight = camera.height;
+                    camera.defaultPan = camera.pan;
+                    camera.defaultRoll = camera.roll;
+                    camera.valuesFound = true;
+                }
+                return;
             }
-            return;
-        }
 
-        if (angleScanFuture.valid())
-            return;
+            if (angleScanFuture.valid())
+                return;
 
-        angleScanFuture = std::async(std::launch::async, []() {
-            return Pattern::ScanProcess("44 74 64 BF 3F DB 74 3E F4 41 BD 3E");
-        });
-    };
+            angleScanFuture = std::async(std::launch::async, []() {
+                return Pattern::ScanProcess("44 74 64 BF 3F DB 74 3E F4 41 BD 3E");
+                });
+        };
 
     auto ScanZoomValue = []()
-    {
-        CameraState& camera = g_CameraState;
-        if (camera.zoomFound)
-            return;
-
-        camera.didScanZoom = true;
-        camera.lastZoomScanInGame = IsPlayerInGame();
-        if (!camera.lastZoomScanInGame)
-            return;
-
-        if (zoomPatternResolved)
         {
-            if (gCameraZoomValue)
+            CameraState& camera = g_CameraState;
+            if (camera.zoomFound)
+                return;
+
+            camera.didScanZoom = true;
+            camera.lastZoomScanInGame = IsPlayerInGame();
+            if (!camera.lastZoomScanInGame)
+                return;
+
+            if (zoomPatternResolved)
             {
-                camera.zoom = *gCameraZoomValue;
-                camera.defaultZoom = camera.zoom;
-                camera.zoomFound = true;
+                if (gCameraZoomValue)
+                {
+                    camera.zoom = *gCameraZoomValue;
+                    camera.defaultZoom = camera.zoom;
+                    camera.zoomFound = true;
+                }
+                return;
             }
-            return;
-        }
 
-        if (zoomScanFuture.valid())
-            return;
+            if (zoomScanFuture.valid())
+                return;
 
-        zoomScanFuture = std::async(std::launch::async, []() {
-            DWORD64 base = Pattern::ScanProcess("00 00 06 00 00 00 ? ? ? ? ? ? ? 43 ? ? ? ? ? ? ? ? 00 00 00 00 01 00 00 00 00 00 00 00 00 00 80 3F");
-            return base ? (base + 0x32) : 0ull;
-        });
-    };
+            zoomScanFuture = std::async(std::launch::async, []() {
+                DWORD64 base = Pattern::ScanProcess("00 00 06 00 00 00 ? ? ? ? ? ? ? 43 ? ? ? ? ? ? ? ? 00 00 00 00 01 00 00 00 00 00 00 00 00 00 80 3F");
+                return base ? (base + 0x32) : 0ull;
+                });
+        };
 
     auto ApplyAngleValues = []()
-    {
-        CameraState& camera = g_CameraState;
-        if (!camera.programEnabled || !camera.valuesFound)
-            return;
+        {
+            CameraState& camera = g_CameraState;
+            if (!camera.programEnabled || !camera.valuesFound)
+                return;
 
-        if (gCameraPitchValue)  *gCameraPitchValue  = camera.pitch;
-        if (gCameraHeightValue) *gCameraHeightValue = camera.height;
-        if (gCameraPanValue)    *gCameraPanValue    = camera.pan;
-        if (gCameraRollValue)   *gCameraRollValue   = camera.roll;
-    };
+            if (gCameraPitchValue)  *gCameraPitchValue = camera.pitch;
+            if (gCameraHeightValue) *gCameraHeightValue = camera.height;
+            if (gCameraPanValue)    *gCameraPanValue = camera.pan;
+            if (gCameraRollValue)   *gCameraRollValue = camera.roll;
+        };
 
     auto ApplyZoomValue = []()
-    {
-        CameraState& camera = g_CameraState;
-        if (!camera.programEnabled || !camera.zoomFound || !gCameraZoomValue)
-            return;
+        {
+            CameraState& camera = g_CameraState;
+            if (!camera.programEnabled || !camera.zoomFound || !gCameraZoomValue)
+                return;
 
-        *gCameraZoomValue = camera.zoom;
-    };
+            *gCameraZoomValue = camera.zoom;
+        };
 
     // Auto-scan once when the window is opened (fast enough to start immediately).
     if (!didAutoScanThisOpen)
@@ -8922,21 +8485,21 @@ void ShowCameraMenu()
         DWORD64 pitchAddr = angleScanFuture.get();
         if (pitchAddr)
         {
-            gCameraPitchValue  = reinterpret_cast<float*>(pitchAddr);
+            gCameraPitchValue = reinterpret_cast<float*>(pitchAddr);
             gCameraHeightValue = reinterpret_cast<float*>(pitchAddr + 0x4);
-            gCameraPanValue    = reinterpret_cast<float*>(pitchAddr + 0x8);
-            gCameraRollValue   = reinterpret_cast<float*>(pitchAddr - 0x4);
+            gCameraPanValue = reinterpret_cast<float*>(pitchAddr + 0x8);
+            gCameraRollValue = reinterpret_cast<float*>(pitchAddr - 0x4);
             anglePatternResolved = true;
 
             CameraState& cam = g_CameraState;
-            cam.pitch  = *gCameraPitchValue;
+            cam.pitch = *gCameraPitchValue;
             cam.height = *gCameraHeightValue;
-            cam.pan    = *gCameraPanValue;
-            cam.roll   = *gCameraRollValue;
-            cam.defaultPitch  = cam.pitch;
+            cam.pan = *gCameraPanValue;
+            cam.roll = *gCameraRollValue;
+            cam.defaultPitch = cam.pitch;
             cam.defaultHeight = cam.height;
-            cam.defaultPan    = cam.pan;
-            cam.defaultRoll   = cam.roll;
+            cam.defaultPan = cam.pan;
+            cam.defaultRoll = cam.roll;
             cam.valuesFound = true;
         }
     }
@@ -8957,7 +8520,7 @@ void ShowCameraMenu()
     }
 
     const bool angleScanning = angleScanFuture.valid() && angleScanFuture.wait_for(std::chrono::seconds(0)) != std::future_status::ready;
-    const bool zoomScanning  = zoomScanFuture.valid() && zoomScanFuture.wait_for(std::chrono::seconds(0)) != std::future_status::ready;
+    const bool zoomScanning = zoomScanFuture.valid() && zoomScanFuture.wait_for(std::chrono::seconds(0)) != std::future_status::ready;
 
     // Only autoload after both scans have completed and default values are captured
     if (!s_autoloadDoneThisOpen
@@ -8970,11 +8533,11 @@ void ShowCameraMenu()
         const CameraPreset& p = d2rHUDConfig.CameraPresets[d2rHUDConfig.CameraLastPresetIndex - 1];
         if (p.HasValues)
         {
-            camera.pitch  = p.Pitch;
+            camera.pitch = p.Pitch;
             camera.height = p.Height;
-            camera.pan    = p.Pan;
-            camera.roll   = p.Roll;
-            camera.zoom   = p.Zoom;
+            camera.pan = p.Pan;
+            camera.roll = p.Roll;
+            camera.zoom = p.Zoom;
 
             ApplyAngleValues();
             ApplyZoomValue();
@@ -8999,230 +8562,230 @@ void ShowCameraMenu()
         PopFontSafe(3);
 
         ImGui::Separator();
-    ImGui::Dummy(ImVec2(0.0f, 4.0f * menuScale));
+        ImGui::Dummy(ImVec2(0.0f, 4.0f * menuScale));
 
-    // Top info line
-    PushFontSafe(1);
-    ImGuiTextCentered("Adjust in-game camera pitch, height, pan, roll, and zoom.");
-    ImGuiTextCentered("Camera values are scanned automatically when you open this window.");
-    PopFontSafe(1);
+        // Top info line
+        PushFontSafe(1);
+        ImGuiTextCentered("Adjust in-game camera pitch, height, pan, roll, and zoom.");
+        ImGuiTextCentered("Camera values are scanned automatically when you open this window.");
+        PopFontSafe(1);
 
-    ImGui::Dummy(ImVec2(0.0f, 4.0f * menuScale));
+        ImGui::Dummy(ImVec2(0.0f, 4.0f * menuScale));
 
-    // Status text (auto-scan runs on open)
-    ImVec4 okColor = ImVec4(0.4f, 0.9f, 0.4f, 1.0f);
-    ImVec4 warnColor = ImVec4(0.9f, 0.7f, 0.2f, 1.0f);
-    ImVec4 errColor = ImVec4(0.9f, 0.3f, 0.3f, 1.0f);
+        // Status text (auto-scan runs on open)
+        ImVec4 okColor = ImVec4(0.4f, 0.9f, 0.4f, 1.0f);
+        ImVec4 warnColor = ImVec4(0.9f, 0.7f, 0.2f, 1.0f);
+        ImVec4 errColor = ImVec4(0.9f, 0.3f, 0.3f, 1.0f);
 
-    ImVec4 angleColor = camera.valuesFound ? okColor : (camera.didScanAngles ? errColor : warnColor);
-    ImVec4 zoomColor  = camera.zoomFound   ? okColor : (camera.didScanZoom   ? errColor : warnColor);
+        ImVec4 angleColor = camera.valuesFound ? okColor : (camera.didScanAngles ? errColor : warnColor);
+        ImVec4 zoomColor = camera.zoomFound ? okColor : (camera.didScanZoom ? errColor : warnColor);
 
-    const char* angleStatus = angleScanning ? "scanning..."
-        : (camera.valuesFound ? "found" : (camera.didScanAngles ? "not found (pattern missing)" : "not scanned"));
-    const char* zoomStatus = zoomScanning ? "scanning..."
-        : (camera.zoomFound ? "found" : (camera.didScanZoom ? "not found (pattern missing)" : "not scanned"));
+        const char* angleStatus = angleScanning ? "scanning..."
+            : (camera.valuesFound ? "found" : (camera.didScanAngles ? "not found (pattern missing)" : "not scanned"));
+        const char* zoomStatus = zoomScanning ? "scanning..."
+            : (camera.zoomFound ? "found" : (camera.didScanZoom ? "not found (pattern missing)" : "not scanned"));
 
-    char statusBuf[96];
-    snprintf(statusBuf, sizeof(statusBuf), "Angles: %s  Zoom: %s", angleStatus, zoomStatus);
-    float statusWidth = ImGui::CalcTextSize(statusBuf).x;
-    float avail = ImGui::GetContentRegionAvail().x;
-    const float statusOffset = 8.0f * menuScale;
-    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (avail - statusWidth) * 0.5f + statusOffset);
-    ImGui::TextColored(angleColor, "Angles: %s", angleStatus);
-    ImGui::SameLine();
-    ImGui::TextColored(zoomColor, "Zoom: %s", zoomStatus);
+        char statusBuf[96];
+        snprintf(statusBuf, sizeof(statusBuf), "Angles: %s  Zoom: %s", angleStatus, zoomStatus);
+        float statusWidth = ImGui::CalcTextSize(statusBuf).x;
+        float avail = ImGui::GetContentRegionAvail().x;
+        const float statusOffset = 8.0f * menuScale;
+        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (avail - statusWidth) * 0.5f + statusOffset);
+        ImGui::TextColored(angleColor, "Angles: %s", angleStatus);
+        ImGui::SameLine();
+        ImGui::TextColored(zoomColor, "Zoom: %s", zoomStatus);
 
-    ImGui::Dummy(ImVec2(0.0f, 6.0f * menuScale));
+        ImGui::Dummy(ImVec2(0.0f, 6.0f * menuScale));
 
-    const float cameraLabelWidth = 90.0f * menuScale;
-    const float cameraInputWidth = 200.0f * menuScale;
-    const float presetColWidth = 350.0f * menuScale;
+        const float cameraLabelWidth = 90.0f * menuScale;
+        const float cameraInputWidth = 200.0f * menuScale;
+        const float presetColWidth = 350.0f * menuScale;
 
-    // Left: Presets | Right: All values + reset buttons
-    ImGui::BeginChild("CameraPresets", ImVec2(presetColWidth, 0), true);
-    ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.3f, 1.0f), "Presets");
-    ImGui::Separator();
+        // Left: Presets | Right: All values + reset buttons
+        ImGui::BeginChild("CameraPresets", ImVec2(presetColWidth, 0), true);
+        ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.3f, 1.0f), "Presets");
+        ImGui::Separator();
 
-    static char presetNameBuf[64] = {};
-    static int lastPresetIndex = -1;
-    if (lastPresetIndex != selectedPreset)
-    {
-        CameraPreset p{};
-        if (selectedPreset > 0 && selectedPreset <= static_cast<int>(d2rHUDConfig.CameraPresets.size()))
+        static char presetNameBuf[64] = {};
+        static int lastPresetIndex = -1;
+        if (lastPresetIndex != selectedPreset)
         {
-            p = d2rHUDConfig.CameraPresets[selectedPreset - 1];
-
-            // When switching to a saved preset, update the input values to match it
-            if (p.HasValues)
+            CameraPreset p{};
+            if (selectedPreset > 0 && selectedPreset <= static_cast<int>(d2rHUDConfig.CameraPresets.size()))
             {
-                camera.pitch  = p.Pitch;
-                camera.height = p.Height;
-                camera.pan    = p.Pan;
-                camera.roll   = p.Roll;
-                camera.zoom   = p.Zoom;
+                p = d2rHUDConfig.CameraPresets[selectedPreset - 1];
+
+                // When switching to a saved preset, update the input values to match it
+                if (p.HasValues)
+                {
+                    camera.pitch = p.Pitch;
+                    camera.height = p.Height;
+                    camera.pan = p.Pan;
+                    camera.roll = p.Roll;
+                    camera.zoom = p.Zoom;
+                }
             }
-        }
-        else if (selectedPreset == 0 && camera.valuesFound && camera.zoomFound)
-        {
-            // Default slot: show the captured in-game defaults in the inputs
-            camera.pitch  = camera.defaultPitch;
-            camera.height = camera.defaultHeight;
-            camera.pan    = camera.defaultPan;
-            camera.roll   = camera.defaultRoll;
-            camera.zoom   = camera.defaultZoom;
-        }
-
-        strncpy(presetNameBuf, p.Name.c_str(), sizeof(presetNameBuf));
-        presetNameBuf[sizeof(presetNameBuf) - 1] = '\0';
-        lastPresetIndex = selectedPreset;
-    }
-
-    static char presetLabel0[64] = "Default";
-    static char presetLabel1[64] = "Preset 1";
-    static char presetLabel2[64] = "Preset 2";
-    static char presetLabel3[64] = "Preset 3";
-    for (int i = 0; i < 3; ++i)
-    {
-        char* buf = (i == 0) ? presetLabel1 : (i == 1) ? presetLabel2 : presetLabel3;
-        const CameraPreset& p = d2rHUDConfig.CameraPresets[i];
-        if (!p.Name.empty())
-        {
-            strncpy(buf, p.Name.c_str(), sizeof(presetLabel1) - 1);
-            buf[sizeof(presetLabel1) - 1] = '\0';
-        }
-        else
-        {
-            snprintf(buf, sizeof(presetLabel1), "Preset %d", i + 1);
-        }
-    }
-    const char* presetLabels[4] = { presetLabel0, presetLabel1, presetLabel2, presetLabel3 };
-    ImGui::Text("Slot");
-    ImGui::SameLine(cameraLabelWidth);
-    ImGui::SetNextItemWidth(-1);
-    BeginFrameBgImageRegion();
-    ImGui::Combo("##PresetSlot", &selectedPreset, presetLabels, IM_ARRAYSIZE(presetLabels));
-    EndFrameBgImageRegion();
-
-    ImGui::Text("Name");
-    ImGui::SameLine(cameraLabelWidth);
-    ImGui::SetNextItemWidth(-1);
-    BeginFrameBgImageRegion();
-    ImGui::InputText("##PresetName", presetNameBuf, sizeof(presetNameBuf));
-    EndFrameBgImageRegion();
-
-    if (ThemeButton("Save Current to Preset", ImVec2(-1, 0)))
-    {
-        if (selectedPreset > 0 && selectedPreset <= static_cast<int>(d2rHUDConfig.CameraPresets.size()))
-        {
-            CameraPreset& p = d2rHUDConfig.CameraPresets[selectedPreset - 1];
-            p.Name = presetNameBuf;
-            p.Pitch = camera.pitch;
-            p.Height = camera.height;
-            p.Pan = camera.pan;
-            p.Roll = camera.roll;
-            p.Zoom = camera.zoom;
-            p.HasValues = true;
-            SaveFullGrailConfig(configFilePath, false);
-        }
-    }
-    if (ThemeButton("Apply Preset", ImVec2(-1, 0)))
-    {
-        if (selectedPreset == 0)
-        {
-            if (camera.valuesFound) {
+            else if (selectedPreset == 0 && camera.valuesFound && camera.zoomFound)
+            {
+                // Default slot: show the captured in-game defaults in the inputs
                 camera.pitch = camera.defaultPitch;
                 camera.height = camera.defaultHeight;
                 camera.pan = camera.defaultPan;
                 camera.roll = camera.defaultRoll;
-                ApplyAngleValues();
-            }
-            if (camera.zoomFound) {
                 camera.zoom = camera.defaultZoom;
-                ApplyZoomValue();
             }
+
+            strncpy(presetNameBuf, p.Name.c_str(), sizeof(presetNameBuf));
+            presetNameBuf[sizeof(presetNameBuf) - 1] = '\0';
+            lastPresetIndex = selectedPreset;
         }
-        else if (selectedPreset > 0 && selectedPreset <= static_cast<int>(d2rHUDConfig.CameraPresets.size()))
+
+        static char presetLabel0[64] = "Default";
+        static char presetLabel1[64] = "Preset 1";
+        static char presetLabel2[64] = "Preset 2";
+        static char presetLabel3[64] = "Preset 3";
+        for (int i = 0; i < 3; ++i)
         {
-            const CameraPreset& p = d2rHUDConfig.CameraPresets[selectedPreset - 1];
-            if (p.HasValues)
+            char* buf = (i == 0) ? presetLabel1 : (i == 1) ? presetLabel2 : presetLabel3;
+            const CameraPreset& p = d2rHUDConfig.CameraPresets[i];
+            if (!p.Name.empty())
             {
-                camera.pitch = p.Pitch;
-                camera.height = p.Height;
-                camera.pan = p.Pan;
-                camera.roll = p.Roll;
-                camera.zoom = p.Zoom;
-                if (camera.valuesFound) ApplyAngleValues();
-                if (camera.zoomFound) ApplyZoomValue();
+                strncpy(buf, p.Name.c_str(), sizeof(presetLabel1) - 1);
+                buf[sizeof(presetLabel1) - 1] = '\0';
+            }
+            else
+            {
+                snprintf(buf, sizeof(presetLabel1), "Preset %d", i + 1);
             }
         }
-        d2rHUDConfig.CameraLastPresetIndex = selectedPreset;
-        SaveFullGrailConfig(configFilePath, false);
-    }
-    if (ThemeCheckbox("Autoload last preset", &d2rHUDConfig.CameraAutoloadLastPreset))
-        SaveFullGrailConfig(configFilePath, false);
-    ImGui::EndChild();
+        const char* presetLabels[4] = { presetLabel0, presetLabel1, presetLabel2, presetLabel3 };
+        ImGui::Text("Slot");
+        ImGui::SameLine(cameraLabelWidth);
+        ImGui::SetNextItemWidth(-1);
+        BeginFrameBgImageRegion();
+        ImGui::Combo("##PresetSlot", &selectedPreset, presetLabels, IM_ARRAYSIZE(presetLabels));
+        EndFrameBgImageRegion();
 
-    ImGui::SameLine();
+        ImGui::Text("Name");
+        ImGui::SameLine(cameraLabelWidth);
+        ImGui::SetNextItemWidth(-1);
+        BeginFrameBgImageRegion();
+        ImGui::InputText("##PresetName", presetNameBuf, sizeof(presetNameBuf));
+        EndFrameBgImageRegion();
 
-    ImGui::BeginChild("CameraValues", ImVec2(0, 0), true);
-    ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.3f, 1.0f), "Camera values");
-    ImGui::Separator();
+        if (ThemeButton("Save Current to Preset", ImVec2(-1, 0)))
+        {
+            if (selectedPreset > 0 && selectedPreset <= static_cast<int>(d2rHUDConfig.CameraPresets.size()))
+            {
+                CameraPreset& p = d2rHUDConfig.CameraPresets[selectedPreset - 1];
+                p.Name = presetNameBuf;
+                p.Pitch = camera.pitch;
+                p.Height = camera.height;
+                p.Pan = camera.pan;
+                p.Roll = camera.roll;
+                p.Zoom = camera.zoom;
+                p.HasValues = true;
+                SaveFullGrailConfig(configFilePath, false);
+            }
+        }
+        if (ThemeButton("Apply Preset", ImVec2(-1, 0)))
+        {
+            if (selectedPreset == 0)
+            {
+                if (camera.valuesFound) {
+                    camera.pitch = camera.defaultPitch;
+                    camera.height = camera.defaultHeight;
+                    camera.pan = camera.defaultPan;
+                    camera.roll = camera.defaultRoll;
+                    ApplyAngleValues();
+                }
+                if (camera.zoomFound) {
+                    camera.zoom = camera.defaultZoom;
+                    ApplyZoomValue();
+                }
+            }
+            else if (selectedPreset > 0 && selectedPreset <= static_cast<int>(d2rHUDConfig.CameraPresets.size()))
+            {
+                const CameraPreset& p = d2rHUDConfig.CameraPresets[selectedPreset - 1];
+                if (p.HasValues)
+                {
+                    camera.pitch = p.Pitch;
+                    camera.height = p.Height;
+                    camera.pan = p.Pan;
+                    camera.roll = p.Roll;
+                    camera.zoom = p.Zoom;
+                    if (camera.valuesFound) ApplyAngleValues();
+                    if (camera.zoomFound) ApplyZoomValue();
+                }
+            }
+            d2rHUDConfig.CameraLastPresetIndex = selectedPreset;
+            SaveFullGrailConfig(configFilePath, false);
+        }
+        if (ThemeCheckbox("Autoload last preset", &d2rHUDConfig.CameraAutoloadLastPreset))
+            SaveFullGrailConfig(configFilePath, false);
+        ImGui::EndChild();
 
-    ImGui::BeginDisabled(!camera.programEnabled || !camera.valuesFound);
-    ImGui::Text("Pitch");
-    ImGui::SameLine(cameraLabelWidth);
-    ImGui::SetNextItemWidth(cameraInputWidth);
-    if (ImGui::DragFloat("##Pitch", &camera.pitch, 0.01f, -10.0f, 10.0f, "%.3f"))
-        ApplyAngleValues();
-    ImGui::Text("Yaw");
-    ImGui::SameLine(cameraLabelWidth);
-    ImGui::SetNextItemWidth(cameraInputWidth);
-    if (ImGui::DragFloat("##Pan", &camera.pan, 0.01f, -10.0f, 10.0f, "%.3f"))
-        ApplyAngleValues();
-    ImGui::Text("Roll");
-    ImGui::SameLine(cameraLabelWidth);
-    ImGui::SetNextItemWidth(cameraInputWidth);
-    if (ImGui::DragFloat("##Roll", &camera.roll, 0.01f, -10.0f, 10.0f, "%.3f"))
-        ApplyAngleValues();
-    ImGui::Text("Height");
-    ImGui::SameLine(cameraLabelWidth);
-    ImGui::SetNextItemWidth(cameraInputWidth);
-    if (ImGui::DragFloat("##Height", &camera.height, 0.01f, -10.0f, 10.0f, "%.3f"))
-        ApplyAngleValues();
-    ImGui::EndDisabled();
+        ImGui::SameLine();
 
-    ImGui::BeginDisabled(!camera.programEnabled || !camera.zoomFound);
-    ImGui::Text("Zoom");
-    ImGui::SameLine(cameraLabelWidth);
-    ImGui::SetNextItemWidth(cameraInputWidth);
-    if (ImGui::DragFloat("##Zoom", &camera.zoom, 0.01f, -5.0f, 5.0f, "%.3f"))
-        ApplyZoomValue();
-    ImGui::EndDisabled();
+        ImGui::BeginChild("CameraValues", ImVec2(0, 0), true);
+        ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.3f, 1.0f), "Camera values");
+        ImGui::Separator();
 
-    ImGui::Dummy(ImVec2(0.0f, 4.0f * menuScale));
-    ImGui::BeginDisabled(!camera.valuesFound);
-    if (ThemeButton("Reset Angles"))
-    {
-        camera.pitch = camera.defaultPitch;
-        camera.height = camera.defaultHeight;
-        camera.pan = camera.defaultPan;
-        camera.roll = camera.defaultRoll;
-        ApplyAngleValues();
-    }
-    ImGui::EndDisabled();
-    ImGui::SameLine();
-    ImGui::BeginDisabled(!camera.zoomFound);
-    if (ThemeButton("Reset Zoom"))
-    {
-        camera.zoom = camera.defaultZoom;
-        ApplyZoomValue();
-    }
-    ImGui::EndDisabled();
+        ImGui::BeginDisabled(!camera.programEnabled || !camera.valuesFound);
+        ImGui::Text("Pitch");
+        ImGui::SameLine(cameraLabelWidth);
+        ImGui::SetNextItemWidth(cameraInputWidth);
+        if (ImGui::DragFloat("##Pitch", &camera.pitch, 0.01f, -10.0f, 10.0f, "%.3f"))
+            ApplyAngleValues();
+        ImGui::Text("Yaw");
+        ImGui::SameLine(cameraLabelWidth);
+        ImGui::SetNextItemWidth(cameraInputWidth);
+        if (ImGui::DragFloat("##Pan", &camera.pan, 0.01f, -10.0f, 10.0f, "%.3f"))
+            ApplyAngleValues();
+        ImGui::Text("Roll");
+        ImGui::SameLine(cameraLabelWidth);
+        ImGui::SetNextItemWidth(cameraInputWidth);
+        if (ImGui::DragFloat("##Roll", &camera.roll, 0.01f, -10.0f, 10.0f, "%.3f"))
+            ApplyAngleValues();
+        ImGui::Text("Height");
+        ImGui::SameLine(cameraLabelWidth);
+        ImGui::SetNextItemWidth(cameraInputWidth);
+        if (ImGui::DragFloat("##Height", &camera.height, 0.01f, -10.0f, 10.0f, "%.3f"))
+            ApplyAngleValues();
+        ImGui::EndDisabled();
 
-    ImGui::EndChild();
+        ImGui::BeginDisabled(!camera.programEnabled || !camera.zoomFound);
+        ImGui::Text("Zoom");
+        ImGui::SameLine(cameraLabelWidth);
+        ImGui::SetNextItemWidth(cameraInputWidth);
+        if (ImGui::DragFloat("##Zoom", &camera.zoom, 0.01f, -5.0f, 5.0f, "%.3f"))
+            ApplyZoomValue();
+        ImGui::EndDisabled();
+
+        ImGui::Dummy(ImVec2(0.0f, 4.0f * menuScale));
+        ImGui::BeginDisabled(!camera.valuesFound);
+        if (ThemeButton("Reset Angles"))
+        {
+            camera.pitch = camera.defaultPitch;
+            camera.height = camera.defaultHeight;
+            camera.pan = camera.defaultPan;
+            camera.roll = camera.defaultRoll;
+            ApplyAngleValues();
+        }
+        ImGui::EndDisabled();
+        ImGui::SameLine();
+        ImGui::BeginDisabled(!camera.zoomFound);
+        if (ThemeButton("Reset Zoom"))
+        {
+            camera.zoom = camera.defaultZoom;
+            ApplyZoomValue();
+        }
+        ImGui::EndDisabled();
+
+        ImGui::EndChild();
 
         ImGui::PopStyleColor();
-    ImGui::End();
+        ImGui::End();
     }
     else
         ImGui::PopStyleColor();
@@ -9307,628 +8870,628 @@ void ShowLootMenu()
         DrawWindowTitleAndClose("D2RLoot Settings", &showLootMenu);
         PopFontSafe(3);
         ImGui::Separator();
-    ImGui::Dummy(ImVec2(0.0f, 3.0f));
-    DrawCreateFilterPopup();
+        ImGui::Dummy(ImVec2(0.0f, 3.0f));
+        DrawCreateFilterPopup();
 
-    // --- Centered Wrapped Text Helper ---
-    auto CenteredWrappedText = [&](const std::string& prefix, const std::string& text,
-        const ImVec4& prefixColor = ImVec4(1, 0.7f, 0.3f, 1.0f),
-        const ImVec4& valueColor = ImVec4(1, 1, 1, 1))
-        {
-            ImVec2 avail = ImGui::GetContentRegionAvail();
-            float leftOffset = 10.0f;
-            float wrapWidth = avail.x - leftOffset;
-
-            ImVec2 prefixSize = ImGui::CalcTextSize(prefix.c_str(), nullptr, false, wrapWidth);
-            ImVec2 valueSize = ImGui::CalcTextSize(text.c_str(), nullptr, false, wrapWidth);
-            float totalWidth = prefixSize.x + valueSize.x;
-            float cursorX = leftOffset + (wrapWidth - totalWidth) * 0.5f;
-            if (cursorX < leftOffset) cursorX = leftOffset;
-
-            ImGui::SetCursorPosX(cursorX);
-            ImGui::TextColored(prefixColor, "%s", prefix.c_str());
-            ImGui::SameLine(0, 0);
-            ImGui::TextColored(valueColor, "%s", text.c_str());
-        };
-
-    if (!s_lootFilterUpdateStatus.empty())
-    {
-        if (s_lootFilterUpdateStatus.size() >= 9 && s_lootFilterUpdateStatus.compare(0, 9, "Updated to") == 0 && !s_lootFilterUpdateApplied)
-        {
-            if (!s_lootFilterNewVersion.empty())
-                g_LootFilterHeader.Version = s_lootFilterNewVersion;
-            else
-                LoadLootFilterLogic(lootFile);
-            s_lootFilterUpdateApplied = true;
-        }
-        auto now = std::chrono::steady_clock::now();
-        if (std::chrono::duration_cast<std::chrono::seconds>(now - s_lootFilterUpdateStatusTime).count() >= 4)
-        {
-            s_lootFilterUpdateStatus.clear();
-            s_lootFilterUpdateStatusTime = {};
-            s_lootFilterNewVersion.clear();
-            s_lootFilterUpdateApplied = false;
-        }
-    }
-    if (!g_LootFilterHeader.Version.empty())
-        CenteredWrappedText("My D2RLoot Version: ", g_LootFilterHeader.Version);
-    ImGui::SameLine(0.0f, 12.0f);
-    if (ThemeButton(s_lootFilterUpdating ? "Updating..." : "Update"))
-    {
-        if (!s_lootFilterUpdating)
-        {
-            s_lootFilterUpdating = true;
-            s_lootFilterUpdateStatus.clear();
-            s_lootFilterUpdateApplied = false;
-            std::thread(LootFilterUpdateThread).detach();
-        }
-    }
-    if (!s_lootFilterUpdateStatus.empty())
-    {
-        ImGui::SameLine(0.0f, 8.0f);
-        ImGui::TextColored(ImVec4(0.7f, 0.9f, 0.7f, 1.0f), "%s", s_lootFilterUpdateStatus.c_str());
-    }
-
-    // --- My Selected Filter: centered styled display + dropdown to change ---
-    std::vector<std::string> orderedFilters = GetOrderedFilterList();
-    std::string currentDisplayName = s_activeFilterInternalName.empty()
-        ? (g_LootFilterHeader.Title.empty() ? "Custom" : g_LootFilterHeader.Title)
-        : GetFilterDisplayName(s_activeFilterInternalName);
-    CenteredWrappedText("My Selected Filter: ", currentDisplayName);
-
-    float comboWidth = 220.0f;
-    ImVec2 avail = ImGui::GetContentRegionAvail();
-    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (avail.x - comboWidth) * 0.5f);
-    std::string comboLabel = s_pendingFilter.empty() ? currentDisplayName : GetFilterDisplayName(s_pendingFilter);
-    ImGui::SetNextItemWidth(comboWidth);
-    BeginFrameBgImageRegion();
-    if (ImGui::BeginCombo("##selected_filter", comboLabel.c_str()))
-    {
-        for (const auto& internalName : orderedFilters)
-        {
-            std::string displayName = GetFilterDisplayName(internalName);
-            bool isActive = (internalName == s_activeFilterInternalName);
-            std::string label = displayName + (isActive ? " \xe2\x9c\x93" : "");
-            if (ImGui::Selectable(label.c_str(), isActive))
+        // --- Centered Wrapped Text Helper ---
+        auto CenteredWrappedText = [&](const std::string& prefix, const std::string& text,
+            const ImVec4& prefixColor = ImVec4(1, 0.7f, 0.3f, 1.0f),
+            const ImVec4& valueColor = ImVec4(1, 1, 1, 1))
             {
-                s_pendingFilter = internalName;
+                ImVec2 avail = ImGui::GetContentRegionAvail();
+                float leftOffset = 10.0f;
+                float wrapWidth = avail.x - leftOffset;
+
+                ImVec2 prefixSize = ImGui::CalcTextSize(prefix.c_str(), nullptr, false, wrapWidth);
+                ImVec2 valueSize = ImGui::CalcTextSize(text.c_str(), nullptr, false, wrapWidth);
+                float totalWidth = prefixSize.x + valueSize.x;
+                float cursorX = leftOffset + (wrapWidth - totalWidth) * 0.5f;
+                if (cursorX < leftOffset) cursorX = leftOffset;
+
+                ImGui::SetCursorPosX(cursorX);
+                ImGui::TextColored(prefixColor, "%s", prefix.c_str());
+                ImGui::SameLine(0, 0);
+                ImGui::TextColored(valueColor, "%s", text.c_str());
+            };
+
+        if (!s_lootFilterUpdateStatus.empty())
+        {
+            if (s_lootFilterUpdateStatus.size() >= 9 && s_lootFilterUpdateStatus.compare(0, 9, "Updated to") == 0 && !s_lootFilterUpdateApplied)
+            {
+                if (!s_lootFilterNewVersion.empty())
+                    g_LootFilterHeader.Version = s_lootFilterNewVersion;
+                else
+                    LoadLootFilterLogic(lootFile);
+                s_lootFilterUpdateApplied = true;
+            }
+            auto now = std::chrono::steady_clock::now();
+            if (std::chrono::duration_cast<std::chrono::seconds>(now - s_lootFilterUpdateStatusTime).count() >= 4)
+            {
+                s_lootFilterUpdateStatus.clear();
+                s_lootFilterUpdateStatusTime = {};
+                s_lootFilterNewVersion.clear();
+                s_lootFilterUpdateApplied = false;
             }
         }
-        ImGui::EndCombo();
-    }
-    EndFrameBgImageRegion();
-    if (!s_pendingFilter.empty())
-    {
-        ImGui::Dummy(ImVec2(0.0f, 4.0f));
-        std::string applyLabel = "Apply \"" + GetFilterDisplayName(s_pendingFilter) + "\":";
-        float applyW = ImGui::CalcTextSize(applyLabel.c_str()).x;
-        ImVec2 availApply = ImGui::GetContentRegionAvail();
-        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (availApply.x - applyW) * 0.5f);
-        ImGui::Text("%s", applyLabel.c_str());
-        float btnW1 = ImGui::CalcTextSize("Use this filter").x + ImGui::GetStyle().FramePadding.x * 2;
-        ImVec2 availApply2 = ImGui::GetContentRegionAvail();
-        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (availApply2.x - btnW1) * 0.5f);
-        if (ThemeButton("Use this filter"))
+        if (!g_LootFilterHeader.Version.empty())
+            CenteredWrappedText("My D2RLoot Version: ", g_LootFilterHeader.Version);
+        ImGui::SameLine(0.0f, 12.0f);
+        if (ThemeButton(s_lootFilterUpdating ? "Updating..." : "Update"))
         {
-            if (CopyModFilterToActive(s_pendingFilter))
+            if (!s_lootFilterUpdating)
             {
-                s_activeFilterInternalName = s_pendingFilter;
-                LoadLootFilterConfig(GetLootFilterConfigPath());
-                LoadLootFilterLogic(lootFile);
+                s_lootFilterUpdating = true;
+                s_lootFilterUpdateStatus.clear();
+                s_lootFilterUpdateApplied = false;
+                std::thread(LootFilterUpdateThread).detach();
             }
-            s_pendingFilter.clear();
         }
-    }
+        if (!s_lootFilterUpdateStatus.empty())
+        {
+            ImGui::SameLine(0.0f, 8.0f);
+            ImGui::TextColored(ImVec4(0.7f, 0.9f, 0.7f, 1.0f), "%s", s_lootFilterUpdateStatus.c_str());
+        }
 
-    ImGui::Dummy(ImVec2(0.0f, 5.0f));
+        // --- My Selected Filter: centered styled display + dropdown to change ---
+        std::vector<std::string> orderedFilters = GetOrderedFilterList();
+        std::string currentDisplayName = s_activeFilterInternalName.empty()
+            ? (g_LootFilterHeader.Title.empty() ? "Custom" : g_LootFilterHeader.Title)
+            : GetFilterDisplayName(s_activeFilterInternalName);
+        CenteredWrappedText("My Selected Filter: ", currentDisplayName);
 
-    // --- Global options (collapsible) ---
-    if (ImGui::CollapsingHeader("Global options", ImGuiTreeNodeFlags_DefaultOpen))
-    {
-        ImGui::Indent(8.0f);
+        float comboWidth = 220.0f;
+        ImVec2 avail = ImGui::GetContentRegionAvail();
+        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (avail.x - comboWidth) * 0.5f);
+        std::string comboLabel = s_pendingFilter.empty() ? currentDisplayName : GetFilterDisplayName(s_pendingFilter);
+        ImGui::SetNextItemWidth(comboWidth);
+        BeginFrameBgImageRegion();
+        if (ImGui::BeginCombo("##selected_filter", comboLabel.c_str()))
+        {
+            for (const auto& internalName : orderedFilters)
+            {
+                std::string displayName = GetFilterDisplayName(internalName);
+                bool isActive = (internalName == s_activeFilterInternalName);
+                std::string label = displayName + (isActive ? " \xe2\x9c\x93" : "");
+                if (ImGui::Selectable(label.c_str(), isActive))
+                {
+                    s_pendingFilter = internalName;
+                }
+            }
+            ImGui::EndCombo();
+        }
+        EndFrameBgImageRegion();
+        if (!s_pendingFilter.empty())
+        {
+            ImGui::Dummy(ImVec2(0.0f, 4.0f));
+            std::string applyLabel = "Apply \"" + GetFilterDisplayName(s_pendingFilter) + "\":";
+            float applyW = ImGui::CalcTextSize(applyLabel.c_str()).x;
+            ImVec2 availApply = ImGui::GetContentRegionAvail();
+            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (availApply.x - applyW) * 0.5f);
+            ImGui::Text("%s", applyLabel.c_str());
+            float btnW1 = ImGui::CalcTextSize("Use this filter").x + ImGui::GetStyle().FramePadding.x * 2;
+            ImVec2 availApply2 = ImGui::GetContentRegionAvail();
+            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (availApply2.x - btnW1) * 0.5f);
+            if (ThemeButton("Use this filter"))
+            {
+                if (CopyModFilterToActive(s_pendingFilter))
+                {
+                    s_activeFilterInternalName = s_pendingFilter;
+                    LoadLootFilterConfig(GetLootFilterConfigPath());
+                    LoadLootFilterLogic(lootFile);
+                }
+                s_pendingFilter.clear();
+            }
+        }
+
+        ImGui::Dummy(ImVec2(0.0f, 5.0f));
+
+        // --- Global options (collapsible) ---
+        if (ImGui::CollapsingHeader("Global options", ImGuiTreeNodeFlags_DefaultOpen))
+        {
+            ImGui::Indent(8.0f);
+            ImGui::Dummy(ImVec2(0.0f, 2.0f));
+
+            // --- Boolean Checkboxes ---
+            auto RenderCheckboxLine = [&](const std::vector<std::pair<std::string, std::string>>& items, std::function<void()> onChanged = nullptr)
+                {
+                    ImVec2 avail = ImGui::GetContentRegionAvail();
+                    float spacing = 10.0f;
+                    float totalWidth = 0.0f;
+
+                    for (auto& item : items)
+                    {
+                        totalWidth += ImGui::CalcTextSize(item.first.c_str()).x + ImGui::GetStyle().FramePadding.x * 2 + ImGui::GetFrameHeight();
+                    }
+                    totalWidth += spacing * (items.size() - 1);
+
+                    float startX = (avail.x - totalWidth) * 0.5f;
+                    if (startX < 0.0f) startX = 0.0f;
+                    ImGui::SetCursorPosX(startX);
+
+                    for (size_t i = 0; i < items.size(); ++i)
+                    {
+                        if (i > 0) ImGui::SameLine(0.0f, spacing);
+
+                        std::string key = items[i].second;
+                        std::string val = "";
+                        auto it = g_LuaVariables.find(key);
+                        if (it != g_LuaVariables.end()) val = it->second;
+
+                        bool boolValue = (val == "true");
+
+                        if (ThemeCheckbox(items[i].first.c_str(), &boolValue))
+                        {
+                            auto it2 = g_LuaVariables.find(key);
+                            if (it2 != g_LuaVariables.end()) it2->second = boolValue ? "true" : "false";
+                            else g_LuaVariables.insert({ key, boolValue ? "true" : "false" });
+                            if (onChanged) onChanged();
+                        }
+
+                        ImVec2 itemMin = ImGui::GetItemRectMin();
+                        ImVec2 itemMax = ImGui::GetItemRectMax();
+                        float textWidth = ImGui::CalcTextSize(items[i].first.c_str()).x;
+                        itemMax.x += textWidth;
+                        if (ImGui::IsMouseHoveringRect(itemMin, itemMax)) hoveredKey = key;
+                    }
+
+                    ImGui::Dummy(ImVec2(0.0f, 3.0f));
+                    ImGui::Separator();
+                    ImGui::Dummy(ImVec2(0.0f, 3.0f));
+                };
+
+            std::vector<std::pair<std::string, std::string>> bools = {
+                { "Allow Overrides", "allowOverrides" },
+                { "Mod Tips", "modTips" },
+                { "Debug Mode", "Debug" },
+                { "Audio Playback", "audioPlayback" }
+            };
+            RenderCheckboxLine(bools, []() { SaveLootFilterConfig("lootfilter_config.lua"); });
+
+            // --- Input Text Helper ---
+            // Map to track which key is in edit mode
+            static std::unordered_map<std::string, bool> g_EditMode;
+
+            auto RenderInputText = [&](const std::string& key, const std::string& label, const std::string& defaultVal = "Not Defined")
+                {
+                    // --- Get value ---
+                    std::string value = defaultVal;
+                    auto it = g_LuaVariables.find(key);
+                    if (it != g_LuaVariables.end()) value = it->second;
+
+                    // Strip quotes for display
+                    if (!value.empty() && value.front() == '"' && value.back() == '"')
+                        value = value.substr(1, value.size() - 2);
+
+                    std::string fullLabel = label + " = ";
+                    float labelWidth = ImGui::CalcTextSize(fullLabel.c_str()).x;
+
+                    ImVec2 cursorPos = ImGui::GetCursorPos();
+                    ImGui::SetCursorPosY(cursorPos.y - 2.0f);
+
+                    ImGui::Text("%s", fullLabel.c_str());
+                    ImGui::SameLine(labelWidth + 10.0f, -3.0f);
+
+                    bool isEditing = g_EditMode[key];
+
+                    if (isEditing)
+                    {
+                        // --- Edit mode: normal input ---
+                        char buffer[512];
+                        strncpy(buffer, value.c_str(), sizeof(buffer));
+                        buffer[sizeof(buffer) - 1] = '\0';
+
+                        std::string inputID = "##val_" + key;
+                        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 60.0f);
+                        BeginFrameBgImageRegion();
+                        bool changed = ImGui::InputText(inputID.c_str(), buffer, sizeof(buffer));
+                        EndFrameBgImageRegion();
+                        ImGui::SameLine();
+                        if (ThemeButton(("Done##" + key).c_str())) g_EditMode[key] = false;
+
+                        if (ImGui::IsItemActivated()) ImGui::SetKeyboardFocusHere(-1);
+
+                        if (changed) {
+                            g_LuaVariables[key] = buffer;
+                            SaveLootFilterConfig("lootfilter_config.lua");
+                        }
+                    }
+                    else
+                    {
+                        // --- Display mode: colored text ---
+                        RenderColoredText(value); // uses your function
+
+                        ImGui::SameLine();
+                        if (ThemeButton(("Edit##" + key).c_str())) g_EditMode[key] = true;
+                    }
+
+                    // --- Hover detection ---
+                    ImVec2 itemMin = ImGui::GetItemRectMin();
+                    ImVec2 itemMax = ImGui::GetItemRectMax();
+                    itemMin.x -= labelWidth;
+                    if (ImGui::IsMouseHoveringRect(itemMin, itemMax)) hoveredKey = key;
+                };
+
+
+
+
+            RenderInputText("reload", "Reload Message");
+            RenderInputText("audioVoice", "Audio Voice");
+            RenderInputText("filter_level", "Filter Level");
+            RenderInputText("language", "Language");
+
+            // --- Filter Titles ---
+            auto RenderFilterTitles = [&]()
+                {
+                    std::string key = "filter_titles";
+                    std::string value = "";
+                    auto it = g_LuaVariables.find(key);
+                    if (it != g_LuaVariables.end()) value = it->second;
+
+                    std::vector<std::string> titles;
+                    if (!value.empty())
+                    {
+                        std::regex titleRegex(R"delim("([^"]*)")delim");
+                        for (auto i = std::sregex_iterator(value.begin(), value.end(), titleRegex);
+                            i != std::sregex_iterator(); ++i)
+                            titles.push_back((*i)[1].str());
+                    }
+                    if (titles.empty()) titles.push_back("Not Defined");
+
+                    std::string ftLabel = "Filter Titles = ";
+                    float labelWidth = ImGui::CalcTextSize(ftLabel.c_str()).x;
+                    ImGui::Text("%s", ftLabel.c_str());
+                    ImGui::SameLine(labelWidth + 10.0f);
+
+                    bool isEditing = g_EditMode[key];
+                    bool anyTitleChanged = false;
+
+                    for (size_t idx = 0; idx < titles.size(); ++idx)
+                    {
+                        if (isEditing)
+                        {
+                            // --- Edit mode: normal input ---
+                            char buffer[256];
+                            strncpy(buffer, titles[idx].c_str(), sizeof(buffer));
+                            buffer[sizeof(buffer) - 1] = '\0';
+
+                            std::string inputID = "##filter_title_" + std::to_string(idx);
+                            ImGui::PushItemWidth(ImGui::CalcTextSize(buffer).x + 12.0f);
+                            BeginFrameBgImageRegion();
+                            bool changed = ImGui::InputText(inputID.c_str(), buffer, sizeof(buffer));
+                            EndFrameBgImageRegion();
+                            ImGui::PopItemWidth();
+
+                            if (changed) { titles[idx] = buffer; anyTitleChanged = true; }
+                        }
+                        else
+                        {
+                            // --- Display mode: colored text ---
+                            RenderColoredText(titles[idx]);
+                        }
+
+                        if (idx + 1 < titles.size())
+                        {
+                            ImGui::SameLine(0, 2);
+                            ImGui::Text(", ");
+                            ImGui::SameLine(0, 0);
+                        }
+                    }
+
+                    ImGui::SameLine();
+                    if (isEditing)
+                    {
+                        if (ThemeButton(("Done##" + key).c_str()))
+                            g_EditMode[key] = false;
+                    }
+                    else
+                    {
+                        if (ThemeButton(("Edit##" + key).c_str()))
+                            g_EditMode[key] = true;
+                    }
+
+                    // --- Update stored value ---
+                    std::string newValue = "{ ";
+                    for (size_t i = 0; i < titles.size(); ++i)
+                    {
+                        newValue += "\"" + titles[i] + "\"";
+                        if (i + 1 < titles.size()) newValue += ", ";
+                    }
+                    newValue += " }";
+                    g_LuaVariables[key] = newValue;
+                    if (anyTitleChanged) SaveLootFilterConfig("lootfilter_config.lua");
+                };
+            RenderFilterTitles();
+
+            ImGui::Unindent(8.0f);
+            ImGui::Dummy(ImVec2(0.0f, 5.0f));
+        }
+
+        // --- Rules section ---
+        static bool s_showAddRulePopup = false;
+        static bool s_addRulePopupJustOpened = false;
+        static char s_addRuleNameBuf[256] = {};
         ImGui::Dummy(ImVec2(0.0f, 2.0f));
-
-        // --- Boolean Checkboxes ---
-    auto RenderCheckboxLine = [&](const std::vector<std::pair<std::string, std::string>>& items, std::function<void()> onChanged = nullptr)
+        if (ImGui::CollapsingHeader("Rules", ImGuiTreeNodeFlags_DefaultOpen))
         {
-            ImVec2 avail = ImGui::GetContentRegionAvail();
-            float spacing = 10.0f;
-            float totalWidth = 0.0f;
-
-            for (auto& item : items)
+            ImGui::Indent(8.0f);
+            ImGui::Dummy(ImVec2(0.0f, 2.0f));
+            if (ImGui::BeginChild("RulesArea", ImVec2(0, 280), true, ImGuiWindowFlags_None))
             {
-                totalWidth += ImGui::CalcTextSize(item.first.c_str()).x + ImGui::GetStyle().FramePadding.x * 2 + ImGui::GetFrameHeight();
-            }
-            totalWidth += spacing * (items.size() - 1);
-
-            float startX = (avail.x - totalWidth) * 0.5f;
-            if (startX < 0.0f) startX = 0.0f;
-            ImGui::SetCursorPosX(startX);
-
-            for (size_t i = 0; i < items.size(); ++i)
-            {
-                if (i > 0) ImGui::SameLine(0.0f, spacing);
-
-                std::string key = items[i].second;
-                std::string val = "";
-                auto it = g_LuaVariables.find(key);
-                if (it != g_LuaVariables.end()) val = it->second;
-
-                bool boolValue = (val == "true");
-
-                if (ThemeCheckbox(items[i].first.c_str(), &boolValue))
+                if (g_LootFilterRules.empty())
                 {
-                    auto it2 = g_LuaVariables.find(key);
-                    if (it2 != g_LuaVariables.end()) it2->second = boolValue ? "true" : "false";
-                    else g_LuaVariables.insert({ key, boolValue ? "true" : "false" });
-                    if (onChanged) onChanged();
-                }
-
-                ImVec2 itemMin = ImGui::GetItemRectMin();
-                ImVec2 itemMax = ImGui::GetItemRectMax();
-                float textWidth = ImGui::CalcTextSize(items[i].first.c_str()).x;
-                itemMax.x += textWidth;
-                if (ImGui::IsMouseHoveringRect(itemMin, itemMax)) hoveredKey = key;
-            }
-
-            ImGui::Dummy(ImVec2(0.0f, 3.0f));
-            ImGui::Separator();
-            ImGui::Dummy(ImVec2(0.0f, 3.0f));
-        };
-
-    std::vector<std::pair<std::string, std::string>> bools = {
-        { "Allow Overrides", "allowOverrides" },
-        { "Mod Tips", "modTips" },
-        { "Debug Mode", "Debug" },
-        { "Audio Playback", "audioPlayback" }
-    };
-    RenderCheckboxLine(bools, []() { SaveLootFilterConfig("lootfilter_config.lua"); });
-
-    // --- Input Text Helper ---
-    // Map to track which key is in edit mode
-    static std::unordered_map<std::string, bool> g_EditMode;
-
-    auto RenderInputText = [&](const std::string& key, const std::string& label, const std::string& defaultVal = "Not Defined")
-        {
-            // --- Get value ---
-            std::string value = defaultVal;
-            auto it = g_LuaVariables.find(key);
-            if (it != g_LuaVariables.end()) value = it->second;
-
-            // Strip quotes for display
-            if (!value.empty() && value.front() == '"' && value.back() == '"')
-                value = value.substr(1, value.size() - 2);
-
-            std::string fullLabel = label + " = ";
-            float labelWidth = ImGui::CalcTextSize(fullLabel.c_str()).x;
-
-            ImVec2 cursorPos = ImGui::GetCursorPos();
-            ImGui::SetCursorPosY(cursorPos.y - 2.0f);
-
-            ImGui::Text("%s", fullLabel.c_str());
-            ImGui::SameLine(labelWidth + 10.0f, -3.0f);
-
-            bool isEditing = g_EditMode[key];
-
-            if (isEditing)
-            {
-                // --- Edit mode: normal input ---
-                char buffer[512];
-                strncpy(buffer, value.c_str(), sizeof(buffer));
-                buffer[sizeof(buffer) - 1] = '\0';
-
-                std::string inputID = "##val_" + key;
-                ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 60.0f);
-                BeginFrameBgImageRegion();
-                bool changed = ImGui::InputText(inputID.c_str(), buffer, sizeof(buffer));
-                EndFrameBgImageRegion();
-                ImGui::SameLine();
-                if (ThemeButton(("Done##" + key).c_str())) g_EditMode[key] = false;
-
-                if (ImGui::IsItemActivated()) ImGui::SetKeyboardFocusHere(-1);
-
-                if (changed) {
-                    g_LuaVariables[key] = buffer;
-                    SaveLootFilterConfig("lootfilter_config.lua");
-                }
-            }
-            else
-            {
-                // --- Display mode: colored text ---
-                RenderColoredText(value); // uses your function
-
-                ImGui::SameLine();
-                if (ThemeButton(("Edit##" + key).c_str())) g_EditMode[key] = true;
-            }
-
-            // --- Hover detection ---
-            ImVec2 itemMin = ImGui::GetItemRectMin();
-            ImVec2 itemMax = ImGui::GetItemRectMax();
-            itemMin.x -= labelWidth;
-            if (ImGui::IsMouseHoveringRect(itemMin, itemMax)) hoveredKey = key;
-        };
-
-
-
-
-    RenderInputText("reload", "Reload Message");
-    RenderInputText("audioVoice", "Audio Voice");
-    RenderInputText("filter_level", "Filter Level");
-    RenderInputText("language", "Language");
-
-    // --- Filter Titles ---
-    auto RenderFilterTitles = [&]()
-        {
-            std::string key = "filter_titles";
-            std::string value = "";
-            auto it = g_LuaVariables.find(key);
-            if (it != g_LuaVariables.end()) value = it->second;
-
-            std::vector<std::string> titles;
-            if (!value.empty())
-            {
-                std::regex titleRegex(R"delim("([^"]*)")delim");
-                for (auto i = std::sregex_iterator(value.begin(), value.end(), titleRegex);
-                    i != std::sregex_iterator(); ++i)
-                    titles.push_back((*i)[1].str());
-            }
-            if (titles.empty()) titles.push_back("Not Defined");
-
-            std::string ftLabel = "Filter Titles = ";
-            float labelWidth = ImGui::CalcTextSize(ftLabel.c_str()).x;
-            ImGui::Text("%s", ftLabel.c_str());
-            ImGui::SameLine(labelWidth + 10.0f);
-
-            bool isEditing = g_EditMode[key];
-            bool anyTitleChanged = false;
-
-            for (size_t idx = 0; idx < titles.size(); ++idx)
-            {
-                if (isEditing)
-                {
-                    // --- Edit mode: normal input ---
-                    char buffer[256];
-                    strncpy(buffer, titles[idx].c_str(), sizeof(buffer));
-                    buffer[sizeof(buffer) - 1] = '\0';
-
-                    std::string inputID = "##filter_title_" + std::to_string(idx);
-                    ImGui::PushItemWidth(ImGui::CalcTextSize(buffer).x + 12.0f);
-                    BeginFrameBgImageRegion();
-                    bool changed = ImGui::InputText(inputID.c_str(), buffer, sizeof(buffer));
-                    EndFrameBgImageRegion();
-                    ImGui::PopItemWidth();
-
-                    if (changed) { titles[idx] = buffer; anyTitleChanged = true; }
+                    ImGui::TextWrapped("No rules in config, or rules table is empty. Add a new rule using the button below (or edit lootfilter_config.lua directly)");
                 }
                 else
                 {
-                    // --- Display mode: colored text ---
-                    RenderColoredText(titles[idx]);
-                }
-
-                if (idx + 1 < titles.size())
-                {
-                    ImGui::SameLine(0, 2);
-                    ImGui::Text(", ");
-                    ImGui::SameLine(0, 0);
-                }
-            }
-
-            ImGui::SameLine();
-            if (isEditing)
-            {
-                if (ThemeButton(("Done##" + key).c_str()))
-                    g_EditMode[key] = false;
-            }
-            else
-            {
-                if (ThemeButton(("Edit##" + key).c_str()))
-                    g_EditMode[key] = true;
-            }
-
-            // --- Update stored value ---
-            std::string newValue = "{ ";
-            for (size_t i = 0; i < titles.size(); ++i)
-            {
-                newValue += "\"" + titles[i] + "\"";
-                if (i + 1 < titles.size()) newValue += ", ";
-            }
-            newValue += " }";
-            g_LuaVariables[key] = newValue;
-            if (anyTitleChanged) SaveLootFilterConfig("lootfilter_config.lua");
-        };
-        RenderFilterTitles();
-
-        ImGui::Unindent(8.0f);
-        ImGui::Dummy(ImVec2(0.0f, 5.0f));
-    }
-
-    // --- Rules section ---
-    static bool s_showAddRulePopup = false;
-    static bool s_addRulePopupJustOpened = false;
-    static char s_addRuleNameBuf[256] = {};
-    ImGui::Dummy(ImVec2(0.0f, 2.0f));
-    if (ImGui::CollapsingHeader("Rules", ImGuiTreeNodeFlags_DefaultOpen))
-    {
-        ImGui::Indent(8.0f);
-        ImGui::Dummy(ImVec2(0.0f, 2.0f));
-        if (ImGui::BeginChild("RulesArea", ImVec2(0, 280), true, ImGuiWindowFlags_None))
-        {
-            if (g_LootFilterRules.empty())
-            {
-                ImGui::TextWrapped("No rules in config, or rules table is empty. Add a new rule using the button below (or edit lootfilter_config.lua directly)");
-            }
-            else
-            {
-                static char s_rawEditBuf[8192];
-                static int s_rawEditRuleIndex = -1;
-                for (size_t r = 0; r < g_LootFilterRules.size(); r++)
-                {
-                    LootFilterRule& rule = g_LootFilterRules[r];
-                    std::string ruleLabel = "Rule " + std::to_string(r + 1);
-                    if (!rule.rawLua.empty())
+                    static char s_rawEditBuf[8192];
+                    static int s_rawEditRuleIndex = -1;
+                    for (size_t r = 0; r < g_LootFilterRules.size(); r++)
                     {
-                        size_t firstLineEnd = rule.rawLua.find('\n');
-                        std::string firstLine = firstLineEnd == std::string::npos ? rule.rawLua : rule.rawLua.substr(0, firstLineEnd);
-                        size_t trim = firstLine.find_first_not_of(" \t");
-                        if (trim != std::string::npos) firstLine = firstLine.substr(trim);
-                        if (!firstLine.empty() && firstLine[0] == '{')
+                        LootFilterRule& rule = g_LootFilterRules[r];
+                        std::string ruleLabel = "Rule " + std::to_string(r + 1);
+                        if (!rule.rawLua.empty())
                         {
-                            size_t p = firstLine.find("--");
-                            if (p != std::string::npos)
-                            {
-                                p += 2;
-                                while (p < firstLine.size() && (firstLine[p] == '-' || firstLine[p] == ' ' || firstLine[p] == '\t'))
-                                    p++;
-                                firstLine = firstLine.substr(p);
-                            }
-                            else
-                                firstLine = firstLine.substr(1);
-                            trim = firstLine.find_first_not_of(" \t");
+                            size_t firstLineEnd = rule.rawLua.find('\n');
+                            std::string firstLine = firstLineEnd == std::string::npos ? rule.rawLua : rule.rawLua.substr(0, firstLineEnd);
+                            size_t trim = firstLine.find_first_not_of(" \t");
                             if (trim != std::string::npos) firstLine = firstLine.substr(trim);
+                            if (!firstLine.empty() && firstLine[0] == '{')
+                            {
+                                size_t p = firstLine.find("--");
+                                if (p != std::string::npos)
+                                {
+                                    p += 2;
+                                    while (p < firstLine.size() && (firstLine[p] == '-' || firstLine[p] == ' ' || firstLine[p] == '\t'))
+                                        p++;
+                                    firstLine = firstLine.substr(p);
+                                }
+                                else
+                                    firstLine = firstLine.substr(1);
+                                trim = firstLine.find_first_not_of(" \t");
+                                if (trim != std::string::npos) firstLine = firstLine.substr(trim);
+                            }
+                            if (!firstLine.empty()) ruleLabel = firstLine;
                         }
-                        if (!firstLine.empty()) ruleLabel = firstLine;
-                    }
-                    else if (!rule.comment.empty())
-                        ruleLabel = rule.comment;
-                    if (!ruleLabel.empty() && ruleLabel.size() >= 2 && ruleLabel[0] == '-' && ruleLabel[1] == '-')
-                    {
-                        size_t d = 2;
-                        while (d < ruleLabel.size() && (ruleLabel[d] == '-' || ruleLabel[d] == ' ' || ruleLabel[d] == '\t'))
-                            d++;
-                        if (d < ruleLabel.size())
-                            ruleLabel = ruleLabel.substr(d);
-                    }
-                    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x);
-                    if (ImGui::TreeNode(("##rule" + std::to_string(r)).c_str(), "%s", ruleLabel.c_str()))
-                    {
-                        if (s_rawEditRuleIndex != (int)r)
+                        else if (!rule.comment.empty())
+                            ruleLabel = rule.comment;
+                        if (!ruleLabel.empty() && ruleLabel.size() >= 2 && ruleLabel[0] == '-' && ruleLabel[1] == '-')
                         {
-                            s_rawEditRuleIndex = (int)r;
-                            std::vector<std::string> lines;
-                            size_t pos = 0;
-                            while (pos < rule.rawLua.size())
-                            {
-                                size_t next = rule.rawLua.find('\n', pos);
-                                if (next == std::string::npos) next = rule.rawLua.size();
-                                lines.push_back(rule.rawLua.substr(pos, next - pos));
-                                pos = next + 1;
-                            }
-                            while (!lines.empty())
-                            {
-                                size_t start = lines.back().find_first_not_of(" \t");
-                                if (start != std::string::npos) break;
-                                lines.pop_back();
-                            }
-                            std::string displayLua;
-                            for (size_t i = 0; i < lines.size(); i++)
-                            {
-                                std::string line = lines[i];
-                                size_t start = line.find_first_not_of(" \t");
-                                if (start != std::string::npos) line = line.substr(start);
-                                if (i > 0 && i < lines.size() - 1 && !line.empty())
-                                    line = "\t" + line;
-                                if (!displayLua.empty()) displayLua += "\n";
-                                displayLua += line;
-                            }
-                            while (!displayLua.empty() && (displayLua.back() == '\n' || displayLua.back() == '\r'))
-                                displayLua.pop_back();
-                            strncpy(s_rawEditBuf, displayLua.c_str(), sizeof(s_rawEditBuf) - 1);
-                            s_rawEditBuf[sizeof(s_rawEditBuf) - 1] = '\0';
+                            size_t d = 2;
+                            while (d < ruleLabel.size() && (ruleLabel[d] == '-' || ruleLabel[d] == ' ' || ruleLabel[d] == '\t'))
+                                d++;
+                            if (d < ruleLabel.size())
+                                ruleLabel = ruleLabel.substr(d);
                         }
-                        float lineCount = 1.0f;
-                        for (const char* p = s_rawEditBuf; *p; p++) if (*p == '\n') lineCount += 1.0f;
-                        float lineH = ImGui::GetTextLineHeightWithSpacing();
-                        float editHeight = lineCount * lineH + ImGui::GetStyle().FramePadding.y * 2.0f - 1.0f * lineH;
-                        editHeight = std::clamp(editHeight, 60.0f, 500.0f);
-                        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
+                        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x);
+                        if (ImGui::TreeNode(("##rule" + std::to_string(r)).c_str(), "%s", ruleLabel.c_str()))
+                        {
+                            if (s_rawEditRuleIndex != (int)r)
+                            {
+                                s_rawEditRuleIndex = (int)r;
+                                std::vector<std::string> lines;
+                                size_t pos = 0;
+                                while (pos < rule.rawLua.size())
+                                {
+                                    size_t next = rule.rawLua.find('\n', pos);
+                                    if (next == std::string::npos) next = rule.rawLua.size();
+                                    lines.push_back(rule.rawLua.substr(pos, next - pos));
+                                    pos = next + 1;
+                                }
+                                while (!lines.empty())
+                                {
+                                    size_t start = lines.back().find_first_not_of(" \t");
+                                    if (start != std::string::npos) break;
+                                    lines.pop_back();
+                                }
+                                std::string displayLua;
+                                for (size_t i = 0; i < lines.size(); i++)
+                                {
+                                    std::string line = lines[i];
+                                    size_t start = line.find_first_not_of(" \t");
+                                    if (start != std::string::npos) line = line.substr(start);
+                                    if (i > 0 && i < lines.size() - 1 && !line.empty())
+                                        line = "\t" + line;
+                                    if (!displayLua.empty()) displayLua += "\n";
+                                    displayLua += line;
+                                }
+                                while (!displayLua.empty() && (displayLua.back() == '\n' || displayLua.back() == '\r'))
+                                    displayLua.pop_back();
+                                strncpy(s_rawEditBuf, displayLua.c_str(), sizeof(s_rawEditBuf) - 1);
+                                s_rawEditBuf[sizeof(s_rawEditBuf) - 1] = '\0';
+                            }
+                            float lineCount = 1.0f;
+                            for (const char* p = s_rawEditBuf; *p; p++) if (*p == '\n') lineCount += 1.0f;
+                            float lineH = ImGui::GetTextLineHeightWithSpacing();
+                            float editHeight = lineCount * lineH + ImGui::GetStyle().FramePadding.y * 2.0f - 1.0f * lineH;
+                            editHeight = std::clamp(editHeight, 60.0f, 500.0f);
+                            ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
+                            BeginFrameBgImageRegion();
+                            if (ImGui::InputTextMultiline(("##raw_rule" + std::to_string(r)).c_str(), s_rawEditBuf, sizeof(s_rawEditBuf), ImVec2(-1, editHeight)))
+                            {
+                                std::string saved = s_rawEditBuf;
+                                while (!saved.empty() && (saved.back() == '\n' || saved.back() == '\r'))
+                                    saved.pop_back();
+                                rule.rawLua = saved;
+                                SaveLootFilterConfig("lootfilter_config.lua");
+                            }
+                            EndFrameBgImageRegion();
+                            static int s_copiedRuleIndex = -1;
+                            static std::chrono::steady_clock::time_point s_copiedAt;
+                            bool showCopied = (s_copiedRuleIndex == (int)r) && (std::chrono::steady_clock::now() - s_copiedAt) < std::chrono::milliseconds(1500);
+                            if (ThemeButton(showCopied ? "Copied!" : "Copy code"))
+                            {
+                                ImGui::SetClipboardText(s_rawEditBuf);
+                                s_copiedRuleIndex = (int)r;
+                                s_copiedAt = std::chrono::steady_clock::now();
+                            }
+                            ImGui::SameLine();
+                            if (ThemeButton("Remove rule"))
+                            {
+                                g_LootFilterRules.erase(g_LootFilterRules.begin() + r);
+                                SaveLootFilterConfig("lootfilter_config.lua");
+                                if (s_copiedRuleIndex == (int)r) s_copiedRuleIndex = -1;
+                                else if (s_copiedRuleIndex > (int)r) s_copiedRuleIndex--;
+                                if (s_rawEditRuleIndex == (int)r) s_rawEditRuleIndex = -1;
+                                else if (s_rawEditRuleIndex > (int)r) s_rawEditRuleIndex--;
+                                ImGui::TreePop();
+                                ImGui::PopTextWrapPos();
+                                break;
+                            }
+                            if (s_copiedRuleIndex == (int)r && (std::chrono::steady_clock::now() - s_copiedAt) >= std::chrono::milliseconds(1500))
+                                s_copiedRuleIndex = -1;
+                            ImGui::TreePop();
+                        }
+                        ImGui::PopTextWrapPos();
+                    }
+                }
+                ImGui::Dummy(ImVec2(0.0f, 4.0f));
+                float addRuleW = ImGui::CalcTextSize("Add new rule").x + ImGui::GetStyle().FramePadding.x * 2;
+                ImVec2 rulesAvail = ImGui::GetContentRegionAvail();
+                ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (rulesAvail.x - addRuleW) * 0.5f);
+                if (ThemeButton("Add new rule"))
+                {
+                    s_showAddRulePopup = true;
+                    s_addRulePopupJustOpened = true;
+                    s_addRuleNameBuf[0] = '\0';
+                }
+                if (s_showAddRulePopup)
+                {
+                    if (s_addRulePopupJustOpened)
+                    {
+                        ImGui::OpenPopup("Add rule");
+                        s_addRulePopupJustOpened = false;
+                    }
+                    ImGui::SetNextWindowSize(ImVec2(320.0f, 0.0f), ImGuiCond_FirstUseEver);
+                    if (ImGui::BeginPopupModal("Add rule", &s_showAddRulePopup, ImGuiWindowFlags_AlwaysAutoResize))
+                    {
+                        ImGui::Text("Rule name (optional, shown as comment):");
+                        ImGui::SetNextItemWidth(-1.0f);
                         BeginFrameBgImageRegion();
-                        if (ImGui::InputTextMultiline(("##raw_rule" + std::to_string(r)).c_str(), s_rawEditBuf, sizeof(s_rawEditBuf), ImVec2(-1, editHeight)))
-                        {
-                            std::string saved = s_rawEditBuf;
-                            while (!saved.empty() && (saved.back() == '\n' || saved.back() == '\r'))
-                                saved.pop_back();
-                            rule.rawLua = saved;
-                            SaveLootFilterConfig("lootfilter_config.lua");
-                        }
+                        ImGui::InputText("##addrule_name", s_addRuleNameBuf, sizeof(s_addRuleNameBuf));
                         EndFrameBgImageRegion();
-                        static int s_copiedRuleIndex = -1;
-                        static std::chrono::steady_clock::time_point s_copiedAt;
-                        bool showCopied = (s_copiedRuleIndex == (int)r) && (std::chrono::steady_clock::now() - s_copiedAt) < std::chrono::milliseconds(1500);
-                        if (ThemeButton(showCopied ? "Copied!" : "Copy code"))
+                        ImGui::Spacing();
+                        if (ThemeButton("Add", ImVec2(80.0f, 0.0f)))
                         {
-                            ImGui::SetClipboardText(s_rawEditBuf);
-                            s_copiedRuleIndex = (int)r;
-                            s_copiedAt = std::chrono::steady_clock::now();
+                            if (!g_LootFilterRules.empty())
+                            {
+                                std::string& lastRaw = g_LootFilterRules.back().rawLua;
+                                while (!lastRaw.empty() && (lastRaw.back() == '\n' || lastRaw.back() == '\r' || lastRaw.back() == ' ' || lastRaw.back() == '\t'))
+                                    lastRaw.pop_back();
+                                if (!lastRaw.empty() && lastRaw.back() == '}')
+                                    lastRaw += ",";
+                                lastRaw += "\n";
+                            }
+                            LootFilterRule newRule;
+                            std::string name(s_addRuleNameBuf);
+                            while (!name.empty() && (name.back() == ' ' || name.back() == '\t')) name.pop_back();
+                            while (!name.empty() && (name.front() == ' ' || name.front() == '\t')) name.erase(0, 1);
+                            if (!name.empty())
+                                newRule.rawLua = "-- " + name + "\n";
+                            newRule.rawLua += "{\n    code = \"isc\",\n    hide = true\n}\n";
+                            g_LootFilterRules.push_back(newRule);
+                            SaveLootFilterConfig("lootfilter_config.lua");
+                            s_showAddRulePopup = false;
+                            ImGui::CloseCurrentPopup();
                         }
                         ImGui::SameLine();
-                        if (ThemeButton("Remove rule"))
+                        if (ThemeButton("Cancel", ImVec2(80.0f, 0.0f)))
                         {
-                            g_LootFilterRules.erase(g_LootFilterRules.begin() + r);
-                            SaveLootFilterConfig("lootfilter_config.lua");
-                            if (s_copiedRuleIndex == (int)r) s_copiedRuleIndex = -1;
-                            else if (s_copiedRuleIndex > (int)r) s_copiedRuleIndex--;
-                            if (s_rawEditRuleIndex == (int)r) s_rawEditRuleIndex = -1;
-                            else if (s_rawEditRuleIndex > (int)r) s_rawEditRuleIndex--;
-                            ImGui::TreePop();
-                            ImGui::PopTextWrapPos();
-                            break;
+                            s_showAddRulePopup = false;
+                            ImGui::CloseCurrentPopup();
                         }
-                        if (s_copiedRuleIndex == (int)r && (std::chrono::steady_clock::now() - s_copiedAt) >= std::chrono::milliseconds(1500))
-                            s_copiedRuleIndex = -1;
-                        ImGui::TreePop();
+                        ImGui::EndPopup();
                     }
-                    ImGui::PopTextWrapPos();
                 }
+            }
+            ImGui::EndChild();
+            ImGui::Unindent(8.0f);
+        }
+
+        ImGui::Dummy(ImVec2(0.0f, 3.0f));
+
+        // --- Sounds section ---
+        if (ImGui::CollapsingHeader("Sounds", ImGuiTreeNodeFlags_DefaultOpen))
+        {
+            ImGui::Indent(8.0f);
+            ImGui::Dummy(ImVec2(0.0f, 2.0f));
+            std::vector<std::pair<std::string, std::string>> soundFiles = GetSoundFilesFromBothLocations();
+            if (soundFiles.empty())
+            {
+                ImGui::TextWrapped("No sounds in My Filters/sounds or mod yet. Use \"Import sounds\" to add .mp3, .flac or .wav files.");
+            }
+            else
+            {
+                if (ImGui::BeginChild("SoundsList", ImVec2(0, 120), true, ImGuiWindowFlags_None))
+                {
+                    for (size_t i = 0; i < soundFiles.size(); i++)
+                    {
+                        const std::string& path = soundFiles[i].first;
+                        const std::string& name = soundFiles[i].second;
+                        ImGui::Text("%s", name.c_str());
+                        float btnX = ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - 55.0f;
+                        if (btnX > ImGui::GetCursorPosX()) ImGui::SameLine(btnX);
+                        std::string playId = "Play##" + name + std::to_string(i);
+                        if (ThemeButton(playId.c_str(), ImVec2(50.0f, 0.0f)))
+                        {
+                            if (std::filesystem::exists(path))
+                                PlaySoundFile(path);
+                        }
+                    }
+                }
+                ImGui::EndChild();  // always call after BeginChild, regardless of return value
             }
             ImGui::Dummy(ImVec2(0.0f, 4.0f));
-            float addRuleW = ImGui::CalcTextSize("Add new rule").x + ImGui::GetStyle().FramePadding.x * 2;
-            ImVec2 rulesAvail = ImGui::GetContentRegionAvail();
-            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (rulesAvail.x - addRuleW) * 0.5f);
-            if (ThemeButton("Add new rule"))
-            {
-                s_showAddRulePopup = true;
-                s_addRulePopupJustOpened = true;
-                s_addRuleNameBuf[0] = '\0';
-            }
-            if (s_showAddRulePopup)
-            {
-                if (s_addRulePopupJustOpened)
-                {
-                    ImGui::OpenPopup("Add rule");
-                    s_addRulePopupJustOpened = false;
-                }
-                ImGui::SetNextWindowSize(ImVec2(320.0f, 0.0f), ImGuiCond_FirstUseEver);
-                if (ImGui::BeginPopupModal("Add rule", &s_showAddRulePopup, ImGuiWindowFlags_AlwaysAutoResize))
-                {
-                    ImGui::Text("Rule name (optional, shown as comment):");
-                    ImGui::SetNextItemWidth(-1.0f);
-                    BeginFrameBgImageRegion();
-                    ImGui::InputText("##addrule_name", s_addRuleNameBuf, sizeof(s_addRuleNameBuf));
-                    EndFrameBgImageRegion();
-                    ImGui::Spacing();
-                    if (ThemeButton("Add", ImVec2(80.0f, 0.0f)))
-                    {
-                        if (!g_LootFilterRules.empty())
-                        {
-                            std::string& lastRaw = g_LootFilterRules.back().rawLua;
-                            while (!lastRaw.empty() && (lastRaw.back() == '\n' || lastRaw.back() == '\r' || lastRaw.back() == ' ' || lastRaw.back() == '\t'))
-                                lastRaw.pop_back();
-                            if (!lastRaw.empty() && lastRaw.back() == '}')
-                                lastRaw += ",";
-                            lastRaw += "\n";
-                        }
-                        LootFilterRule newRule;
-                        std::string name(s_addRuleNameBuf);
-                        while (!name.empty() && (name.back() == ' ' || name.back() == '\t')) name.pop_back();
-                        while (!name.empty() && (name.front() == ' ' || name.front() == '\t')) name.erase(0, 1);
-                        if (!name.empty())
-                            newRule.rawLua = "-- " + name + "\n";
-                        newRule.rawLua += "{\n    code = \"isc\",\n    hide = true\n}\n";
-                        g_LootFilterRules.push_back(newRule);
-                        SaveLootFilterConfig("lootfilter_config.lua");
-                        s_showAddRulePopup = false;
-                        ImGui::CloseCurrentPopup();
-                    }
-                    ImGui::SameLine();
-                    if (ThemeButton("Cancel", ImVec2(80.0f, 0.0f)))
-                    {
-                        s_showAddRulePopup = false;
-                        ImGui::CloseCurrentPopup();
-                    }
-                    ImGui::EndPopup();
-                }
-            }
+            float importSoundsW = ImGui::CalcTextSize("Import sounds").x + ImGui::GetStyle().FramePadding.x * 2;
+            ImVec2 soundsAvail = ImGui::GetContentRegionAvail();
+            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (soundsAvail.x - importSoundsW) * 0.5f);
+            if (ThemeButton("Import sounds"))
+                OpenImportSoundsPathInput();
+            DrawImportSoundsPathRow();
+            ImGui::Unindent(8.0f);
         }
-        ImGui::EndChild();
-        ImGui::Unindent(8.0f);
-    }
 
-    ImGui::Dummy(ImVec2(0.0f, 3.0f));
-
-    // --- Sounds section ---
-    if (ImGui::CollapsingHeader("Sounds", ImGuiTreeNodeFlags_DefaultOpen))
-    {
-        ImGui::Indent(8.0f);
-        ImGui::Dummy(ImVec2(0.0f, 2.0f));
-        std::vector<std::pair<std::string, std::string>> soundFiles = GetSoundFilesFromBothLocations();
-        if (soundFiles.empty())
-        {
-            ImGui::TextWrapped("No sounds in My Filters/sounds or mod yet. Use \"Import sounds\" to add .mp3, .flac or .wav files.");
-        }
-        else
-        {
-            if (ImGui::BeginChild("SoundsList", ImVec2(0, 120), true, ImGuiWindowFlags_None))
-            {
-                for (size_t i = 0; i < soundFiles.size(); i++)
-                {
-                    const std::string& path = soundFiles[i].first;
-                    const std::string& name = soundFiles[i].second;
-                    ImGui::Text("%s", name.c_str());
-                    float btnX = ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - 55.0f;
-                    if (btnX > ImGui::GetCursorPosX()) ImGui::SameLine(btnX);
-                    std::string playId = "Play##" + name + std::to_string(i);
-                    if (ThemeButton(playId.c_str(), ImVec2(50.0f, 0.0f)))
-                    {
-                        if (std::filesystem::exists(path))
-                            PlaySoundFile(path);
-                    }
-                }
-            }
-            ImGui::EndChild();  // always call after BeginChild, regardless of return value
-        }
+        ImGui::Dummy(ImVec2(0.0f, 3.0f));
+        ImGui::Separator();
         ImGui::Dummy(ImVec2(0.0f, 4.0f));
-        float importSoundsW = ImGui::CalcTextSize("Import sounds").x + ImGui::GetStyle().FramePadding.x * 2;
-        ImVec2 soundsAvail = ImGui::GetContentRegionAvail();
-        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (soundsAvail.x - importSoundsW) * 0.5f);
-        if (ThemeButton("Import sounds"))
-            OpenImportSoundsPathInput();
-        DrawImportSoundsPathRow();
-        ImGui::Unindent(8.0f);
-    }
 
-    ImGui::Dummy(ImVec2(0.0f, 3.0f));
-    ImGui::Separator();
-    ImGui::Dummy(ImVec2(0.0f, 4.0f));
+        // --- Import / Open / Guide / Create buttons ---
+        float btnImportW = ImGui::CalcTextSize("Import Filter").x + ImGui::GetStyle().FramePadding.x * 2;
+        float btnOpenW = ImGui::CalcTextSize("Open Filter").x + ImGui::GetStyle().FramePadding.x * 2;
+        float btnCreateW = ImGui::CalcTextSize("Create my own filter").x + ImGui::GetStyle().FramePadding.x * 2;
+        float btnGuideW = ImGui::CalcTextSize("Filter Guide").x + ImGui::GetStyle().FramePadding.x * 2;
+        float spacing = ImGui::GetStyle().ItemSpacing.x;
+        float totalBtnW = btnImportW + btnOpenW + btnCreateW + btnGuideW + spacing * 3;
+        ImVec2 availBtns = ImGui::GetContentRegionAvail();
+        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (availBtns.x - totalBtnW) * 0.5f);
+        if (ThemeButton("Import Filter"))
+            OpenImportPathInput();
+        ImGui::SameLine();
+        if (ThemeButton("Open Filter"))
+        {
+            std::string path = GetLootFilterConfigPathAbsolute();
+            if (std::filesystem::exists(path))
+                OpenInShell(path);
+        }
+        ImGui::SameLine();
+        if (ThemeButton("Create my own filter"))
+            OpenCreateFilterPopup();
+        ImGui::SameLine();
+        if (ThemeButton("Filter Guide"))
+        {
+            OpenInShell("https://locbones.github.io/D2RLAN-LootFilterGuide");
+        }
+        DrawImportFilterPathRow();
+        ImGui::Dummy(ImVec2(0.0f, 3.0f));
 
-    // --- Import / Open / Guide / Create buttons ---
-    float btnImportW = ImGui::CalcTextSize("Import Filter").x + ImGui::GetStyle().FramePadding.x * 2;
-    float btnOpenW  = ImGui::CalcTextSize("Open Filter").x + ImGui::GetStyle().FramePadding.x * 2;
-    float btnCreateW = ImGui::CalcTextSize("Create my own filter").x + ImGui::GetStyle().FramePadding.x * 2;
-    float btnGuideW = ImGui::CalcTextSize("Filter Guide").x + ImGui::GetStyle().FramePadding.x * 2;
-    float spacing = ImGui::GetStyle().ItemSpacing.x;
-    float totalBtnW = btnImportW + btnOpenW + btnCreateW + btnGuideW + spacing * 3;
-    ImVec2 availBtns = ImGui::GetContentRegionAvail();
-    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (availBtns.x - totalBtnW) * 0.5f);
-    if (ThemeButton("Import Filter"))
-        OpenImportPathInput();
-    ImGui::SameLine();
-    if (ThemeButton("Open Filter"))
-    {
-        std::string path = GetLootFilterConfigPathAbsolute();
-        if (std::filesystem::exists(path))
-            OpenInShell(path);
-    }
-    ImGui::SameLine();
-    if (ThemeButton("Create my own filter"))
-        OpenCreateFilterPopup();
-    ImGui::SameLine();
-    if (ThemeButton("Filter Guide"))
-    {
-        OpenInShell("https://locbones.github.io/D2RLAN-LootFilterGuide");
-    }
-    DrawImportFilterPathRow();
-    ImGui::Dummy(ImVec2(0.0f, 3.0f));
+        // --- Bottom Description ---
+        std::string desc = "Hover over an option to see its description.";
+        if (!hoveredKey.empty() && g_LuaDescriptions.count(hoveredKey))
+            desc = g_LuaDescriptions.at(hoveredKey);
 
-    // --- Bottom Description ---
-    std::string desc = "Hover over an option to see its description.";
-    if (!hoveredKey.empty() && g_LuaDescriptions.count(hoveredKey))
-        desc = g_LuaDescriptions.at(hoveredKey);
-
-    DrawBottomDescription(desc);
+        DrawBottomDescription(desc);
 
         ImGui::PopStyleColor();
-    ImGui::End();
+        ImGui::End();
     }
     else
         ImGui::PopStyleColor();
@@ -9965,268 +9528,268 @@ void ShowMemoryMenu()
         DrawWindowTitleAndClose("Memory Edit Info", &showMemoryMenu);
         PopFontSafe(3);
 
-    // STICKY DESCRIPTION
-    PushFontSafe(2);
-    DrawBottomDescription("Shows the currently enabled memory edits.\nNow fully editable.");
-    PopFontSafe(2);
+        // STICKY DESCRIPTION
+        PushFontSafe(2);
+        DrawBottomDescription("Shows the currently enabled memory edits.\nNow fully editable.");
+        PopFontSafe(2);
 
-    ImGui::Dummy(ImVec2(0, 10.0f * menuScale));
-    ImGui::Separator();
-    ImGui::Dummy(ImVec2(0, 6.0f * menuScale));
+        ImGui::Dummy(ImVec2(0, 10.0f * menuScale));
+        ImGui::Separator();
+        ImGui::Dummy(ImVec2(0, 6.0f * menuScale));
 
-    // Red disclaimer: game restart required
-    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.2f, 0.2f, 1.0f));
-    ImGui::TextWrapped("Disclaimer: The game must be restarted for memory edit changes to take effect.");
-    ImGui::PopStyleColor();
-    ImGui::Dummy(ImVec2(0, 6.0f * menuScale));
+        // Red disclaimer: game restart required
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.2f, 0.2f, 1.0f));
+        ImGui::TextWrapped("Disclaimer: The game must be restarted for memory edit changes to take effect.");
+        ImGui::PopStyleColor();
+        ImGui::Dummy(ImVec2(0, 6.0f * menuScale));
 
-    // persistent dropdown selections
-    static std::unordered_map<int, int> selectedIndexMap;
-    static std::string selectedCategory = "All";
+        // persistent dropdown selections
+        static std::unordered_map<int, int> selectedIndexMap;
+        static std::string selectedCategory = "All";
 
-    // 2 COLUMN LAYOUT (LEFT = STICKY)
-    float leftWidth = 160.0f * menuScale;
-    float spacing = 10.0f * menuScale;
+        // 2 COLUMN LAYOUT (LEFT = STICKY)
+        float leftWidth = 160.0f * menuScale;
+        float spacing = 10.0f * menuScale;
 
-    ImGui::Columns(2, nullptr, false); // NOT scrollable
-    ImGui::SetColumnWidth(0, leftWidth);
+        ImGui::Columns(2, nullptr, false); // NOT scrollable
+        ImGui::SetColumnWidth(0, leftWidth);
 
-    // LEFT COLUMN (STICKY)
-    {
-        std::set<std::string> categories;
-        for (auto& entry : g_MemoryConfigs)
-            if (!entry.Category.empty())
-                categories.insert(entry.Category);
-
-        if (ImGui::Selectable("All", selectedCategory == "All"))
-            selectedCategory = "All";
-
-        for (auto& cat : categories)
+        // LEFT COLUMN (STICKY)
         {
-            if (ImGui::Selectable(cat.c_str(), selectedCategory == cat))
-                selectedCategory = cat;
+            std::set<std::string> categories;
+            for (auto& entry : g_MemoryConfigs)
+                if (!entry.Category.empty())
+                    categories.insert(entry.Category);
+
+            if (ImGui::Selectable("All", selectedCategory == "All"))
+                selectedCategory = "All";
+
+            for (auto& cat : categories)
+            {
+                if (ImGui::Selectable(cat.c_str(), selectedCategory == cat))
+                    selectedCategory = cat;
+            }
         }
-    }
 
-    // RIGHT COLUMN (SCROLLABLE CHILD)
-    ImGui::NextColumn();
-    float rightWidth = ImGui::GetContentRegionAvail().x;
-    ImGui::BeginChild("RightScrollRegion", ImVec2(rightWidth, 0), false, ImGuiWindowFlags_AlwaysVerticalScrollbar);
+        // RIGHT COLUMN (SCROLLABLE CHILD)
+        ImGui::NextColumn();
+        float rightWidth = ImGui::GetContentRegionAvail().x;
+        ImGui::BeginChild("RightScrollRegion", ImVec2(rightWidth, 0), false, ImGuiWindowFlags_AlwaysVerticalScrollbar);
 
-    // RENDER MEMORY ENTRIES (SCROLLABLE)
-    for (auto& entry : g_MemoryConfigs)
-    {
-        if (selectedCategory != "All" && entry.Category != selectedCategory)
-            continue;
-
-        ImGui::Dummy(ImVec2(0.0f, 6.0f));
-        RightColumnSeparator(rightWidth, 2.0f);
-        ImGui::Dummy(ImVec2(0.0f, 6.0f));
-
-        ImGui::PushID(entry.UniqueID);
-
-        // ===== TITLE =====
-        float nameWidth = ImGui::CalcTextSize(entry.Name.c_str()).x;
-        ImGui::SetCursorPosX((rightWidth - nameWidth) * 0.5f);
-        ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.1f, 1.0f), "%s", entry.Name.c_str());
-
-        // ===== DESCRIPTION =====
-        if (!entry.Description.empty())
+        // RENDER MEMORY ENTRIES (SCROLLABLE)
+        for (auto& entry : g_MemoryConfigs)
         {
-            PushFontSafe(2);
-
-            float wrapWidth = rightWidth * 0.9f;
-            std::istringstream iss(entry.Description);
-            std::string word, line;
-            std::vector<std::string> lines;
-
-            while (iss >> word)
-            {
-                std::string testLine = line.empty() ? word : line + " " + word;
-                if (ImGui::CalcTextSize(testLine.c_str()).x > wrapWidth)
-                {
-                    lines.push_back(line);
-                    line = word;
-                }
-                else line = testLine;
-            }
-            if (!line.empty()) lines.push_back(line);
-
-            for (auto& l : lines)
-            {
-                float w = ImGui::CalcTextSize(l.c_str()).x;
-                ImGui::SetCursorPosX((rightWidth - w) * 0.5f);
-                ImGui::TextColored(ImVec4(0.0157f, 0.380f, 0.8f, 1.0f), "%s", l.c_str());
-            }
+            if (selectedCategory != "All" && entry.Category != selectedCategory)
+                continue;
 
             ImGui::Dummy(ImVec2(0.0f, 6.0f));
-            PopFontSafe(2);
-        }
+            RightColumnSeparator(rightWidth, 2.0f);
+            ImGui::Dummy(ImVec2(0.0f, 6.0f));
 
-        // ===== TYPE + LENGTH (same line) =====
-        {
-            PushFontSafe(2);
+            ImGui::PushID(entry.UniqueID);
 
-            const char* typeOptions[] = { "Hex", "Integer" };
-            int typeIndex = (entry.Type == "Integer") ? 1 : 0;
+            // ===== TITLE =====
+            float nameWidth = ImGui::CalcTextSize(entry.Name.c_str()).x;
+            ImGui::SetCursorPosX((rightWidth - nameWidth) * 0.5f);
+            ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.1f, 1.0f), "%s", entry.Name.c_str());
 
-            float typeLabelWidth = ImGui::CalcTextSize("Type:").x;
-            float typeComboWidth = 80.0f;
-
-            float lengthLabelWidth = ImGui::CalcTextSize("Length:").x;
-            float lengthInputWidth = 80.0f;
-
-            float totalWidth =
-                typeLabelWidth + typeComboWidth +
-                10.0f +
-                lengthLabelWidth + lengthInputWidth;
-
-            float startX = (rightWidth - totalWidth) * 0.5f;
-
-            ImGui::SetCursorPosX(startX);
-            ImGui::Text("Type:");
-            ImGui::SameLine();
-
-            ImGui::SetCursorPosX(startX + typeLabelWidth + 5.0f);
-            ImGui::PushItemWidth(typeComboWidth);
-            BeginFrameBgImageRegion();
-            if (ImGui::Combo("##type", &typeIndex, typeOptions, IM_ARRAYSIZE(typeOptions)))
+            // ===== DESCRIPTION =====
+            if (!entry.Description.empty())
             {
-                entry.Type = (typeIndex == 1 ? "Integer" : "Hex");
-                SaveFullGrailConfig(configFilePath, false);
+                PushFontSafe(2);
+
+                float wrapWidth = rightWidth * 0.9f;
+                std::istringstream iss(entry.Description);
+                std::string word, line;
+                std::vector<std::string> lines;
+
+                while (iss >> word)
+                {
+                    std::string testLine = line.empty() ? word : line + " " + word;
+                    if (ImGui::CalcTextSize(testLine.c_str()).x > wrapWidth)
+                    {
+                        lines.push_back(line);
+                        line = word;
+                    }
+                    else line = testLine;
+                }
+                if (!line.empty()) lines.push_back(line);
+
+                for (auto& l : lines)
+                {
+                    float w = ImGui::CalcTextSize(l.c_str()).x;
+                    ImGui::SetCursorPosX((rightWidth - w) * 0.5f);
+                    ImGui::TextColored(ImVec4(0.0157f, 0.380f, 0.8f, 1.0f), "%s", l.c_str());
+                }
+
+                ImGui::Dummy(ImVec2(0.0f, 6.0f));
+                PopFontSafe(2);
             }
-            EndFrameBgImageRegion();
-            ImGui::PopItemWidth();
 
-            ImGui::SameLine();
-            ImGui::SetCursorPosX(startX + typeLabelWidth + typeComboWidth + 10.0f);
-            ImGui::Text("Length:");
-
-            ImGui::SameLine();
-            ImGui::SetCursorPosX(startX + typeLabelWidth + typeComboWidth + 10.0f + lengthLabelWidth + 5.0f);
-            ImGui::PushItemWidth(lengthInputWidth);
-            BeginFrameBgImageRegion();
-            bool lengthChanged = ImGui::InputInt("##length", &entry.Length, 1, 10);
-            EndFrameBgImageRegion();
-            if (entry.Length < 1) entry.Length = 1;
-            if (lengthChanged) SaveFullGrailConfig(configFilePath, false);
-            ImGui::PopItemWidth();
-
-            PopFontSafe(2);
-        }
-
-        // ===== ADDRESS COMBO =====
-        {
-            PushFontSafe(2);
-            std::vector<std::string> addrList;
-
-            if (!entry.Address.empty())
-                addrList.push_back(entry.Address);
-
-            for (auto& a : entry.Addresses)
-                addrList.push_back(a);
-
-            if (!addrList.empty())
+            // ===== TYPE + LENGTH (same line) =====
             {
-                int& selectedIdx = selectedIndexMap[entry.UniqueID];
-                if (selectedIdx >= addrList.size()) selectedIdx = 0;
+                PushFontSafe(2);
 
-                std::string current = addrList[selectedIdx];
+                const char* typeOptions[] = { "Hex", "Integer" };
+                int typeIndex = (entry.Type == "Integer") ? 1 : 0;
 
-                float labelWidth = ImGui::CalcTextSize("Address:").x;
-                float comboWidth = 120.0f;
+                float typeLabelWidth = ImGui::CalcTextSize("Type:").x;
+                float typeComboWidth = 80.0f;
 
-                ImGui::SetCursorPosX((rightWidth - (labelWidth + comboWidth + 10)) * 0.5f);
-                ImGui::Text("Address:");
+                float lengthLabelWidth = ImGui::CalcTextSize("Length:").x;
+                float lengthInputWidth = 80.0f;
+
+                float totalWidth =
+                    typeLabelWidth + typeComboWidth +
+                    10.0f +
+                    lengthLabelWidth + lengthInputWidth;
+
+                float startX = (rightWidth - totalWidth) * 0.5f;
+
+                ImGui::SetCursorPosX(startX);
+                ImGui::Text("Type:");
                 ImGui::SameLine();
 
-                ImGui::PushItemWidth(comboWidth);
+                ImGui::SetCursorPosX(startX + typeLabelWidth + 5.0f);
+                ImGui::PushItemWidth(typeComboWidth);
                 BeginFrameBgImageRegion();
-                if (ImGui::BeginCombo("##addr", current.c_str()))
+                if (ImGui::Combo("##type", &typeIndex, typeOptions, IM_ARRAYSIZE(typeOptions)))
                 {
-                    for (int i = 0; i < addrList.size(); ++i)
-                    {
-                        bool selected = (selectedIdx == i);
-                        if (ImGui::Selectable(addrList[i].c_str(), selected))
-                            selectedIdx = i;
-                        if (selected)
-                            ImGui::SetItemDefaultFocus();
-                    }
-                    ImGui::EndCombo();
+                    entry.Type = (typeIndex == 1 ? "Integer" : "Hex");
+                    SaveFullGrailConfig(configFilePath, false);
                 }
                 EndFrameBgImageRegion();
                 ImGui::PopItemWidth();
+
+                ImGui::SameLine();
+                ImGui::SetCursorPosX(startX + typeLabelWidth + typeComboWidth + 10.0f);
+                ImGui::Text("Length:");
+
+                ImGui::SameLine();
+                ImGui::SetCursorPosX(startX + typeLabelWidth + typeComboWidth + 10.0f + lengthLabelWidth + 5.0f);
+                ImGui::PushItemWidth(lengthInputWidth);
+                BeginFrameBgImageRegion();
+                bool lengthChanged = ImGui::InputInt("##length", &entry.Length, 1, 10);
+                EndFrameBgImageRegion();
+                if (entry.Length < 1) entry.Length = 1;
+                if (lengthChanged) SaveFullGrailConfig(configFilePath, false);
+                ImGui::PopItemWidth();
+
+                PopFontSafe(2);
             }
 
-            PopFontSafe(2);
-        }
-
-
-        // ===== DYNAMIC VALUE INPUT WIDTH =====
-        {
-            PushFontSafe(2);
-
-            char buffer[256];
-            strncpy(buffer, entry.Values.c_str(), sizeof(buffer));
-            buffer[255] = '\0';
-
-            float textWidth = ImGui::CalcTextSize(buffer).x;
-            float boxWidth = std::clamp(textWidth + 20.0f, 60.0f, 300.0f);
-            float labelWidth = ImGui::CalcTextSize("Value:").x;
-
-            ImGui::SetCursorPosX((rightWidth - (labelWidth + boxWidth + 10)) * 0.5f);
-            ImGui::Text("Value:");
-            ImGui::SameLine();
-
-            ImGui::PushItemWidth(boxWidth);
-            BeginFrameBgImageRegion();
-            if (ImGui::InputText("##value", buffer, sizeof(buffer)))
+            // ===== ADDRESS COMBO =====
             {
-                entry.Values = buffer;
-                SaveFullGrailConfig(configFilePath, false);
+                PushFontSafe(2);
+                std::vector<std::string> addrList;
+
+                if (!entry.Address.empty())
+                    addrList.push_back(entry.Address);
+
+                for (auto& a : entry.Addresses)
+                    addrList.push_back(a);
+
+                if (!addrList.empty())
+                {
+                    int& selectedIdx = selectedIndexMap[entry.UniqueID];
+                    if (selectedIdx >= addrList.size()) selectedIdx = 0;
+
+                    std::string current = addrList[selectedIdx];
+
+                    float labelWidth = ImGui::CalcTextSize("Address:").x;
+                    float comboWidth = 120.0f;
+
+                    ImGui::SetCursorPosX((rightWidth - (labelWidth + comboWidth + 10)) * 0.5f);
+                    ImGui::Text("Address:");
+                    ImGui::SameLine();
+
+                    ImGui::PushItemWidth(comboWidth);
+                    BeginFrameBgImageRegion();
+                    if (ImGui::BeginCombo("##addr", current.c_str()))
+                    {
+                        for (int i = 0; i < addrList.size(); ++i)
+                        {
+                            bool selected = (selectedIdx == i);
+                            if (ImGui::Selectable(addrList[i].c_str(), selected))
+                                selectedIdx = i;
+                            if (selected)
+                                ImGui::SetItemDefaultFocus();
+                        }
+                        ImGui::EndCombo();
+                    }
+                    EndFrameBgImageRegion();
+                    ImGui::PopItemWidth();
+                }
+
+                PopFontSafe(2);
             }
-            EndFrameBgImageRegion();
-            ImGui::PopItemWidth();
 
-            PopFontSafe(2);
+
+            // ===== DYNAMIC VALUE INPUT WIDTH =====
+            {
+                PushFontSafe(2);
+
+                char buffer[256];
+                strncpy(buffer, entry.Values.c_str(), sizeof(buffer));
+                buffer[255] = '\0';
+
+                float textWidth = ImGui::CalcTextSize(buffer).x;
+                float boxWidth = std::clamp(textWidth + 20.0f, 60.0f, 300.0f);
+                float labelWidth = ImGui::CalcTextSize("Value:").x;
+
+                ImGui::SetCursorPosX((rightWidth - (labelWidth + boxWidth + 10)) * 0.5f);
+                ImGui::Text("Value:");
+                ImGui::SameLine();
+
+                ImGui::PushItemWidth(boxWidth);
+                BeginFrameBgImageRegion();
+                if (ImGui::InputText("##value", buffer, sizeof(buffer)))
+                {
+                    entry.Values = buffer;
+                    SaveFullGrailConfig(configFilePath, false);
+                }
+                EndFrameBgImageRegion();
+                ImGui::PopItemWidth();
+
+                PopFontSafe(2);
+            }
+
+            // ===== Original | Modded =====
+            {
+                PushFontSafe(1);
+
+                std::string original = "In Retail: " + entry.OriginalValues;
+                std::string modded = "HUD Default: " + entry.ModdedValues;
+                std::string sep = "|";
+
+                ImVec2 o = ImGui::CalcTextSize(original.c_str());
+                ImVec2 m = ImGui::CalcTextSize(modded.c_str());
+                ImVec2 s = ImGui::CalcTextSize(sep.c_str());
+
+                float total = o.x + s.x + m.x + 10.0f;
+                float startX = (rightWidth - total) * 0.5f;
+
+                ImGui::SetCursorPosX(startX);
+                ImGui::TextUnformatted(original.c_str());
+                ImGui::SameLine();
+
+                ImGui::SetCursorPosX(startX + o.x + 5.0f);
+                ImGui::TextUnformatted(sep.c_str());
+                ImGui::SameLine();
+
+                ImGui::SetCursorPosX(startX + o.x + s.x + 10.0f);
+                ImGui::TextUnformatted(modded.c_str());
+
+                PopFontSafe(1);
+            }
+
+            ImGui::PopID();
         }
 
-        // ===== Original | Modded =====
-        {
-            PushFontSafe(1);
-
-            std::string original = "In Retail: " + entry.OriginalValues;
-            std::string modded = "HUD Default: " + entry.ModdedValues;
-            std::string sep = "|";
-
-            ImVec2 o = ImGui::CalcTextSize(original.c_str());
-            ImVec2 m = ImGui::CalcTextSize(modded.c_str());
-            ImVec2 s = ImGui::CalcTextSize(sep.c_str());
-
-            float total = o.x + s.x + m.x + 10.0f;
-            float startX = (rightWidth - total) * 0.5f;
-
-            ImGui::SetCursorPosX(startX);
-            ImGui::TextUnformatted(original.c_str());
-            ImGui::SameLine();
-
-            ImGui::SetCursorPosX(startX + o.x + 5.0f);
-            ImGui::TextUnformatted(sep.c_str());
-            ImGui::SameLine();
-
-            ImGui::SetCursorPosX(startX + o.x + s.x + 10.0f);
-            ImGui::TextUnformatted(modded.c_str());
-
-            PopFontSafe(1);
-        }
-
-        ImGui::PopID();
-    }
-
-    ImGui::EndChild();     // end scrollable region
-    ImGui::Columns(1);     // reset
+        ImGui::EndChild();     // end scrollable region
+        ImGui::Columns(1);     // reset
         ImGui::PopStyleColor();
-    ImGui::End();          // end main window
+        ImGui::End();          // end main window
     }
     else
         ImGui::PopStyleColor();
@@ -10265,7 +9828,8 @@ static std::vector<ImVec4> GetCurrentThemeColors()
                 out.push_back(style.Colors[ImGuiCol_FrameBgHovered]);
             else
                 out.push_back(style.Colors[ImGuiCol_FrameBgActive]);
-        } else
+        }
+        else
             out.push_back(style.Colors[s_ThemeColorEntries[i].imguiCol]);
     }
     return out;
@@ -10450,26 +10014,26 @@ static void ApplyUITheme(const std::string& themeName)
     {
         ImGui::StyleColorsDark();
         ImVec4* colors = style.Colors;
-        colors[ImGuiCol_Text]                   = ImVec4(0.85f, 0.75f, 0.55f, 1.00f);
-        colors[ImGuiCol_TextDisabled]           = ImVec4(0.45f, 0.40f, 0.30f, 1.00f);
-        colors[ImGuiCol_WindowBg]               = ImVec4(0.08f, 0.06f, 0.05f, 0.94f);
-        colors[ImGuiCol_ChildBg]                = ImVec4(0.10f, 0.08f, 0.06f, 1.00f);
-        colors[ImGuiCol_PopupBg]                = ImVec4(0.10f, 0.08f, 0.06f, 0.98f);
-        colors[ImGuiCol_Border]                  = ImVec4(0.45f, 0.35f, 0.20f, 0.50f);
-        colors[ImGuiCol_FrameBg]                = ImVec4(0.18f, 0.12f, 0.08f, 1.00f);
-        colors[ImGuiCol_FrameBgHovered]         = ImVec4(0.35f, 0.22f, 0.10f, 1.00f);
-        colors[ImGuiCol_FrameBgActive]          = ImVec4(0.42f, 0.28f, 0.12f, 1.00f);
-        colors[ImGuiCol_TitleBg]                 = ImVec4(0.15f, 0.10f, 0.05f, 1.00f);
-        colors[ImGuiCol_TitleBgActive]           = ImVec4(0.35f, 0.22f, 0.08f, 1.00f);
-        colors[ImGuiCol_Button]                  = ImVec4(0.30f, 0.20f, 0.08f, 1.00f);
-        colors[ImGuiCol_ButtonHovered]           = ImVec4(0.55f, 0.38f, 0.12f, 1.00f);
-        colors[ImGuiCol_ButtonActive]            = ImVec4(0.70f, 0.50f, 0.18f, 1.00f);
-        colors[ImGuiCol_Header]                  = ImVec4(0.28f, 0.18f, 0.06f, 1.00f);
-        colors[ImGuiCol_HeaderHovered]           = ImVec4(0.45f, 0.30f, 0.10f, 1.00f);
-        colors[ImGuiCol_HeaderActive]            = ImVec4(0.55f, 0.38f, 0.12f, 1.00f);
-        colors[ImGuiCol_Separator]               = ImVec4(0.45f, 0.35f, 0.20f, 0.50f);
-        colors[ImGuiCol_SliderGrab]              = ImVec4(0.65f, 0.45f, 0.15f, 1.00f);
-        colors[ImGuiCol_SliderGrabActive]        = ImVec4(0.85f, 0.65f, 0.25f, 1.00f);
+        colors[ImGuiCol_Text] = ImVec4(0.85f, 0.75f, 0.55f, 1.00f);
+        colors[ImGuiCol_TextDisabled] = ImVec4(0.45f, 0.40f, 0.30f, 1.00f);
+        colors[ImGuiCol_WindowBg] = ImVec4(0.08f, 0.06f, 0.05f, 0.94f);
+        colors[ImGuiCol_ChildBg] = ImVec4(0.10f, 0.08f, 0.06f, 1.00f);
+        colors[ImGuiCol_PopupBg] = ImVec4(0.10f, 0.08f, 0.06f, 0.98f);
+        colors[ImGuiCol_Border] = ImVec4(0.45f, 0.35f, 0.20f, 0.50f);
+        colors[ImGuiCol_FrameBg] = ImVec4(0.18f, 0.12f, 0.08f, 1.00f);
+        colors[ImGuiCol_FrameBgHovered] = ImVec4(0.35f, 0.22f, 0.10f, 1.00f);
+        colors[ImGuiCol_FrameBgActive] = ImVec4(0.42f, 0.28f, 0.12f, 1.00f);
+        colors[ImGuiCol_TitleBg] = ImVec4(0.15f, 0.10f, 0.05f, 1.00f);
+        colors[ImGuiCol_TitleBgActive] = ImVec4(0.35f, 0.22f, 0.08f, 1.00f);
+        colors[ImGuiCol_Button] = ImVec4(0.30f, 0.20f, 0.08f, 1.00f);
+        colors[ImGuiCol_ButtonHovered] = ImVec4(0.55f, 0.38f, 0.12f, 1.00f);
+        colors[ImGuiCol_ButtonActive] = ImVec4(0.70f, 0.50f, 0.18f, 1.00f);
+        colors[ImGuiCol_Header] = ImVec4(0.28f, 0.18f, 0.06f, 1.00f);
+        colors[ImGuiCol_HeaderHovered] = ImVec4(0.45f, 0.30f, 0.10f, 1.00f);
+        colors[ImGuiCol_HeaderActive] = ImVec4(0.55f, 0.38f, 0.12f, 1.00f);
+        colors[ImGuiCol_Separator] = ImVec4(0.45f, 0.35f, 0.20f, 0.50f);
+        colors[ImGuiCol_SliderGrab] = ImVec4(0.65f, 0.45f, 0.15f, 1.00f);
+        colors[ImGuiCol_SliderGrabActive] = ImVec4(0.85f, 0.65f, 0.25f, 1.00f);
         ClearThemeImageOverrides();
         for (int w = 0; w < kWindowBgCount; ++w)
             s_WindowBgColors[w] = style.Colors[ImGuiCol_WindowBg];
@@ -10478,26 +10042,26 @@ static void ApplyUITheme(const std::string& themeName)
     {
         ImGui::StyleColorsDark();
         ImVec4* colors = style.Colors;
-        colors[ImGuiCol_Text]                   = ImVec4(0.95f, 0.85f, 0.85f, 1.00f);
-        colors[ImGuiCol_TextDisabled]           = ImVec4(0.50f, 0.40f, 0.40f, 1.00f);
-        colors[ImGuiCol_WindowBg]               = ImVec4(0.04f, 0.02f, 0.02f, 0.94f);
-        colors[ImGuiCol_ChildBg]                = ImVec4(0.06f, 0.03f, 0.03f, 1.00f);
-        colors[ImGuiCol_PopupBg]                = ImVec4(0.06f, 0.03f, 0.03f, 0.98f);
-        colors[ImGuiCol_Border]                  = ImVec4(0.45f, 0.15f, 0.15f, 0.50f);
-        colors[ImGuiCol_FrameBg]                = ImVec4(0.12f, 0.05f, 0.05f, 1.00f);
-        colors[ImGuiCol_FrameBgHovered]         = ImVec4(0.25f, 0.08f, 0.08f, 1.00f);
-        colors[ImGuiCol_FrameBgActive]          = ImVec4(0.35f, 0.10f, 0.10f, 1.00f);
-        colors[ImGuiCol_TitleBg]                 = ImVec4(0.08f, 0.02f, 0.02f, 1.00f);
-        colors[ImGuiCol_TitleBgActive]           = ImVec4(0.22f, 0.06f, 0.06f, 1.00f);
-        colors[ImGuiCol_Button]                  = ImVec4(0.20f, 0.05f, 0.05f, 1.00f);
-        colors[ImGuiCol_ButtonHovered]           = ImVec4(0.45f, 0.10f, 0.10f, 1.00f);
-        colors[ImGuiCol_ButtonActive]            = ImVec4(0.60f, 0.12f, 0.12f, 1.00f);
-        colors[ImGuiCol_Header]                  = ImVec4(0.18f, 0.05f, 0.05f, 1.00f);
-        colors[ImGuiCol_HeaderHovered]           = ImVec4(0.35f, 0.08f, 0.08f, 1.00f);
-        colors[ImGuiCol_HeaderActive]            = ImVec4(0.50f, 0.10f, 0.10f, 1.00f);
-        colors[ImGuiCol_Separator]               = ImVec4(0.40f, 0.15f, 0.15f, 0.50f);
-        colors[ImGuiCol_SliderGrab]              = ImVec4(0.55f, 0.15f, 0.15f, 1.00f);
-        colors[ImGuiCol_SliderGrabActive]        = ImVec4(0.75f, 0.20f, 0.20f, 1.00f);
+        colors[ImGuiCol_Text] = ImVec4(0.95f, 0.85f, 0.85f, 1.00f);
+        colors[ImGuiCol_TextDisabled] = ImVec4(0.50f, 0.40f, 0.40f, 1.00f);
+        colors[ImGuiCol_WindowBg] = ImVec4(0.04f, 0.02f, 0.02f, 0.94f);
+        colors[ImGuiCol_ChildBg] = ImVec4(0.06f, 0.03f, 0.03f, 1.00f);
+        colors[ImGuiCol_PopupBg] = ImVec4(0.06f, 0.03f, 0.03f, 0.98f);
+        colors[ImGuiCol_Border] = ImVec4(0.45f, 0.15f, 0.15f, 0.50f);
+        colors[ImGuiCol_FrameBg] = ImVec4(0.12f, 0.05f, 0.05f, 1.00f);
+        colors[ImGuiCol_FrameBgHovered] = ImVec4(0.25f, 0.08f, 0.08f, 1.00f);
+        colors[ImGuiCol_FrameBgActive] = ImVec4(0.35f, 0.10f, 0.10f, 1.00f);
+        colors[ImGuiCol_TitleBg] = ImVec4(0.08f, 0.02f, 0.02f, 1.00f);
+        colors[ImGuiCol_TitleBgActive] = ImVec4(0.22f, 0.06f, 0.06f, 1.00f);
+        colors[ImGuiCol_Button] = ImVec4(0.20f, 0.05f, 0.05f, 1.00f);
+        colors[ImGuiCol_ButtonHovered] = ImVec4(0.45f, 0.10f, 0.10f, 1.00f);
+        colors[ImGuiCol_ButtonActive] = ImVec4(0.60f, 0.12f, 0.12f, 1.00f);
+        colors[ImGuiCol_Header] = ImVec4(0.18f, 0.05f, 0.05f, 1.00f);
+        colors[ImGuiCol_HeaderHovered] = ImVec4(0.35f, 0.08f, 0.08f, 1.00f);
+        colors[ImGuiCol_HeaderActive] = ImVec4(0.50f, 0.10f, 0.10f, 1.00f);
+        colors[ImGuiCol_Separator] = ImVec4(0.40f, 0.15f, 0.15f, 0.50f);
+        colors[ImGuiCol_SliderGrab] = ImVec4(0.55f, 0.15f, 0.15f, 1.00f);
+        colors[ImGuiCol_SliderGrabActive] = ImVec4(0.75f, 0.20f, 0.20f, 1.00f);
         ClearThemeImageOverrides();
         for (int w = 0; w < kWindowBgCount; ++w)
             s_WindowBgColors[w] = style.Colors[ImGuiCol_WindowBg];
@@ -10854,7 +10418,7 @@ void ShowSettingsPanel()
             const auto* names = (const std::vector<std::string>*)data;
             if (idx >= 0 && idx < (int)names->size()) { *out = (*names)[idx].c_str(); return true; }
             return false;
-        }, &s_ThemeComboNames, (int)s_ThemeComboNames.size()))
+            }, &s_ThemeComboNames, (int)s_ThemeComboNames.size()))
         {
             s_UITheme = s_ThemeComboNames[themeComboIndex];
             ApplyUITheme(s_UITheme);
@@ -11059,7 +10623,8 @@ void ShowSettingsPanel()
                             }
                             std::sort(s_WindowBgImageList.begin() + 1, s_WindowBgImageList.end());
                         }
-                    } catch (...) {}
+                    }
+                    catch (...) {}
                     const std::string& cur = s_WindowBgImageOverrides[w];
                     float listH = (float)((int)s_WindowBgImageList.size() * 22 + 8);
                     if (listH > 250.0f) listH = 250.0f;
@@ -11109,7 +10674,8 @@ void ShowSettingsPanel()
                             }
                             std::sort(s_ImageList.begin() + 1, s_ImageList.end());
                         }
-                    } catch (...) {}
+                    }
+                    catch (...) {}
                     const std::string& cur = s_UIColorImageOverrides[idx];
                     float listH = (float)((int)s_ImageList.size() * 22 + 8);
                     if (listH > 250.0f) listH = 250.0f;
@@ -11152,7 +10718,7 @@ void ShowSettingsPanel()
 void ShowD2RHUDMenu()
 {
     if (!showD2RHUDMenu) return;
-        
+
     static std::string saveStatusMessage = "";
     static ImVec4 saveStatusColor = ImVec4(0, 1, 0, 1); // default green
     static bool initialized = false;
@@ -11471,6 +11037,8 @@ void ShowD2RHUDMenu()
             cachedSettings.TransmogVisuals = d2rHUDConfig.TransmogVisuals;
             cachedSettings.ExtendedItemcodes = d2rHUDConfig.ExtendedItemcodes;
             cachedSettings.FloatingDamage = d2rHUDConfig.FloatingDamage;
+            settings.sunderedMonUMods = cachedSettings.sunderedMonUMods;
+            settings.SunderValue = cachedSettings.SunderValue;
 
             saveStatusMessage = "New Settings Applied!";
             saveStatusColor = ImVec4(0.0f, 1.0f, 0.0f, 1.0f); // green
@@ -11539,6 +11107,8 @@ void ShowD2RHUDMenu()
             cachedSettings.TransmogVisuals = d2rHUDConfig.TransmogVisuals;
             cachedSettings.ExtendedItemcodes = d2rHUDConfig.ExtendedItemcodes;
             cachedSettings.FloatingDamage = d2rHUDConfig.FloatingDamage;
+            settings.sunderedMonUMods = cachedSettings.sunderedMonUMods;
+            settings.SunderValue = cachedSettings.SunderValue;
 
             // Reload HUD config
             d2rHUDConfig.HPRolloverPercent = cachedSettings.HPRolloverAmt;
@@ -11598,333 +11168,333 @@ void ShowHUDSettingsMenu()
         DrawWindowTitleAndClose("HUD Settings", &showHUDSettingsMenu);
         PopFontSafe(3);
         ImGui::Separator();
-    ImGui::Dummy(ImVec2(0.0f, 5.0f));
-    DrawCreateFilterPopup();
+        ImGui::Dummy(ImVec2(0.0f, 5.0f));
+        DrawCreateFilterPopup();
 
-    // --- Centered Wrapped Text Helper ---
-    auto CenteredWrappedText = [&](const std::string& prefix, const std::string& text,
-        const ImVec4& prefixColor = ImVec4(1, 0.7f, 0.3f, 1.0f),
-        const ImVec4& valueColor = ImVec4(1, 1, 1, 1))
-        {
-            ImVec2 avail = ImGui::GetContentRegionAvail();
-            float leftOffset = 10.0f;
-            float wrapWidth = avail.x - leftOffset;
-
-            ImVec2 prefixSize = ImGui::CalcTextSize(prefix.c_str(), nullptr, false, wrapWidth);
-            ImVec2 valueSize = ImGui::CalcTextSize(text.c_str(), nullptr, false, wrapWidth);
-            float totalWidth = prefixSize.x + valueSize.x;
-            float cursorX = leftOffset + (wrapWidth - totalWidth) * 0.5f;
-            if (cursorX < leftOffset) cursorX = leftOffset;
-
-            ImGui::SetCursorPosX(cursorX);
-            ImGui::TextColored(prefixColor, "%s", prefix.c_str());
-            ImGui::SameLine(0, 0);
-            ImGui::TextColored(valueColor, "%s", text.c_str());
-        };
-
-    static bool hudTriedFilterLoad = false;
-    if (!hudTriedFilterLoad && g_LootFilterHeader.Version.empty())
-    {
-        LoadLootFilterConfig("lootfilter_config.lua");
-        LoadLootFilterLogic("lootfilter.lua");
-        hudTriedFilterLoad = true;
-    }
-    if (!s_lootFilterUpdateStatus.empty())
-    {
-        if (s_lootFilterUpdateStatus.size() >= 9 && s_lootFilterUpdateStatus.compare(0, 9, "Updated to") == 0 && !s_lootFilterUpdateApplied)
-        {
-            if (!s_lootFilterNewVersion.empty())
-                g_LootFilterHeader.Version = s_lootFilterNewVersion;
-            else
-                LoadLootFilterLogic(lootFile);
-            s_lootFilterUpdateApplied = true;
-        }
-        auto now = std::chrono::steady_clock::now();
-        if (std::chrono::duration_cast<std::chrono::seconds>(now - s_lootFilterUpdateStatusTime).count() >= 4)
-        {
-            s_lootFilterUpdateStatus.clear();
-            s_lootFilterUpdateStatusTime = {};
-            s_lootFilterNewVersion.clear();
-            s_lootFilterUpdateApplied = false;
-        }
-    }
-    if (!g_LootFilterHeader.Version.empty())
-        CenteredWrappedText("My D2RLoot Version: ", g_LootFilterHeader.Version);
-    ImGui::SameLine(0.0f, 12.0f);
-    if (ThemeButton(s_lootFilterUpdating ? "Updating...##hud" : "Update##hud"))
-    {
-        if (!s_lootFilterUpdating)
-        {
-            s_lootFilterUpdating = true;
-            s_lootFilterUpdateStatus.clear();
-            s_lootFilterUpdateApplied = false;
-            std::thread(LootFilterUpdateThread).detach();
-        }
-    }
-    if (!s_lootFilterUpdateStatus.empty())
-    {
-        ImGui::SameLine(0.0f, 8.0f);
-        ImGui::TextColored(ImVec4(0.7f, 0.9f, 0.7f, 1.0f), "%s", s_lootFilterUpdateStatus.c_str());
-    }
-
-    // --- My Selected Filter: centered styled display + dropdown to change ---
-    std::vector<std::string> orderedFiltersHUD = GetOrderedFilterList();
-    std::string currentDisplayNameHUD = s_activeFilterInternalName.empty()
-        ? (g_LootFilterHeader.Title.empty() ? "Custom" : g_LootFilterHeader.Title)
-        : GetFilterDisplayName(s_activeFilterInternalName);
-    CenteredWrappedText("My Selected Filter: ", currentDisplayNameHUD);
-
-    float comboWidthHUD = 220.0f;
-    ImVec2 availHUD = ImGui::GetContentRegionAvail();
-    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (availHUD.x - comboWidthHUD) * 0.5f);
-    std::string comboLabelHUD = s_pendingFilter.empty() ? currentDisplayNameHUD : GetFilterDisplayName(s_pendingFilter);
-    ImGui::SetNextItemWidth(comboWidthHUD);
-    BeginFrameBgImageRegion();
-    if (ImGui::BeginCombo("##selected_filter_hud", comboLabelHUD.c_str()))
-    {
-        for (const auto& internalName : orderedFiltersHUD)
-        {
-            std::string displayName = GetFilterDisplayName(internalName);
-            bool isActive = (internalName == s_activeFilterInternalName);
-            std::string label = displayName + (isActive ? " \xe2\x9c\x93" : "");
-            if (ImGui::Selectable(label.c_str(), isActive))
+        // --- Centered Wrapped Text Helper ---
+        auto CenteredWrappedText = [&](const std::string& prefix, const std::string& text,
+            const ImVec4& prefixColor = ImVec4(1, 0.7f, 0.3f, 1.0f),
+            const ImVec4& valueColor = ImVec4(1, 1, 1, 1))
             {
-                s_pendingFilter = internalName;
+                ImVec2 avail = ImGui::GetContentRegionAvail();
+                float leftOffset = 10.0f;
+                float wrapWidth = avail.x - leftOffset;
+
+                ImVec2 prefixSize = ImGui::CalcTextSize(prefix.c_str(), nullptr, false, wrapWidth);
+                ImVec2 valueSize = ImGui::CalcTextSize(text.c_str(), nullptr, false, wrapWidth);
+                float totalWidth = prefixSize.x + valueSize.x;
+                float cursorX = leftOffset + (wrapWidth - totalWidth) * 0.5f;
+                if (cursorX < leftOffset) cursorX = leftOffset;
+
+                ImGui::SetCursorPosX(cursorX);
+                ImGui::TextColored(prefixColor, "%s", prefix.c_str());
+                ImGui::SameLine(0, 0);
+                ImGui::TextColored(valueColor, "%s", text.c_str());
+            };
+
+        static bool hudTriedFilterLoad = false;
+        if (!hudTriedFilterLoad && g_LootFilterHeader.Version.empty())
+        {
+            LoadLootFilterConfig("lootfilter_config.lua");
+            LoadLootFilterLogic("lootfilter.lua");
+            hudTriedFilterLoad = true;
+        }
+        if (!s_lootFilterUpdateStatus.empty())
+        {
+            if (s_lootFilterUpdateStatus.size() >= 9 && s_lootFilterUpdateStatus.compare(0, 9, "Updated to") == 0 && !s_lootFilterUpdateApplied)
+            {
+                if (!s_lootFilterNewVersion.empty())
+                    g_LootFilterHeader.Version = s_lootFilterNewVersion;
+                else
+                    LoadLootFilterLogic(lootFile);
+                s_lootFilterUpdateApplied = true;
+            }
+            auto now = std::chrono::steady_clock::now();
+            if (std::chrono::duration_cast<std::chrono::seconds>(now - s_lootFilterUpdateStatusTime).count() >= 4)
+            {
+                s_lootFilterUpdateStatus.clear();
+                s_lootFilterUpdateStatusTime = {};
+                s_lootFilterNewVersion.clear();
+                s_lootFilterUpdateApplied = false;
             }
         }
-        ImGui::EndCombo();
-    }
-    EndFrameBgImageRegion();
-    if (!s_pendingFilter.empty())
-    {
-        ImGui::Dummy(ImVec2(0.0f, 4.0f));
-        std::string applyLabelHUD = "Apply \"" + GetFilterDisplayName(s_pendingFilter) + "\":";
-        float applyWHUD = ImGui::CalcTextSize(applyLabelHUD.c_str()).x;
-        ImVec2 availApplyHUD = ImGui::GetContentRegionAvail();
-        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (availApplyHUD.x - applyWHUD) * 0.5f);
-        ImGui::Text("%s", applyLabelHUD.c_str());
-        float btnW1HUD = ImGui::CalcTextSize("Use this filter").x + ImGui::GetStyle().FramePadding.x * 2;
-        ImVec2 availApply2HUD = ImGui::GetContentRegionAvail();
-        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (availApply2HUD.x - btnW1HUD) * 0.5f);
-        if (ThemeButton("Use this filter##hud"))
+        if (!g_LootFilterHeader.Version.empty())
+            CenteredWrappedText("My D2RLoot Version: ", g_LootFilterHeader.Version);
+        ImGui::SameLine(0.0f, 12.0f);
+        if (ThemeButton(s_lootFilterUpdating ? "Updating...##hud" : "Update##hud"))
         {
-            if (CopyModFilterToActive(s_pendingFilter))
+            if (!s_lootFilterUpdating)
             {
-                s_activeFilterInternalName = s_pendingFilter;
-                LoadLootFilterConfig(GetLootFilterConfigPath());
-                LoadLootFilterLogic(lootFile);
+                s_lootFilterUpdating = true;
+                s_lootFilterUpdateStatus.clear();
+                s_lootFilterUpdateApplied = false;
+                std::thread(LootFilterUpdateThread).detach();
             }
-            s_pendingFilter.clear();
         }
-    }
-
-    ImGui::Dummy(ImVec2(0.0f, 3.0f));
-    ImGui::Separator();
-    ImGui::Dummy(ImVec2(0.0f, 5.0f));
-
-    // --- Boolean Checkboxes ---
-    auto RenderCheckboxLine = [&](const std::vector<std::pair<std::string, std::string>>& items)
+        if (!s_lootFilterUpdateStatus.empty())
         {
-            ImVec2 avail = ImGui::GetContentRegionAvail();
-            float spacing = 10.0f;
-            float totalWidth = 0.0f;
+            ImGui::SameLine(0.0f, 8.0f);
+            ImGui::TextColored(ImVec4(0.7f, 0.9f, 0.7f, 1.0f), "%s", s_lootFilterUpdateStatus.c_str());
+        }
 
-            for (auto& item : items)
+        // --- My Selected Filter: centered styled display + dropdown to change ---
+        std::vector<std::string> orderedFiltersHUD = GetOrderedFilterList();
+        std::string currentDisplayNameHUD = s_activeFilterInternalName.empty()
+            ? (g_LootFilterHeader.Title.empty() ? "Custom" : g_LootFilterHeader.Title)
+            : GetFilterDisplayName(s_activeFilterInternalName);
+        CenteredWrappedText("My Selected Filter: ", currentDisplayNameHUD);
+
+        float comboWidthHUD = 220.0f;
+        ImVec2 availHUD = ImGui::GetContentRegionAvail();
+        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (availHUD.x - comboWidthHUD) * 0.5f);
+        std::string comboLabelHUD = s_pendingFilter.empty() ? currentDisplayNameHUD : GetFilterDisplayName(s_pendingFilter);
+        ImGui::SetNextItemWidth(comboWidthHUD);
+        BeginFrameBgImageRegion();
+        if (ImGui::BeginCombo("##selected_filter_hud", comboLabelHUD.c_str()))
+        {
+            for (const auto& internalName : orderedFiltersHUD)
             {
-                totalWidth += ImGui::CalcTextSize(item.first.c_str()).x + ImGui::GetStyle().FramePadding.x * 2 + ImGui::GetFrameHeight();
-            }
-            totalWidth += spacing * (items.size() - 1);
-
-            float startX = (avail.x - totalWidth) * 0.5f;
-            if (startX < 0.0f) startX = 0.0f;
-            ImGui::SetCursorPosX(startX);
-
-            for (size_t i = 0; i < items.size(); ++i)
-            {
-                if (i > 0) ImGui::SameLine(0.0f, spacing);
-
-                std::string key = items[i].second;
-                std::string val = "";
-                auto it = g_LuaVariables.find(key);
-                if (it != g_LuaVariables.end()) val = it->second;
-
-                bool boolValue = (val == "true");
-
-                if (ThemeCheckbox(items[i].first.c_str(), &boolValue))
+                std::string displayName = GetFilterDisplayName(internalName);
+                bool isActive = (internalName == s_activeFilterInternalName);
+                std::string label = displayName + (isActive ? " \xe2\x9c\x93" : "");
+                if (ImGui::Selectable(label.c_str(), isActive))
                 {
-                    auto it2 = g_LuaVariables.find(key);
-                    if (it2 != g_LuaVariables.end()) it2->second = boolValue ? "true" : "false";
-                    else g_LuaVariables.insert({ key, boolValue ? "true" : "false" });
+                    s_pendingFilter = internalName;
+                }
+            }
+            ImGui::EndCombo();
+        }
+        EndFrameBgImageRegion();
+        if (!s_pendingFilter.empty())
+        {
+            ImGui::Dummy(ImVec2(0.0f, 4.0f));
+            std::string applyLabelHUD = "Apply \"" + GetFilterDisplayName(s_pendingFilter) + "\":";
+            float applyWHUD = ImGui::CalcTextSize(applyLabelHUD.c_str()).x;
+            ImVec2 availApplyHUD = ImGui::GetContentRegionAvail();
+            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (availApplyHUD.x - applyWHUD) * 0.5f);
+            ImGui::Text("%s", applyLabelHUD.c_str());
+            float btnW1HUD = ImGui::CalcTextSize("Use this filter").x + ImGui::GetStyle().FramePadding.x * 2;
+            ImVec2 availApply2HUD = ImGui::GetContentRegionAvail();
+            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (availApply2HUD.x - btnW1HUD) * 0.5f);
+            if (ThemeButton("Use this filter##hud"))
+            {
+                if (CopyModFilterToActive(s_pendingFilter))
+                {
+                    s_activeFilterInternalName = s_pendingFilter;
+                    LoadLootFilterConfig(GetLootFilterConfigPath());
+                    LoadLootFilterLogic(lootFile);
+                }
+                s_pendingFilter.clear();
+            }
+        }
+
+        ImGui::Dummy(ImVec2(0.0f, 3.0f));
+        ImGui::Separator();
+        ImGui::Dummy(ImVec2(0.0f, 5.0f));
+
+        // --- Boolean Checkboxes ---
+        auto RenderCheckboxLine = [&](const std::vector<std::pair<std::string, std::string>>& items)
+            {
+                ImVec2 avail = ImGui::GetContentRegionAvail();
+                float spacing = 10.0f;
+                float totalWidth = 0.0f;
+
+                for (auto& item : items)
+                {
+                    totalWidth += ImGui::CalcTextSize(item.first.c_str()).x + ImGui::GetStyle().FramePadding.x * 2 + ImGui::GetFrameHeight();
+                }
+                totalWidth += spacing * (items.size() - 1);
+
+                float startX = (avail.x - totalWidth) * 0.5f;
+                if (startX < 0.0f) startX = 0.0f;
+                ImGui::SetCursorPosX(startX);
+
+                for (size_t i = 0; i < items.size(); ++i)
+                {
+                    if (i > 0) ImGui::SameLine(0.0f, spacing);
+
+                    std::string key = items[i].second;
+                    std::string val = "";
+                    auto it = g_LuaVariables.find(key);
+                    if (it != g_LuaVariables.end()) val = it->second;
+
+                    bool boolValue = (val == "true");
+
+                    if (ThemeCheckbox(items[i].first.c_str(), &boolValue))
+                    {
+                        auto it2 = g_LuaVariables.find(key);
+                        if (it2 != g_LuaVariables.end()) it2->second = boolValue ? "true" : "false";
+                        else g_LuaVariables.insert({ key, boolValue ? "true" : "false" });
+                    }
+
+                    ImVec2 itemMin = ImGui::GetItemRectMin();
+                    ImVec2 itemMax = ImGui::GetItemRectMax();
+                    float textWidth = ImGui::CalcTextSize(items[i].first.c_str()).x;
+                    itemMax.x += textWidth;
+                    if (ImGui::IsMouseHoveringRect(itemMin, itemMax)) hoveredKey = key;
                 }
 
-                ImVec2 itemMin = ImGui::GetItemRectMin();
-                ImVec2 itemMax = ImGui::GetItemRectMax();
-                float textWidth = ImGui::CalcTextSize(items[i].first.c_str()).x;
-                itemMax.x += textWidth;
-                if (ImGui::IsMouseHoveringRect(itemMin, itemMax)) hoveredKey = key;
-            }
+                ImGui::Dummy(ImVec2(0.0f, 3.0f));
+                ImGui::Separator();
+                ImGui::Dummy(ImVec2(0.0f, 3.0f));
+            };
 
-            ImGui::Dummy(ImVec2(0.0f, 3.0f));
-            ImGui::Separator();
-            ImGui::Dummy(ImVec2(0.0f, 3.0f));
+        std::vector<std::pair<std::string, std::string>> bools = {
+            { "Allow Overrides", "allowOverrides" },
+            { "Mod Tips", "modTips" },
+            { "Debug Mode", "Debug" },
+            { "Audio Playback", "audioPlayback" }
         };
+        RenderCheckboxLine(bools);
 
-    std::vector<std::pair<std::string, std::string>> bools = {
-        { "Allow Overrides", "allowOverrides" },
-        { "Mod Tips", "modTips" },
-        { "Debug Mode", "Debug" },
-        { "Audio Playback", "audioPlayback" }
-    };
-    RenderCheckboxLine(bools);
-
-    // --- Input Text Helper ---
-    auto RenderInputText = [&](const std::string& key, const std::string& label, const std::string& defaultVal = "Not Defined")
-        {
-            std::string value = defaultVal;
-            auto it = g_LuaVariables.find(key);
-            if (it != g_LuaVariables.end()) value = it->second;
-            if (!value.empty() && value.front() == '"' && value.back() == '"') value = value.substr(1, value.size() - 2);
-
-            std::string fullLabel = label + " = ";
-            float labelWidth = ImGui::CalcTextSize(fullLabel.c_str()).x;
-            float valueWidth = ImGui::CalcTextSize(value.c_str()).x + 8.0f;
-
-            ImVec2 cursorPos = ImGui::GetCursorPos();
-            ImGui::SetCursorPosY(cursorPos.y - 2.0f);
-
-            ImGui::Text("%s", fullLabel.c_str());
-            ImGui::SameLine(labelWidth + 10.0f, -3.0f);
-
-            char buffer[256];
-            strncpy(buffer, value.c_str(), sizeof(buffer));
-            buffer[sizeof(buffer) - 1] = '\0';
-
-            std::string inputID = "##val_" + key;
-            ImGui::PushItemWidth(valueWidth);
-            BeginFrameBgImageRegion();
-            bool changed = ImGui::InputText(inputID.c_str(), buffer, sizeof(buffer));
-            EndFrameBgImageRegion();
-            if (ImGui::IsItemActivated()) ImGui::SetKeyboardFocusHere(-1);
-            if (changed)
+        // --- Input Text Helper ---
+        auto RenderInputText = [&](const std::string& key, const std::string& label, const std::string& defaultVal = "Not Defined")
             {
-                auto it2 = g_LuaVariables.find(key);
-                if (it2 != g_LuaVariables.end()) it2->second = buffer;
-                else g_LuaVariables.insert({ key, buffer });
-            }
-            ImGui::PopItemWidth();
+                std::string value = defaultVal;
+                auto it = g_LuaVariables.find(key);
+                if (it != g_LuaVariables.end()) value = it->second;
+                if (!value.empty() && value.front() == '"' && value.back() == '"') value = value.substr(1, value.size() - 2);
 
-            ImVec2 itemMin = ImGui::GetItemRectMin();
-            ImVec2 itemMax = ImGui::GetItemRectMax();
-            itemMin.x -= labelWidth;
-            if (ImGui::IsMouseHoveringRect(itemMin, itemMax)) hoveredKey = key;
-        };
+                std::string fullLabel = label + " = ";
+                float labelWidth = ImGui::CalcTextSize(fullLabel.c_str()).x;
+                float valueWidth = ImGui::CalcTextSize(value.c_str()).x + 8.0f;
 
-    RenderInputText("reload", "Reload Message");
-    RenderInputText("audioVoice", "Audio Voice");
-    RenderInputText("filter_level", "Filter Level");
-    RenderInputText("language", "Language");
+                ImVec2 cursorPos = ImGui::GetCursorPos();
+                ImGui::SetCursorPosY(cursorPos.y - 2.0f);
 
-    // --- Filter Titles ---
-    auto RenderFilterTitles = [&]()
-        {
-            std::string key = "filter_titles";
-            std::string value = "";
-            auto it = g_LuaVariables.find(key);
-            if (it != g_LuaVariables.end()) value = it->second;
+                ImGui::Text("%s", fullLabel.c_str());
+                ImGui::SameLine(labelWidth + 10.0f, -3.0f);
 
-            std::vector<std::string> titles;
-            if (!value.empty())
-            {
-                std::regex titleRegex(R"delim("([^"]*)")delim");
-                for (auto i = std::sregex_iterator(value.begin(), value.end(), titleRegex);
-                    i != std::sregex_iterator(); ++i)
-                    titles.push_back((*i)[1].str());
-            }
-            if (titles.empty()) titles.push_back("Not Defined");
-
-            std::string ftLabel = "Filter Titles = ";
-            float labelWidth = ImGui::CalcTextSize(ftLabel.c_str()).x;
-            ImGui::Text("%s", ftLabel.c_str());
-            ImGui::SameLine(labelWidth + 10.0f);
-
-            for (size_t idx = 0; idx < titles.size(); ++idx)
-            {
                 char buffer[256];
-                strncpy(buffer, titles[idx].c_str(), sizeof(buffer));
+                strncpy(buffer, value.c_str(), sizeof(buffer));
                 buffer[sizeof(buffer) - 1] = '\0';
 
-                float textWidth = ImGui::CalcTextSize(buffer).x;
-                ImGui::PushItemWidth(textWidth + 8.0f);
-
-                std::string inputID = "##filter_title_" + std::to_string(idx);
+                std::string inputID = "##val_" + key;
+                ImGui::PushItemWidth(valueWidth);
                 BeginFrameBgImageRegion();
                 bool changed = ImGui::InputText(inputID.c_str(), buffer, sizeof(buffer));
                 EndFrameBgImageRegion();
+                if (ImGui::IsItemActivated()) ImGui::SetKeyboardFocusHere(-1);
+                if (changed)
+                {
+                    auto it2 = g_LuaVariables.find(key);
+                    if (it2 != g_LuaVariables.end()) it2->second = buffer;
+                    else g_LuaVariables.insert({ key, buffer });
+                }
                 ImGui::PopItemWidth();
-
-                if (changed) titles[idx] = buffer;
-                if (idx + 1 < titles.size()) { ImGui::SameLine(0, 2); ImGui::Text(", "); ImGui::SameLine(0, 0); }
 
                 ImVec2 itemMin = ImGui::GetItemRectMin();
                 ImVec2 itemMax = ImGui::GetItemRectMax();
                 itemMin.x -= labelWidth;
                 if (ImGui::IsMouseHoveringRect(itemMin, itemMax)) hoveredKey = key;
-            }
+            };
 
-            std::string newValue = "{ ";
-            for (size_t i = 0; i < titles.size(); ++i)
+        RenderInputText("reload", "Reload Message");
+        RenderInputText("audioVoice", "Audio Voice");
+        RenderInputText("filter_level", "Filter Level");
+        RenderInputText("language", "Language");
+
+        // --- Filter Titles ---
+        auto RenderFilterTitles = [&]()
             {
-                newValue += "\"" + titles[i] + "\"";
-                if (i + 1 < titles.size()) newValue += ", ";
-            }
-            newValue += " }";
+                std::string key = "filter_titles";
+                std::string value = "";
+                auto it = g_LuaVariables.find(key);
+                if (it != g_LuaVariables.end()) value = it->second;
 
-            auto it2 = g_LuaVariables.find(key);
-            if (it2 != g_LuaVariables.end()) it2->second = newValue;
-            else g_LuaVariables.insert({ key, newValue });
-        };
-    RenderFilterTitles();
+                std::vector<std::string> titles;
+                if (!value.empty())
+                {
+                    std::regex titleRegex(R"delim("([^"]*)")delim");
+                    for (auto i = std::sregex_iterator(value.begin(), value.end(), titleRegex);
+                        i != std::sregex_iterator(); ++i)
+                        titles.push_back((*i)[1].str());
+                }
+                if (titles.empty()) titles.push_back("Not Defined");
 
-    ImGui::Dummy(ImVec2(0.0f, 3.0f));
-    ImGui::Separator();
-    ImGui::Dummy(ImVec2(0.0f, 4.0f));
-    float btnImportWHUD = ImGui::CalcTextSize("Import Filter").x + ImGui::GetStyle().FramePadding.x * 2;
-    float btnOpenWHUD  = ImGui::CalcTextSize("Open Filter").x + ImGui::GetStyle().FramePadding.x * 2;
-    float btnCreateWHUD = ImGui::CalcTextSize("Create my own filter").x + ImGui::GetStyle().FramePadding.x * 2;
-    float btnGuideWHUD = ImGui::CalcTextSize("Filter Guide").x + ImGui::GetStyle().FramePadding.x * 2;
-    float spacingBtnsHUD = ImGui::GetStyle().ItemSpacing.x;
-    float totalBtnWHUD2 = btnImportWHUD + btnOpenWHUD + btnCreateWHUD + btnGuideWHUD + spacingBtnsHUD * 3;
-    ImVec2 availBtnsHUD = ImGui::GetContentRegionAvail();
-    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (availBtnsHUD.x - totalBtnWHUD2) * 0.5f);
-    if (ThemeButton("Import Filter##hud"))
-        OpenImportPathInput();
-    ImGui::SameLine();
-    if (ThemeButton("Open Filter##hud"))
-    {
-        std::string path = GetLootFilterConfigPathAbsolute();
-        if (std::filesystem::exists(path))
-            OpenInShell(path);
-    }
-    ImGui::SameLine();
-    if (ThemeButton("Create my own filter##hud"))
-        OpenCreateFilterPopup();
-    ImGui::SameLine();
-    if (ThemeButton("Filter Guide##hud"))
-    {
-        OpenInShell("https://locbones.github.io/D2RLAN-LootFilterGuide");
-    }
-    DrawImportFilterPathRow();
-    ImGui::Dummy(ImVec2(0.0f, 3.0f));
+                std::string ftLabel = "Filter Titles = ";
+                float labelWidth = ImGui::CalcTextSize(ftLabel.c_str()).x;
+                ImGui::Text("%s", ftLabel.c_str());
+                ImGui::SameLine(labelWidth + 10.0f);
 
-    // --- Bottom Description ---
-    std::string desc = "Hover over an option to see its description.";
-    if (!hoveredKey.empty() && g_LuaDescriptions.count(hoveredKey))
-        desc = g_LuaDescriptions.at(hoveredKey);
+                for (size_t idx = 0; idx < titles.size(); ++idx)
+                {
+                    char buffer[256];
+                    strncpy(buffer, titles[idx].c_str(), sizeof(buffer));
+                    buffer[sizeof(buffer) - 1] = '\0';
 
-    DrawBottomDescription(desc);
+                    float textWidth = ImGui::CalcTextSize(buffer).x;
+                    ImGui::PushItemWidth(textWidth + 8.0f);
+
+                    std::string inputID = "##filter_title_" + std::to_string(idx);
+                    BeginFrameBgImageRegion();
+                    bool changed = ImGui::InputText(inputID.c_str(), buffer, sizeof(buffer));
+                    EndFrameBgImageRegion();
+                    ImGui::PopItemWidth();
+
+                    if (changed) titles[idx] = buffer;
+                    if (idx + 1 < titles.size()) { ImGui::SameLine(0, 2); ImGui::Text(", "); ImGui::SameLine(0, 0); }
+
+                    ImVec2 itemMin = ImGui::GetItemRectMin();
+                    ImVec2 itemMax = ImGui::GetItemRectMax();
+                    itemMin.x -= labelWidth;
+                    if (ImGui::IsMouseHoveringRect(itemMin, itemMax)) hoveredKey = key;
+                }
+
+                std::string newValue = "{ ";
+                for (size_t i = 0; i < titles.size(); ++i)
+                {
+                    newValue += "\"" + titles[i] + "\"";
+                    if (i + 1 < titles.size()) newValue += ", ";
+                }
+                newValue += " }";
+
+                auto it2 = g_LuaVariables.find(key);
+                if (it2 != g_LuaVariables.end()) it2->second = newValue;
+                else g_LuaVariables.insert({ key, newValue });
+            };
+        RenderFilterTitles();
+
+        ImGui::Dummy(ImVec2(0.0f, 3.0f));
+        ImGui::Separator();
+        ImGui::Dummy(ImVec2(0.0f, 4.0f));
+        float btnImportWHUD = ImGui::CalcTextSize("Import Filter").x + ImGui::GetStyle().FramePadding.x * 2;
+        float btnOpenWHUD = ImGui::CalcTextSize("Open Filter").x + ImGui::GetStyle().FramePadding.x * 2;
+        float btnCreateWHUD = ImGui::CalcTextSize("Create my own filter").x + ImGui::GetStyle().FramePadding.x * 2;
+        float btnGuideWHUD = ImGui::CalcTextSize("Filter Guide").x + ImGui::GetStyle().FramePadding.x * 2;
+        float spacingBtnsHUD = ImGui::GetStyle().ItemSpacing.x;
+        float totalBtnWHUD2 = btnImportWHUD + btnOpenWHUD + btnCreateWHUD + btnGuideWHUD + spacingBtnsHUD * 3;
+        ImVec2 availBtnsHUD = ImGui::GetContentRegionAvail();
+        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (availBtnsHUD.x - totalBtnWHUD2) * 0.5f);
+        if (ThemeButton("Import Filter##hud"))
+            OpenImportPathInput();
+        ImGui::SameLine();
+        if (ThemeButton("Open Filter##hud"))
+        {
+            std::string path = GetLootFilterConfigPathAbsolute();
+            if (std::filesystem::exists(path))
+                OpenInShell(path);
+        }
+        ImGui::SameLine();
+        if (ThemeButton("Create my own filter##hud"))
+            OpenCreateFilterPopup();
+        ImGui::SameLine();
+        if (ThemeButton("Filter Guide##hud"))
+        {
+            OpenInShell("https://locbones.github.io/D2RLAN-LootFilterGuide");
+        }
+        DrawImportFilterPathRow();
+        ImGui::Dummy(ImVec2(0.0f, 3.0f));
+
+        // --- Bottom Description ---
+        std::string desc = "Hover over an option to see its description.";
+        if (!hoveredKey.empty() && g_LuaDescriptions.count(hoveredKey))
+            desc = g_LuaDescriptions.at(hoveredKey);
+
+        DrawBottomDescription(desc);
 
         ImGui::PopStyleColor();
-    ImGui::End();
+        ImGui::End();
     }
     else
         ImGui::PopStyleColor();
@@ -11954,171 +11524,172 @@ void ShowMainMenu()
     {
         if (ShouldDrawWindowBackgroundImage(kWindowBg_ControlCenter))
             DrawWindowBackgroundImage(kWindowBg_ControlCenter);
-    // --- HEADER ---
-    int fontIndex = 3;
-    ImFont* fontSize = (fontIndex >= 0 && fontIndex < io.Fonts->Fonts.Size) ? io.Fonts->Fonts[fontIndex] : nullptr;
-    if (fontSize) ImGui::PushFont(fontSize);
+        // --- HEADER ---
+        int fontIndex = 3;
+        ImFont* fontSize = (fontIndex >= 0 && fontIndex < io.Fonts->Fonts.Size) ? io.Fonts->Fonts[fontIndex] : nullptr;
+        if (fontSize) ImGui::PushFont(fontSize);
 
-    const char* windowTitle = "D2RHUD Control Center";
-    float closeBtnSize = 20.0f * menuScale;
-    float padding = 5.0f * menuScale;
-    ImVec2 contentSize = ImGui::GetContentRegionAvail();
-    float titleWidth = ImGui::CalcTextSize(windowTitle).x;
+        const char* windowTitle = "D2RHUD Control Center";
+        float closeBtnSize = 20.0f * menuScale;
+        float padding = 5.0f * menuScale;
+        ImVec2 contentSize = ImGui::GetContentRegionAvail();
+        float titleWidth = ImGui::CalcTextSize(windowTitle).x;
 
-    // --- Gear icon at top-left: opens Settings panel (uses theme.png if available, else shows "Settings" text) ---
-    float gearBtnSize = 28.0f * menuScale;
-    float leftPadding = 8.0f * menuScale;
-    ImGui::SetCursorPosX(leftPadding);
-    ImGui::InvisibleButton("SettingsGear", ImVec2(gearBtnSize, gearBtnSize));
-    if (ImGui::IsItemClicked())
-        showSettingsPanel = true;
-    if (ImGui::IsItemHovered())
-    {
-        ImVec2 mouse = ImGui::GetIO().MousePos;
-        ImGui::SetNextWindowPos(ImVec2(mouse.x + 30.0f, mouse.y - 30.0f), ImGuiCond_Always);
-        ImGui::SetTooltip("Theme Control (Beta)");
-    }
-    ImVec2 gearMin = ImGui::GetItemRectMin();
-    int gearW = 0, gearH = 0;
-    D3D12::GetGearTextureSize(&gearW, &gearH);
-    ImTextureID gearTexId = (ImTextureID)(uint64_t)D3D12::GetGearTextureId();
-    if (gearTexId && gearW > 0 && gearH > 0) {
-        ImVec2 gearSize((float)gearW, (float)gearH);
-        float scale = (gearBtnSize - 4.0f) / (gearSize.x > gearSize.y ? gearSize.x : gearSize.y);
-        if (scale > 1.0f) scale = 1.0f;
-        ImVec2 drawSize(gearSize.x * scale, gearSize.y * scale);
-        ImVec2 center(gearMin.x + (gearBtnSize - drawSize.x) * 0.5f, gearMin.y + (gearBtnSize - drawSize.y) * 0.5f);
-        ImGui::GetWindowDrawList()->AddImage(gearTexId, center, ImVec2(center.x + drawSize.x, center.y + drawSize.y), ImVec2(0, 0), ImVec2(1, 1), IM_COL32(255, 255, 255, 255));
-    } else {
-        const char* label = "Settings";
-        ImVec2 labelSize = ImGui::CalcTextSize(label);
-        ImVec2 textPos(gearMin.x + (gearBtnSize - labelSize.x) * 0.5f, gearMin.y + (gearBtnSize - labelSize.y) * 0.5f);
-        ImGui::GetWindowDrawList()->AddText(textPos, IM_COL32(230, 230, 230, 255), label);
-    }
+        // --- Gear icon at top-left: opens Settings panel (uses theme.png if available, else shows "Settings" text) ---
+        float gearBtnSize = 28.0f * menuScale;
+        float leftPadding = 8.0f * menuScale;
+        ImGui::SetCursorPosX(leftPadding);
+        ImGui::InvisibleButton("SettingsGear", ImVec2(gearBtnSize, gearBtnSize));
+        if (ImGui::IsItemClicked())
+            showSettingsPanel = true;
+        if (ImGui::IsItemHovered())
+        {
+            ImVec2 mouse = ImGui::GetIO().MousePos;
+            ImGui::SetNextWindowPos(ImVec2(mouse.x + 30.0f, mouse.y - 30.0f), ImGuiCond_Always);
+            ImGui::SetTooltip("Theme Control (Beta)");
+        }
+        ImVec2 gearMin = ImGui::GetItemRectMin();
+        int gearW = 0, gearH = 0;
+        D3D12::GetGearTextureSize(&gearW, &gearH);
+        ImTextureID gearTexId = (ImTextureID)(uint64_t)D3D12::GetGearTextureId();
+        if (gearTexId && gearW > 0 && gearH > 0) {
+            ImVec2 gearSize((float)gearW, (float)gearH);
+            float scale = (gearBtnSize - 4.0f) / (gearSize.x > gearSize.y ? gearSize.x : gearSize.y);
+            if (scale > 1.0f) scale = 1.0f;
+            ImVec2 drawSize(gearSize.x * scale, gearSize.y * scale);
+            ImVec2 center(gearMin.x + (gearBtnSize - drawSize.x) * 0.5f, gearMin.y + (gearBtnSize - drawSize.y) * 0.5f);
+            ImGui::GetWindowDrawList()->AddImage(gearTexId, center, ImVec2(center.x + drawSize.x, center.y + drawSize.y), ImVec2(0, 0), ImVec2(1, 1), IM_COL32(255, 255, 255, 255));
+        }
+        else {
+            const char* label = "Settings";
+            ImVec2 labelSize = ImGui::CalcTextSize(label);
+            ImVec2 textPos(gearMin.x + (gearBtnSize - labelSize.x) * 0.5f, gearMin.y + (gearBtnSize - labelSize.y) * 0.5f);
+            ImGui::GetWindowDrawList()->AddText(textPos, IM_COL32(230, 230, 230, 255), label);
+        }
 
-    // --- Centered title ---
-    ImGui::SameLine((contentSize.x - titleWidth) * 0.5f);
-    ImGui::TextColored(ImVec4(0.95f, 0.85f, 0.5f, 1.0f), "%s", windowTitle);
+        // --- Centered title ---
+        ImGui::SameLine((contentSize.x - titleWidth) * 0.5f);
+        ImGui::TextColored(ImVec4(0.95f, 0.85f, 0.5f, 1.0f), "%s", windowTitle);
 
-    ImGui::SameLine(contentSize.x - closeBtnSize - padding);
-    ImVec2 btnPos = ImGui::GetCursorScreenPos();
-    ImGui::InvisibleButton("CloseBtn", ImVec2(closeBtnSize, closeBtnSize));
-    if (ImGui::IsItemClicked()) showMainMenu = false;
+        ImGui::SameLine(contentSize.x - closeBtnSize - padding);
+        ImVec2 btnPos = ImGui::GetCursorScreenPos();
+        ImGui::InvisibleButton("CloseBtn", ImVec2(closeBtnSize, closeBtnSize));
+        if (ImGui::IsItemClicked()) showMainMenu = false;
 
-    ImDrawList* drawList = ImGui::GetWindowDrawList();
-    ImVec2 textSize = ImGui::CalcTextSize("X");
-    ImVec2 textPos = ImVec2(btnPos.x + (closeBtnSize - textSize.x) * 0.5f,
-        btnPos.y + (closeBtnSize - textSize.y) * 0.5f);
-    drawList->AddText(textPos, IM_COL32(255, 80, 80, 255), "X");
-    if (fontSize) ImGui::PopFont();
+        ImDrawList* drawList = ImGui::GetWindowDrawList();
+        ImVec2 textSize = ImGui::CalcTextSize("X");
+        ImVec2 textPos = ImVec2(btnPos.x + (closeBtnSize - textSize.x) * 0.5f,
+            btnPos.y + (closeBtnSize - textSize.y) * 0.5f);
+        drawList->AddText(textPos, IM_COL32(255, 80, 80, 255), "X");
+        if (fontSize) ImGui::PopFont();
 
-    fontIndex = 1;
-    fontSize = (fontIndex >= 0 && fontIndex < io.Fonts->Fonts.Size) ? io.Fonts->Fonts[fontIndex] : nullptr;
-    if (fontSize) ImGui::PushFont(fontSize);
-    ImGuiTextCentered("Quickly view or command custom options offered by D2RHUD");
-    ImGuiTextCentered("This menu can be toggled using the hotkey set in D2RLAN");
-    if (fontSize) ImGui::PopFont();
+        fontIndex = 1;
+        fontSize = (fontIndex >= 0 && fontIndex < io.Fonts->Fonts.Size) ? io.Fonts->Fonts[fontIndex] : nullptr;
+        if (fontSize) ImGui::PushFont(fontSize);
+        ImGuiTextCentered("Quickly view or command custom options offered by D2RHUD");
+        ImGuiTextCentered("This menu can be toggled using the hotkey set in D2RLAN");
+        if (fontSize) ImGui::PopFont();
 
-    fontIndex = 2;
-    fontSize = (fontIndex >= 0 && fontIndex < io.Fonts->Fonts.Size) ? io.Fonts->Fonts[fontIndex] : nullptr;
-    if (fontSize) ImGui::PushFont(fontSize);
+        fontIndex = 2;
+        fontSize = (fontIndex >= 0 && fontIndex < io.Fonts->Fonts.Size) ? io.Fonts->Fonts[fontIndex] : nullptr;
+        if (fontSize) ImGui::PushFont(fontSize);
 
-    // Prepare version line
-    std::string label = "Version:";
-    std::string number = Version;
-    ImVec2 labelSize = ImGui::CalcTextSize(label.c_str());
-    ImVec2 numberSize = ImGui::CalcTextSize(number.c_str());
-    float totalWidth = labelSize.x + numberSize.x;
-    float contentWidth = ImGui::GetWindowContentRegionMax().x - ImGui::GetWindowContentRegionMin().x;
-    ImGui::SetCursorPosX((contentWidth - totalWidth) * 0.5f);
+        // Prepare version line
+        std::string label = "Version:";
+        std::string number = Version;
+        ImVec2 labelSize = ImGui::CalcTextSize(label.c_str());
+        ImVec2 numberSize = ImGui::CalcTextSize(number.c_str());
+        float totalWidth = labelSize.x + numberSize.x;
+        float contentWidth = ImGui::GetWindowContentRegionMax().x - ImGui::GetWindowContentRegionMin().x;
+        ImGui::SetCursorPosX((contentWidth - totalWidth) * 0.5f);
 
-    // Draw the two colored segments
-    ImGui::TextColored(ImVec4(0.95f, 0.85f, 0.5f, 1.0f), "%s", label.c_str());
-    ImGui::SameLine();
-    ImGui::TextColored(ImVec4(0.0157f, 0.380f, 0.8f, 1.0f), "%s", number.c_str());
+        // Draw the two colored segments
+        ImGui::TextColored(ImVec4(0.95f, 0.85f, 0.5f, 1.0f), "%s", label.c_str());
+        ImGui::SameLine();
+        ImGui::TextColored(ImVec4(0.0157f, 0.380f, 0.8f, 1.0f), "%s", number.c_str());
 
-    if (fontSize) ImGui::PopFont();
-    ImGui::Separator();
+        if (fontSize) ImGui::PopFont();
+        ImGui::Separator();
 
-    // --- MENU BUTTONS AND DESCRIPTION AREA ---
-    float buttonWidth = 200.0f * menuScale;
-    float buttonHeight = 50.0f * menuScale;
-    float separatorX = buttonWidth + 20.0f * menuScale;
-    float descriptionWidth = windowSize.x - separatorX - 15.0f * menuScale;
-    const char* descriptionTitle = "";
-    const char* descriptionText = "";
-    const char* descriptionNote = "";
+        // --- MENU BUTTONS AND DESCRIPTION AREA ---
+        float buttonWidth = 200.0f * menuScale;
+        float buttonHeight = 50.0f * menuScale;
+        float separatorX = buttonWidth + 20.0f * menuScale;
+        float descriptionWidth = windowSize.x - separatorX - 15.0f * menuScale;
+        const char* descriptionTitle = "";
+        const char* descriptionText = "";
+        const char* descriptionNote = "";
 
-    fontIndex = 2;
-    fontSize = (fontIndex >= 0 && fontIndex < io.Fonts->Fonts.Size) ? io.Fonts->Fonts[fontIndex] : nullptr;
-    if (fontSize) ImGui::PushFont(fontSize);
-    
-    if (ThemeButton("D2RHUD Options", ImVec2(buttonWidth, buttonHeight)))
-        showD2RHUDMenu = true;
-    ShowD2RHUDMenu();
-    if (showSettingsPanel)
-        ShowSettingsPanel();
-    if (ImGui::IsItemHovered()) { descriptionTitle = "D2RHUD Options"; descriptionText = "Explore and Control enabled D2RHUD Options\n\n- Values are retrieved and stored in D2RLAN/Launcher/config.json\n- Overrides can be applied by the author in data/D2RLAN/config_override.json\n- Expect implementation changes over the next updates"; }
-    
-    if (ThemeButton("Memory Edit Info", ImVec2(buttonWidth, buttonHeight)))
-        showMemoryMenu = true;
-    ShowMemoryMenu();
-    if (ImGui::IsItemHovered()) { descriptionTitle = "Memory Edit Info"; descriptionText = "View and edit your currently active memory edits\n\n- Values are loaded from D2RLAN/Launcher config when you open the panel\n- You can change Type, Length, and Value; edits are kept while the panel is open\n- These edits provide additional 'hardcode only' options to the game\n- For some entries, game restart will be needed for them to apply"; }
-   
-    if (ThemeButton("D2RLoot Settings", ImVec2(buttonWidth, buttonHeight)))
-        showLootMenu = true;
-    ShowLootMenu();
-    if (ImGui::IsItemHovered()) { descriptionTitle = "D2RLoot Settings"; descriptionText = "Explore and control your currently active loot filter\n\n- Filters operate in real-time with user-defined rules\n- Accessible in D2RLAN > Options > Loot Filter\n- Rules are defined in D2RLAN/D2R/lootfilter_config.lua"; }
-    
-    if (ThemeButton("Grail Tracker", ImVec2(buttonWidth, buttonHeight)))
-        showGrailMenu = true;
-    ShowGrailMenu();
-    if (ImGui::IsItemHovered()) { descriptionTitle = "Grail Tracker"; descriptionText = "View the progress of your Set/Unique item hunting\n\n- Grail Entries are manually stored for now\n- This feature works for all mods* (or TCP)\n(Mod must have included set/unique items.txt files)\n- Grail Progress/Settings are stored in D2RLAN/D2R/HUD_Settings_ModName.json"; }
+        fontIndex = 2;
+        fontSize = (fontIndex >= 0 && fontIndex < io.Fonts->Fonts.Size) ? io.Fonts->Fonts[fontIndex] : nullptr;
+        if (fontSize) ImGui::PushFont(fontSize);
 
-    if (ThemeButton("Hotkey Controls", ImVec2(buttonWidth, buttonHeight)))
-        showHotkeyMenu = true;
-    ShowHotkeyMenu();
-    if (ImGui::IsItemHovered()) { descriptionTitle = "Hotkey Controls"; descriptionText = "Manage your hotkeys used by various tools\n\n- Hotkeys are achieved by utilizing internal game functions\n- They can also be used to dynamically control your loot filter\n- Hotkeys are defined in D2RLAN/Launcher/D2RLAN_Config.txt"; }
+        if (ThemeButton("D2RHUD Options", ImVec2(buttonWidth, buttonHeight)))
+            showD2RHUDMenu = true;
+        ShowD2RHUDMenu();
+        if (showSettingsPanel)
+            ShowSettingsPanel();
+        if (ImGui::IsItemHovered()) { descriptionTitle = "D2RHUD Options"; descriptionText = "Explore and Control enabled D2RHUD Options\n\n- Values are retrieved and stored in D2RLAN/Launcher/config.json\n- Overrides can be applied by the author in data/D2RLAN/config_override.json\n- Expect implementation changes over the next updates"; }
 
-    if (ThemeButton("Camera Controls", ImVec2(buttonWidth, buttonHeight)))
-        showCameraMenu = true;
-    ShowCameraMenu();
-    if (ImGui::IsItemHovered()) { descriptionTitle = "Camera Controls"; descriptionText = "Modify the in-game camera angles and zoom\n\n- Scans memory to find camera control values\n- Angle/zoom scans required for every fresh session\n- Future versions likely to include more automation/controls"; }
-    
-    if (fontSize) ImGui::PopFont();
+        if (ThemeButton("Memory Edit Info", ImVec2(buttonWidth, buttonHeight)))
+            showMemoryMenu = true;
+        ShowMemoryMenu();
+        if (ImGui::IsItemHovered()) { descriptionTitle = "Memory Edit Info"; descriptionText = "View and edit your currently active memory edits\n\n- Values are loaded from D2RLAN/Launcher config when you open the panel\n- You can change Type, Length, and Value; edits are kept while the panel is open\n- These edits provide additional 'hardcode only' options to the game\n- For some entries, game restart will be needed for them to apply"; }
 
-    // Vertical separator + Description Panel (on 4K, move description down ~300px so it isn't shifted too high)
-    float descriptionPanelY = 100.0f + (menuScale >= 2.0f ? 100.0f : 0.0f);
-    ImGui::GetWindowDrawList()->AddLine(ImVec2(ImGui::GetWindowPos().x + separatorX, ImGui::GetWindowPos().y + descriptionPanelY), ImVec2(ImGui::GetWindowPos().x + separatorX, ImGui::GetWindowPos().y + windowSize.y - 3.0f), IM_COL32(180, 150, 80, 255), 2.0f);
-    ImGui::SetCursorPosX(separatorX - 200.0f);
-    ImGui::SetCursorPosY(descriptionPanelY);
+        if (ThemeButton("D2RLoot Settings", ImVec2(buttonWidth, buttonHeight)))
+            showLootMenu = true;
+        ShowLootMenu();
+        if (ImGui::IsItemHovered()) { descriptionTitle = "D2RLoot Settings"; descriptionText = "Explore and control your currently active loot filter\n\n- Filters operate in real-time with user-defined rules\n- Accessible in D2RLAN > Options > Loot Filter\n- Rules are defined in D2RLAN/D2R/lootfilter_config.lua"; }
 
-    // Title style
-    fontIndex = 3;
-    fontSize = (fontIndex >= 0 && fontIndex < io.Fonts->Fonts.Size) ? io.Fonts->Fonts[fontIndex] : nullptr;
-    if (fontSize) ImGui::PushFont(fontSize);
-    if (descriptionTitle && descriptionTitle[0] != '\0')
-    {
-        ImVec2 textSize = ImGui::CalcTextSize(descriptionTitle);
-        ImGui::SetCursorPosX(separatorX + 5.0f + (descriptionWidth - textSize.x) * 0.5f);
-        ImGui::TextColored(ImVec4(0.0157f, 0.380f, 0.8f, 1.0f), descriptionTitle);
-    }
-    if (fontSize) ImGui::PopFont();
+        if (ThemeButton("Grail Tracker", ImVec2(buttonWidth, buttonHeight)))
+            showGrailMenu = true;
+        ShowGrailMenu();
+        if (ImGui::IsItemHovered()) { descriptionTitle = "Grail Tracker"; descriptionText = "View the progress of your Set/Unique item hunting\n\n- Grail Entries are manually stored for now\n- This feature works for all mods* (or TCP)\n(Mod must have included set/unique items.txt files)\n- Grail Progress/Settings are stored in D2RLAN/D2R/HUD_Settings_ModName.json"; }
 
-    // Description style
-    fontIndex = 1;
-    fontSize = (fontIndex >= 0 && fontIndex < io.Fonts->Fonts.Size) ? io.Fonts->Fonts[fontIndex] : nullptr;
-    if (fontSize) ImGui::PushFont(fontSize);
-    if (descriptionText && descriptionText[0] != '\0')
-    {
-        ImVec2 textSize = ImGui::CalcTextSize(descriptionText, nullptr, false, descriptionWidth);
-        ImGui::SetCursorPosX(separatorX + 5.0f + (descriptionWidth - textSize.x) * 0.5f);
-        ImGui::TextWrapped("%s", descriptionText);
-    }
-    if (fontSize) ImGui::PopFont();
+        if (ThemeButton("Hotkey Controls", ImVec2(buttonWidth, buttonHeight)))
+            showHotkeyMenu = true;
+        ShowHotkeyMenu();
+        if (ImGui::IsItemHovered()) { descriptionTitle = "Hotkey Controls"; descriptionText = "Manage your hotkeys used by various tools\n\n- Hotkeys are achieved by utilizing internal game functions\n- They can also be used to dynamically control your loot filter\n- Hotkeys are defined in D2RLAN/Launcher/D2RLAN_Config.txt"; }
+
+        if (ThemeButton("Camera Controls", ImVec2(buttonWidth, buttonHeight)))
+            showCameraMenu = true;
+        ShowCameraMenu();
+        if (ImGui::IsItemHovered()) { descriptionTitle = "Camera Controls"; descriptionText = "Modify the in-game camera angles and zoom\n\n- Scans memory to find camera control values\n- Angle/zoom scans required for every fresh session\n- Future versions likely to include more automation/controls"; }
+
+        if (fontSize) ImGui::PopFont();
+
+        // Vertical separator + Description Panel (on 4K, move description down ~300px so it isn't shifted too high)
+        float descriptionPanelY = 100.0f + (menuScale >= 2.0f ? 100.0f : 0.0f);
+        ImGui::GetWindowDrawList()->AddLine(ImVec2(ImGui::GetWindowPos().x + separatorX, ImGui::GetWindowPos().y + descriptionPanelY), ImVec2(ImGui::GetWindowPos().x + separatorX, ImGui::GetWindowPos().y + windowSize.y - 3.0f), IM_COL32(180, 150, 80, 255), 2.0f);
+        ImGui::SetCursorPosX(separatorX - 200.0f);
+        ImGui::SetCursorPosY(descriptionPanelY);
+
+        // Title style
+        fontIndex = 3;
+        fontSize = (fontIndex >= 0 && fontIndex < io.Fonts->Fonts.Size) ? io.Fonts->Fonts[fontIndex] : nullptr;
+        if (fontSize) ImGui::PushFont(fontSize);
+        if (descriptionTitle && descriptionTitle[0] != '\0')
+        {
+            ImVec2 textSize = ImGui::CalcTextSize(descriptionTitle);
+            ImGui::SetCursorPosX(separatorX + 5.0f + (descriptionWidth - textSize.x) * 0.5f);
+            ImGui::TextColored(ImVec4(0.0157f, 0.380f, 0.8f, 1.0f), descriptionTitle);
+        }
+        if (fontSize) ImGui::PopFont();
+
+        // Description style
+        fontIndex = 1;
+        fontSize = (fontIndex >= 0 && fontIndex < io.Fonts->Fonts.Size) ? io.Fonts->Fonts[fontIndex] : nullptr;
+        if (fontSize) ImGui::PushFont(fontSize);
+        if (descriptionText && descriptionText[0] != '\0')
+        {
+            ImVec2 textSize = ImGui::CalcTextSize(descriptionText, nullptr, false, descriptionWidth);
+            ImGui::SetCursorPosX(separatorX + 5.0f + (descriptionWidth - textSize.x) * 0.5f);
+            ImGui::TextWrapped("%s", descriptionText);
+        }
+        if (fontSize) ImGui::PopFont();
 
         ImGui::PopStyleColor();
-    ImGui::End();
+        ImGui::End();
     }
     else
         ImGui::PopStyleColor();
@@ -12138,39 +11709,25 @@ void __fastcall Hooked_D2GAME_UMOD8Array_1402fc530(D2UnitStrc* pUnit, int32_t nU
     if (!pUnit)
         return;
 
+    if (g_lastSunderGame)
+    {
+        ApplySunderClampToMonster(g_lastSunderGame, pUnit, true);
+        return;
+    }
+
     // Get stored remainders
     RemainderEntry remainders = GetRemainder(pUnit);
-
-    auto& processedStats = g_unitsEditedStats[pUnit->dwUnitId];
 
     // Helper lambda to handle each stat
     auto ApplyFinalValue = [&](D2C_ItemStats statId, int remainder, const char* name)
         {
-            // Skip if this stat was already processed for this unit
-            if (processedStats.find(statId) != processedStats.end())
+            if (remainder <= 0 || settings.sunderedMonUMods != true)
                 return;
 
             int nCurrentValue = STATLIST_GetUnitStatSigned(pUnit, statId, 0);
-            int finalValue = 0;
-            int wastedValue = 0;
 
-            if ((nCurrentValue >= settings.SunderValue + 1) && settings.sunderedMonUMods == true)
-            {
-                finalValue = nCurrentValue - remainder;
-                //LogSpawnDebug("  Stat %s: nCurrentValue=%d, finalValue=%d, wastedValue=%d, remainder=%d", name, nCurrentValue, finalValue, wastedValue, remainder);
-
-                if (finalValue < settings.SunderValue)
-                {
-                    wastedValue = settings.SunderValue - finalValue;
-                    finalValue = settings.SunderValue;
-                    //LogSpawnDebug("  Stat %s: nCurrentValue=%d, finalValue=%d, wastedValue=%d, remainder=%d", name, nCurrentValue, finalValue, wastedValue, remainder);
-                }
-
-                STATLISTEX_SetStatListExStat(pUnit->pStatListEx, statId, finalValue, 0);
-
-                // Mark this stat as processed for this unit
-                processedStats.insert(statId);
-            }
+            if (nCurrentValue >= 100)
+                STATLISTEX_SetStatListExStat(pUnit->pStatListEx, statId, settings.SunderValue, 0);
         };
 
     // Apply for all six resistances
@@ -12184,6 +11741,15 @@ void __fastcall Hooked_D2GAME_UMOD8Array_1402fc530(D2UnitStrc* pUnit, int32_t nU
 
 void __fastcall HookedMONSTER_InitializeStatsAndSkills(D2GameStrc* pGame, D2ActiveRoomStrc* pRoom, D2UnitStrc* pUnit, int64_t* pMonRegData)
 {
+    if (pGame)
+        g_lastSunderGame = pGame;
+
+    if (pUnit && pUnit->dwUnitType == UNIT_MONSTER)
+    {
+        g_unitsEditedStats.erase(pUnit->dwUnitId);
+        g_resistRemainders.erase(pUnit->dwUnitId);
+    }
+
     oMONSTER_InitializeStatsAndSkills(pGame, pRoom, pUnit, pMonRegData);
 
     if (!pUnit || pUnit->dwUnitType != UNIT_MONSTER || !pUnit->pMonsterData || !pUnit->pMonsterData->pMonstatsTxt)
@@ -12231,6 +11797,7 @@ void __fastcall HookedMONSTER_InitializeStatsAndSkills(D2GameStrc* pGame, D2Acti
         ApplyGhettoTerrorZone(pGame, pRoom, pUnit, pMonRegData, &monStatsInit);
 
     ApplyMonsterDifficultyScalingNonTZ(pUnit, difficulty, playerLevel, playerCountGlobal, pGame);
+    ApplyGhettoSunder(pGame, pRoom, pUnit, pMonRegData, &monStatsInit);
 
     time_t currentUtc = std::time(nullptr);
 
@@ -12345,7 +11912,7 @@ void __fastcall HookedDropTCTest(D2GameStrc* pGame, D2UnitStrc* pMonster, D2Unit
     if (isTerrorized == false)
     {
         LogDebug("debug logging: {}\n---------------------\n");
-        oDropTCTest(pGame, pMonster, pPlayer, nTCId, nQuality, nItemLevel, a7, ppItems, pnItemsDropped, nMaxItems);      
+        oDropTCTest(pGame, pMonster, pPlayer, nTCId, nQuality, nItemLevel, a7, ppItems, pnItemsDropped, nMaxItems);
         return;
     }
     else
@@ -12415,7 +11982,7 @@ void __fastcall Hooked_DamageInfo(void* param1, D2UnitStrc* attacker, D2UnitStrc
     // Debug
     std::cout << std::fixed << std::setprecision(3)
         << "[DamageHook] Dmg:" << actualDamage
-        << " Δ(" << dx << "," << dy << ")"
+        << " Î”(" << dx << "," << dy << ")"
         << " ISO(" << isoX << "," << isoY << ")"
         << " Px(" << pixelOffsetX << "," << pixelOffsetY << ")\n";
     */
@@ -12433,18 +12000,18 @@ void D2RHUD::OnDraw() {
 
     if (pGameClient != nullptr)
         pGame = (D2GameStrc*)pGameClient->pGame;
-    
+
     if (!configLoaded)
     {
         LoadCommandsAndKeybinds("HUDConfig_" + modName + ".json");
         LoadD2RHUDConfig(configFilePath);
         RegisterModOverrides();
         ApplyModOverrides(modName);
-        
+
         configLoaded = true;
     }
-    
-        
+
+
 
     if (!menuClickHookInstalled)
     {
@@ -12490,19 +12057,19 @@ void D2RHUD::OnDraw() {
             ImGuiIO& io = ImGui::GetIO();
             ImFont* chosenFont = (fontIndex >= 0 && fontIndex < io.Fonts->Fonts.Size) ? io.Fonts->Fonts[fontIndex] : nullptr;
 
-                if (chosenFont)
-                    ImGui::PushFont(chosenFont);
+            if (chosenFont)
+                ImGui::PushFont(chosenFont);
 
-                auto drawList = ImGui::GetBackgroundDrawList();
-                ImVec2 screenSize = io.DisplaySize;
-                ImVec2 textSize = ImGui::CalcTextSize(g_ItemFilterStatusMessage.c_str());
-                ImVec2 textPos = ImVec2((screenSize.x - textSize.x) * 0.5f,
-                    (screenSize.y - textSize.y) * 0.1f);
+            auto drawList = ImGui::GetBackgroundDrawList();
+            ImVec2 screenSize = io.DisplaySize;
+            ImVec2 textSize = ImGui::CalcTextSize(g_ItemFilterStatusMessage.c_str());
+            ImVec2 textPos = ImVec2((screenSize.x - textSize.x) * 0.5f,
+                (screenSize.y - textSize.y) * 0.1f);
 
-                drawList->AddText(textPos, color, g_ItemFilterStatusMessage.c_str());
+            drawList->AddText(textPos, color, g_ItemFilterStatusMessage.c_str());
 
-                if (chosenFont)
-                    ImGui::PopFont();
+            if (chosenFont)
+                ImGui::PopFont();
         }
         else
             g_ShouldShowItemFilterMessage = false;
@@ -12545,7 +12112,7 @@ void D2RHUD::OnDraw() {
         DetourTransactionCommit();
     }
 
-    if ((settings.HPRollover || cachedSettings.HPRollover) && !oSUNITDMG_ApplyResistancesAndAbsorb) {
+    if ((settings.HPRollover || cachedSettings.HPRollover || settings.sunderedMonUMods || cachedSettings.sunderedMonUMods) && !oSUNITDMG_ApplyResistancesAndAbsorb) {
         DetourTransactionBegin();
         DetourUpdateThread(GetCurrentThread());
         oSUNITDMG_ApplyResistancesAndAbsorb = reinterpret_cast<SUNITDMG_ApplyResistancesAndAbsorb_t>(Pattern::Address(0x3253d0));
@@ -12607,7 +12174,7 @@ void D2RHUD::OnDraw() {
                 ImGui::PopFont();
         }
     }
-    
+
 
 
     // Scale all menu UI by 200% on 4K resolution
@@ -12640,7 +12207,7 @@ void D2RHUD::OnDraw() {
     }
     */
 
-    
+
     if (!oD2GAME_UMOD8Array_1402fc530)
     {
         DetourTransactionBegin();
@@ -12701,7 +12268,7 @@ void D2RHUD::OnDraw() {
 
     }
 
-    
+
     if (!oMONSTER_InitializeStatsAndSkills) {
         DetourTransactionBegin();
         DetourUpdateThread(GetCurrentThread());
@@ -12709,7 +12276,7 @@ void D2RHUD::OnDraw() {
         DetourAttach(&(PVOID&)oMONSTER_InitializeStatsAndSkills, HookedMONSTER_InitializeStatsAndSkills);
         DetourTransactionCommit();
     }
-    
+
 
     static bool settingsLoaded = false;
 
@@ -12831,7 +12398,7 @@ void D2RHUD::OnDraw() {
         }
 
         /* Debug Example - Retrieves stat references from D2Enums.h, Remove the // at start of line to use
-        
+
         if (pUnitServer)
         {
             std::string mystatname = std::format("Defense: {}", STATLIST_GetUnitStatSigned(pUnitServer, 31, 0));
@@ -12843,8 +12410,11 @@ void D2RHUD::OnDraw() {
 
         if (STATLIST_GetUnitStatSigned(pUnitServer, STAT_HITPOINTS, 0) == 0) break;
 
-        if (pUnitServer && (cachedSettings.monsterStatsDisplay|| settings.monsterStatsDisplay))
+        if (pUnitServer && (cachedSettings.monsterStatsDisplay || settings.monsterStatsDisplay))
         {
+            if (pGame != nullptr)
+                ApplySunderClampToMonster(pGame, pUnitServer, true);
+
             float totalWidth = 0.f;
             float spaceWidth = ImGui::CalcTextSize(Seperator).x;
             std::string resistances[6];
@@ -12885,12 +12455,12 @@ void D2RHUD::OnDraw() {
                     auto width = ImGui::CalcTextSize(hp.c_str()).x;
                     drawList->AddText({ center - (width / 2.0f) + 1, ypercent2 }, IM_COL32(255, 255, 255, 255), hp.c_str());
 
-                    
-                }              
+
+                }
             }
         }
 
-        
+
 
     } while (false);
 
@@ -12927,7 +12497,7 @@ bool D2RHUD::OnKeyPressed(short key)
             if (token == "XBUTTON1") return VK_XBUTTON1;
             if (token == "XBUTTON2") return VK_XBUTTON2;
 
-            // function keys: F1–F24
+            // function keys: F1â€“F24
             if (token.size() >= 2 && token[0] == 'F')
             {
                 int f = std::atoi(token.c_str() + 1);
@@ -13086,7 +12656,7 @@ bool D2RHUD::OnKeyPressed(short key)
         else
             CheckAndAddMatch(kb->key, 0, []() { CheckToggleForward(); });
     }
-        
+
 
     if (auto kb = FindKeybind("Cycle TZ Backward"))
     {
