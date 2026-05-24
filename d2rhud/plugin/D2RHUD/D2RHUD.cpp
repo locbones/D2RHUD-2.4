@@ -58,7 +58,7 @@
 #pragma region Global Static/Structs
 
 std::string lootFile = "../D2R/lootfilter.lua";
-std::string Version = "1.7.1";
+std::string Version = "1.7.2";
 
 using json = nlohmann::json;
 static MonsterStatsDisplaySettings cachedSettings;
@@ -96,7 +96,7 @@ static bool IsHardcore()
     uint8_t value = *reinterpret_cast<uint8_t*>(addr);
     return (value & (1 << 2)) != 0;
 }
-static bool isHardcore = false;
+bool isHardcore = false;
 std::atomic<uint32_t> g_GrailRevision{ 1 };
 static int TerrorStat = 0;
 
@@ -896,8 +896,113 @@ static int GetClientStatus() {
     return (pClients != NULL) ? static_cast<int>(*(uint8_t*)pClients) : -1;
 }
 
+static std::string TrimCommandToken(const std::string& s)
+{
+    const char* ws = " \t\r\n";
+    size_t start = s.find_first_not_of(ws);
+    if (start == std::string::npos)
+        return "";
+    size_t end = s.find_last_not_of(ws);
+    return s.substr(start, end - start + 1);
+}
+
+static std::queue<std::function<void()>> g_keySimQueue;
+static constexpr UINT_PTR kKeySimTimerId = 1235;
+
+static VOID CALLBACK KeySimTimerProc(HWND hwnd, UINT message, UINT_PTR idTimer, DWORD dwTime)
+{
+    (void)message;
+    (void)dwTime;
+    if (idTimer != kKeySimTimerId)
+        return;
+
+    if (g_keySimQueue.empty())
+    {
+        KillTimer(hwnd, kKeySimTimerId);
+        return;
+    }
+
+    std::function<void()> action = std::move(g_keySimQueue.front());
+    g_keySimQueue.pop();
+    if (action)
+        action();
+
+    if (!g_keySimQueue.empty())
+        SetTimer(hwnd, kKeySimTimerId, 16, KeySimTimerProc);
+    else
+        KillTimer(hwnd, kKeySimTimerId);
+}
+
+static void QueueOnGameMainThread(std::function<void()> action)
+{
+    HWND hwnd = find_main_window(GetCurrentProcessId());
+    if (!hwnd || !action)
+        return;
+
+    g_keySimQueue.push(std::move(action));
+    SetTimer(hwnd, kKeySimTimerId, 16, KeySimTimerProc);
+}
+
+static void PostSyntheticKeyTap(HWND hwnd, WORD vk, bool useSysKeyMessages)
+{
+    if (!hwnd)
+        return;
+
+    const UINT scan = MapVirtualKeyW(vk, MAPVK_VK_TO_VSC);
+    const LPARAM keyDownLParam = 1 | (static_cast<LPARAM>(scan) << 16);
+    const LPARAM keyUpLParam = keyDownLParam | (static_cast<LPARAM>(1) << 30) | (static_cast<LPARAM>(1) << 31);
+
+    if (useSysKeyMessages)
+    {
+        PostMessageW(hwnd, WM_SYSKEYDOWN, vk, keyDownLParam);
+        PostMessageW(hwnd, WM_SYSKEYUP, vk, keyUpLParam);
+    }
+    else
+    {
+        PostMessageW(hwnd, WM_KEYDOWN, vk, keyDownLParam);
+        PostMessageW(hwnd, WM_KEYUP, vk, keyUpLParam);
+    }
+}
+
+static void SimulateStartupKeypress(WORD vk, bool useSysKeyMessages)
+{
+    QueueOnGameMainThread([vk, useSysKeyMessages]() {
+        HWND hwnd = find_main_window(GetCurrentProcessId());
+        if (!hwnd)
+            return;
+        SetForegroundWindow(hwnd);
+        PostSyntheticKeyTap(hwnd, vk, useSysKeyMessages);
+    });
+}
+
+static bool TryExecuteKeypressStartupCommand(const std::string& command)
+{
+    std::string token = TrimCommandToken(command);
+    if (token.size() >= 2 && token.front() == '[' && token.back() == ']')
+        token = TrimCommandToken(token.substr(1, token.size() - 2));
+
+    std::string lower = token;
+    std::transform(lower.begin(), lower.end(), lower.begin(),
+        [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+
+    if (lower == "tab")
+    {
+        SimulateStartupKeypress(VK_TAB, false);
+        return true;
+    }
+    if (lower == "alt")
+    {
+        SimulateStartupKeypress(VK_MENU, true);
+        return true;
+    }
+    return false;
+}
+
 void ExecuteCommand(const std::string& command) {
     if (command == "disabled" || command.empty()) return;
+
+    if (TryExecuteKeypressStartupCommand(command))
+        return;
 
     bool isPlayerCommand = (command.find("/") != std::string::npos);
     if (isPlayerCommand) {
@@ -917,17 +1022,38 @@ int GetPlayerDifficulty(D2UnitStrc* pPlayer) {
     return pLevel->pDrlg->nDifficulty;
 }
 
-void OnClientStatusChange() {
-    std::this_thread::sleep_for(std::chrono::seconds(10));
+static std::atomic<uint64_t> s_startupCommandRunId{ 0 };
 
-    std::vector<std::string> commands = { automaticCommand1, automaticCommand2, automaticCommand3,
-                                         automaticCommand4, automaticCommand5, automaticCommand6 };
-    for (const auto& command : commands) {
-        if (!command.empty() && command != "disabled") {
-            ExecuteCommand(command);
+static void QueueStartupCommandExecution(float initialDelaySeconds)
+{
+    const uint64_t runId = ++s_startupCommandRunId;
+    std::thread([runId, initialDelaySeconds]() {
+        if (initialDelaySeconds > 0.0f)
+            std::this_thread::sleep_for(std::chrono::milliseconds(static_cast<int>(initialDelaySeconds * 1000.0f)));
+
+        if (runId != s_startupCommandRunId.load())
+            return;
+        if (GetClientStatus() != 1)
+            return;
+
+        const std::vector<std::string> commands = {
+            automaticCommand1, automaticCommand2, automaticCommand3,
+            automaticCommand4, automaticCommand5, automaticCommand6
+        };
+        for (const auto& command : commands)
+        {
+            if (runId != s_startupCommandRunId.load())
+                return;
+            if (!command.empty() && command != "disabled")
+                ExecuteCommand(command);
+            std::this_thread::sleep_for(std::chrono::seconds(1));
         }
-        std::this_thread::sleep_for(std::chrono::seconds(1));
-    }
+    }).detach();
+}
+
+void OnClientStatusChange()
+{
+    QueueStartupCommandExecution(3.0f);
 }
 
 int CheckClientStatusChange() {
@@ -3341,741 +3467,8 @@ std::wstring GetSavePath()
     return savePath;
 }
 
-class BitReader {
-public:
-    BitReader(const std::vector<uint8_t>& buffer)
-        : bufPtr(buffer.data()), bufSize(buffer.size()), bitPos(0) {
-    }
-
-    BitReader(const uint8_t* data, size_t size)
-        : bufPtr(data), bufSize(size), bitPos(0) {
-    }
-
-    uint32_t ReadBits(size_t bits) {
-        if (bits > 32)
-            throw std::runtime_error("Cannot read more than 32 bits at once");
-
-        uint32_t result = 0;
-        for (size_t i = 0; i < bits; ++i) {
-            size_t byteIdx = bitPos >> 3;
-            size_t bitIdx = bitPos & 7;
-
-            if (byteIdx >= bufSize)
-                throw std::runtime_error("Buffer overflow");
-
-            if ((bufPtr[byteIdx] >> bitIdx) & 1)
-                result |= (1u << i);
-
-            ++bitPos;
-        }
-        return result;
-    }
-
-    uint8_t ReadUInt8(size_t bits) { return static_cast<uint8_t>(ReadBits(bits)); }
-    uint16_t ReadUInt16(size_t bits) { return static_cast<uint16_t>(ReadBits(bits)); }
-    uint32_t ReadUInt32(size_t bits) { return ReadBits(bits); }
-    bool ReadBit() { return ReadBits(1) != 0; }
-
-    void SkipBits(size_t bits) { bitPos += bits; }
-    void SetBitPos(size_t pos) { bitPos = pos; }
-    size_t GetBitPos() const { return bitPos; }
-    size_t GetBytePos() const { return bitPos >> 3; }
-
-    void AlignToByte() {
-        if (bitPos & 7)
-            bitPos = ((bitPos >> 3) + 1) << 3;
-    }
-
-    bool HasBits(size_t n) const {
-        return bitPos + n <= bufSize * 8;
-    }
-
-private:
-    const uint8_t* bufPtr;
-    size_t bufSize;
-    size_t bitPos;
-};
-
-
-struct EarAttributes {
-    uint8_t clazz = 0;
-    uint8_t level = 0;
-    std::string name;
-};
-
-struct Item {
-    // Base header flags
-    bool identified = false;
-    bool socketed = false;
-    bool new_flag = false;
-    bool is_ear = false;
-    bool starter_item = false;
-    bool simple_item = false;
-    bool ethereal = false;
-    bool personalized = false;
-    bool given_runeword = false;
-
-    uint16_t version = 0;
-    uint8_t location_id = 0;
-    uint8_t equipped_id = 0;
-    uint8_t position_x = 0;
-    uint8_t position_y = 0;
-    uint8_t alt_position_id = 0;
-
-    // Item core data
-    uint32_t id = 0;
-    uint8_t level = 0;
-    std::string type;
-
-    uint8_t nr_of_items_in_sockets = 0;
-
-    // Picture, class-specific
-    bool multiple_pictures = false;
-    uint8_t picture_id = 0;
-    bool class_specific = false;
-    uint16_t auto_affix_id = 0;
-
-    // Quality
-    uint8_t quality = 0;
-
-    uint8_t low_quality_id = 0;
-    uint8_t file_index = 0;
-
-    uint16_t magic_prefix = 0;
-    uint16_t magic_suffix = 0;
-
-    uint16_t set_id = 0;
-    uint16_t unique_id = 0;
-
-    uint8_t rare_name_id = 0;
-    uint8_t rare_name_id2 = 0;
-    uint16_t magical_name_ids[6] = { 0 };
-
-    EarAttributes ear_attributes;
-
-    uint16_t personalized_id = 0;
-    uint32_t runeword_id = 0;
-
-    std::vector<Item> socketed_items;
-};
-
-struct StashParsedItemDebug {
-    int page = 0;
-    int tab = 0;
-    int x = 0;
-    int y = 0;
-    std::string code;
-    uint8_t quality = 0;
-    uint16_t setId = 0;
-    uint16_t uniqueId = 0;
-    bool identified = false;
-    bool grailMatched = false;
-    std::string grailName;
-    std::string note;
-};
-
-static bool showStashParseDebug = false;
-static bool g_ForceStashRescan = false;
-static bool g_StashScanInProgress = false;
-static double g_DeferStashScanUntil = 0.0;
-static int g_StashScanPageFilter = 0; // 0 = all pages, 1-64 = single page (debug only)
-static std::vector<int> g_AvailableStashPages;
-static std::vector<StashParsedItemDebug> g_StashDebugEntries;
-
-std::unordered_map<uint32_t, std::string> g_SetItemLookup;
-std::unordered_map<uint32_t, std::string> g_UniqueItemLookup;
-
-#pragma endregion
-
-#pragma region Huffman Tree
-
-struct HuffmanNode {
-    char value = 0;
-    HuffmanNode* left = nullptr;
-    HuffmanNode* right = nullptr;
-    ~HuffmanNode() { delete left; delete right; }
-};
-
-static const std::vector<std::pair<char, std::string>> HUFFMAN_CODES = {
-    {' ', "10"},
-    {'0', "11111011"},
-    {'1', "1111100"},
-    {'2', "001100"},
-    {'3', "1101101"},
-    {'4', "11111010"},
-    {'5', "00010110"},
-    {'6', "1101111"},
-    {'7', "01111"},
-    {'8', "000100"},
-    {'9', "01110"},
-    {'a', "11110"},
-    {'b', "0101"},
-    {'c', "01000"},
-    {'d', "110001"},
-    {'e', "110000"},
-    {'f', "010011"},
-    {'g', "11010"},
-    {'h', "00011"},
-    {'i', "1111110"},
-    {'j', "000101110"},
-    {'k', "010010"},
-    {'l', "11101"},
-    {'m', "01101"},
-    {'n', "001101"},
-    {'o', "1111111"},
-    {'p', "11001"},
-    {'q', "11011001"},
-    {'r', "11100"},
-    {'s', "0010"},
-    {'t', "01100"},
-    {'u', "00001"},
-    {'v', "1101110"},
-    {'w', "00000"},
-    {'x', "00111"},
-    {'y', "0001010"},
-    {'z', "11011000"},
-
-    // --- Capitals ---
-    {'A', "00010111101011100"},
-    {'B', "00010111111001110"},
-    {'C', "00010111111011001"},
-    {'D', "00010111110011111"},
-    {'E', "00010111101111000"},
-    {'F', "00010111110011100"},
-    {'G', "00010111110101011"},
-    {'H', "00010111110111001"},
-    {'I', "00010111110111100"},
-    {'J', "0001011110000111"},
-    {'K', "00010111110100100"},
-    {'L', "00010111110010010"},
-    {'M', "00010111111011011"},
-    {'N', "0001011110000010"},
-    {'O', "00010111111101011"},
-    {'P', "00010111110100111"},
-    {'Q', "00010111101100100"},
-    {'R', "00010111111100111"},
-    {'S', "00010111101101010"},
-    {'T', "00010111110001010"},
-    {'U', "00010111110001001"},
-    {'V', "00010111110010001"},
-    {'W', "00010111111101110"},
-    {'X', "00010111111111010"},
-    {'Y', "00010111111111101"},
-    {'Z', "00010111110000100"},
-};
-
-HuffmanNode* BuildHuffmanTreeFromTable() {
-    auto root = new HuffmanNode{};
-
-    for (auto& [ch, bits] : HUFFMAN_CODES) {
-        HuffmanNode* node = root;
-
-        for (char b : bits) {
-            if (b == '0') {
-                if (!node->left) node->left = new HuffmanNode{};
-                node = node->left;
-            }
-            else {
-                if (!node->right) node->right = new HuffmanNode{};
-                node = node->right;
-            }
-        }
-
-        node->value = ch; // leaf
-    }
-
-    return root;
-}
-
-char DecodeHuffmanChar(BitReader& reader, HuffmanNode* root) {
-    HuffmanNode* node = root;
-    int depth = 0;
-    while (node && node->value == 0 && depth++ < 30) {
-        bool bit = reader.ReadBit();
-        node = bit ? node->right : node->left;
-    }
-    if (!node) throw std::runtime_error("Invalid Huffman tree traversal");
-    return node->value;
-}
-
-std::string DecodeHuffmanString(BitReader& reader, HuffmanNode* root) {
-    std::string s;
-    for (int i = 0; i < 4; ++i) {
-        char c = DecodeHuffmanChar(reader, root);
-        if (c == ' ' || c == 0) break;
-        s += c;
-    }
-    return s;
-}
-
-struct StatCostRow {
-    int saveBits = 0;
-    int saveAdd = 0;
-    int saveParamBits = 0;
-};
-
-struct ItemTypeRow {
-    bool isArmor = false;
-    bool isWeapon = false;
-    bool stackable = false;
-};
-
-static bool g_ItemParseTablesLoaded = false;
-static std::unordered_map<int, StatCostRow> g_StatCostById;
-static std::unordered_map<std::string, ItemTypeRow> g_ItemTypeByCode;
-
-static bool SafeStringToInt(const std::string& s, int& out)
-{
-    if (s.empty())
-        return false;
-    try {
-        size_t idx = 0;
-        out = std::stoi(s, &idx);
-        return idx == s.size();
-    }
-    catch (...) {
-        out = -1;
-        return false;
-    }
-}
-
-static std::vector<std::string> SplitTabLine(const std::string& line)
-{
-    std::vector<std::string> result;
-    std::stringstream ss(line);
-    std::string field;
-    while (std::getline(ss, field, '\t'))
-        result.push_back(field);
-    return result;
-}
-
-static int FindTabColumn(const std::vector<std::string>& header, const std::string& name)
-{
-    for (size_t i = 0; i < header.size(); i++)
-        if (header[i] == name)
-            return static_cast<int>(i);
-    return -1;
-}
-
-static std::string TrimItemCode(std::string code)
-{
-    while (!code.empty() && (code.back() == ' ' || code.back() == '\0'))
-        code.pop_back();
-    return code;
-}
-
-static void LoadItemStatCostTable(const std::string& filepath)
-{
-    std::ifstream file(filepath);
-    if (!file.is_open())
-        return;
-
-    std::string line;
-    std::getline(file, line);
-    auto header = SplitTabLine(line);
-
-    int colId = FindTabColumn(header, "ID");
-    if (colId < 0)
-        colId = FindTabColumn(header, "*ID");
-    const int colSaveBits = FindTabColumn(header, "Save Bits");
-    const int colSaveAdd = FindTabColumn(header, "Save Add");
-    const int colSaveParam = FindTabColumn(header, "Save Param Bits");
-
-    if (colId < 0 || colSaveBits < 0)
-        return;
-
-    while (std::getline(file, line))
-    {
-        auto cols = SplitTabLine(line);
-        if (cols.size() <= static_cast<size_t>(colSaveBits))
-            continue;
-
-        int id = 0;
-        if (!SafeStringToInt(cols[colId], id))
-            continue;
-
-        StatCostRow row;
-        if (!SafeStringToInt(cols[colSaveBits], row.saveBits))
-            continue;
-        if (colSaveAdd >= 0 && static_cast<int>(cols.size()) > colSaveAdd)
-            SafeStringToInt(cols[colSaveAdd], row.saveAdd);
-        if (colSaveParam >= 0 && static_cast<int>(cols.size()) > colSaveParam)
-            SafeStringToInt(cols[colSaveParam], row.saveParamBits);
-
-        g_StatCostById[id] = row;
-    }
-}
-
-static void LoadCodesFromExcel(const std::string& filepath, bool armor, bool weapon)
-{
-    std::ifstream file(filepath);
-    if (!file.is_open())
-        return;
-
-    std::string line;
-    std::getline(file, line);
-    auto header = SplitTabLine(line);
-    int colCode = FindTabColumn(header, "code");
-    if (colCode < 0)
-        colCode = 0;
-
-    while (std::getline(file, line))
-    {
-        auto cols = SplitTabLine(line);
-        if (cols.size() <= static_cast<size_t>(colCode))
-            continue;
-
-        std::string code = TrimItemCode(cols[colCode]);
-        if (code.empty())
-            continue;
-
-        ItemTypeRow& row = g_ItemTypeByCode[code];
-        if (armor)
-            row.isArmor = true;
-        if (weapon)
-            row.isWeapon = true;
-    }
-}
-
-static void LoadItemTypeTable(const std::string& filepath)
-{
-    std::ifstream file(filepath);
-    if (!file.is_open())
-        return;
-
-    std::string line;
-    std::getline(file, line);
-    auto header = SplitTabLine(line);
-
-    const int colCode = FindTabColumn(header, "code");
-    const int colStack = FindTabColumn(header, "stackable");
-
-    if (colCode < 0)
-        return;
-
-    while (std::getline(file, line))
-    {
-        auto cols = SplitTabLine(line);
-        if (cols.size() <= static_cast<size_t>(colCode))
-            continue;
-
-        std::string code = TrimItemCode(cols[colCode]);
-        if (code.empty())
-            continue;
-
-        ItemTypeRow& row = g_ItemTypeByCode[code];
-        if (colStack >= 0 && static_cast<int>(cols.size()) > colStack)
-        {
-            const std::string& st = cols[colStack];
-            row.stackable = (st == "1" || st == "true");
-        }
-    }
-}
-
-static void EnsureItemParseTablesLoaded()
-{
-    if (g_ItemParseTablesLoaded)
-        return;
-    g_ItemParseTablesLoaded = true;
-
-    const std::string excelBase = "Mods/" + modName + "/" + modName + ".mpq/data/global/excel/";
-    LoadItemStatCostTable(excelBase + "ItemStatCost.txt");
-    LoadItemTypeTable(excelBase + "items.txt");
-    LoadCodesFromExcel(excelBase + "armor.txt", true, false);
-    LoadCodesFromExcel(excelBase + "weapons.txt", false, true);
-}
-
-static const StatCostRow* GetStatCostRow(int id)
-{
-    auto it = g_StatCostById.find(id);
-    return it != g_StatCostById.end() ? &it->second : nullptr;
-}
-
-static void SkipItemStatBits(BitReader& reader, int id)
-{
-    const StatCostRow* row = GetStatCostRow(id);
-    if (!row)
-        throw std::runtime_error("unknown stat id");
-
-    if (row->saveParamBits > 0)
-        reader.SkipBits(static_cast<size_t>(row->saveParamBits));
-
-    reader.SkipBits(static_cast<size_t>(row->saveBits));
-}
-
-static void SkipPropertyList(BitReader& reader)
-{
-    while (reader.HasBits(9))
-    {
-        const uint16_t id = reader.ReadUInt16(9);
-        if (id == 0x1ff)
-            break;
-
-        SkipItemStatBits(reader, id);
-
-        // Min/max paired stats (D2MOO Items.cpp)
-        if (id == 52 || id == 17 || id == 48 || id == 50)
-            SkipItemStatBits(reader, id + 1);
-        else if (id == 54 || id == 57)
-        {
-            SkipItemStatBits(reader, id + 1);
-            SkipItemStatBits(reader, id + 2);
-        }
-    }
-}
-
-static const ItemTypeRow* GetItemTypeRow(const std::string& code)
-{
-    auto it = g_ItemTypeByCode.find(code);
-    return it != g_ItemTypeByCode.end() ? &it->second : nullptr;
-}
-
-static void SkipItemRemainder(BitReader& reader, const Item& item)
-{
-    const std::string code = TrimItemCode(item.type);
-    const ItemTypeRow* typeRow = GetItemTypeRow(code);
-
-    uint16_t propertyLists = 0;
-
-    if (item.given_runeword)
-    {
-        reader.SkipBits(12);
-        propertyLists |= static_cast<uint16_t>(1 << (reader.ReadUInt16(4) + 1));
-    }
-
-    if (item.personalized)
-    {
-        for (int i = 0; i < 15; ++i)
-        {
-            const uint8_t ch = reader.ReadUInt8(7);
-            if (ch == 0)
-                break;
-        }
-    }
-
-    if (code == "tbk" || code == "ibk")
-        reader.SkipBits(5);
-
-    if (reader.ReadBit())
-    {
-        const bool longRealm = typeRow && !typeRow->isArmor && !typeRow->isWeapon;
-        reader.SkipBits(longRealm ? 96 : 3);
-    }
-
-    if (typeRow && typeRow->isArmor)
-        reader.SkipBits(11);
-
-    if (typeRow && (typeRow->isArmor || typeRow->isWeapon))
-    {
-        const int maxDurBits = 8;
-        const uint16_t maxDur = reader.ReadUInt16(maxDurBits);
-        if (maxDur > 0)
-        {
-            reader.SkipBits(8); // current durability
-            reader.SkipBits(1); // unknown
-        }
-    }
-
-    if (typeRow && typeRow->stackable)
-        reader.SkipBits(9);
-
-    if (item.socketed)
-        reader.SkipBits(4);
-
-    if (item.quality == 5)
-        propertyLists |= reader.ReadUInt8(5);
-
-    SkipPropertyList(reader);
-
-    for (int mask = 1; mask <= 64; mask <<= 1)
-    {
-        if (propertyLists & mask)
-            SkipPropertyList(reader);
-    }
-}
-
-#pragma endregion
-
-#pragma region Lookup Functions
-
-void BuildItemNameLookups()
-{
-    g_SetItemLookup.clear();
-    g_UniqueItemLookup.clear();
-
-    for (auto& s : g_SetItems)
-        g_SetItemLookup[s.id] = s.setName.empty() ? "Unknown Set Item" : s.setName;
-
-    for (auto& u : g_UniqueItems)
-        g_UniqueItemLookup[u.id] = u.name.empty() ? "Unknown Unique" : u.name;
-}
-
-std::string GetItemTypeName(const std::string& code)
-{
-    for (auto& s : g_SetItems)
-    {
-        if (s.code == code)
-            return s.itemName.empty() ? code : s.itemName;
-    }
-
-    for (auto& u : g_UniqueItems)
-    {
-        if (u.code == code)
-            return u.name.empty() ? code : u.name;
-    }
-
-    // Not Found
-    return "Unknown Item";
-}
-
-std::string GetSetItemName(uint32_t id)
-{
-    auto it = g_SetItemLookup.find(id);
-    return it != g_SetItemLookup.end() ? it->second : "Unknown Set Item";
-}
-
-std::string GetUniqueItemName(uint32_t id)
-{
-    auto it = g_UniqueItemLookup.find(id);
-    return it != g_UniqueItemLookup.end() ? it->second : "Unknown Unique";
-}
-
-const char* GetQualityName(uint32_t q) {
-    const char* names[] = { "", "Inferior", "Normal", "Superior", "Magic", "Set", "Rare", "Unique", "Crafted", "Tempered" };
-    return q < 10 ? names[q] : "Unknown";
-}
-
-#pragma endregion
-
-#pragma region Stash Parsing
-
-static bool ParseItemFromReader(BitReader& reader, Item& item, uint32_t fileVersion, HuffmanNode* huffmanRoot, bool consumeTail)
-{
-    if (!reader.HasBits(32))
-        return false;
-
-    // === FLAG BITS (32 bits) ===
-    reader.SkipBits(4);
-    item.identified = reader.ReadBit();
-    reader.SkipBits(1);
-    item.socketed = reader.ReadBit();
-    reader.SkipBits(2);
-    item.new_flag = reader.ReadBit();
-    reader.SkipBits(1);
-    item.is_ear = reader.ReadBit();
-    item.starter_item = reader.ReadBit();
-    reader.SkipBits(8);
-    item.simple_item = reader.ReadBit();
-    item.ethereal = reader.ReadBit();
-    reader.SkipBits(1);
-    item.personalized = reader.ReadBit();
-    reader.SkipBits(1);
-    item.given_runeword = reader.ReadBit();
-    reader.SkipBits(5);
-
-    if (fileVersion >= 0x61)
-        item.version = reader.ReadUInt16(3);
-    else
-        item.version = reader.ReadUInt16(10);
-
-    item.location_id = reader.ReadUInt8(3);
-    item.equipped_id = reader.ReadUInt8(4);
-    item.position_x = reader.ReadUInt8(4);
-    item.position_y = reader.ReadUInt8(4);
-    item.alt_position_id = reader.ReadUInt8(3);
-
-    if (item.is_ear)
-    {
-        item.ear_attributes.clazz = reader.ReadUInt8(3);
-        item.ear_attributes.level = reader.ReadUInt8(7);
-        for (int i = 0; i < 15; i++)
-        {
-            const uint8_t ch = reader.ReadUInt8(7);
-            if (ch == 0)
-                break;
-            item.ear_attributes.name.push_back(static_cast<char>(ch));
-        }
-        if (consumeTail)
-            reader.AlignToByte();
-        return true;
-    }
-
-    if (fileVersion >= 0x61)
-        item.type = DecodeHuffmanString(reader, huffmanRoot);
-    else
-    {
-        for (int i = 0; i < 4; ++i)
-        {
-            const char c = static_cast<char>(reader.ReadUInt8(8));
-            if (c && c != ' ')
-                item.type += c;
-        }
-    }
-    item.type = TrimItemCode(item.type);
-
-    item.nr_of_items_in_sockets = reader.ReadUInt8(item.simple_item ? 1 : 3);
-
-    if (item.simple_item)
-    {
-        if (consumeTail)
-            reader.AlignToByte();
-        return true;
-    }
-
-    item.id = reader.ReadUInt32(32);
-    item.level = reader.ReadUInt8(7);
-    item.quality = reader.ReadUInt8(4);
-
-    item.multiple_pictures = reader.ReadBit();
-    if (item.multiple_pictures)
-        item.picture_id = reader.ReadUInt8(3);
-
-    item.class_specific = reader.ReadBit();
-    if (item.class_specific)
-        item.auto_affix_id = reader.ReadUInt16(11);
-
-    switch (item.quality)
-    {
-    case 1:
-        item.low_quality_id = reader.ReadUInt8(3);
-        break;
-    case 3:
-        item.file_index = reader.ReadUInt8(3);
-        break;
-    case 4:
-        item.magic_prefix = reader.ReadUInt16(11);
-        item.magic_suffix = reader.ReadUInt16(11);
-        break;
-    case 5:
-        item.set_id = reader.ReadUInt16(12);
-        break;
-    case 6:
-    case 8:
-        item.rare_name_id = reader.ReadUInt8(8);
-        item.rare_name_id2 = reader.ReadUInt8(8);
-        for (int i = 0; i < 3; ++i)
-        {
-            if (reader.ReadBit())
-                item.magical_name_ids[i] = reader.ReadUInt16(11);
-            if (reader.ReadBit())
-                item.magical_name_ids[i + 3] = reader.ReadUInt16(11);
-        }
-        break;
-    case 7:
-        item.unique_id = reader.ReadUInt16(12);
-        break;
-  default:
-        break;
-    }
-
-    if (consumeTail && !g_StatCostById.empty())
-        SkipItemRemainder(reader, item);
-
-    if (consumeTail)
-        reader.AlignToByte();
-
-    return true;
-}
+// Stash parsing moved to GrailTracker.cpp (FindItemOffsets)
+#include "../GrailStatus.h"
 
 static void ShowItemLocationTooltip(int id, bool isSet)
 {
@@ -4128,7 +3521,7 @@ static void ShowItemLocationTooltip(int id, bool isSet)
             }
         }
     }
-    else // UNIQUE
+    else
     {
         for (auto& u : g_UniqueItems)
         {
@@ -4144,7 +3537,6 @@ static void ShowItemLocationTooltip(int id, bool isSet)
             ImGui::TextColored(ImVec4(0.9f, 0.15f, 0.15f, 1.0f), "Not Collected");
             ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1), "This item has not been found in your stash.");
 
-            // RMD Quest
             if (modName == "RMD-MP" && id == 556)
             {
                 ImGui::Separator();
@@ -4158,17 +3550,6 @@ static void ShowItemLocationTooltip(int id, bool isSet)
             else
                 ImGui::TextColored(ImVec4(0.9f, 0.15f, 0.15f, 1.0f), "Found %d Items", located);
 
-            // â”€â”€ Tooltip append (safe & scoped) â”€â”€
-            if (ImGui::IsItemHovered())
-            {
-                ImGui::BeginTooltip();
-
-                // original tooltip text (whatever you already show)
-                ImGui::TextUnformatted("Item found in stash.");
-
-                ImGui::EndTooltip();
-            }
-
             ImGui::Separator();
             for (auto& u : g_UniqueItems)
             {
@@ -4178,7 +3559,6 @@ static void ShowItemLocationTooltip(int id, bool isSet)
                     {
                         ImGui::TextColored(ImVec4(0.4f, 0.7f, 1.0f, 1.0f), "- Page %d, Tab %d  (X: %d, Y: %d)", loc.page, loc.tab, loc.x, loc.y);
 
-                        // RMD Quest
                         if (modName == "RMD-MP" && id == 556)
                         {
                             ImGui::Separator();
@@ -4190,361 +3570,9 @@ static void ShowItemLocationTooltip(int id, bool isSet)
         }
     }
 
-
     ImGui::PopTextWrapPos();
     ImGui::EndTooltip();
 }
-
-static int ExtractPageFromPath(const std::string& path)
-{
-    size_t p = path.find("Page");
-    if (p == std::string::npos) return -1;
-
-    p += 4; // skip "Page"
-    size_t end = path.find_first_not_of("0123456789", p);
-    std::string num = path.substr(p, end - p);
-
-    int page = std::stoi(num);
-    if (page < 1 || page > 64) return -1;
-    return page;
-}
-
-static void ProcessStashItemForGrail(
-    const Item& item,
-    int page,
-    int tab,
-    std::unordered_map<int, SetItemEntry*>& setById,
-    std::unordered_map<int, UniqueItemEntry*>& uniqueById,
-    int& totalItems,
-    int& setCount,
-    int& uniqueCount)
-{
-    if (item.type.empty())
-        return;
-
-    for (char c : item.type)
-    {
-        if (!std::isalnum(static_cast<unsigned char>(c)))
-            return;
-    }
-
-    // Stash files only contain stored items (mode 0) in the shared stash panel (5).
-    if (item.location_id != 0 || item.alt_position_id != 5)
-        return;
-
-    ++totalItems;
-
-    SetItemEntry* matchedSet = nullptr;
-    UniqueItemEntry* matchedUnique = nullptr;
-
-    if (item.quality == 5)
-    {
-        auto it = setById.find(item.set_id);
-        if (it != setById.end())
-        {
-            matchedSet = it->second;
-            matchedSet->collected = true;
-            matchedSet->locations.push_back({
-                page,
-                tab,
-                item.position_x + 1,
-                item.position_y + 1
-                });
-            ++setCount;
-        }
-    }
-    else if (item.quality == 7)
-    {
-        auto it = uniqueById.find(item.unique_id);
-        if (it != uniqueById.end())
-        {
-            matchedUnique = it->second;
-            matchedUnique->collected = true;
-            matchedUnique->locations.push_back({
-                page,
-                tab,
-                item.position_x + 1,
-                item.position_y + 1
-                });
-            ++uniqueCount;
-        }
-    }
-
-    if (showStashParseDebug)
-    {
-        StashParsedItemDebug dbg;
-        dbg.page = page;
-        dbg.tab = tab;
-        dbg.x = item.position_x + 1;
-        dbg.y = item.position_y + 1;
-        dbg.code = item.type;
-        dbg.quality = item.quality;
-        dbg.setId = item.set_id;
-        dbg.uniqueId = item.unique_id;
-        dbg.identified = item.identified;
-
-        if (matchedSet)
-        {
-            dbg.grailMatched = true;
-            dbg.grailName = matchedSet->name;
-        }
-        else if (matchedUnique)
-        {
-            dbg.grailMatched = true;
-            dbg.grailName = matchedUnique->name;
-        }
-        else if (item.quality == 5)
-            dbg.note = "set_id not in grail table";
-        else if (item.quality == 7)
-            dbg.note = "unique_id not in grail table";
-        else
-            dbg.note = GetQualityName(item.quality);
-
-        g_StashDebugEntries.push_back(std::move(dbg));
-    }
-}
-
-static int ParseSharedStash(const std::string& filePath, int pageNum)
-{
-    EnsureItemParseTablesLoaded();
-
-    std::ifstream file(filePath, std::ios::binary | std::ios::ate);
-    if (!file)
-        return 1;
-
-    const size_t fileSize = static_cast<size_t>(file.tellg());
-    if (fileSize < 16)
-        return 1;
-
-    file.seekg(0);
-
-    // Read File
-    std::vector<uint8_t> buf;
-    buf.resize(fileSize);
-    file.read(reinterpret_cast<char*>(buf.data()), fileSize);
-
-    // Validate Header
-    if (buf[0] != 0x55 || buf[1] != 0xAA ||
-        buf[2] != 0x55 || buf[3] != 0xAA)
-        return 1;
-
-    const uint32_t version = buf[8];
-    const int page = pageNum;
-
-    // Build Huffman Tree
-    std::unique_ptr<HuffmanNode> huffman(BuildHuffmanTreeFromTable());
-
-    int totalItems = 0;
-    int uniqueCount = 0;
-    int setCount = 0;
-
-    // Build ID â†’ Entry Lookup Tables
-    static std::unordered_map<int, SetItemEntry*> setById;
-    static std::unordered_map<int, UniqueItemEntry*> uniqueById;
-
-    if (setById.empty()) {
-        setById.reserve(g_SetItems.size());
-        for (auto& s : g_SetItems)
-            setById.emplace(s.id, &s);
-    }
-
-    if (uniqueById.empty()) {
-        uniqueById.reserve(g_UniqueItems.size());
-        for (auto& u : g_UniqueItems)
-            uniqueById.emplace(u.id, &u);
-    }
-
-    // Find Tab Headers
-    std::vector<size_t> tabOffsets;
-    tabOffsets.reserve(8);
-
-    for (size_t i = 0, end = fileSize - 3; i < end; ++i) {
-        if (buf[i] == 0x55 && buf[i + 1] == 0xAA &&
-            buf[i + 2] == 0x55 && buf[i + 3] == 0xAA)
-        {
-            tabOffsets.push_back(i);
-        }
-    }
-
-    // Process Tab
-    for (size_t tabIdx = 0; tabIdx < tabOffsets.size(); ++tabIdx) {
-        const size_t tabStart = tabOffsets[tabIdx];
-        const size_t tabEnd =
-            (tabIdx + 1 < tabOffsets.size()) ? tabOffsets[tabIdx + 1] : fileSize;
-
-        // Find JM Marker
-        size_t jmOffset = 0;
-        for (size_t i = tabStart; i + 1 < tabEnd; ++i) {
-            if (buf[i] == 'J' && buf[i + 1] == 'M') {
-                jmOffset = i;
-                break;
-            }
-        }
-
-        if (!jmOffset)
-            continue;
-
-        // Empty tab check
-        if (jmOffset + 3 < fileSize &&
-            buf[jmOffset + 2] == 0 &&
-            buf[jmOffset + 3] == 0)
-            continue;
-
-        if (jmOffset + 4 >= tabEnd)
-            continue;
-
-        const uint16_t rootItemCount =
-            static_cast<uint16_t>(buf[jmOffset + 2]) |
-            (static_cast<uint16_t>(buf[jmOffset + 3]) << 8);
-
-        const size_t dataStart = jmOffset + 4;
-        BitReader stream(buf.data() + dataStart, tabEnd - dataStart);
-        const bool canSkipTail = !g_StatCostById.empty();
-        const int tab = static_cast<int>(tabIdx) + 1;
-
-        for (uint16_t n = 0; n < rootItemCount; ++n)
-        {
-            if (!stream.HasBits(32))
-                break;
-
-            try
-            {
-                Item item;
-                if (!ParseItemFromReader(stream, item, version, huffman.get(), canSkipTail))
-                    break;
-
-                ProcessStashItemForGrail(item, page, tab, setById, uniqueById, totalItems, setCount, uniqueCount);
-
-                for (uint8_t s = 0; s < item.nr_of_items_in_sockets; ++s)
-                {
-                    if (!stream.HasBits(32))
-                        break;
-
-                    Item socketItem;
-                    if (!ParseItemFromReader(stream, socketItem, version, huffman.get(), canSkipTail))
-                        break;
-
-                    if (showStashParseDebug)
-                    {
-                        StashParsedItemDebug dbg;
-                        dbg.page = page;
-                        dbg.tab = tab;
-                        dbg.x = socketItem.position_x + 1;
-                        dbg.y = socketItem.position_y + 1;
-                        dbg.code = socketItem.type;
-                        dbg.quality = socketItem.quality;
-                        dbg.setId = socketItem.set_id;
-                        dbg.uniqueId = socketItem.unique_id;
-                        dbg.identified = socketItem.identified;
-                        dbg.note = "socketed item";
-                        g_StashDebugEntries.push_back(std::move(dbg));
-                    }
-                }
-            }
-            catch (...)
-            {
-                break;
-            }
-        }
-    }
-
-    g_GrailRevision++;
-    return 0;
-}
-
-
-void ScanStashPages()
-{
-    if (!IsPlayerInGame())
-        return;
-
-    if (g_StashScanInProgress)
-        return;
-
-    g_StashScanInProgress = true;
-    struct StashScanScopeGuard {
-        ~StashScanScopeGuard() { g_StashScanInProgress = false; }
-    } stashScanGuard;
-
-    g_ForceStashRescan = false;
-    const bool hardcore = IsHardcore();
-    isHardcore = hardcore;
-
-    // Reset Collected State
-    for (auto& s : g_SetItems) {
-        s.collected = false;
-        s.locations.clear();
-    }
-    for (auto& u : g_UniqueItems) {
-        u.collected = false;
-        u.locations.clear();
-    }
-
-    if (showStashParseDebug)
-        g_StashDebugEntries.clear();
-
-    namespace fs = std::filesystem;
-    const std::wstring stashFolder = GetSavePath() + L"\\Diablo II Resurrected\\Mods\\" + std::wstring(modName.begin(), modName.end()) + L"\\";
-
-    if (!fs::exists(stashFolder))
-        return;
-
-    const std::string prefix = hardcore ? "Stash_HC_Page" : "Stash_SC_Page";
-    const std::string suffix = ".d2i";
-
-    std::vector<std::pair<int, std::string>> pages;
-    pages.reserve(64);
-
-    for (const auto& entry : fs::directory_iterator(stashFolder))
-    {
-        if (!entry.is_regular_file())
-            continue;
-
-        const std::string filename = entry.path().filename().string();
-
-        // Page String Checks
-        if (filename.rfind(prefix, 0) != 0)
-            continue;
-        if (filename.size() <= prefix.size() + suffix.size())
-            continue;
-        if (filename.compare(filename.size() - suffix.size(), suffix.size(), suffix) != 0)
-            continue;
-
-        // Extract Page Number
-        const std::string numStr = filename.substr(prefix.size(), filename.size() - prefix.size() - suffix.size());
-
-        int pageNum = std::atoi(numStr.c_str());
-        if (pageNum >= 1 && pageNum <= 64)
-            pages.emplace_back(pageNum, entry.path().string());
-    }
-
-    // Only sort if needed
-    if (pages.size() > 1)
-    {
-        std::sort(pages.begin(), pages.end(),
-            [](const auto& a, const auto& b) {
-                return a.first < b.first;
-            });
-    }
-
-    g_AvailableStashPages.clear();
-    g_AvailableStashPages.reserve(pages.size());
-    for (const auto& [pageNum, path] : pages)
-        g_AvailableStashPages.push_back(pageNum);
-
-    const int pageFilter = showStashParseDebug ? g_StashScanPageFilter : 0;
-
-    for (const auto& [pageNum, path] : pages)
-    {
-        if (pageFilter != 0 && pageNum != pageFilter)
-            continue;
-        ParseSharedStash(path, pageNum);
-    }
-
-    ReloadGameFilterForGrail();
-}
-
-#pragma endregion
 
 #pragma endregion
 
@@ -4626,35 +3654,62 @@ struct LootFilterRule
 
 std::vector<LootFilterRule> g_LootFilterRules;
 
-struct MemoryConfigEntry
-{
-    std::string Name;
-    std::string Description;
-    std::string Category;
-    std::string Address;
-    std::vector<std::string> Addresses;
-    int Length = 1;
-    std::string Type = "Hex";
-    std::string Values;
-    std::string OriginalValues;
-    std::string ModdedValues;
-    int UniqueID;
-};
-
 struct CommandEntry
 {
     std::string key;
     std::string command;
 };
 
+static constexpr int kCustomCommandSlotCount = 6;
 static std::vector<CommandEntry> g_CommandHotkeys;
+
+static void EnsureCustomCommandSlots()
+{
+    while ((int)g_CommandHotkeys.size() < kCustomCommandSlotCount)
+        g_CommandHotkeys.push_back({});
+    if ((int)g_CommandHotkeys.size() > kCustomCommandSlotCount)
+        g_CommandHotkeys.resize(kCustomCommandSlotCount);
+}
+
+static std::string CustomCommandHotkeyId(size_t index)
+{
+    return "CustomCommand:" + std::to_string(index);
+}
+
+static std::string EscapeJsonStringForConfig(const std::string& s)
+{
+    std::string out;
+    out.reserve(s.size() + 8);
+    for (char c : s)
+    {
+        switch (c)
+        {
+        case '\\': out += "\\\\"; break;
+        case '"':  out += "\\\""; break;
+        case '\n': out += "\\n"; break;
+        case '\r': out += "\\r"; break;
+        case '\t': out += "\\t"; break;
+        default:   out += c; break;
+        }
+    }
+    return out;
+}
+
 static std::string g_StartupCommands;
+static std::string s_registeredStartupSnapshot;
+
+static std::vector<std::string> ApplyStartupCommandsFromString(const std::string& startup);
+
+static void RegisterStartupCommands(const std::string& startupText)
+{
+    ApplyStartupCommandsFromString(startupText);
+    s_registeredStartupSnapshot = startupText;
+}
 static char searchBuffer[128] = "";
 static bool filterUncollected = false;
 static bool showMainMenu = false;
 static bool showHUDSettingsMenu = false;
 static bool showD2RHUDMenu = false;
-static bool showMemoryMenu = false;
 static bool showLootMenu = false;
 static bool showHotkeyMenu = false;
 static bool showGrailMenu = false;
@@ -4688,10 +3743,10 @@ static const ThemeColorEntry s_ThemeColorEntries[] = {
 };
 static const int s_ThemeColorCount = (int)(sizeof(s_ThemeColorEntries) / sizeof(s_ThemeColorEntries[0]));
 
-// Per-window background: order matches UI list (Control Center, Theme Control, D2RHUD Options, Memory, Loot, Grail, Hotkeys, Camera)
-enum WindowBgId { kWindowBg_ControlCenter = 0, kWindowBg_ThemeControl, kWindowBg_D2RHUDOptions, kWindowBg_Memory, kWindowBg_Loot, kWindowBg_Grail, kWindowBg_Hotkeys, kWindowBg_Camera, kWindowBgCount };
+// Per-window background: order matches UI list (Control Center, Theme Control, D2RHUD Options, Loot, Grail, Hotkeys, Camera)
+enum WindowBgId { kWindowBg_ControlCenter = 0, kWindowBg_ThemeControl, kWindowBg_D2RHUDOptions, kWindowBg_Loot, kWindowBg_Grail, kWindowBg_Hotkeys, kWindowBg_Camera, kWindowBgCount };
 static const char* const s_WindowBgNames[kWindowBgCount] = {
-    "D2RHUD Control Center", "Theme Control", "D2RHUD Options", "Memory Edit Info", "D2RLoot Settings", "Grail Tracker", "Hotkey Controls", "Camera Controls"
+    "D2RHUD Control Center", "Theme Control", "D2RHUD Options", "D2RLoot Settings", "Grail Tracker", "Hotkey Controls", "Camera Controls"
 };
 static ImVec4 s_WindowBgColors[kWindowBgCount];
 static std::string s_WindowBgImageOverrides[kWindowBgCount];
@@ -4736,7 +3791,6 @@ LootFilterHeader g_LootFilterHeader;
 std::unordered_map<std::string, std::string> g_LuaVariables;
 std::unordered_map<std::string, std::string> g_LuaVariableComments;
 std::unordered_map<std::string, std::pair<std::string, std::string>> g_Hotkeys;
-std::vector<MemoryConfigEntry> g_MemoryConfigs;
 static D2RHUDConfig d2rHUDConfig;
 using ordered_json = nlohmann::ordered_json;
 bool lootConfigLoaded = false;
@@ -4921,7 +3975,6 @@ bool D2RHUD::TryCloseMenuOnEscape()
     if (showGrailMenu) { showGrailMenu = false; return true; }
     if (showLootMenu) { showLootMenu = false; return true; }
     if (showCameraMenu) { showCameraMenu = false; return true; }
-    if (showMemoryMenu) { showMemoryMenu = false; return true; }
     if (showD2RHUDMenu) { showD2RHUDMenu = false; return true; }
     if (showSettingsPanel) { showSettingsPanel = false; return true; }
     if (showHUDSettingsMenu) { showHUDSettingsMenu = false; return true; }
@@ -5090,58 +4143,24 @@ void ReadKeybindsFromJson(const ordered_json& j)
     }
 }
 
-std::vector<std::string> ReadStartupCommandsFromJson(const ordered_json& j)
+static std::vector<std::string> ApplyStartupCommandsFromString(const std::string& startup)
 {
     std::vector<std::string> result;
 
-    std::cout << "[StartupCmd] Enter ReadStartupCommandsFromJson()\n";
-
-    if (!j.contains("Commands"))
-    {
-        std::cout << "[StartupCmd] ERROR: JSON has no 'Commands' object\n";
-        return result;
-    }
-
-    const auto& cmdsObj = j["Commands"];
-
-    if (!cmdsObj.contains("Startup Commands"))
-    {
-        std::cout << "[StartupCmd] WARNING: 'Commands' has no 'Startup Commands' entry\n";
-    }
-
-    std::string startup = cmdsObj.value("Startup Commands", "");
     g_StartupCommands = startup;
-
-    std::cout << "[StartupCmd] Raw Startup Commands string: \""
-        << startup << "\" (len=" << startup.size() << ")\n";
 
     if (!startup.empty())
     {
         std::stringstream ss(startup);
         std::string cmd;
-        int index = 0;
-
-        // Split ONLY on commas
         while (std::getline(ss, cmd, ','))
         {
-            std::cout << "[StartupCmd] Parsed token [" << index
-                << "]: \"" << cmd << "\" (len=" << cmd.size() << ")\n";
-
+            cmd = TrimCommandToken(cmd);
             if (!cmd.empty())
                 result.push_back(cmd);
-
-            ++index;
         }
     }
-    else
-    {
-        std::cout << "[StartupCmd] Startup Commands string is EMPTY\n";
-    }
 
-    std::cout << "[StartupCmd] Parsed command count = "
-        << result.size() << "\n";
-
-    // Pad or clamp to exactly 6 entries
     result.resize(6);
 
     automaticCommand1 = result[0];
@@ -5151,6 +4170,43 @@ std::vector<std::string> ReadStartupCommandsFromJson(const ordered_json& j)
     automaticCommand5 = result[4];
     automaticCommand6 = result[5];
 
+    return result;
+}
+
+static void RegisterStartupCommandsAfterEdit(const std::string& startupText)
+{
+    ApplyStartupCommandsFromString(startupText);
+    if (startupText == s_registeredStartupSnapshot)
+        return;
+    s_registeredStartupSnapshot = startupText;
+    if (GetClientStatus() == 1)
+        QueueStartupCommandExecution(3.0f);
+}
+
+std::vector<std::string> ReadStartupCommandsFromJson(const ordered_json& j)
+{
+    std::cout << "[StartupCmd] Enter ReadStartupCommandsFromJson()\n";
+
+    if (!j.contains("Commands"))
+    {
+        std::cout << "[StartupCmd] ERROR: JSON has no 'Commands' object\n";
+        EnsureCustomCommandSlots();
+        return std::vector<std::string>(6);
+    }
+
+    const auto& cmdsObj = j["Commands"];
+
+    if (!cmdsObj.contains("Startup Commands"))
+        std::cout << "[StartupCmd] WARNING: 'Commands' has no 'Startup Commands' entry\n";
+
+    const std::string startup = cmdsObj.value("Startup Commands", "");
+    std::cout << "[StartupCmd] Raw Startup Commands string: \""
+        << startup << "\" (len=" << startup.size() << ")\n";
+
+    std::vector<std::string> result = ApplyStartupCommandsFromString(startup);
+    s_registeredStartupSnapshot = startup;
+
+    std::cout << "[StartupCmd] Parsed command count = " << result.size() << "\n";
     std::cout << "[StartupCmd] Assigned commands:\n";
     std::cout << "  [1] \"" << automaticCommand1 << "\"\n";
     std::cout << "  [2] \"" << automaticCommand2 << "\"\n";
@@ -5166,14 +4222,20 @@ void ReadCustomCommandsFromJson(const ordered_json& j)
 {
     g_CommandHotkeys.clear();
 
-    if (!j.contains("Commands"))
+    if (!j.contains("Commands") || !j["Commands"].is_object())
+    {
+        EnsureCustomCommandSlots();
         return;
+    }
 
-    const auto& cmds = j["Commands"]["Custom Commands"];
-    if (!cmds.is_array())
+    const auto& commands = j["Commands"];
+    if (!commands.contains("Custom Commands") || !commands["Custom Commands"].is_array())
+    {
+        EnsureCustomCommandSlots();
         return;
+    }
 
-    for (const auto& entry : cmds)
+    for (const auto& entry : commands["Custom Commands"])
     {
         CommandEntry ce;
         ce.key = entry.value("Key", "");
@@ -5181,6 +4243,8 @@ void ReadCustomCommandsFromJson(const ordered_json& j)
 
         g_CommandHotkeys.push_back(ce);
     }
+
+    EnsureCustomCommandSlots();
 }
 
 void LoadCommandsAndKeybinds(const std::string& filename)
@@ -5323,6 +4387,11 @@ void SaveHotkeys(const std::string& filename)
         commands = json::object();
 
     commands["Startup Commands"] = g_StartupCommands;
+
+    commands["Custom Commands"] = json::array();
+    EnsureCustomCommandSlots();
+    for (const auto& cmd : g_CommandHotkeys)
+        commands["Custom Commands"].push_back(json{ {"Key", cmd.key}, {"Command", cmd.command} });
 
     // ---------------- Write file ----------------
     std::ofstream out(filename);
@@ -6338,180 +5407,6 @@ void LoadLootFilterLogic(const std::string& path)
     }
 }
 
-void LoadMemoryConfigs(const std::string& path)
-{
-    // Open log for writing
-    std::ofstream log("debug_memoryedits.log", std::ios::trunc);
-    auto Log = [&](const std::string& msg)
-        {
-            log << msg << std::endl;
-        };
-
-    Log("=== LoadMemoryConfigs START ===");
-
-    // --- Load main config ---
-    json jMain;
-    try
-    {
-        std::string cleanJson = CleanJsonFile(path);
-        if (cleanJson.empty())
-        {
-            Log("Main config is empty or failed to clean.");
-            return;
-        }
-
-        jMain = json::parse(cleanJson);
-        Log("Main config loaded successfully.");
-    }
-    catch (const std::exception& e)
-    {
-        Log(std::string("Failed to parse main config: ") + e.what());
-        return;
-    }
-
-    g_MemoryConfigs.clear();
-
-    if (!jMain.contains("MemoryConfigs") || !jMain["MemoryConfigs"].is_array())
-    {
-        Log("Main config does not contain MemoryConfigs array. Creating empty array.");
-        jMain["MemoryConfigs"] = json::array();
-    }
-
-    size_t index = 0;
-
-    // --- Load main MemoryConfigs into g_MemoryConfigs ---
-    for (const auto& entry : jMain["MemoryConfigs"])
-    {
-        try
-        {
-            MemoryConfigEntry m;
-            m.UniqueID = index++;
-            m.Name = entry.value("Name", "");
-            m.Description = entry.value("Description", "");
-            m.Category = entry.value("Category", "");
-            m.Address = entry.value("Address", "");
-            m.Addresses = entry.value("Addresses", std::vector<std::string>{});
-            m.Length = entry.value("Length", 1);
-            m.Type = entry.value("Type", "Hex");
-            m.Values = entry.value("Values", "");
-            m.OriginalValues = entry.value("OriginalValues", "");
-            m.ModdedValues = entry.value("ModdedValues", "");
-
-            g_MemoryConfigs.push_back(std::move(m));
-            Log("Loaded main entry: " + entry.value("Name", "") + " @ " + entry.value("Address", ""));
-        }
-        catch (const std::exception& e)
-        {
-            Log(std::string("Failed to load main entry: ") + e.what());
-        }
-    }
-
-    // --- Load override config ---
-    std::string overridePath = "Mods/" + modName + "/" + modName + ".mpq/data/D2RLAN/memory_overrides.json";
-    json jOverride;
-    std::ifstream overrideFile(overridePath);
-    if (overrideFile.is_open())
-    {
-        try
-        {
-            std::string cleanOverride = CleanJsonFile(overridePath);
-            if (!cleanOverride.empty())
-            {
-                jOverride = json::parse(cleanOverride);
-                Log("Override config loaded successfully from " + overridePath);
-            }
-        }
-        catch (const std::exception& e)
-        {
-            Log(std::string("Failed to parse override config: ") + e.what());
-        }
-    }
-    else
-    {
-        Log("Override config file not found: " + overridePath);
-    }
-
-
-    // --- Merge override entries ---
-    if (jOverride.contains("MemoryConfigs") && jOverride["MemoryConfigs"].is_array())
-    {
-        for (const auto& entry : jOverride["MemoryConfigs"])
-        {
-            try
-            {
-                std::string name = entry.value("Name", "");
-                std::string address = entry.value("Address", "");
-
-                bool exists = std::any_of(g_MemoryConfigs.begin(), g_MemoryConfigs.end(), [&](const MemoryConfigEntry& m) {
-                    if (!m.Addresses.empty() && !entry.value("Addresses", std::vector<std::string>{}).empty())
-                        return m.Addresses == entry["Addresses"].get<std::vector<std::string>>();
-                    return m.Name == name && m.Address == address;
-                    });
-
-                if (exists)
-                {
-                    Log("Skipped override entry (already exists): " + name + " @ " + address);
-                    continue;
-                }
-
-                MemoryConfigEntry m;
-                m.Name = name;
-                m.Description = entry.value("Description", "");
-                m.Category = entry.value("Category", "");
-                m.Address = address;
-                m.Addresses = entry.value("Addresses", std::vector<std::string>{});
-                m.Length = entry.value("Length", 1);
-                m.Type = entry.value("Type", "Hex");
-                m.Values = entry.value("Values", "");
-                m.OriginalValues = entry.value("OriginalValues", "");
-                m.ModdedValues = entry.value("ModdedValues", "");
-
-                g_MemoryConfigs.push_back(std::move(m));
-                Log("Added override entry: " + name + " @ " + address);
-            }
-            catch (const std::exception& e)
-            {
-                Log(std::string("Failed to load override entry: ") + e.what());
-            }
-        }
-    }
-
-    // --- Optional: Process entries ---
-    int totalOperations = 0;
-    int successfulOperations = 0;
-
-    for (auto& entry : g_MemoryConfigs)
-    {
-        totalOperations++;
-        bool allSucceeded = true;
-
-        try
-        {
-            if (!entry.Addresses.empty())
-            {
-                for (auto& addr : entry.Addresses)
-                    allSucceeded = false;
-            }
-            else if (!entry.Address.empty())
-            {
-                allSucceeded = false;
-            }
-        }
-        catch (...)
-        {
-            allSucceeded = false;
-        }
-
-        if (allSucceeded)
-            successfulOperations++;
-    }
-
-    Log("Total entries: " + std::to_string(g_MemoryConfigs.size()));
-    Log("Total operations: " + std::to_string(totalOperations));
-    Log("Successful operations: " + std::to_string(successfulOperations));
-    Log("=== LoadMemoryConfigs END ===");
-}
-
 static void ApplyUITheme(const std::string& themeName);  // implemented later
 static std::vector<ImVec4> GetCurrentThemeColors();     // implemented later
 static bool ShouldDrawWindowBackgroundImage(WindowBgId id);  // implemented later
@@ -6695,19 +5590,20 @@ void LoadD2RHUDConfig(const std::string& path)
             const auto& arr = j["WindowBgColors"];
             int srcCount = (int)arr.size();
             int orderVer = j.contains("WindowBgOrderVersion") ? (int)j["WindowBgOrderVersion"] : 0;
-            // Old order: Grail, Hotkeys, Camera, Loot, Memory, ThemeControl, D2RHUDOptions, ControlCenter -> indices 0..7
-            const int oldToNew[] = { 7, 5, 6, 4, 3, 0, 1, 2 };
+            const int old8ToNew7[] = { 7, 5, 6, 3, 0, 1, 2 };
+            const int orderV1_8ToNew7[] = { 0, 1, 2, 4, 5, 6, 7 };
             if (srcCount == 9) {
-                for (int w = 0; w < 7 && w < srcCount; ++w) {
+                for (int w = 0; w < kWindowBgCount && w < 7; ++w) {
                     if (arr[w].is_array() && arr[w].size() >= 4)
                         s_WindowBgColors[w] = ImVec4((float)arr[w][0], (float)arr[w][1], (float)arr[w][2], (float)arr[w][3]);
                 }
                 if (arr[8].is_array() && arr[8].size() >= 4)
-                    s_WindowBgColors[7] = ImVec4((float)arr[8][0], (float)arr[8][1], (float)arr[8][2], (float)arr[8][3]);
+                    s_WindowBgColors[kWindowBg_Camera] = ImVec4((float)arr[8][0], (float)arr[8][1], (float)arr[8][2], (float)arr[8][3]);
             }
-            else if (srcCount == 8 && orderVer == 0) {
-                for (int w = 0; w < kWindowBgCount && w < srcCount; ++w) {
-                    int o = oldToNew[w];
+            else if (srcCount == 8 && orderVer < 2) {
+                const int* map = (orderVer == 0) ? old8ToNew7 : orderV1_8ToNew7;
+                for (int w = 0; w < kWindowBgCount; ++w) {
+                    int o = map[w];
                     if (arr[o].is_array() && arr[o].size() >= 4)
                         s_WindowBgColors[w] = ImVec4((float)arr[o][0], (float)arr[o][1], (float)arr[o][2], (float)arr[o][3]);
                 }
@@ -6724,15 +5620,18 @@ void LoadD2RHUDConfig(const std::string& path)
             const auto& arr = j["WindowBgImageOverrides"];
             int srcCount = (int)arr.size();
             int orderVer = j.contains("WindowBgOrderVersion") ? (int)j["WindowBgOrderVersion"] : 0;
-            const int oldToNew[] = { 7, 5, 6, 4, 3, 0, 1, 2 };
+            const int old8ToNew7[] = { 7, 5, 6, 3, 0, 1, 2 };
+            const int orderV1_8ToNew7[] = { 0, 1, 2, 4, 5, 6, 7 };
             if (srcCount == 9) {
-                for (int w = 0; w < 7 && w < srcCount; ++w)
+                for (int w = 0; w < kWindowBgCount && w < 7; ++w)
                     s_WindowBgImageOverrides[w] = arr[w].is_string() ? arr[w].get<std::string>() : "";
-                s_WindowBgImageOverrides[7] = arr[8].is_string() ? arr[8].get<std::string>() : "";
+                if (arr[8].is_string())
+                    s_WindowBgImageOverrides[kWindowBg_Camera] = arr[8].get<std::string>();
             }
-            else if (srcCount == 8 && orderVer == 0) {
-                for (int w = 0; w < kWindowBgCount && w < srcCount; ++w) {
-                    int o = oldToNew[w];
+            else if (srcCount == 8 && orderVer < 2) {
+                const int* map = (orderVer == 0) ? old8ToNew7 : orderV1_8ToNew7;
+                for (int w = 0; w < kWindowBgCount; ++w) {
+                    int o = map[w];
                     s_WindowBgImageOverrides[w] = arr[o].is_string() ? arr[o].get<std::string>() : "";
                 }
             }
@@ -6893,7 +5792,7 @@ bool SaveFullGrailConfig(const std::string& userPath, bool isAutoBackup)
             j["UICustomColors"] = customArr;
         }
         {
-            j["WindowBgOrderVersion"] = 1;
+            j["WindowBgOrderVersion"] = 2;
             ordered_json winBgArr = ordered_json::array();
             for (int w = 0; w < kWindowBgCount; ++w)
                 winBgArr.push_back(ordered_json::array({ s_WindowBgColors[w].x, s_WindowBgColors[w].y, s_WindowBgColors[w].z, s_WindowBgColors[w].w }));
@@ -6917,30 +5816,7 @@ bool SaveFullGrailConfig(const std::string& userPath, bool isAutoBackup)
             j["UIThemePresets"] = presetsArr;
         }
 
-        // --- MemoryConfigs ---
-        if (!g_MemoryConfigs.empty())
-        {
-            j["MemoryConfigs"] = ordered_json::array();
-
-            for (const auto& m : g_MemoryConfigs)
-            {
-                ordered_json entry;
-                entry["Name"] = m.Name;
-                entry["Description"] = m.Description;
-                entry["Category"] = m.Category;
-                if (!m.Address.empty()) entry["Address"] = m.Address;
-                if (!m.Addresses.empty()) entry["Addresses"] = m.Addresses;
-                entry["Length"] = m.Length;
-                entry["Type"] = m.Type;
-                entry["Values"] = m.Values;
-                entry["OriginalValues"] = m.OriginalValues;
-                entry["ModdedValues"] = m.ModdedValues;
-                entry["UniqueID"] = m.UniqueID;
-
-                j["MemoryConfigs"].push_back(entry);
-            }
-        }
-        else if (existing.contains("MemoryConfigs"))
+        if (existing.contains("MemoryConfigs"))
             j["MemoryConfigs"] = existing["MemoryConfigs"];
 
 
@@ -6983,19 +5859,15 @@ bool SaveFullGrailConfig(const std::string& userPath, bool isAutoBackup)
 
         // --- Commands ---
         outFile << ",\n    \"Commands\": {\n";
+        EnsureCustomCommandSlots();
         ordered_json commands;
-        if (g_CommandHotkeys.empty() && existing.contains("Commands"))
-            commands = existing["Commands"];
-        else
-        {
-            commands["Startup Commands"] = g_StartupCommands;
-            commands["Custom Commands"] = ordered_json::array();
-            for (auto& cmd : g_CommandHotkeys)
-                commands["Custom Commands"].push_back(ordered_json{ {"Key", cmd.key}, {"Command", cmd.command} });
-        }
+        commands["Startup Commands"] = g_StartupCommands;
+        commands["Custom Commands"] = ordered_json::array();
+        for (const auto& cmd : g_CommandHotkeys)
+            commands["Custom Commands"].push_back(ordered_json{ {"Key", cmd.key}, {"Command", cmd.command} });
 
         if (commands.contains("Startup Commands"))
-            outFile << "        \"Startup Commands\": \"" << commands["Startup Commands"].get<std::string>() << "\",\n";
+            outFile << "        \"Startup Commands\": \"" << EscapeJsonStringForConfig(commands["Startup Commands"].get<std::string>()) << "\",\n";
         if (commands.contains("Custom Commands"))
         {
             outFile << "        \"Custom Commands\": [\n";
@@ -7004,8 +5876,8 @@ bool SaveFullGrailConfig(const std::string& userPath, bool isAutoBackup)
             {
                 if (!firstCmd) outFile << ",\n";
                 firstCmd = false;
-                outFile << "            { \"Key\": \"" << cmd["Key"].get<std::string>()
-                    << "\", \"Command\": \"" << cmd["Command"].get<std::string>() << "\" }";
+                outFile << "            { \"Key\": \"" << EscapeJsonStringForConfig(cmd["Key"].get<std::string>())
+                    << "\", \"Command\": \"" << EscapeJsonStringForConfig(cmd["Command"].get<std::string>()) << "\" }";
             }
             outFile << "\n        ]\n";
         }
@@ -8052,7 +6924,10 @@ void ShowHotkeyMenu()
     {
         // Menu just closed? Save progress including AutoBackup settings
         if (wasOpen)
+        {
+            RegisterStartupCommandsAfterEdit(g_StartupCommands);
             SaveFullGrailConfig(configFilePath, false);
+        }
 
         wasOpen = false;
         return;
@@ -8263,10 +7138,13 @@ void ShowHotkeyMenu()
             ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.3f, 1.0f), "%s", colTitle);
             ImGui::Dummy(ImVec2(0.0f, 15.0f));
 
+            EnsureCustomCommandSlots();
+
             // ---- Custom Commands ----
             for (size_t i = 0; i < g_CommandHotkeys.size(); ++i)
             {
                 auto& cmd = g_CommandHotkeys[i];
+                const std::string hotkeyId = CustomCommandHotkeyId(i);
                 std::string label = "Command " + std::to_string(i + 1);
 
                 ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(2, 130, 199, 255));
@@ -8274,18 +7152,69 @@ void ShowHotkeyMenu()
                 ImGui::PopStyleColor();
                 ImGui::SameLine();
 
+                if (activeHotkeyInput == hotkeyId)
+                {
+                    auto pressedKeys = GetPressedKeys();
+                    if (std::find(pressedKeys.begin(), pressedKeys.end(), "VK_DELETE") != pressedKeys.end())
+                    {
+                        cmd.key.clear();
+                        SaveFullGrailConfig("HUDConfig_" + modName + ".json", false);
+                        activeCombo.clear();
+                        hotkeyReleased = true;
+                        pressedKeys.clear();
+                    }
+                    if (!pressedKeys.empty())
+                        hotkeyReleased = false;
+                    if (pressedKeys.empty() && !hotkeyReleased)
+                    {
+                        if (!activeCombo.empty())
+                        {
+                            std::string combo;
+                            for (size_t j = 0; j < activeCombo.size(); ++j)
+                            {
+                                combo += activeCombo[j];
+                                if (j + 1 < activeCombo.size())
+                                    combo += " + ";
+                            }
+                            if (combo != cmd.key)
+                            {
+                                cmd.key = combo;
+                                SaveFullGrailConfig("HUDConfig_" + modName + ".json", false);
+                            }
+                        }
+                        activeCombo.clear();
+                        hotkeyReleased = true;
+                    }
+                    else if (!pressedKeys.empty())
+                    {
+                        for (auto& k : pressedKeys)
+                        {
+                            if (k != "VK_DELETE" && std::find(activeCombo.begin(), activeCombo.end(), k) == activeCombo.end())
+                                activeCombo.push_back(k);
+                        }
+                    }
+                }
+
                 char keyBuf[128];
                 strncpy(keyBuf, DisplayKey(cmd.key).c_str(), sizeof(keyBuf));
                 keyBuf[sizeof(keyBuf) - 1] = '\0';
 
-                ImGui::PushItemWidth(120.0f * menuScale);
+                ImGui::PushItemWidth(88.0f * menuScale);
                 if (inputFont) ImGui::PushFont(inputFont);
                 BeginFrameBgImageRegion();
-                if (ImGui::InputText(("##cmd_key_" + std::to_string(i)).c_str(), keyBuf, sizeof(keyBuf)))
-                    cmd.key = keyBuf;
+                ImGui::InputText(("##cmd_key_" + std::to_string(i)).c_str(), keyBuf, sizeof(keyBuf), ImGuiInputTextFlags_ReadOnly);
                 EndFrameBgImageRegion();
                 if (inputFont) ImGui::PopFont();
                 ImGui::PopItemWidth();
+
+                if (ImGui::IsItemClicked())
+                {
+                    activeHotkeyInput = hotkeyId;
+                    activeCombo.clear();
+                    hotkeyReleased = true;
+                }
+                if (!ImGui::IsItemFocused() && activeHotkeyInput == hotkeyId)
+                    activeHotkeyInput.clear();
 
                 ImGui::SameLine();
 
@@ -8293,7 +7222,7 @@ void ShowHotkeyMenu()
                 strncpy(cmdBuf, cmd.command.c_str(), sizeof(cmdBuf));
                 cmdBuf[sizeof(cmdBuf) - 1] = '\0';
 
-                ImGui::PushItemWidth(220.0f * menuScale);
+                ImGui::PushItemWidth(-1);
                 if (inputFont) ImGui::PushFont(inputFont);
                 BeginFrameBgImageRegion();
                 if (ImGui::InputText(("##cmd_txt_" + std::to_string(i)).c_str(), cmdBuf, sizeof(cmdBuf)))
@@ -8301,6 +7230,9 @@ void ShowHotkeyMenu()
                 EndFrameBgImageRegion();
                 if (inputFont) ImGui::PopFont();
                 ImGui::PopItemWidth();
+
+                if (ImGui::IsItemDeactivatedAfterEdit())
+                    SaveFullGrailConfig("HUDConfig_" + modName + ".json", false);
 
                 if (ImGui::IsItemHovered())
                     hoveredHotkey = label;
@@ -8311,6 +7243,7 @@ void ShowHotkeyMenu()
             ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(2, 130, 199, 255));
             ImGui::Text("Startup Commands");
             ImGui::PopStyleColor();
+            ImGui::TextWrapped("Comma-separated. Use [Tab] or [Alt] for a key tap. Changes apply when you click away; if already in-game, commands run again after ~3s.");
 
             static char startupBuf[512] = { 0 };
             static bool startupBufInitialized = false;
@@ -8325,13 +7258,17 @@ void ShowHotkeyMenu()
             ImGui::PushItemWidth(-1);
             if (inputFont) ImGui::PushFont(inputFont);
             BeginFrameBgImageRegion();
-            if (ImGui::InputTextMultiline("##startup_commands", startupBuf, sizeof(startupBuf), ImVec2(-1, 80)))
-            {
-                g_StartupCommands = startupBuf;
-            }
+            ImGui::InputTextMultiline("##startup_commands", startupBuf, sizeof(startupBuf), ImVec2(-1, 80));
             EndFrameBgImageRegion();
             if (inputFont) ImGui::PopFont();
             ImGui::PopItemWidth();
+
+            if (ImGui::IsItemDeactivatedAfterEdit())
+            {
+                g_StartupCommands = startupBuf;
+                RegisterStartupCommandsAfterEdit(g_StartupCommands);
+                SaveFullGrailConfig("HUDConfig_" + modName + ".json", false);
+            }
 
         }
 
@@ -9492,304 +8429,6 @@ void ShowLootMenu()
 
         ImGui::PopStyleColor();
         ImGui::End();
-    }
-    else
-        ImGui::PopStyleColor();
-}
-
-void ShowMemoryMenu()
-{
-    static bool s_wasMemoryMenuOpen = false;
-    if (!showMemoryMenu)
-    {
-        s_wasMemoryMenuOpen = false;
-        return;
-    }
-
-    // Load from file only when the panel is first opened, so user edits (Type, Length, Value) are not overwritten every frame
-    if (!s_wasMemoryMenuOpen)
-    {
-        LoadMemoryConfigs(configFilePath);
-        s_wasMemoryMenuOpen = true;
-    }
-
-    EnableAllInput();
-    CenterWindow(ImVec2(950, 500));
-
-    float menuScale = GetMenuScaleFactor();
-    ImGui::PushStyleColor(ImGuiCol_WindowBg, ShouldDrawWindowBackgroundImage(kWindowBg_Memory) ? ImVec4(0, 0, 0, 0) : s_WindowBgColors[kWindowBg_Memory]);
-    PushFontSafe(3);
-    if (ImGui::Begin("Memory Edit Info", &showMemoryMenu,
-        ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoTitleBar))
-    {
-        if (ShouldDrawWindowBackgroundImage(kWindowBg_Memory))
-            DrawWindowBackgroundImage(kWindowBg_Memory);
-        // STICKY TITLE
-        DrawWindowTitleAndClose("Memory Edit Info", &showMemoryMenu);
-        PopFontSafe(3);
-
-        // STICKY DESCRIPTION
-        PushFontSafe(2);
-        DrawBottomDescription("Shows the currently enabled memory edits.\nNow fully editable.");
-        PopFontSafe(2);
-
-        ImGui::Dummy(ImVec2(0, 10.0f * menuScale));
-        ImGui::Separator();
-        ImGui::Dummy(ImVec2(0, 6.0f * menuScale));
-
-        // Red disclaimer: game restart required
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.2f, 0.2f, 1.0f));
-        ImGui::TextWrapped("Disclaimer: The game must be restarted for memory edit changes to take effect.");
-        ImGui::PopStyleColor();
-        ImGui::Dummy(ImVec2(0, 6.0f * menuScale));
-
-        // persistent dropdown selections
-        static std::unordered_map<int, int> selectedIndexMap;
-        static std::string selectedCategory = "All";
-
-        // 2 COLUMN LAYOUT (LEFT = STICKY)
-        float leftWidth = 160.0f * menuScale;
-        float spacing = 10.0f * menuScale;
-
-        ImGui::Columns(2, nullptr, false); // NOT scrollable
-        ImGui::SetColumnWidth(0, leftWidth);
-
-        // LEFT COLUMN (STICKY)
-        {
-            std::set<std::string> categories;
-            for (auto& entry : g_MemoryConfigs)
-                if (!entry.Category.empty())
-                    categories.insert(entry.Category);
-
-            if (ImGui::Selectable("All", selectedCategory == "All"))
-                selectedCategory = "All";
-
-            for (auto& cat : categories)
-            {
-                if (ImGui::Selectable(cat.c_str(), selectedCategory == cat))
-                    selectedCategory = cat;
-            }
-        }
-
-        // RIGHT COLUMN (SCROLLABLE CHILD)
-        ImGui::NextColumn();
-        float rightWidth = ImGui::GetContentRegionAvail().x;
-        ImGui::BeginChild("RightScrollRegion", ImVec2(rightWidth, 0), false, ImGuiWindowFlags_AlwaysVerticalScrollbar);
-
-        // RENDER MEMORY ENTRIES (SCROLLABLE)
-        for (auto& entry : g_MemoryConfigs)
-        {
-            if (selectedCategory != "All" && entry.Category != selectedCategory)
-                continue;
-
-            ImGui::Dummy(ImVec2(0.0f, 6.0f));
-            RightColumnSeparator(rightWidth, 2.0f);
-            ImGui::Dummy(ImVec2(0.0f, 6.0f));
-
-            ImGui::PushID(entry.UniqueID);
-
-            // ===== TITLE =====
-            float nameWidth = ImGui::CalcTextSize(entry.Name.c_str()).x;
-            ImGui::SetCursorPosX((rightWidth - nameWidth) * 0.5f);
-            ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.1f, 1.0f), "%s", entry.Name.c_str());
-
-            // ===== DESCRIPTION =====
-            if (!entry.Description.empty())
-            {
-                PushFontSafe(2);
-
-                float wrapWidth = rightWidth * 0.9f;
-                std::istringstream iss(entry.Description);
-                std::string word, line;
-                std::vector<std::string> lines;
-
-                while (iss >> word)
-                {
-                    std::string testLine = line.empty() ? word : line + " " + word;
-                    if (ImGui::CalcTextSize(testLine.c_str()).x > wrapWidth)
-                    {
-                        lines.push_back(line);
-                        line = word;
-                    }
-                    else line = testLine;
-                }
-                if (!line.empty()) lines.push_back(line);
-
-                for (auto& l : lines)
-                {
-                    float w = ImGui::CalcTextSize(l.c_str()).x;
-                    ImGui::SetCursorPosX((rightWidth - w) * 0.5f);
-                    ImGui::TextColored(ImVec4(0.0157f, 0.380f, 0.8f, 1.0f), "%s", l.c_str());
-                }
-
-                ImGui::Dummy(ImVec2(0.0f, 6.0f));
-                PopFontSafe(2);
-            }
-
-            // ===== TYPE + LENGTH (same line) =====
-            {
-                PushFontSafe(2);
-
-                const char* typeOptions[] = { "Hex", "Integer" };
-                int typeIndex = (entry.Type == "Integer") ? 1 : 0;
-
-                float typeLabelWidth = ImGui::CalcTextSize("Type:").x;
-                float typeComboWidth = 80.0f;
-
-                float lengthLabelWidth = ImGui::CalcTextSize("Length:").x;
-                float lengthInputWidth = 80.0f;
-
-                float totalWidth =
-                    typeLabelWidth + typeComboWidth +
-                    10.0f +
-                    lengthLabelWidth + lengthInputWidth;
-
-                float startX = (rightWidth - totalWidth) * 0.5f;
-
-                ImGui::SetCursorPosX(startX);
-                ImGui::Text("Type:");
-                ImGui::SameLine();
-
-                ImGui::SetCursorPosX(startX + typeLabelWidth + 5.0f);
-                ImGui::PushItemWidth(typeComboWidth);
-                BeginFrameBgImageRegion();
-                if (ImGui::Combo("##type", &typeIndex, typeOptions, IM_ARRAYSIZE(typeOptions)))
-                {
-                    entry.Type = (typeIndex == 1 ? "Integer" : "Hex");
-                    SaveFullGrailConfig(configFilePath, false);
-                }
-                EndFrameBgImageRegion();
-                ImGui::PopItemWidth();
-
-                ImGui::SameLine();
-                ImGui::SetCursorPosX(startX + typeLabelWidth + typeComboWidth + 10.0f);
-                ImGui::Text("Length:");
-
-                ImGui::SameLine();
-                ImGui::SetCursorPosX(startX + typeLabelWidth + typeComboWidth + 10.0f + lengthLabelWidth + 5.0f);
-                ImGui::PushItemWidth(lengthInputWidth);
-                BeginFrameBgImageRegion();
-                bool lengthChanged = ImGui::InputInt("##length", &entry.Length, 1, 10);
-                EndFrameBgImageRegion();
-                if (entry.Length < 1) entry.Length = 1;
-                if (lengthChanged) SaveFullGrailConfig(configFilePath, false);
-                ImGui::PopItemWidth();
-
-                PopFontSafe(2);
-            }
-
-            // ===== ADDRESS COMBO =====
-            {
-                PushFontSafe(2);
-                std::vector<std::string> addrList;
-
-                if (!entry.Address.empty())
-                    addrList.push_back(entry.Address);
-
-                for (auto& a : entry.Addresses)
-                    addrList.push_back(a);
-
-                if (!addrList.empty())
-                {
-                    int& selectedIdx = selectedIndexMap[entry.UniqueID];
-                    if (selectedIdx >= addrList.size()) selectedIdx = 0;
-
-                    std::string current = addrList[selectedIdx];
-
-                    float labelWidth = ImGui::CalcTextSize("Address:").x;
-                    float comboWidth = 120.0f;
-
-                    ImGui::SetCursorPosX((rightWidth - (labelWidth + comboWidth + 10)) * 0.5f);
-                    ImGui::Text("Address:");
-                    ImGui::SameLine();
-
-                    ImGui::PushItemWidth(comboWidth);
-                    BeginFrameBgImageRegion();
-                    if (ImGui::BeginCombo("##addr", current.c_str()))
-                    {
-                        for (int i = 0; i < addrList.size(); ++i)
-                        {
-                            bool selected = (selectedIdx == i);
-                            if (ImGui::Selectable(addrList[i].c_str(), selected))
-                                selectedIdx = i;
-                            if (selected)
-                                ImGui::SetItemDefaultFocus();
-                        }
-                        ImGui::EndCombo();
-                    }
-                    EndFrameBgImageRegion();
-                    ImGui::PopItemWidth();
-                }
-
-                PopFontSafe(2);
-            }
-
-
-            // ===== DYNAMIC VALUE INPUT WIDTH =====
-            {
-                PushFontSafe(2);
-
-                char buffer[256];
-                strncpy(buffer, entry.Values.c_str(), sizeof(buffer));
-                buffer[255] = '\0';
-
-                float textWidth = ImGui::CalcTextSize(buffer).x;
-                float boxWidth = std::clamp(textWidth + 20.0f, 60.0f, 300.0f);
-                float labelWidth = ImGui::CalcTextSize("Value:").x;
-
-                ImGui::SetCursorPosX((rightWidth - (labelWidth + boxWidth + 10)) * 0.5f);
-                ImGui::Text("Value:");
-                ImGui::SameLine();
-
-                ImGui::PushItemWidth(boxWidth);
-                BeginFrameBgImageRegion();
-                if (ImGui::InputText("##value", buffer, sizeof(buffer)))
-                {
-                    entry.Values = buffer;
-                    SaveFullGrailConfig(configFilePath, false);
-                }
-                EndFrameBgImageRegion();
-                ImGui::PopItemWidth();
-
-                PopFontSafe(2);
-            }
-
-            // ===== Original | Modded =====
-            {
-                PushFontSafe(1);
-
-                std::string original = "In Retail: " + entry.OriginalValues;
-                std::string modded = "HUD Default: " + entry.ModdedValues;
-                std::string sep = "|";
-
-                ImVec2 o = ImGui::CalcTextSize(original.c_str());
-                ImVec2 m = ImGui::CalcTextSize(modded.c_str());
-                ImVec2 s = ImGui::CalcTextSize(sep.c_str());
-
-                float total = o.x + s.x + m.x + 10.0f;
-                float startX = (rightWidth - total) * 0.5f;
-
-                ImGui::SetCursorPosX(startX);
-                ImGui::TextUnformatted(original.c_str());
-                ImGui::SameLine();
-
-                ImGui::SetCursorPosX(startX + o.x + 5.0f);
-                ImGui::TextUnformatted(sep.c_str());
-                ImGui::SameLine();
-
-                ImGui::SetCursorPosX(startX + o.x + s.x + 10.0f);
-                ImGui::TextUnformatted(modded.c_str());
-
-                PopFontSafe(1);
-            }
-
-            ImGui::PopID();
-        }
-
-        ImGui::EndChild();     // end scrollable region
-        ImGui::Columns(1);     // reset
-        ImGui::PopStyleColor();
-        ImGui::End();          // end main window
     }
     else
         ImGui::PopStyleColor();
@@ -11631,11 +10270,6 @@ void ShowMainMenu()
             ShowSettingsPanel();
         if (ImGui::IsItemHovered()) { descriptionTitle = "D2RHUD Options"; descriptionText = "Explore and Control enabled D2RHUD Options\n\n- Values are retrieved and stored in D2RLAN/Launcher/config.json\n- Overrides can be applied by the author in data/D2RLAN/config_override.json\n- Expect implementation changes over the next updates"; }
 
-        if (ThemeButton("Memory Edit Info", ImVec2(buttonWidth, buttonHeight)))
-            showMemoryMenu = true;
-        ShowMemoryMenu();
-        if (ImGui::IsItemHovered()) { descriptionTitle = "Memory Edit Info"; descriptionText = "View and edit your currently active memory edits\n\n- Values are loaded from D2RLAN/Launcher config when you open the panel\n- You can change Type, Length, and Value; edits are kept while the panel is open\n- These edits provide additional 'hardcode only' options to the game\n- For some entries, game restart will be needed for them to apply"; }
-
         if (ThemeButton("D2RLoot Settings", ImVec2(buttonWidth, buttonHeight)))
             showLootMenu = true;
         ShowLootMenu();
@@ -12179,7 +10813,7 @@ void D2RHUD::OnDraw() {
 
     // Scale all menu UI by 200% on 4K resolution
     {
-        bool anyMenuOpen = showMainMenu || showHUDSettingsMenu || showD2RHUDMenu || showSettingsPanel || showMemoryMenu || showLootMenu || showHotkeyMenu || showGrailMenu || showCameraMenu;
+        bool anyMenuOpen = showMainMenu || showHUDSettingsMenu || showD2RHUDMenu || showSettingsPanel || showLootMenu || showHotkeyMenu || showGrailMenu || showCameraMenu;
         ImGuiIO& io = ImGui::GetIO();
         io.FontGlobalScale = anyMenuOpen ? GetMenuScaleFactor() : 1.0f;
     }
@@ -12596,12 +11230,9 @@ bool D2RHUD::OnKeyPressed(short key)
 
     for (const auto& cmd : g_CommandHotkeys)
     {
-        CheckAndAddMatch(cmd.key, 0, [cmd]() {
-            if (cmd.command.find('/') != std::string::npos)
-                CLIENT_playerCommand(cmd.command, cmd.command);
-            else
-                ExecuteDebugCheatFunc(cmd.command.c_str());
-            });
+        if (cmd.key.empty() || cmd.command.empty())
+            continue;
+        CheckAndAddMatch(cmd.key, 0, [cmd]() { ExecuteCommand(cmd.command); });
     }
 
     if (auto kb = FindKeybind("Reload Game/Filter"))

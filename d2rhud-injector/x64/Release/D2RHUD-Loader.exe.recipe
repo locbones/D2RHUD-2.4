@@ -2,6 +2,9 @@
 <Project>
   <ProjectOutputs>
     <ProjectOutput>
+      <FullPath>C:\Users\djsch\Github\D2RHUD-2.4\x64\Release\d2rhud.dll</FullPath>
+    </ProjectOutput>
+    <ProjectOutput>
       <FullPath>C:\Users\djsch\Github\D2RHUD-2.4\x64\Release\D2RHUD-Loader.exe</FullPath>
     </ProjectOutput>
   </ProjectOutputs>

@@ -8,11 +8,44 @@
 #include <cstring>
 #include <chrono>
 #include <ctime>
+#include <unordered_set>
 
 using json = nlohmann::json;
 
 extern std::string modName;
 extern std::string configFilePath;
+
+static std::unordered_map<int, SetItemEntry*> g_SetById;
+static std::unordered_map<std::string, SetItemEntry*> g_SetByCode;
+static std::unordered_map<int, UniqueItemEntry*> g_UniqueById;
+static std::unordered_map<std::string, UniqueItemEntry*> g_UniqueByCode;
+static bool g_ValidBaseItemCodesLoaded = false;
+
+static void RebuildGrailStashLookups()
+{
+    g_SetById.clear();
+    g_SetByCode.clear();
+    g_UniqueById.clear();
+    g_UniqueByCode.clear();
+
+    g_SetById.reserve(g_SetItems.size());
+    g_SetByCode.reserve(g_SetItems.size());
+    for (auto& s : g_SetItems)
+    {
+        g_SetById.emplace(s.id, &s);
+        if (!s.code.empty())
+            g_SetByCode[s.code] = &s;
+    }
+
+    g_UniqueById.reserve(g_UniqueItems.size());
+    g_UniqueByCode.reserve(g_UniqueItems.size());
+    for (auto& u : g_UniqueItems)
+    {
+        g_UniqueById.emplace(u.id, &u);
+        if (!u.code.empty())
+            g_UniqueByCode[u.code] = &u;
+    }
+}
 
 std::vector<UniqueItemEntry> g_UniqueItems;
 std::vector<SetItemEntry>    g_SetItems;
@@ -949,39 +982,14 @@ void LoadGrailProgress(const std::string& filepath)
     }
 }
 
-bool LoadUniqueItems(const std::string& filepath)
+static bool LoadUniqueItemsFromFile(const std::string& filepath)
 {
-    g_UniqueItems.clear();
-
-    // Use static array for RMD
-    if (modName == "RMD-MP")
-    {
-        int arraySize = sizeof(g_StaticUniqueItemsRMD) / sizeof(g_StaticUniqueItemsRMD[0]);
-        for (int i = 0; i < arraySize; ++i)
-        {
-            g_UniqueItems.push_back(g_StaticUniqueItemsRMD[i]);
-        }
-        return true;
-    }
-    
-
-    // Use static array for Retail Mods if file doesn't exist
-    if (!std::filesystem::exists("Mods/" + modName + "/" + modName + ".mpq/data/global/excel/uniqueitems.txt") && modName != "RMD-MP")
-    {
-        int arraySize = sizeof(g_StaticUniqueItems) / sizeof(g_StaticUniqueItems[0]);
-        for (int i = 0; i < arraySize; ++i)
-        {
-            g_UniqueItems.push_back(g_StaticUniqueItems[i]);
-        }
-        return true;
-    }
-
     std::ifstream file(filepath);
     if (!file.is_open())
         return false;
 
     std::string line;
-    std::getline(file, line); // read header
+    std::getline(file, line);
     auto header = SplitTab(line);
 
     int colIndex = FindColumn(header, "index");
@@ -1003,53 +1011,56 @@ bool LoadUniqueItems(const std::string& filepath)
         UniqueItemEntry entry;
 
         int indexVal;
-        if (!SafeStringToInt(cols[colID], indexVal)) // ID
+        if (!SafeStringToInt(cols[colID], indexVal))
             continue;
         entry.id = indexVal;
 
-        entry.name = cols[colIndex];   // Name from index column
-        entry.code = cols[colCode];    // Code
-        entry.itemName = cols[colItemName];
+        entry.name = cols[colIndex];
+        entry.code = cols[colCode];
+        if (colItemName >= 0 && static_cast<int>(cols.size()) > colItemName)
+            entry.itemName = cols[colItemName];
 
         std::string enabledStr = cols[colEnabled];
         entry.enabled = (enabledStr == "1" || enabledStr == "true");
 
-        // Skip items not enabled in the file
         if (!(enabledStr == "1" || enabledStr == "true"))
             continue;
 
         g_UniqueItems.push_back(entry);
     }
 
-    return true;
+    return !g_UniqueItems.empty();
 }
 
-bool LoadSetItems(const std::string& filepath)
+bool LoadUniqueItems(const std::string& filepath)
 {
-    g_SetItems.clear();
+    g_UniqueItems.clear();
 
-    // Use static array for RMD
     if (modName == "RMD-MP")
     {
-        int arraySize = sizeof(g_StaticSetItemsRMD) / sizeof(g_StaticSetItemsRMD[0]);
+        const int arraySize = sizeof(g_StaticUniqueItemsRMD) / sizeof(g_StaticUniqueItemsRMD[0]);
         for (int i = 0; i < arraySize; ++i)
-        {
-            g_SetItems.push_back(g_StaticSetItemsRMD[i]);
-        }
+            g_UniqueItems.push_back(g_StaticUniqueItemsRMD[i]);
         return true;
     }
+    
 
     // Use static array for Retail Mods if file doesn't exist
-    if (!std::filesystem::exists("Mods/" + modName + "/" + modName + ".mpq/data/global/excel/setitems.txt") && modName != "RMD-MP")
+    if (!std::filesystem::exists("Mods/" + modName + "/" + modName + ".mpq/data/global/excel/uniqueitems.txt") && modName != "RMD-MP")
     {
-        int arraySize = sizeof(g_StaticSetItems) / sizeof(g_StaticSetItems[0]);
+        int arraySize = sizeof(g_StaticUniqueItems) / sizeof(g_StaticUniqueItems[0]);
         for (int i = 0; i < arraySize; ++i)
         {
-            g_SetItems.push_back(g_StaticSetItems[i]);
+            g_UniqueItems.push_back(g_StaticUniqueItems[i]);
         }
         return true;
     }
 
+    return LoadUniqueItemsFromFile(filepath);
+}
+
+static bool LoadSetItemsFromFile(const std::string& filepath)
+{
     std::ifstream file(filepath);
     if (!file.is_open())
         return false;
@@ -1085,11 +1096,36 @@ bool LoadSetItems(const std::string& filepath)
         entry.setName = cols[colSet];
         entry.code = cols[colItem];
         entry.enabled = false;
-        entry.itemName = cols[colItemName];
+        if (colItemName >= 0 && static_cast<int>(cols.size()) > colItemName)
+            entry.itemName = cols[colItemName];
         g_SetItems.push_back(entry);
     }
 
-    return true;
+    return !g_SetItems.empty();
+}
+
+bool LoadSetItems(const std::string& filepath)
+{
+    g_SetItems.clear();
+
+    if (modName == "RMD-MP")
+    {
+        const int arraySize = sizeof(g_StaticSetItemsRMD) / sizeof(g_StaticSetItemsRMD[0]);
+        for (int i = 0; i < arraySize; ++i)
+            g_SetItems.push_back(g_StaticSetItemsRMD[i]);
+        return true;
+    }
+
+    // Use static array for Retail Mods if file doesn't exist
+    if (!std::filesystem::exists(filepath))
+    {
+        const int arraySize = sizeof(g_StaticSetItems) / sizeof(g_StaticSetItems[0]);
+        for (int i = 0; i < arraySize; ++i)
+            g_SetItems.push_back(g_StaticSetItems[i]);
+        return true;
+    }
+
+    return LoadSetItemsFromFile(filepath);
 }
 
 void LoadExcludedGrailItems(const std::string& filepath)
@@ -1120,22 +1156,942 @@ void LoadExcludedGrailItems(const std::string& filepath)
     }
 }
 
+// --- Stash / D2I parsing (FindItemOffsets) ---
+#include "ItemFilter/ItemFilter.h"
+#include <Windows.h>
+#include <cctype>
+#include <memory>
+#include <regex>
+#include <stdexcept>
+#include <unordered_map>
+
+extern std::wstring GetSavePath();
+extern bool isHardcore;
+
+static bool IsHardcoreForGrailScan();
+
+std::unordered_map<uint32_t, std::string> g_SetItemLookup;
+std::unordered_map<uint32_t, std::string> g_UniqueItemLookup;
+
+bool showStashParseDebug = false;
+bool g_ForceStashRescan = false;
+bool g_StashScanInProgress = false;
+double g_DeferStashScanUntil = 0.0;
+int g_StashScanPageFilter = 0;
+std::vector<int> g_AvailableStashPages;
+std::vector<StashParsedItemDebug> g_StashDebugEntries;
+
+static std::string GetGrailPluginDirectory()
+{
+    char buf[MAX_PATH]{};
+    HMODULE self = nullptr;
+    if (GetModuleHandleExA(
+            GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+            reinterpret_cast<LPCSTR>(&GetGrailPluginDirectory),
+            &self) && self)
+    {
+        GetModuleFileNameA(self, buf, MAX_PATH);
+        return std::filesystem::path(buf).parent_path().string();
+    }
+    return {};
+}
+
+void BuildItemNameLookups()
+{
+    g_SetItemLookup.clear();
+    g_UniqueItemLookup.clear();
+
+    for (auto& s : g_SetItems)
+        g_SetItemLookup[s.id] = s.setName.empty() ? "Unknown Set Item" : s.setName;
+
+    for (auto& u : g_UniqueItems)
+        g_UniqueItemLookup[u.id] = u.name.empty() ? "Unknown Unique" : u.name;
+}
+
+class BitReader {
+public:
+    BitReader(const std::vector<uint8_t>& buffer)
+        : bufPtr(buffer.data()), bufSize(buffer.size()), bitPos(0) {
+    }
+
+    BitReader(const uint8_t* data, size_t size)
+        : bufPtr(data), bufSize(size), bitPos(0) {
+    }
+
+    uint32_t ReadBits(size_t bits) {
+        if (bits > 32)
+            throw std::runtime_error("Cannot read more than 32 bits at once");
+
+        uint32_t result = 0;
+        for (size_t i = 0; i < bits; ++i) {
+            size_t byteIdx = bitPos >> 3;
+            size_t bitIdx = bitPos & 7;
+
+            if (byteIdx >= bufSize)
+                throw std::runtime_error("Buffer overflow");
+
+            if ((bufPtr[byteIdx] >> bitIdx) & 1)
+                result |= (1u << i);
+
+            ++bitPos;
+        }
+        return result;
+    }
+
+    uint8_t ReadUInt8(size_t bits) { return static_cast<uint8_t>(ReadBits(bits)); }
+    uint16_t ReadUInt16(size_t bits) { return static_cast<uint16_t>(ReadBits(bits)); }
+    uint32_t ReadUInt32(size_t bits) { return ReadBits(bits); }
+    bool ReadBit() { return ReadBits(1) != 0; }
+
+    void SkipBits(size_t bits) { bitPos += bits; }
+    void SetBitPos(size_t pos) { bitPos = pos; }
+    size_t GetBitPos() const { return bitPos; }
+    size_t GetBytePos() const { return bitPos >> 3; }
+
+    void AlignToByte() {
+        if (bitPos & 7)
+            bitPos = ((bitPos >> 3) + 1) << 3;
+    }
+
+    bool HasBits(size_t n) const {
+        return bitPos + n <= bufSize * 8;
+    }
+
+private:
+    const uint8_t* bufPtr;
+    size_t bufSize;
+    size_t bitPos;
+};
+
+
+struct EarAttributes {
+    uint8_t clazz = 0;
+    uint8_t level = 0;
+    std::string name;
+};
+
+struct Item {
+    // Base header flags
+    bool identified = false;
+    bool socketed = false;
+    bool new_flag = false;
+    bool is_ear = false;
+    bool starter_item = false;
+    bool simple_item = false;
+    bool ethereal = false;
+    bool personalized = false;
+    bool given_runeword = false;
+
+    uint16_t version = 0;
+    uint8_t location_id = 0;
+    uint8_t equipped_id = 0;
+    uint8_t position_x = 0;
+    uint8_t position_y = 0;
+    uint8_t alt_position_id = 0;
+
+    // Item core data
+    uint32_t id = 0;
+    uint8_t level = 0;
+    std::string type;
+
+    uint8_t nr_of_items_in_sockets = 0;
+
+    // Picture, class-specific
+    bool multiple_pictures = false;
+    uint8_t picture_id = 0;
+    bool class_specific = false;
+    uint16_t auto_affix_id = 0;
+
+    // Quality
+    uint8_t quality = 0;
+
+    uint8_t low_quality_id = 0;
+    uint8_t file_index = 0;
+
+    uint16_t magic_prefix = 0;
+    uint16_t magic_suffix = 0;
+
+    uint16_t set_id = 0;
+    uint16_t unique_id = 0;
+
+    uint8_t rare_name_id = 0;
+    uint8_t rare_name_id2 = 0;
+    uint16_t magical_name_ids[6] = { 0 };
+
+    EarAttributes ear_attributes;
+
+    uint16_t personalized_id = 0;
+    uint32_t runeword_id = 0;
+
+    std::vector<Item> socketed_items;
+};
+
+#pragma endregion
+
+#pragma region Huffman Tree
+
+struct HuffmanNode {
+    char value = 0;
+    HuffmanNode* left = nullptr;
+    HuffmanNode* right = nullptr;
+    ~HuffmanNode() { delete left; delete right; }
+};
+
+static const std::vector<std::pair<char, std::string>> HUFFMAN_CODES = {
+    {' ', "10"},
+    {'0', "11111011"},
+    {'1', "1111100"},
+    {'2', "001100"},
+    {'3', "1101101"},
+    {'4', "11111010"},
+    {'5', "00010110"},
+    {'6', "1101111"},
+    {'7', "01111"},
+    {'8', "000100"},
+    {'9', "01110"},
+    {'a', "11110"},
+    {'b', "0101"},
+    {'c', "01000"},
+    {'d', "110001"},
+    {'e', "110000"},
+    {'f', "010011"},
+    {'g', "11010"},
+    {'h', "00011"},
+    {'i', "1111110"},
+    {'j', "000101110"},
+    {'k', "010010"},
+    {'l', "11101"},
+    {'m', "01101"},
+    {'n', "001101"},
+    {'o', "1111111"},
+    {'p', "11001"},
+    {'q', "11011001"},
+    {'r', "11100"},
+    {'s', "0010"},
+    {'t', "01100"},
+    {'u', "00001"},
+    {'v', "1101110"},
+    {'w', "00000"},
+    {'x', "00111"},
+    {'y', "0001010"},
+    {'z', "11011000"},
+
+    // --- Capitals ---
+    {'A', "00010111101011100"},
+    {'B', "00010111111001110"},
+    {'C', "00010111111011001"},
+    {'D', "00010111110011111"},
+    {'E', "00010111101111000"},
+    {'F', "00010111110011100"},
+    {'G', "00010111110101011"},
+    {'H', "00010111110111001"},
+    {'I', "00010111110111100"},
+    {'J', "0001011110000111"},
+    {'K', "00010111110100100"},
+    {'L', "00010111110010010"},
+    {'M', "00010111111011011"},
+    {'N', "0001011110000010"},
+    {'O', "00010111111101011"},
+    {'P', "00010111110100111"},
+    {'Q', "00010111101100100"},
+    {'R', "00010111111100111"},
+    {'S', "00010111101101010"},
+    {'T', "00010111110001010"},
+    {'U', "00010111110001001"},
+    {'V', "00010111110010001"},
+    {'W', "00010111111101110"},
+    {'X', "00010111111111010"},
+    {'Y', "00010111111111101"},
+    {'Z', "00010111110000100"},
+};
+
+HuffmanNode* BuildHuffmanTreeFromTable() {
+    auto root = new HuffmanNode{};
+
+    for (auto& [ch, bits] : HUFFMAN_CODES) {
+        HuffmanNode* node = root;
+
+        for (char b : bits) {
+            if (b == '0') {
+                if (!node->left) node->left = new HuffmanNode{};
+                node = node->left;
+            }
+            else {
+                if (!node->right) node->right = new HuffmanNode{};
+                node = node->right;
+            }
+        }
+
+        node->value = ch; // leaf
+    }
+
+    return root;
+}
+
+char DecodeHuffmanChar(BitReader& reader, HuffmanNode* root) {
+    HuffmanNode* node = root;
+    int depth = 0;
+    while (node && node->value == 0 && depth++ < 30) {
+        bool bit = reader.ReadBit();
+        node = bit ? node->right : node->left;
+    }
+    if (!node) throw std::runtime_error("Invalid Huffman tree traversal");
+    return node->value;
+}
+
+std::string DecodeHuffmanString(BitReader& reader, HuffmanNode* root) {
+    std::string s;
+    for (int i = 0; i < 4; ++i) {
+        char c = DecodeHuffmanChar(reader, root);
+        if (c == ' ' || c == 0) break;
+        s += c;
+    }
+    return s;
+}
+
+static std::string TrimItemCode(std::string code)
+{
+    while (!code.empty() && (code.back() == ' ' || code.back() == '\0'))
+        code.pop_back();
+    return code;
+}
+
+static uint8_t NormalizeItemQuality(uint8_t rawQuality);
+
+Item ParseItem(const uint8_t* data, size_t size, HuffmanNode* huffmanRoot, uint32_t fileVersion)
+{
+    Item item;
+    BitReader reader(data, size);
+
+    reader.SkipBits(4);
+    item.identified = reader.ReadBit();
+    reader.SkipBits(1);
+    item.socketed = reader.ReadBit();
+    reader.SkipBits(2);
+    item.new_flag = reader.ReadBit();
+    reader.SkipBits(1);
+    item.is_ear = reader.ReadBit();
+    item.starter_item = reader.ReadBit();
+    reader.SkipBits(8);
+    item.simple_item = reader.ReadBit();
+    item.ethereal = reader.ReadBit();
+    reader.SkipBits(1);
+    item.personalized = reader.ReadBit();
+    reader.SkipBits(1);
+    item.given_runeword = reader.ReadBit();
+    reader.SkipBits(5);
+
+    if (fileVersion >= 0x61)
+        item.version = reader.ReadUInt16(3);
+    else
+        item.version = reader.ReadUInt16(10);
+
+    item.location_id = reader.ReadUInt8(3);
+    item.equipped_id = reader.ReadUInt8(4);
+    item.position_x = reader.ReadUInt8(4);
+    item.position_y = reader.ReadUInt8(4);
+    item.alt_position_id = reader.ReadUInt8(3);
+
+    if (item.is_ear && item.simple_item)
+    {
+        item.ear_attributes.clazz = reader.ReadUInt8(3);
+        item.ear_attributes.level = reader.ReadUInt8(7);
+        for (int i = 0; i < 15; i++)
+        {
+            const uint8_t ch = reader.ReadUInt8(7);
+            if (ch == 0)
+                break;
+            item.ear_attributes.name.push_back(static_cast<char>(ch));
+        }
+        return item;
+    }
+
+    if (fileVersion >= 0x61)
+        item.type = DecodeHuffmanString(reader, huffmanRoot);
+    else
+    {
+        for (int i = 0; i < 4; ++i)
+        {
+            const char c = static_cast<char>(reader.ReadUInt8(8));
+            if (c && c != ' ')
+                item.type += c;
+        }
+    }
+    item.type = TrimItemCode(item.type);
+
+    item.nr_of_items_in_sockets = reader.ReadUInt8(item.simple_item ? 1 : 3);
+
+    if (item.simple_item)
+        return item;
+
+    item.id = reader.ReadUInt32(32);
+    item.level = reader.ReadUInt8(7);
+    item.quality = NormalizeItemQuality(reader.ReadUInt8(4));
+
+    item.multiple_pictures = reader.ReadBit();
+    if (item.multiple_pictures)
+        item.picture_id = reader.ReadUInt8(3);
+
+    item.class_specific = reader.ReadBit();
+    if (item.class_specific)
+        item.auto_affix_id = reader.ReadUInt16(11);
+
+    switch (item.quality)
+    {
+    case 1:
+        item.low_quality_id = reader.ReadUInt8(3);
+        break;
+    case 3:
+        item.file_index = reader.ReadUInt8(3);
+        break;
+    case 4:
+        item.magic_prefix = reader.ReadUInt16(11);
+        item.magic_suffix = reader.ReadUInt16(11);
+        break;
+    case 5:
+        item.set_id = reader.ReadUInt16(12);
+        break;
+    case 6:
+    case 8:
+        item.rare_name_id = reader.ReadUInt8(8);
+        item.rare_name_id2 = reader.ReadUInt8(8);
+        for (int i = 0; i < 3; ++i)
+        {
+            if (reader.ReadBit())
+                item.magical_name_ids[i] = reader.ReadUInt16(11);
+            if (reader.ReadBit())
+                item.magical_name_ids[i + 3] = reader.ReadUInt16(11);
+        }
+        break;
+    case 7:
+        item.unique_id = reader.ReadUInt16(12);
+        break;
+    default:
+        break;
+    }
+
+    return item;
+}
+
+std::vector<size_t> FindItemOffsets(const std::vector<uint8_t>& buf, size_t start, size_t end) {
+    std::vector<size_t> offsets;
+    for (size_t i = start; i + 4 < end; i++) {
+        // D2R item flags have multiple patterns depending on item properties
+        // Common patterns: 10 00 80 00, 10 20 a0 00, 10 08 80 00, etc.
+        // Byte 0: lower nibble is typically 0 (0x10, 0x00)
+        // Byte 2: has bit 7 set (0x80, 0xa0, 0xc0)
+        // Byte 3: is 0x00
+        bool byte0_valid = (buf[i] & 0x0F) == 0;      // lower nibble is 0
+        bool byte2_valid = (buf[i + 2] & 0x80) != 0;    // bit 7 set
+        bool byte3_valid = buf[i + 3] == 0x00;          // must be 0
+
+        if (byte0_valid && byte2_valid && byte3_valid) {
+            offsets.push_back(i);
+        }
+    }
+    return offsets;
+}
+
+#pragma endregion
+
+static std::unordered_set<std::string> g_ValidBaseItemCodes;
+
+static void LoadBaseItemCodesFromExcel(const std::string& filepath)
+{
+    std::ifstream file(filepath);
+    if (!file.is_open())
+        return;
+
+    std::string line;
+    std::getline(file, line);
+    auto header = SplitTab(line);
+    int colCode = FindColumn(header, "code");
+    if (colCode < 0)
+        colCode = 0;
+
+    while (std::getline(file, line))
+    {
+        auto cols = SplitTab(line);
+        if (cols.size() <= static_cast<size_t>(colCode))
+            continue;
+        std::string code = TrimItemCode(cols[colCode]);
+        if (code.size() >= 3 && code.size() <= 4)
+            g_ValidBaseItemCodes.insert(code);
+    }
+}
+
+static void EnsureValidBaseItemCodesLoaded()
+{
+    if (g_ValidBaseItemCodesLoaded)
+        return;
+    g_ValidBaseItemCodesLoaded = true;
+
+    const std::string dllDir = GetGrailPluginDirectory();
+    if (!dllDir.empty())
+    {
+        LoadBaseItemCodesFromExcel(dllDir + "/items.txt");
+        LoadBaseItemCodesFromExcel(dllDir + "/armor.txt");
+        LoadBaseItemCodesFromExcel(dllDir + "/weapons.txt");
+    }
+
+    const std::string excelBase = "Mods/" + modName + "/" + modName + ".mpq/data/global/excel/";
+    LoadBaseItemCodesFromExcel(excelBase + "items.txt");
+    LoadBaseItemCodesFromExcel(excelBase + "armor.txt");
+    LoadBaseItemCodesFromExcel(excelBase + "weapons.txt");
+}
+
+static bool IsValidItemTypeCode(const std::string& code)
+{
+    if (code.size() < 3 || code.size() > 4)
+        return false;
+    for (char c : code)
+    {
+        if (!std::isalnum(static_cast<unsigned char>(c)))
+            return false;
+    }
+    if (g_ValidBaseItemCodes.empty())
+        return true;
+    return g_ValidBaseItemCodes.count(code) != 0;
+}
+
+static bool IsSharedStashPanelItem(const Item& item)
+{
+    return item.location_id == 0 && item.alt_position_id == 5;
+}
+
+static uint8_t NormalizeItemQuality(uint8_t rawQuality)
+{
+    if (rawQuality <= 9)
+        return rawQuality;
+    const uint8_t flipped = static_cast<uint8_t>((~rawQuality) & 0x0F);
+    if (flipped <= 9)
+        return flipped;
+    return rawQuality;
+}
+
+const char* GetQualityName(uint32_t q)
+{
+    const char* names[] = { "", "Inferior", "Normal", "Superior", "Magic", "Set", "Rare", "Unique", "Crafted", "Tempered" };
+    return q < 10 ? names[q] : "Unknown";
+}
+
+static bool IsStashOffsetCandidate(const Item& item)
+{
+    if (item.is_ear && item.simple_item)
+        return false;
+    if (!IsSharedStashPanelItem(item))
+        return false;
+    if (item.position_x > 15 || item.position_y > 12)
+        return false;
+    return IsValidItemTypeCode(TrimItemCode(item.type));
+}
+
+static bool IsGrailEligibleStashItem(const Item& item)
+{
+    if (!IsStashOffsetCandidate(item))
+        return false;
+    return item.quality <= 9;
+}
+
+static SetItemEntry* ResolveSetItemForStash(const Item& item)
+{
+    if (item.quality != 5)
+        return nullptr;
+
+    const std::string code = TrimItemCode(item.type);
+
+    const auto idIt = g_SetById.find(static_cast<int>(item.set_id));
+    if (idIt != g_SetById.end())
+        return idIt->second;
+
+    const auto codeIt = g_SetByCode.find(code);
+    if (codeIt != g_SetByCode.end())
+        return codeIt->second;
+
+    return nullptr;
+}
+
+static UniqueItemEntry* ResolveUniqueItemForStash(const Item& item)
+{
+    if (item.quality != 7)
+        return nullptr;
+
+    const std::string code = TrimItemCode(item.type);
+
+    const auto idIt = g_UniqueById.find(static_cast<int>(item.unique_id));
+    if (idIt != g_UniqueById.end())
+        return idIt->second;
+
+    const auto codeIt = g_UniqueByCode.find(code);
+    if (codeIt != g_UniqueByCode.end())
+        return codeIt->second;
+
+    return nullptr;
+}
+
+static bool TryParseStashItemAtOffset(
+    const std::vector<uint8_t>& buf,
+    size_t offset,
+    size_t tabEnd,
+    HuffmanNode* huffmanRoot,
+    uint32_t fileVersion,
+    Item& outItem)
+{
+    if (offset + 16 >= tabEnd)
+        return false;
+
+    const size_t maxSlice = (std::min)(tabEnd - offset, static_cast<size_t>(512));
+    try
+    {
+        outItem = ParseItem(buf.data() + offset, maxSlice, huffmanRoot, fileVersion);
+        return IsStashOffsetCandidate(outItem);
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+
+static std::vector<size_t> FilterItemOffsets(
+    const std::vector<uint8_t>& buf,
+    const std::vector<size_t>& rawOffsets,
+    size_t tabEnd,
+    HuffmanNode* huffmanRoot,
+    uint32_t fileVersion)
+{
+    std::vector<size_t> filtered;
+    filtered.reserve(rawOffsets.size());
+
+    for (size_t offset : rawOffsets)
+    {
+        Item item;
+        if (!TryParseStashItemAtOffset(buf, offset, tabEnd, huffmanRoot, fileVersion, item))
+            continue;
+
+        if (!filtered.empty() && offset - filtered.back() < 12)
+        {
+            Item prev;
+            if (TryParseStashItemAtOffset(buf, filtered.back(), tabEnd, huffmanRoot, fileVersion, prev))
+            {
+                const int prevScore = (prev.quality == 5 || prev.quality == 7) ? 2 : 1;
+                const int curScore = (item.quality == 5 || item.quality == 7) ? 2 : 1;
+                if (curScore <= prevScore)
+                    continue;
+            }
+            filtered.pop_back();
+        }
+
+        filtered.push_back(offset);
+    }
+
+    return filtered;
+}
+
+void ClearStashDebugEntries()
+{
+    g_StashDebugEntries.clear();
+}
+
+const char* GetStashItemQualityName(uint8_t quality)
+{
+    return GetQualityName(quality);
+}
+
+static void RecordStashParseFailure(const Item& item, int page, int tab, const char* note)
+{
+    if (!showStashParseDebug)
+        return;
+
+    StashParsedItemDebug entry;
+    entry.page = page;
+    entry.tab = tab;
+    entry.x = item.position_x + 1;
+    entry.y = item.position_y + 1;
+    entry.code = item.type;
+    entry.quality = item.quality;
+    entry.setId = item.set_id;
+    entry.uniqueId = item.unique_id;
+    entry.identified = item.identified;
+    entry.note = note;
+    g_StashDebugEntries.push_back(std::move(entry));
+}
+
+static void RecordStashDebugEntry(const Item& item, int page, int tab)
+{
+    if (!showStashParseDebug)
+        return;
+
+    StashParsedItemDebug entry;
+    entry.page = page;
+    entry.tab = tab;
+    entry.x = item.position_x + 1;
+    entry.y = item.position_y + 1;
+    entry.code = item.type;
+    entry.quality = item.quality;
+    entry.setId = item.set_id;
+    entry.uniqueId = item.unique_id;
+    entry.identified = item.identified;
+
+    if (SetItemEntry* setEntry = ResolveSetItemForStash(item))
+    {
+        entry.grailMatched = true;
+        entry.grailName = setEntry->name;
+        if (!g_SetById.count(static_cast<int>(item.set_id)) && g_SetByCode.count(TrimItemCode(item.type)))
+            entry.note = "Set ID not in grail list (matched by item code)";
+    }
+    else if (UniqueItemEntry* uniqueEntry = ResolveUniqueItemForStash(item))
+    {
+        entry.grailMatched = true;
+        entry.grailName = uniqueEntry->name;
+        if (!g_UniqueById.count(static_cast<int>(item.unique_id)) && g_UniqueByCode.count(TrimItemCode(item.type)))
+            entry.note = "Unique ID not in grail list (matched by item code)";
+    }
+    else if (item.quality == 5)
+        entry.note = "Set ID/code not in grail list";
+    else if (item.quality == 7)
+        entry.note = "Unique ID/code not in grail list";
+    else
+        entry.note = GetQualityName(item.quality);
+
+    g_StashDebugEntries.push_back(std::move(entry));
+}
+
+
+static int ParseSharedStash(const std::string& filePath, int pageNum)
+{
+    EnsureValidBaseItemCodesLoaded();
+
+    std::ifstream file(filePath, std::ios::binary | std::ios::ate);
+    if (!file)
+        return 1;
+
+    const size_t fileSize = static_cast<size_t>(file.tellg());
+    if (fileSize < 16)
+        return 1;
+
+    file.seekg(0);
+
+    std::vector<uint8_t> buf;
+    buf.resize(fileSize);
+    file.read(reinterpret_cast<char*>(buf.data()), fileSize);
+
+    if (buf[0] != 0x55 || buf[1] != 0xAA || buf[2] != 0x55 || buf[3] != 0xAA)
+        return 1;
+
+    const uint32_t version = buf[8];
+    const int page = pageNum;
+
+    std::unique_ptr<HuffmanNode> huffman(BuildHuffmanTreeFromTable());
+
+    int totalItems = 0;
+    int uniqueCount = 0;
+    int setCount = 0;
+
+    RebuildGrailStashLookups();
+
+    std::vector<size_t> tabOffsets;
+    tabOffsets.reserve(8);
+
+    for (size_t i = 0, end = fileSize - 3; i < end; ++i) {
+        if (buf[i] == 0x55 && buf[i + 1] == 0xAA && buf[i + 2] == 0x55 && buf[i + 3] == 0xAA)
+            tabOffsets.push_back(i);
+    }
+
+    for (size_t tabIdx = 0; tabIdx < tabOffsets.size(); ++tabIdx) {
+        const size_t tabStart = tabOffsets[tabIdx];
+        const size_t tabEnd = (tabIdx + 1 < tabOffsets.size()) ? tabOffsets[tabIdx + 1] : fileSize;
+
+        size_t jmOffset = 0;
+        for (size_t i = tabStart; i + 1 < tabEnd; ++i) {
+            if (buf[i] == 'J' && buf[i + 1] == 'M') {
+                jmOffset = i;
+                break;
+            }
+        }
+
+        if (!jmOffset)
+            continue;
+
+        if (jmOffset + 3 < fileSize && buf[jmOffset + 2] == 0 && buf[jmOffset + 3] == 0)
+            continue;
+
+        auto itemOffsets = FindItemOffsets(buf, jmOffset + 4, tabEnd);
+        if (itemOffsets.empty())
+            continue;
+
+        itemOffsets = FilterItemOffsets(buf, itemOffsets, tabEnd, huffman.get(), version);
+        if (itemOffsets.empty())
+            continue;
+
+        const int tab = static_cast<int>(tabIdx) + 1;
+
+        for (size_t i = 0; i < itemOffsets.size(); ++i) {
+            const size_t offset = itemOffsets[i];
+            const size_t nextOffset = (i + 1 < itemOffsets.size()) ? itemOffsets[i + 1] : tabEnd;
+
+            try {
+                Item item = ParseItem(
+                    buf.data() + offset,
+                    nextOffset - offset,
+                    huffman.get(),
+                    version);
+
+                if (!IsStashOffsetCandidate(item))
+                    continue;
+
+                if (showStashParseDebug)
+                    RecordStashDebugEntry(item, page, tab);
+
+                if (!IsGrailEligibleStashItem(item))
+                    continue;
+
+                ++totalItems;
+
+                if (SetItemEntry* setEntry = ResolveSetItemForStash(item)) {
+                    setEntry->collected = true;
+                    setEntry->locations.push_back({
+                        page, tab, item.position_x + 1, item.position_y + 1 });
+                    ++setCount;
+                }
+                else if (UniqueItemEntry* uniqueEntry = ResolveUniqueItemForStash(item)) {
+                    uniqueEntry->collected = true;
+                    uniqueEntry->locations.push_back({
+                        page, tab, item.position_x + 1, item.position_y + 1 });
+                    ++uniqueCount;
+                }
+            }
+            catch (...) {
+            }
+        }
+    }
+
+    g_GrailRevision++;
+    return 0;
+}
+void ScanStashPages()
+{
+    if (!IsPlayerInGame())
+        return;
+
+    if (g_StashScanInProgress)
+        return;
+
+    g_StashScanInProgress = true;
+    struct StashScanScopeGuard {
+        ~StashScanScopeGuard() { g_StashScanInProgress = false; }
+    } stashScanGuard;
+
+    g_ForceStashRescan = false;
+    const bool hardcore = IsHardcoreForGrailScan();
+    isHardcore = hardcore;
+
+    // Reset Collected State
+    for (auto& s : g_SetItems) {
+        s.collected = false;
+        s.locations.clear();
+    }
+    for (auto& u : g_UniqueItems) {
+        u.collected = false;
+        u.locations.clear();
+    }
+
+    if (showStashParseDebug)
+        g_StashDebugEntries.clear();
+
+    namespace fs = std::filesystem;
+    const std::wstring stashFolder = GetSavePath() + L"\\Diablo II Resurrected\\Mods\\" + std::wstring(modName.begin(), modName.end()) + L"\\";
+
+    if (!fs::exists(stashFolder))
+        return;
+
+    const std::string prefix = hardcore ? "Stash_HC_Page" : "Stash_SC_Page";
+    const std::string suffix = ".d2i";
+
+    std::vector<std::pair<int, std::string>> pages;
+    pages.reserve(64);
+
+    for (const auto& entry : fs::directory_iterator(stashFolder))
+    {
+        if (!entry.is_regular_file())
+            continue;
+
+        const std::string filename = entry.path().filename().string();
+
+        // Page String Checks
+        if (filename.rfind(prefix, 0) != 0)
+            continue;
+        if (filename.size() <= prefix.size() + suffix.size())
+            continue;
+        if (filename.compare(filename.size() - suffix.size(), suffix.size(), suffix) != 0)
+            continue;
+
+        // Extract Page Number
+        const std::string numStr = filename.substr(prefix.size(), filename.size() - prefix.size() - suffix.size());
+
+        int pageNum = std::atoi(numStr.c_str());
+        if (pageNum >= 1 && pageNum <= 64)
+            pages.emplace_back(pageNum, entry.path().string());
+    }
+
+    // Only sort if needed
+    if (pages.size() > 1)
+    {
+        std::sort(pages.begin(), pages.end(),
+            [](const auto& a, const auto& b) {
+                return a.first < b.first;
+            });
+    }
+
+    g_AvailableStashPages.clear();
+    g_AvailableStashPages.reserve(pages.size());
+    for (const auto& [pageNum, path] : pages)
+        g_AvailableStashPages.push_back(pageNum);
+
+    const int pageFilter = showStashParseDebug ? g_StashScanPageFilter : 0;
+
+    for (const auto& [pageNum, path] : pages)
+    {
+        if (pageFilter != 0 && pageNum != pageFilter)
+            continue;
+        ParseSharedStash(path, pageNum);
+    }
+
+    ReloadGameFilterForGrail();
+}
+
+static bool IsHardcoreForGrailScan()
+{
+    constexpr uint32_t sharedStashFlagOffset = 0x1BF0883;
+    const uint64_t addr = Pattern::Address(sharedStashFlagOffset);
+    if (!addr)
+        return false;
+    const uint8_t value = *reinterpret_cast<const uint8_t*>(addr);
+    return (value & (1 << 2)) != 0;
+}
+
 void LoadAllItemData()
 {
     g_UniqueItems.clear();
     g_SetItems.clear();
 
-    // Load Functions  
-    LoadUniqueItems("Mods/" + modName + "/" + modName + ".mpq/data/global/excel/uniqueitems.txt");
-    LoadSetItems("Mods/" + modName + "/" + modName + ".mpq/data/global/excel/setitems.txt");
+    const std::string dllDir = GetGrailPluginDirectory();
+    const std::string modExcel = "Mods/" + modName + "/" + modName + ".mpq/data/global/excel/";
+
+    if (!dllDir.empty())
+    {
+        LoadUniqueItems(dllDir + "/uniqueitems.txt");
+        LoadSetItems(dllDir + "/setitems.txt");
+    }
+    if (g_UniqueItems.empty())
+        LoadUniqueItems(modExcel + "uniqueitems.txt");
+    if (g_SetItems.empty())
+        LoadSetItems(modExcel + "setitems.txt");
+
     SortItemLists();
+    g_ValidBaseItemCodesLoaded = false;
+    RebuildGrailStashLookups();
+    BuildItemNameLookups();
     LoadGrailProgress(configFilePath);
-
-
-    //GenerateStaticArrays("Mods/" + modName + "/" + modName + ".mpq/data/global/excel/uniqueitems.txt", 5);
-    //GenerateStaticArrays("Mods/" + modName + "/" + modName + ".mpq/data/global/excel/setitems.txt", 2);
-    //WriteResultsToFile("ParsedItemData_Output.txt");
-
 }
 
 GrailStatus GetGrailStatus(uint32_t id, bool isSetItem)
