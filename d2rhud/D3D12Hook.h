@@ -3,7 +3,9 @@
 #include <Windows.h>
 #include <cstdint>
 #include <string>
-#include "plugin/D2RHUD/D2RHUD.h"
+#include <vector>
+
+struct ImFont;
 
 namespace D3D12 {
 
@@ -55,5 +57,11 @@ namespace D3D12 {
 	// Camera.png button icon for "use image" on each color row (from D2RHUD_Images/).
 	uint64_t GetCameraButtonTextureId();
 	void GetCameraButtonTextureSize(int* outWidth, int* outHeight);
+
+	// Bundled Floating Damage fonts are embedded in the DLL as RCDATA resources.
+	// User-added fonts go in D2RHUD_Fonts/.
+	constexpr int kFloatingDamageFontCount = 12;
+	std::string GetD2RHUDFontsPath();
+	ImFont* GetFloatingDamageFont(int index);
 
 }

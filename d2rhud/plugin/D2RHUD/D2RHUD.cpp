@@ -2,6 +2,7 @@
 
 #include "D2RHUD.h"
 #include "../GrailTracker.h"
+#include "../FloatingDamage.h"
 #include <imgui.h>
 #include "../../D2/D2Ptrs.h"
 #include <sstream>
@@ -58,7 +59,7 @@
 #pragma region Global Static/Structs
 
 std::string lootFile = "../D2R/lootfilter.lua";
-std::string Version = "1.7.2";
+std::string Version = "1.7.3";
 
 using json = nlohmann::json;
 static MonsterStatsDisplaySettings cachedSettings;
@@ -365,7 +366,7 @@ typedef D2ChatManager* (__fastcall* GetChatManagerFptr)();
 typedef D2ChatManager* (__fastcall* ChatManager_PushChatEntryFptr)(D2ChatManager* pMgr, blz_string& msg, uint32_t color, bool a4, ChatMsg& typeMsg, ChatOptionalStruct& a6, ChatOptionalStruct& a7, ChatOptionalStruct& a8, ChatOptionalStruct& a9);
 
 static GetChatManagerFptr GetChatManager = reinterpret_cast<GetChatManagerFptr>(Pattern::Address(GetChatManagerOffset));
-static ChatManager_PushChatEntryFptr ChatManager_PushChatEntry = reinterpret_cast<ChatManager_PushChatEntryFptr>(Pattern::Address(ChatManager_PushChatEntryOffset));
+static ChatManager_PushChatEntryFptr oChatManager_PushChatEntry = reinterpret_cast<ChatManager_PushChatEntryFptr>(Pattern::Address(ChatManager_PushChatEntryOffset));
 
 typedef void(__fastcall* D2GAME_UModInit_t)(D2UnitStrc* pUnit, int32_t nUMod, int32_t bUnique);
 D2GAME_UModInit_t oD2GAME_UModInit = nullptr;
@@ -1045,9 +1046,9 @@ static void QueueStartupCommandExecution(float initialDelaySeconds)
             if (runId != s_startupCommandRunId.load())
                 return;
             if (!command.empty() && command != "disabled")
-                ExecuteCommand(command);
-            std::this_thread::sleep_for(std::chrono::seconds(1));
-        }
+            ExecuteCommand(command);
+        std::this_thread::sleep_for(std::chrono::seconds(1));
+    }
     }).detach();
 }
 
@@ -1248,7 +1249,7 @@ void SendDebugCheat(const char* cheat) {
 
 typedef void(__fastcall* Send_SCMD_CHATSTART_Fptr)(uint64_t pPlayer, SCMD_CHATSTART_PACKET* pChatStart);
 static GetUnitNameFptr GetUnitName = reinterpret_cast<GetUnitNameFptr>(Pattern::Address(GetUnitNameOffset));
-static BroadcastChatMessageFptr BroadcastChatMessage = reinterpret_cast<BroadcastChatMessageFptr>(Pattern::Address(BroadcastChatMessageOffset));
+static BroadcastChatMessageFptr oBroadcastChatMessage = reinterpret_cast<BroadcastChatMessageFptr>(Pattern::Address(BroadcastChatMessageOffset));
 static Send_SCMD_CHATSTART_Fptr Send_SCMD_CHATSTART = reinterpret_cast<Send_SCMD_CHATSTART_Fptr>(Pattern::Address(Send_SCMD_CHATSTARTOffset));
 static std::vector<std::string> g_automaticCommands;
 typedef void(__fastcall* MONSTER_InitializeStatsAndSkills_t)(D2GameStrc* pGame, D2ActiveRoomStrc* pRoom, D2UnitStrc* pMonster, int64_t* pMonRegData);
@@ -1307,7 +1308,18 @@ bool __fastcall CCMD_DEBUGCHEAT_Hook(uint64_t pGame, uint64_t pPlayer, CCMD_DEBU
     return CCMD_DEBUGCHEAT_Handler_Orig(pGame, pPlayer, pCheat, dwDataLen);
 }
 
+static bool IsFloatingDamageActive();
+static void TryQueuePoisonCombatMessage(const char* text, D2UnitStrc* targetOverride = nullptr);
+static void TryQueuePoisonDamageFromStatTable(D2DamageInfoStrc* pDamageInfo, D2DamageStatTableStrc* pDamageStatTableRecord);
+static void EnsureSunitdmHook();
+static void QueuePoisonDamageEvent(int amount, float screenX, float screenY, uint32_t unitType, uint32_t unitId, FloatingDamage::Element element);
+static void UpdatePoisonDoTWatch();
+static void SyncPoisonWatchHp(uint32_t unitType, uint32_t unitId);
+
 bool __fastcall Process_SCMD_CHATSTART_Hook(SCMD_CHATSTART_PACKET* pPacket) {
+    if (IsFloatingDamageActive() && pPacket && pPacket->message[0])
+        TryQueuePoisonCombatMessage(pPacket->message);
+
     if (pPacket->msgType == 0xFF) {
         auto pChatMgr = GetChatManager();
         blz_string msg = { pPacket->message, strlen(pPacket->message), strlen(pPacket->message) };
@@ -1315,7 +1327,7 @@ bool __fastcall Process_SCMD_CHATSTART_Hook(SCMD_CHATSTART_PACKET* pPacket) {
         ChatMsg gameChatMsgType = *reinterpret_cast<ChatMsg*>(Pattern::Address(gameChatMsgTypeOffset));
         ChatOptionalStruct opt = {};
 
-        ChatManager_PushChatEntry(pChatMgr, msg, colorValue, false, gameChatMsgType, opt, opt, opt, opt);
+        oChatManager_PushChatEntry(pChatMgr, msg, colorValue, false, gameChatMsgType, opt, opt, opt, opt);
         return true;
     }
     return Process_SCMD_CHATSTART_Orig(pPacket);
@@ -1369,6 +1381,27 @@ static MONSTER_GetPlayerCountBonus_t oMONSTER_GetPlayerCountBonus = nullptr;
 
 typedef void(__fastcall* SUNITDMG_ApplyResistancesAndAbsorb_t)(D2DamageInfoStrc* pDamageInfo, D2DamageStatTableStrc* pDamageStatTableRecord, int32_t bDontAbsorb);
 static SUNITDMG_ApplyResistancesAndAbsorb_t oSUNITDMG_ApplyResistancesAndAbsorb = nullptr;
+static bool g_SunitdmHookInstalled = false;
+
+void __fastcall HookedSUNITDMG_ApplyResistancesAndAbsorb(D2DamageInfoStrc* pDamageInfo, D2DamageStatTableStrc* pDamageStatTableRecord, int32_t bDontAbsorb);
+
+static void EnsureSunitdmHook()
+{
+    if (g_SunitdmHookInstalled)
+        return;
+
+    const uint64_t addr = Pattern::Address(0x3253d0);
+    if (!addr)
+        return;
+
+    oSUNITDMG_ApplyResistancesAndAbsorb = reinterpret_cast<SUNITDMG_ApplyResistancesAndAbsorb_t>(addr);
+
+    DetourTransactionBegin();
+    DetourUpdateThread(GetCurrentThread());
+    DetourAttach(&(PVOID&)oSUNITDMG_ApplyResistancesAndAbsorb, HookedSUNITDMG_ApplyResistancesAndAbsorb);
+    DetourTransactionCommit();
+    g_SunitdmHookInstalled = true;
+}
 
 static int32_t* gnVirtualPlayerCount = reinterpret_cast<int32_t*>(Pattern::Address(0x1d637e4));
 int32_t playerCountGlobal;
@@ -1436,6 +1469,8 @@ void __fastcall HookedSUNITDMG_ApplyResistancesAndAbsorb(D2DamageInfoStrc* pDama
         ApplySunderClampToMonster(pDamageInfo->pGame, pDamageInfo->pDefender, true);
 
     oSUNITDMG_ApplyResistancesAndAbsorb(pDamageInfo, pDamageStatTableRecord, bDontAbsorb);
+
+    TryQueuePoisonDamageFromStatTable(pDamageInfo, pDamageStatTableRecord);
 
     if ((settings.HPRollover || cachedSettings.HPRollover) && pDamageInfo && pDamageInfo->pGame && pDamageInfo->pGame->nDifficulty > settings.HPRolloverDiff) {
         ScaleDamage(pDamageInfo, pDamageStatTableRecord);
@@ -3714,6 +3749,8 @@ static bool showLootMenu = false;
 static bool showHotkeyMenu = false;
 static bool showGrailMenu = false;
 static bool showCameraMenu = false;
+static bool showFloatingDamageMenu = false;
+static void ShowFloatingDamageMenu();
 static bool showSettingsPanel = false;
 static std::string s_UITheme = "Default";
 // Per-slot image override: s_UIColorImageOverrides[i] = filename from D2RHUD_Images (empty = use color only)
@@ -3966,7 +4003,7 @@ void EnableAllInput() {
 }
 
 bool D2RHUD::IsAnyMenuOpen() {
-    return showGrailMenu || showHotkeyMenu || showLootMenu || showD2RHUDMenu || showCameraMenu;
+    return showGrailMenu || showHotkeyMenu || showLootMenu || showD2RHUDMenu || showCameraMenu || showFloatingDamageMenu;
 }
 
 bool D2RHUD::TryCloseMenuOnEscape()
@@ -3975,6 +4012,7 @@ bool D2RHUD::TryCloseMenuOnEscape()
     if (showGrailMenu) { showGrailMenu = false; return true; }
     if (showLootMenu) { showLootMenu = false; return true; }
     if (showCameraMenu) { showCameraMenu = false; return true; }
+    if (showFloatingDamageMenu) { showFloatingDamageMenu = false; return true; }
     if (showD2RHUDMenu) { showD2RHUDMenu = false; return true; }
     if (showSettingsPanel) { showSettingsPanel = false; return true; }
     if (showHUDSettingsMenu) { showHUDSettingsMenu = false; return true; }
@@ -5445,6 +5483,10 @@ void LoadD2RHUDConfig(const std::string& path)
         d2rHUDConfig.TransmogVisuals = j.value("TransmogVisuals", d2rHUDConfig.TransmogVisuals);
         d2rHUDConfig.ExtendedItemcodes = j.value("ExtendedItemcodes", d2rHUDConfig.ExtendedItemcodes);
         d2rHUDConfig.FloatingDamage = j.value("FloatingDamage", d2rHUDConfig.FloatingDamage);
+        FloatingDamage::LoadFromJson(j);
+        d2rHUDConfig.FloatingDamage = FloatingDamage::GetConfig().enabled;
+        settings.FloatingDamage = d2rHUDConfig.FloatingDamage;
+        cachedSettings.FloatingDamage = d2rHUDConfig.FloatingDamage;
 
         if (j.contains("DLLsToLoad"))
             d2rHUDConfig.DLLsToLoad = j["DLLsToLoad"].get<std::vector<std::string>>();
@@ -5730,7 +5772,8 @@ bool SaveFullGrailConfig(const std::string& userPath, bool isAutoBackup)
         j["CombatLog"] = d2rHUDConfig.CombatLog;
         j["TransmogVisuals"] = d2rHUDConfig.TransmogVisuals;
         j["ExtendedItemcodes"] = d2rHUDConfig.ExtendedItemcodes;
-        j["FloatingDamage"] = d2rHUDConfig.FloatingDamage;
+        FloatingDamage::GetConfig().enabled = d2rHUDConfig.FloatingDamage;
+        FloatingDamage::SaveToJson(j);
         j["Options"] = ordered_json{
             {"Base Codes", showBaseCodes},
             {"Base Names", showBaseNames},
@@ -5861,10 +5904,10 @@ bool SaveFullGrailConfig(const std::string& userPath, bool isAutoBackup)
         outFile << ",\n    \"Commands\": {\n";
         EnsureCustomCommandSlots();
         ordered_json commands;
-        commands["Startup Commands"] = g_StartupCommands;
-        commands["Custom Commands"] = ordered_json::array();
+            commands["Startup Commands"] = g_StartupCommands;
+            commands["Custom Commands"] = ordered_json::array();
         for (const auto& cmd : g_CommandHotkeys)
-            commands["Custom Commands"].push_back(ordered_json{ {"Key", cmd.key}, {"Command", cmd.command} });
+                commands["Custom Commands"].push_back(ordered_json{ {"Key", cmd.key}, {"Command", cmd.command} });
 
         if (commands.contains("Startup Commands"))
             outFile << "        \"Startup Commands\": \"" << EscapeJsonStringForConfig(commands["Startup Commands"].get<std::string>()) << "\",\n";
@@ -6012,6 +6055,9 @@ void ApplyModOverrides(const std::string& modName)
 
     settings.sunderedMonUMods = d2rHUDConfig.SunderedMonUMods;
     settings.SunderValue = d2rHUDConfig.SunderValue;
+    settings.FloatingDamage = d2rHUDConfig.FloatingDamage;
+    cachedSettings.FloatingDamage = d2rHUDConfig.FloatingDamage;
+    FloatingDamage::GetConfig().enabled = d2rHUDConfig.FloatingDamage;
 }
 
 const LockedValueInfo* GetLockInfo(const std::string& modName, const LockedValueInfo ModOverrideSettings::* field)
@@ -9550,7 +9596,13 @@ void ShowD2RHUDMenu()
         drawCheckbox("Combat Log", &d2rHUDConfig.CombatLog, "Combat Log", "- Displays real-time combat logs in system chat\n    - RNG rolls for Hit, Block and Dodge results\n    - Elemental Type, +DMG%, Length and Final Damage\n    - Remaining Monster Health\n- Uses data retrieved directly from the game for accuracy\n\n", "This feature is also utilized by the 'attackinfo 1' cheat\nExpect formatting and usage to adapt over time", GetLockInfo(modName, &ModOverrideSettings::CombatLog));
         drawCheckbox("Transmog Visuals", &d2rHUDConfig.TransmogVisuals, "Transmog Visuals", "- Allows you to transform visuals of applicable items\n(Make your Hand Axe look like a Short Sword, etc)\n- Requires mod to provide items/sets/uniques.json\n- Mod Author decides all transmog possibilities\n- Applies both in-game and at the main menu\n\n", "Currently only basic status text is added to the item\nExpect it to include the target item name in the future", GetLockInfo(modName, &ModOverrideSettings::TransmogVisuals));
         drawCheckbox("Extended Itemcodes", &d2rHUDConfig.ExtendedItemcodes, "Extended Itemcodes", "- Allows you to use 4-length item codes\n(Such as ic69, twrk, 1337, etc)\n- Without this, 4-length item codes will have no visuals\n- Visuals are applied to both inventory and world views\n\n", "Currently requires the Transmog Visuals option to be enabled", GetLockInfo(modName, &ModOverrideSettings::ExtendedItemcodes));
-        drawCheckbox("Floating Damage (Beta)", &d2rHUDConfig.FloatingDamage, "Floating Damage (Beta)", "- Displays floating damage values in-game\n(Currently in beta, quirks are almost guaranteed)\n- Uses data retrieved directly from game for accuracy\n- Value displayed is after any +element dmg%\n\n", "Expect more options and aesthetic improvements over time", GetLockInfo(modName, &ModOverrideSettings::FloatingDamage));
+        drawCheckbox("Floating Damage", &d2rHUDConfig.FloatingDamage, "Floating Damage", "- Displays floating damage values above monsters\n- Coalesces rapid ticks (poison, fire, etc.)\n- Optional DPS meter with rolling window\n- Customize appearance in the Floating Damage menu\n\n", "Enable or disable floating damage display", GetLockInfo(modName, &ModOverrideSettings::FloatingDamage));
+        if (ImGui::IsItemDeactivatedAfterEdit())
+        {
+            FloatingDamage::GetConfig().enabled = d2rHUDConfig.FloatingDamage;
+            settings.FloatingDamage = d2rHUDConfig.FloatingDamage;
+            cachedSettings.FloatingDamage = d2rHUDConfig.FloatingDamage;
+        }
         drawCheckbox("HP Rollover Mods", &d2rHUDConfig.HPRolloverMods, "HP Rollover Mods", "- Prevents HP rollovers on high player counts by:\n- Capping the maximum health bonus % applied to monsters\n- Applying damage reduction logic to the Player\n- Scales Reduction % by the calculated rollover amount\n\n", "This feature cannot guarantee no rollovers\nHowever, it should work for mods with retail-ish values", GetLockInfo(modName, &ModOverrideSettings::HPRolloverMods));
 
         // --- HPRolloverDifficulty ---
@@ -10290,6 +10342,11 @@ void ShowMainMenu()
         ShowCameraMenu();
         if (ImGui::IsItemHovered()) { descriptionTitle = "Camera Controls"; descriptionText = "Modify the in-game camera angles and zoom\n\n- Scans memory to find camera control values\n- Angle/zoom scans required for every fresh session\n- Future versions likely to include more automation/controls"; }
 
+        if (ThemeButton("Floating Damage", ImVec2(buttonWidth, buttonHeight)))
+            showFloatingDamageMenu = true;
+        ShowFloatingDamageMenu();
+        if (ImGui::IsItemHovered()) { descriptionTitle = "Floating Damage"; descriptionText = "Customize floating damage display and DPS meter\n\n- Pop/fade animations, hit combining, and spread columns\n- Enable or disable in D2RHUD Options"; }
+
         if (fontSize) ImGui::PopFont();
 
         // Vertical separator + Description Panel (on 4K, move description down ~300px so it isn't shifted too high)
@@ -10557,69 +10614,1261 @@ void __fastcall HookedDropTCTest(D2GameStrc* pGame, D2UnitStrc* pMonster, D2Unit
 
 #pragma region Floating Damage
 
-struct FloatingDamage
-{
-    std::string text;
-    float offsetX;
-    float offsetY;
-    float displayIndex;
-    std::chrono::steady_clock::time_point spawnTime;
-    float invLifetime;
-    ImVec2 textSize;
-};
+static ImVec2 g_LastDisplaySize = ImVec2(1920.0f, 1080.0f);
+static bool g_DamageInfoHookInstalled = false;
 
-std::vector<FloatingDamage> g_FloatingDamageList;
 typedef void(__fastcall* DamageInfo_t)(void* param1, D2UnitStrc* attacker, D2UnitStrc* target, int damage, int param5, void* param6, int param7, void* param8, char param9, void* param10);
-DamageInfo_t oDamageInfo = reinterpret_cast<DamageInfo_t>(Pattern::Address(0x27ab90));
+DamageInfo_t oDamageInfo = nullptr;
 
-void __fastcall Hooked_DamageInfo(void* param1, D2UnitStrc* attacker, D2UnitStrc* target, int baseDamage, int param5, void* param6, int finalDamage, void* param8, char param9, void* param10)
+static bool IsFloatingDamageActive()
 {
-    int actualDamage = finalDamage >> 8;
-    oDamageInfo(param1, attacker, target, baseDamage, param5, param6, finalDamage, param8, param9, param10);
+    return d2rHUDConfig.FloatingDamage || settings.FloatingDamage || cachedSettings.FloatingDamage;
+}
 
-    if (!attacker || !attacker->pDynamicPath || !target || !target->pDynamicPath)
+void __fastcall Hooked_DamageInfo(void* param1, D2UnitStrc* attacker, D2UnitStrc* target, int baseDamage, int param5, void* param6, int finalDamage, void* param8, char param9, void* param10);
+
+static bool LooksLikeGamePointer(const void* ptr)
+{
+    const uintptr_t addr = reinterpret_cast<uintptr_t>(ptr);
+    return addr >= 0x10000;
+}
+
+static bool IsCommittedReadableMemory(const void* address, size_t size)
+{
+    if (!LooksLikeGamePointer(address) || size == 0)
+        return false;
+
+    const uint8_t* cursor = static_cast<const uint8_t*>(address);
+    const uint8_t* end = cursor + size;
+
+    while (cursor < end)
+    {
+        MEMORY_BASIC_INFORMATION mbi{};
+        if (VirtualQuery(cursor, &mbi, sizeof(mbi)) == 0)
+            return false;
+        if (mbi.State != MEM_COMMIT)
+            return false;
+        if (mbi.Protect & (PAGE_NOACCESS | PAGE_GUARD))
+            return false;
+
+        const uint8_t* regionEnd = static_cast<const uint8_t*>(mbi.BaseAddress) + mbi.RegionSize;
+        if (regionEnd <= cursor)
+            return false;
+
+        cursor = regionEnd;
+    }
+
+    return true;
+}
+
+static bool SafeReadShortString(const char* src, char* dst, size_t dstSize)
+{
+    if (!src || !dst || dstSize == 0 || !LooksLikeGamePointer(src))
+        return false;
+
+    __try
+    {
+        for (size_t i = 0; i + 1 < dstSize; ++i)
+        {
+            const char c = src[i];
+            dst[i] = c;
+            if (c == '\0')
+                return true;
+        }
+        dst[dstSize - 1] = '\0';
+        return true;
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER)
+    {
+        if (dstSize > 0)
+            dst[0] = '\0';
+        return false;
+    }
+}
+
+static bool NameEqualsI(const char* value, const char* token)
+{
+    return value && token && _stricmp(value, token) == 0;
+}
+
+static bool NameContainsI(const char* value, const char* token)
+{
+    if (!value || !token || !token[0])
+        return false;
+
+    const size_t tokenLen = strlen(token);
+    if (tokenLen == 0)
+        return false;
+
+    for (const char* cursor = value; *cursor; ++cursor)
+    {
+        if (_strnicmp(cursor, token, tokenLen) == 0)
+            return true;
+    }
+    return false;
+}
+
+static FloatingDamage::Element ElementFromDamageTypeName(const char* name)
+{
+    if (!name || !name[0])
+        return FloatingDamage::Element::Physical;
+
+    if (NameEqualsI(name, "Fire") || NameEqualsI(name, "Burn"))
+        return FloatingDamage::Element::Fire;
+    if (NameEqualsI(name, "Lightning") || NameEqualsI(name, "Ltng") || NameEqualsI(name, "Light") || NameEqualsI(name, "ligt"))
+        return FloatingDamage::Element::Lightning;
+    if (NameEqualsI(name, "Cold"))
+        return FloatingDamage::Element::Cold;
+    if (NameEqualsI(name, "Poison") || NameEqualsI(name, "Pois") || NameEqualsI(name, "pois"))
+        return FloatingDamage::Element::Poison;
+    if (NameEqualsI(name, "Magic") || NameEqualsI(name, "Mag") || NameEqualsI(name, "magc"))
+        return FloatingDamage::Element::Magic;
+    if (NameEqualsI(name, "Physical") || NameEqualsI(name, "Phys") || NameEqualsI(name, "Attack"))
+        return FloatingDamage::Element::Physical;
+
+    if (NameContainsI(name, "POISON:") || NameContainsI(name, " poison damage"))
+        return FloatingDamage::Element::Poison;
+
+    if (NameContainsI(name, "ligt") || NameContainsI(name, "Lightning") || NameContainsI(name, "Ltng"))
+        return FloatingDamage::Element::Lightning;
+    if (NameContainsI(name, "Fire"))
+        return FloatingDamage::Element::Fire;
+    if (NameContainsI(name, "Cold"))
+        return FloatingDamage::Element::Cold;
+    if (NameContainsI(name, "pois") || NameContainsI(name, "Poison"))
+        return FloatingDamage::Element::Poison;
+    if (NameContainsI(name, "magc") || NameContainsI(name, "Magic"))
+        return FloatingDamage::Element::Magic;
+
+    return FloatingDamage::Element::Physical;
+}
+
+static FloatingDamage::Element ElementFromReductionType(int32_t type)
+{
+    switch (type)
+    {
+    case 1: return FloatingDamage::Element::Fire;
+    case 2: return FloatingDamage::Element::Lightning;
+    case 3: return FloatingDamage::Element::Cold;
+    case 4: return FloatingDamage::Element::Poison;
+    case 5: return FloatingDamage::Element::Magic;
+    case 0:
+    default: return FloatingDamage::Element::Physical;
+    }
+}
+
+static FloatingDamage::Element ElementFromTypeIndex(int index)
+{
+    switch (index)
+    {
+    case 1: return FloatingDamage::Element::Fire;
+    case 2: return FloatingDamage::Element::Lightning;
+    case 3: return FloatingDamage::Element::Cold;
+    case 4: return FloatingDamage::Element::Poison;
+    case 5: return FloatingDamage::Element::Magic;
+    case 0:
+    default: return FloatingDamage::Element::Physical;
+    }
+}
+
+static bool SafeReadShortWideStringToUtf8(const wchar_t* src, char* dst, size_t dstSize)
+{
+    if (!src || !dst || dstSize == 0 || !LooksLikeGamePointer(src))
+        return false;
+
+    __try
+    {
+        wchar_t buffer[128]{};
+        for (size_t i = 0; i + 1 < 128; ++i)
+        {
+            buffer[i] = src[i];
+            if (src[i] == L'\0')
+                break;
+        }
+
+        const int written = WideCharToMultiByte(CP_UTF8, 0, buffer, -1, dst, static_cast<int>(dstSize), nullptr, nullptr);
+        return written > 0;
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER)
+    {
+        if (dstSize > 0)
+            dst[0] = '\0';
+        return false;
+    }
+}
+
+static bool SafeReadBlzString(const blz_string* src, char* dst, size_t dstSize)
+{
+    if (!src || !dst || dstSize == 0 || !LooksLikeGamePointer(src))
+        return false;
+    if (!IsCommittedReadableMemory(src, sizeof(blz_string)))
+        return false;
+
+    __try
+    {
+        const char* text = src->str;
+        if (!text || !LooksLikeGamePointer(text))
+        {
+            if (src->length > 0 && src->length < sizeof(src->data))
+                text = src->data;
+            else
+                return false;
+        }
+
+        return SafeReadShortString(text, dst, dstSize);
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER)
+    {
+        if (dstSize > 0)
+            dst[0] = '\0';
+        return false;
+    }
+}
+
+static bool TextLooksLikeDamageType(const char* text)
+{
+    if (!text || !text[0])
+        return false;
+
+    return NameEqualsI(text, "Physical") ||
+        NameEqualsI(text, "Phys") ||
+        NameEqualsI(text, "Attack") ||
+        NameEqualsI(text, "ligt") ||
+        NameEqualsI(text, "magc") ||
+        NameEqualsI(text, "pois") ||
+        NameContainsI(text, "POISON:") ||
+        NameContainsI(text, " poison damage") ||
+        NameContainsI(text, "Fire") ||
+        NameContainsI(text, "Cold") ||
+        NameContainsI(text, "Lightning") ||
+        NameContainsI(text, "Light") ||
+        NameContainsI(text, "Ltng") ||
+        NameContainsI(text, "ligt") ||
+        NameContainsI(text, "Poison") ||
+        NameContainsI(text, "pois") ||
+        NameContainsI(text, "Magic") ||
+        NameContainsI(text, "magc") ||
+        NameContainsI(text, "Burn");
+}
+
+static FloatingDamage::Element TryElementFromReadableText(const char* text)
+{
+    if (!TextLooksLikeDamageType(text))
+        return FloatingDamage::Element::Physical;
+
+    return ElementFromDamageTypeName(text);
+}
+
+static FloatingDamage::Element TryElementFromStringCandidate(const void* candidate)
+{
+    if (!candidate || !LooksLikeGamePointer(candidate))
+        return FloatingDamage::Element::Physical;
+
+    char text[256]{};
+
+    if (SafeReadShortString(static_cast<const char*>(candidate), text, sizeof(text)))
+    {
+        const FloatingDamage::Element element = TryElementFromReadableText(text);
+        if (element != FloatingDamage::Element::Physical)
+            return element;
+    }
+
+    if (SafeReadShortWideStringToUtf8(static_cast<const wchar_t*>(candidate), text, sizeof(text)))
+    {
+        const FloatingDamage::Element element = TryElementFromReadableText(text);
+        if (element != FloatingDamage::Element::Physical)
+            return element;
+    }
+
+    if (SafeReadBlzString(static_cast<const blz_string*>(candidate), text, sizeof(text)))
+    {
+        const FloatingDamage::Element element = TryElementFromReadableText(text);
+        if (element != FloatingDamage::Element::Physical)
+            return element;
+    }
+
+    if (IsCommittedReadableMemory(candidate, sizeof(void*)))
+    {
+        __try
+        {
+            const char* indirect = *static_cast<const char* const*>(candidate);
+            if (indirect && SafeReadShortString(indirect, text, sizeof(text)))
+            {
+                const FloatingDamage::Element element = TryElementFromReadableText(text);
+                if (element != FloatingDamage::Element::Physical)
+                    return element;
+            }
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+        }
+    }
+
+    return FloatingDamage::Element::Physical;
+}
+
+static FloatingDamage::Element TryElementFromStatTable(const D2DamageStatTableStrc* pTable)
+{
+    if (!pTable)
+        return FloatingDamage::Element::Physical;
+
+    char typeName[32]{};
+    if (pTable->szName && SafeReadShortString(pTable->szName, typeName, sizeof(typeName)))
+    {
+        const FloatingDamage::Element fromName = ElementFromDamageTypeName(typeName);
+        if (fromName != FloatingDamage::Element::Physical ||
+            NameEqualsI(typeName, "Physical") ||
+            NameEqualsI(typeName, "Phys") ||
+            NameEqualsI(typeName, "Attack"))
+        {
+            return fromName;
+        }
+    }
+
+    return ElementFromReductionType(pTable->nDamageReductionType);
+}
+
+static const char* AdvancePastColorCodes(const char* text)
+{
+    while (text && *text)
+    {
+        if (static_cast<unsigned char>(text[0]) == 0xFF && text[1] == 'c' && text[2])
+        {
+            text += 3;
+            continue;
+        }
+        break;
+    }
+    return text;
+}
+
+static const char* FindCaseInsensitive(const char* haystack, const char* needle)
+{
+    if (!haystack || !needle || !needle[0])
+        return nullptr;
+
+    const size_t needleLen = strlen(needle);
+    for (const char* cursor = haystack; *cursor; ++cursor)
+    {
+        if (_strnicmp(cursor, needle, needleLen) == 0)
+            return cursor;
+    }
+    return nullptr;
+}
+
+static D2GameStrc* GetActiveGame()
+{
+    D2Client* pGameClient = GetClientPtr();
+    if (!pGameClient)
+        return nullptr;
+
+    return reinterpret_cast<D2GameStrc*>(pGameClient->pGame);
+}
+
+static bool TryReadTextCandidate(const void* candidate, char* dst, size_t dstSize)
+{
+    if (!candidate || !dst || dstSize == 0 || !LooksLikeGamePointer(candidate))
+        return false;
+
+    if (SafeReadShortString(static_cast<const char*>(candidate), dst, dstSize) && dst[0])
+        return true;
+
+    if (SafeReadShortWideStringToUtf8(static_cast<const wchar_t*>(candidate), dst, dstSize) && dst[0])
+        return true;
+
+    if (SafeReadBlzString(static_cast<const blz_string*>(candidate), dst, dstSize) && dst[0])
+        return true;
+
+    return false;
+}
+
+static void CollectHookCombatText(void* param1, void* param6, void* param8, void* param10, char* dst, size_t dstSize)
+{
+    if (!dst || dstSize == 0)
         return;
+
+    dst[0] = '\0';
+
+    const void* candidates[] = { param8, param10, param6, param1 };
+    for (const void* candidate : candidates)
+    {
+        char text[512]{};
+        if (!TryReadTextCandidate(candidate, text, sizeof(text)))
+            continue;
+
+        if (!dst[0] || strlen(text) > strlen(dst))
+            strncpy_s(dst, dstSize, text, _TRUNCATE);
+    }
+}
+
+static int ParseCombatLogDamageAmount(const char* text)
+{
+    if (!text || !text[0])
+        return 0;
+
+    const char* dmgLabel = FindCaseInsensitive(text, " poison damage");
+    if (dmgLabel && dmgLabel > text)
+    {
+        const char* cursor = dmgLabel;
+        while (cursor > text && cursor[-1] == ' ')
+            --cursor;
+
+        int amount = 0;
+        int multiplier = 1;
+        while (cursor > text && cursor[-1] >= '0' && cursor[-1] <= '9')
+        {
+            amount += (cursor[-1] - '0') * multiplier;
+            multiplier *= 10;
+            --cursor;
+        }
+
+        if (amount > 0)
+            return amount;
+    }
+
+    const char* cursor = text;
+    while ((cursor = FindCaseInsensitive(cursor, "takes")) != nullptr)
+    {
+        cursor += 5;
+        for (int attempt = 0; attempt < 8 && *cursor; ++attempt)
+        {
+            cursor = AdvancePastColorCodes(cursor);
+            while (*cursor == ' ')
+                ++cursor;
+
+            if (*cursor >= '0' && *cursor <= '9')
+            {
+                int amount = 0;
+                while (*cursor >= '0' && *cursor <= '9')
+                {
+                    amount = (amount * 10) + (*cursor - '0');
+                    ++cursor;
+                }
+
+                if (amount > 0)
+                    return amount;
+            }
+
+            if (static_cast<unsigned char>(*cursor) == 0xFF && cursor[1] == 'c' && cursor[2])
+                cursor += 3;
+            else if (*cursor)
+                ++cursor;
+        }
+    }
+
+    return 0;
+}
+
+static bool ExtractBracketedName(const char* text, char* out, size_t outSize)
+{
+    if (!text || !out || outSize == 0)
+        return false;
+
+    const char* open = strchr(text, '[');
+    if (!open)
+        return false;
+
+    ++open;
+    const char* close = strchr(open, ']');
+    if (!close || close <= open)
+        return false;
+
+    const size_t length = static_cast<size_t>(close - open);
+    if (length == 0 || length >= outSize)
+        return false;
+
+    memcpy(out, open, length);
+    out[length] = '\0';
+    return true;
+}
+
+static const char* StripLeadingColorCodes(const char* text, char* scratch, size_t scratchSize)
+{
+    if (!text)
+        return "";
+
+    strncpy_s(scratch, scratchSize, text, _TRUNCATE);
+    char* cursor = scratch;
+    while (*cursor)
+    {
+        char* next = cursor;
+        if (static_cast<unsigned char>(*next) == 0xFF && next[1] == 'c' && next[2])
+            next += 3;
+        if (next == cursor)
+            break;
+        cursor = next;
+    }
+
+    return cursor;
+}
+
+static bool UnitNameMatches(const char* unitName, const char* bracketName)
+{
+    char strippedUnit[128]{};
+    char strippedBracket[128]{};
+    const char* lhs = StripLeadingColorCodes(unitName, strippedUnit, sizeof(strippedUnit));
+    const char* rhs = StripLeadingColorCodes(bracketName, strippedBracket, sizeof(strippedBracket));
+
+    if (!lhs[0] || !rhs[0])
+        return false;
+
+    return _stricmp(lhs, rhs) == 0 || NameContainsI(lhs, rhs) || NameContainsI(rhs, lhs);
+}
+
+static D2UnitStrc* FindClientMonsterByDisplayName(const char* displayName)
+{
+    if (!displayName || !displayName[0])
+        return nullptr;
+
+    auto* ppClientUnitList = reinterpret_cast<D2UnitStrc**>(Pattern::Address(unitDataOffset));
+    if (!ppClientUnitList)
+        return nullptr;
+
+    D2UnitStrc** ppMonsterList = &ppClientUnitList[UNIT_MONSTER * 0x80];
+    for (int bucket = 0; bucket < 0x80; ++bucket)
+    {
+        for (D2UnitStrc* pUnit = ppMonsterList[bucket]; pUnit; pUnit = pUnit->pListNext)
+        {
+            if (!pUnit->pDynamicPath)
+                continue;
+
+            char nameBuf[128]{};
+            const char* unitName = GetUnitName(reinterpret_cast<uint64_t>(pUnit), nameBuf);
+            if (!unitName || !unitName[0])
+                unitName = nameBuf;
+
+            if (UnitNameMatches(unitName, displayName))
+                return pUnit;
+        }
+    }
+
+    return nullptr;
+}
+
+static bool ComputeScreenPositionForTarget(D2UnitStrc* attacker, D2UnitStrc* target, float& screenX, float& screenY)
+{
+    if (!target || !target->pDynamicPath)
+        return false;
+
+    if (!attacker || !attacker->pDynamicPath)
+        attacker = target;
 
     D2DynamicPathStrc* a = attacker->pDynamicPath;
     D2DynamicPathStrc* t = target->pDynamicPath;
 
-    // Subtile Positions
     constexpr float INV_SUBTILE = 1.0f / 65536.0f;
 
-    float ax = a->wPosX + a->wOffsetX * INV_SUBTILE;
-    float ay = a->wPosY + a->wOffsetY * INV_SUBTILE;
-    float tx = t->wPosX + t->wOffsetX * INV_SUBTILE;
-    float ty = t->wPosY + t->wOffsetY * INV_SUBTILE;
-    float dx = tx - ax;
-    float dy = ty - ay;
+    const float ax = a->wPosX + a->wOffsetX * INV_SUBTILE;
+    const float ay = a->wPosY + a->wOffsetY * INV_SUBTILE;
+    const float tx = t->wPosX + t->wOffsetX * INV_SUBTILE;
+    const float ty = t->wPosY + t->wOffsetY * INV_SUBTILE;
+    const float dx = tx - ax;
+    const float dy = ty - ay;
 
-    // Isometric Projection Offsets
-    float isoX = dx - dy;
-    float isoY = dx + dy;
-    float pixelOffsetX = 40.0f + isoX * 30.0f;
-    float pixelOffsetY = 120.0f + isoY * -12.5f;
+    const float isoX = dx - dy;
+    const float isoY = dx + dy;
+    const float pixelOffsetX = 40.0f + isoX * 30.0f;
+    const float pixelOffsetY = 120.0f + isoY * -12.5f;
 
-    // Value Properties
-    constexpr float DAMAGE_LIFETIME = 2.0f;
+    screenX = g_LastDisplaySize.x * 0.5f + pixelOffsetX;
+    screenY = g_LastDisplaySize.y * 0.5f - pixelOffsetY;
+    return true;
+}
 
-    FloatingDamage dmg;
-    dmg.text = std::to_string(actualDamage);
-    dmg.offsetX = pixelOffsetX;
-    dmg.offsetY = pixelOffsetY;
-    dmg.spawnTime = std::chrono::steady_clock::now();
-    dmg.invLifetime = 1.0f / DAMAGE_LIFETIME;
-    dmg.textSize = ImGui::CalcTextSize(dmg.text.c_str());
-    dmg.displayIndex = (float)g_FloatingDamageList.size();
-    g_FloatingDamageList.push_back(dmg);
+static std::unordered_map<uint64_t, std::pair<FloatingDamage::Element, std::chrono::steady_clock::time_point>> g_targetElementCache;
 
-    /*
-    // Debug
-    std::cout << std::fixed << std::setprecision(3)
-        << "[DamageHook] Dmg:" << actualDamage
-        << " Î”(" << dx << "," << dy << ")"
-        << " ISO(" << isoX << "," << isoY << ")"
-        << " Px(" << pixelOffsetX << "," << pixelOffsetY << ")\n";
-    */
+static D2UnitStrc* GetClientUnitByIdAndType(uint32_t unitId, uint32_t unitType)
+{
+    auto* ppClientUnitList = reinterpret_cast<D2UnitStrc**>(Pattern::Address(unitDataOffset));
+    if (!ppClientUnitList)
+        return nullptr;
+
+    D2UnitStrc** ppUnitList = &ppClientUnitList[unitType * 0x80];
+    D2UnitStrc* pUnit = ppUnitList[unitId & 0x7F];
+    while (pUnit && pUnit->dwUnitId != unitId)
+        pUnit = pUnit->pListNext;
+
+    return pUnit;
+}
+
+static bool ReadBlzStringMessage(const blz_string* msg, char* dst, size_t dstSize)
+{
+    if (!msg || !dst || dstSize == 0)
+        return false;
+
+    return SafeReadBlzString(msg, dst, dstSize);
+}
+
+static D2UnitStrc* FindCachedPoisonTarget()
+{
+    const auto now = std::chrono::steady_clock::now();
+
+    for (const auto& entry : g_targetElementCache)
+    {
+        if (entry.second.second <= now)
+            continue;
+        if (entry.second.first != FloatingDamage::Element::Poison)
+            continue;
+
+        const uint32_t unitType = static_cast<uint32_t>(entry.first >> 32);
+        const uint32_t unitId = static_cast<uint32_t>(entry.first & 0xFFFFFFFFu);
+        D2UnitStrc* pUnit = GetClientUnitByIdAndType(unitId, unitType);
+        if (pUnit && pUnit->pDynamicPath)
+            return pUnit;
+    }
+
+    return nullptr;
+}
+
+struct RecentDamageQueueEntry {
+    uint64_t targetKey = 0;
+    std::chrono::steady_clock::time_point queuedAt{};
+};
+
+static RecentDamageQueueEntry g_recentDamageQueue{};
+
+struct PoisonWatchEntry {
+    int32_t lastHpPoints = -1;
+};
+
+static std::unordered_map<uint64_t, PoisonWatchEntry> g_poisonWatch;
+static std::unordered_map<uint64_t, std::chrono::steady_clock::time_point> g_lastPoisonHookQueue;
+static std::unordered_map<uint64_t, std::chrono::steady_clock::time_point> g_lastNonPoisonDamageOnTarget;
+
+static uint64_t MakeTargetElementKey(uint32_t unitType, uint32_t unitId);
+static FloatingDamage::Element ResolveTargetElement(
+    FloatingDamage::Element detected,
+    uint32_t unitType,
+    uint32_t unitId);
+
+static void QueueTargetDamage(
+    int amount,
+    float screenX,
+    float screenY,
+    uint32_t unitType,
+    uint32_t unitId,
+    FloatingDamage::Kind kind,
+    FloatingDamage::Element element)
+{
+    if (amount <= 0)
+        return;
+
+    if (element != FloatingDamage::Element::Poison)
+    {
+        const uint64_t targetKey = MakeTargetElementKey(unitType, unitId);
+        const auto now = std::chrono::steady_clock::now();
+        if (g_recentDamageQueue.targetKey == targetKey &&
+            now - g_recentDamageQueue.queuedAt < std::chrono::milliseconds(20))
+        {
+            return;
+        }
+
+        g_recentDamageQueue = { targetKey, now };
+        g_lastNonPoisonDamageOnTarget[targetKey] = now;
+        SyncPoisonWatchHp(unitType, unitId);
+    }
+
+    FloatingDamage::QueueGameDamage(amount, screenX, screenY, unitType, unitId, kind, element);
+}
+
+static std::pair<uint32_t, uint32_t> g_lastPoisonTarget{ UINT32_MAX, UINT32_MAX };
+
+static void TryQueuePoisonCombatMessage(const char* text, D2UnitStrc* targetOverride)
+{
+    if (!text || !text[0])
+        return;
+
+    if (!FindCaseInsensitive(text, "POISON:") && !FindCaseInsensitive(text, " poison damage"))
+        return;
+
+    const int amount = ParseCombatLogDamageAmount(text);
+    if (amount <= 0)
+        return;
+
+    D2UnitStrc* target = targetOverride;
+    if (!target)
+    {
+        char bracketName[128]{};
+        if (ExtractBracketedName(text, bracketName, sizeof(bracketName)))
+            target = FindClientMonsterByDisplayName(bracketName);
+    }
+
+    if (!target)
+        target = GetClientUnitByIdAndType(g_lastPoisonTarget.second, g_lastPoisonTarget.first);
+
+    if (!target)
+        target = FindCachedPoisonTarget();
+
+    if (!target || !target->pDynamicPath)
+        return;
+
+    g_lastPoisonTarget = { target->dwUnitType, target->dwUnitId };
+
+    float screenX = 0.0f;
+    float screenY = 0.0f;
+    if (!ComputeScreenPositionForTarget(target, target, screenX, screenY))
+        return;
+
+    const FloatingDamage::Element element = ResolveTargetElement(
+        FloatingDamage::Element::Poison,
+        target->dwUnitType,
+        target->dwUnitId);
+
+    QueuePoisonDamageEvent(
+        amount,
+        screenX,
+        screenY,
+        target->dwUnitType,
+        target->dwUnitId,
+        element);
+}
+
+static FloatingDamage::Element DetectDamageElement(void* param1, int param5, void* param6, void* param8, void* param10)
+{
+    char combatText[512]{};
+    CollectHookCombatText(param1, param6, param8, param10, combatText, sizeof(combatText));
+    if (combatText[0])
+    {
+        const FloatingDamage::Element fromCombat = ElementFromDamageTypeName(combatText);
+        if (fromCombat != FloatingDamage::Element::Physical)
+            return fromCombat;
+    }
+
+    const FloatingDamage::Element fromParam8 = TryElementFromStringCandidate(param8);
+    if (fromParam8 != FloatingDamage::Element::Physical)
+        return fromParam8;
+
+    const FloatingDamage::Element fromParam6Text = TryElementFromStringCandidate(param6);
+    if (fromParam6Text != FloatingDamage::Element::Physical)
+        return fromParam6Text;
+
+    if (param6 && LooksLikeGamePointer(param6) &&
+        IsCommittedReadableMemory(param6, sizeof(D2DamageStatTableStrc)))
+    {
+        __try
+        {
+            const auto* pTable = reinterpret_cast<const D2DamageStatTableStrc*>(param6);
+            const FloatingDamage::Element fromTable = TryElementFromStatTable(pTable);
+            if (fromTable != FloatingDamage::Element::Physical)
+                return fromTable;
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+        }
+    }
+    else if (param6 && !LooksLikeGamePointer(param6))
+    {
+        const int typeIndex = static_cast<int>(reinterpret_cast<intptr_t>(param6));
+        if (typeIndex >= 0 && typeIndex <= 16)
+        {
+            const FloatingDamage::Element fromIndex = ElementFromTypeIndex(typeIndex);
+            if (fromIndex != FloatingDamage::Element::Physical)
+                return fromIndex;
+        }
+    }
+
+    if (param5 >= 0 && param5 <= 16)
+    {
+        const FloatingDamage::Element fromParam5 = ElementFromTypeIndex(param5);
+        if (fromParam5 != FloatingDamage::Element::Physical)
+            return fromParam5;
+    }
+
+    const FloatingDamage::Element fromParam10 = TryElementFromStringCandidate(param10);
+    if (fromParam10 != FloatingDamage::Element::Physical)
+        return fromParam10;
+
+    const FloatingDamage::Element fromParam1 = TryElementFromStringCandidate(param1);
+    if (fromParam1 != FloatingDamage::Element::Physical)
+        return fromParam1;
+
+    return FloatingDamage::Element::Physical;
+}
+
+static uint64_t MakeTargetElementKey(uint32_t unitType, uint32_t unitId)
+{
+    return (static_cast<uint64_t>(unitType) << 32) | static_cast<uint64_t>(unitId);
+}
+
+static FloatingDamage::Element ResolveTargetElement(
+    FloatingDamage::Element detected,
+    uint32_t unitType,
+    uint32_t unitId)
+{
+    const uint64_t key = MakeTargetElementKey(unitType, unitId);
+    const auto now = std::chrono::steady_clock::now();
+    constexpr auto kDoTElementCacheDuration = std::chrono::seconds(60);
+
+    if (detected != FloatingDamage::Element::Physical)
+    {
+        g_targetElementCache[key] = { detected, now + kDoTElementCacheDuration };
+        return detected;
+    }
+
+    const auto it = g_targetElementCache.find(key);
+    if (it != g_targetElementCache.end())
+    {
+        if (it->second.second > now)
+            return it->second.first;
+
+        g_targetElementCache.erase(it);
+    }
+
+    return FloatingDamage::Element::Physical;
+}
+
+static int32_t ReadUnitHpPoints(D2UnitStrc* pUnit)
+{
+    if (!pUnit)
+        return -1;
+
+    __try
+    {
+        return STATLIST_GetUnitStatSigned(pUnit, STAT_HITPOINTS, 0) >> 8;
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER)
+    {
+        return -1;
+    }
+}
+
+static int32_t ReadUnitHpPointsById(uint32_t unitType, uint32_t unitId, D2UnitStrc* pClientUnit)
+{
+    if (D2GameStrc* pGame = GetActiveGame())
+    {
+        D2UnitStrc* pServerUnit = UNITS_GetServerUnitByTypeAndId(
+            pGame,
+            static_cast<D2C_UnitTypes>(unitType),
+            unitId);
+        if (pServerUnit)
+        {
+            const int32_t serverHp = ReadUnitHpPoints(pServerUnit);
+            if (serverHp >= 0)
+                return serverHp;
+        }
+    }
+
+    return ReadUnitHpPoints(pClientUnit);
+}
+
+static void SyncPoisonWatchHp(uint32_t unitType, uint32_t unitId)
+{
+    D2UnitStrc* pUnit = GetClientUnitByIdAndType(unitId, unitType);
+    if (!pUnit)
+        return;
+
+    const uint64_t key = MakeTargetElementKey(unitType, unitId);
+    g_poisonWatch[key].lastHpPoints = ReadUnitHpPointsById(unitType, unitId, pUnit);
+}
+
+static bool IsTargetPoisonActive(uint32_t unitType, uint32_t unitId)
+{
+    const uint64_t key = MakeTargetElementKey(unitType, unitId);
+    const auto now = std::chrono::steady_clock::now();
+
+    const auto cacheIt = g_targetElementCache.find(key);
+    if (cacheIt != g_targetElementCache.end() &&
+        cacheIt->second.first == FloatingDamage::Element::Poison &&
+        cacheIt->second.second > now)
+    {
+        return true;
+    }
+
+    D2UnitStrc* pUnit = GetClientUnitByIdAndType(unitId, unitType);
+    if (!pUnit)
+        return g_poisonWatch.find(key) != g_poisonWatch.end();
+
+    __try
+    {
+        if (STATLIST_GetUnitStatSigned(pUnit, STAT_POISON_COUNT, 0) > 0)
+            return true;
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER)
+    {
+    }
+
+    return g_poisonWatch.find(key) != g_poisonWatch.end();
+}
+
+static void QueuePoisonDamageEvent(
+    int amount,
+    float screenX,
+    float screenY,
+    uint32_t unitType,
+    uint32_t unitId,
+    FloatingDamage::Element element)
+{
+    if (!IsFloatingDamageActive() || amount <= 0)
+        return;
+
+    const uint64_t key = MakeTargetElementKey(unitType, unitId);
+    const auto now = std::chrono::steady_clock::now();
+    const auto recentHookIt = g_lastPoisonHookQueue.find(key);
+    if (recentHookIt != g_lastPoisonHookQueue.end() &&
+        now - recentHookIt->second < std::chrono::milliseconds(8))
+    {
+        return;
+    }
+
+    g_lastPoisonHookQueue[key] = now;
+    g_lastPoisonTarget = { unitType, unitId };
+    ResolveTargetElement(FloatingDamage::Element::Poison, unitType, unitId);
+    SyncPoisonWatchHp(unitType, unitId);
+
+    FloatingDamage::QueueGameDamage(
+        amount,
+        screenX,
+        screenY,
+        unitType,
+        unitId,
+        FloatingDamage::Kind::Normal,
+        element);
+}
+
+static void UpdatePoisonDoTWatch()
+{
+    if (!IsFloatingDamageActive())
+        return;
+
+    const auto now = std::chrono::steady_clock::now();
+    constexpr auto kHookGracePeriod = std::chrono::milliseconds(120);
+    constexpr auto kStaleWatchTimeout = std::chrono::seconds(3);
+
+    std::vector<uint64_t> keys;
+    keys.reserve(g_poisonWatch.size() + g_targetElementCache.size());
+    for (const auto& entry : g_poisonWatch)
+        keys.push_back(entry.first);
+    for (const auto& entry : g_targetElementCache)
+    {
+        if (entry.second.first == FloatingDamage::Element::Poison && entry.second.second > now)
+            keys.push_back(entry.first);
+    }
+
+    std::sort(keys.begin(), keys.end());
+    keys.erase(std::unique(keys.begin(), keys.end()), keys.end());
+
+    for (const uint64_t key : keys)
+    {
+        const uint32_t unitType = static_cast<uint32_t>(key >> 32);
+        const uint32_t unitId = static_cast<uint32_t>(key & 0xFFFFFFFFu);
+
+        D2UnitStrc* pUnit = GetClientUnitByIdAndType(unitId, unitType);
+        if (!pUnit || !pUnit->pDynamicPath)
+            continue;
+
+        if (!IsTargetPoisonActive(unitType, unitId))
+        {
+            const auto watchIt = g_poisonWatch.find(key);
+            if (watchIt != g_poisonWatch.end())
+            {
+                const auto lastHookIt = g_lastPoisonHookQueue.find(key);
+                if (lastHookIt == g_lastPoisonHookQueue.end() ||
+                    now - lastHookIt->second > kStaleWatchTimeout)
+                {
+                    g_poisonWatch.erase(watchIt);
+                }
+            }
+            continue;
+        }
+
+        const auto hookIt = g_lastPoisonHookQueue.find(key);
+        if (hookIt != g_lastPoisonHookQueue.end() && now - hookIt->second < kHookGracePeriod)
+        {
+            SyncPoisonWatchHp(unitType, unitId);
+            continue;
+        }
+
+        const auto nonPoisonIt = g_lastNonPoisonDamageOnTarget.find(key);
+        if (nonPoisonIt != g_lastNonPoisonDamageOnTarget.end() && now - nonPoisonIt->second < kHookGracePeriod)
+        {
+            SyncPoisonWatchHp(unitType, unitId);
+            continue;
+        }
+
+        const int32_t hp = ReadUnitHpPointsById(unitType, unitId, pUnit);
+        if (hp < 0)
+            continue;
+
+        PoisonWatchEntry& watch = g_poisonWatch[key];
+        if (watch.lastHpPoints >= 0 && hp < watch.lastHpPoints)
+        {
+            const int delta = watch.lastHpPoints - hp;
+            if (delta > 0)
+            {
+                float screenX = 0.0f;
+                float screenY = 0.0f;
+                if (ComputeScreenPositionForTarget(pUnit, pUnit, screenX, screenY))
+                {
+                    const FloatingDamage::Element element = ResolveTargetElement(
+                        FloatingDamage::Element::Poison,
+                        unitType,
+                        unitId);
+
+                    g_lastPoisonHookQueue[key] = now;
+                    FloatingDamage::QueueGameDamage(
+                        delta,
+                        screenX,
+                        screenY,
+                        unitType,
+                        unitId,
+                        FloatingDamage::Kind::Normal,
+                        element);
+                }
+            }
+        }
+
+        watch.lastHpPoints = hp;
+    }
+}
+
+static bool IsPoisonStatTableRecord(const D2DamageStatTableStrc* pTable)
+{
+    if (!pTable)
+        return false;
+
+    if (TryElementFromStatTable(pTable) == FloatingDamage::Element::Poison)
+        return true;
+
+    return pTable->nDamageReductionType == 4;
+}
+
+static int ReadPoisonDamageAmount(D2DamageInfoStrc* pDamageInfo, D2DamageStatTableStrc* pTable)
+{
+    if (pTable && pTable->pOffsetInDamageStrc &&
+        LooksLikeGamePointer(pTable->pOffsetInDamageStrc) &&
+        IsCommittedReadableMemory(pTable->pOffsetInDamageStrc, sizeof(int32_t)))
+    {
+        const int amount = *pTable->pOffsetInDamageStrc;
+        if (amount > 0)
+            return amount;
+    }
+
+    if (pDamageInfo && pDamageInfo->pDamage &&
+        LooksLikeGamePointer(pDamageInfo->pDamage) &&
+        IsCommittedReadableMemory(pDamageInfo->pDamage, sizeof(D2DamageStrc)))
+    {
+        return pDamageInfo->pDamage->dwPoisDamage;
+    }
+
+    return 0;
+}
+
+static void TryQueuePoisonDamageFromStatTable(D2DamageInfoStrc* pDamageInfo, D2DamageStatTableStrc* pDamageStatTableRecord)
+{
+    if (!IsFloatingDamageActive())
+        return;
+    if (!pDamageInfo || !pDamageStatTableRecord || !pDamageInfo->pDefender)
+        return;
+    if (!pDamageInfo->pDefender->pDynamicPath)
+        return;
+    if (!IsCommittedReadableMemory(pDamageStatTableRecord, sizeof(D2DamageStatTableStrc)))
+        return;
+
+    __try
+    {
+        if (!IsPoisonStatTableRecord(pDamageStatTableRecord))
+            return;
+
+        const int amount = ReadPoisonDamageAmount(pDamageInfo, pDamageStatTableRecord);
+        if (amount <= 0)
+            return;
+
+        D2UnitStrc* target = pDamageInfo->pDefender;
+        D2UnitStrc* attacker = pDamageInfo->pAttacker;
+
+        float screenX = 0.0f;
+        float screenY = 0.0f;
+        if (!ComputeScreenPositionForTarget(attacker, target, screenX, screenY))
+            return;
+
+        const FloatingDamage::Element resolved = ResolveTargetElement(
+            FloatingDamage::Element::Poison,
+            target->dwUnitType,
+            target->dwUnitId);
+
+        QueuePoisonDamageEvent(
+            amount,
+            screenX,
+            screenY,
+            target->dwUnitType,
+            target->dwUnitId,
+            resolved);
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER)
+    {
+    }
+}
+
+static void EnsureDamageInfoHook();
+static bool g_BroadcastChatHookInstalled = false;
+static bool g_ChatManagerHookInstalled = false;
+
+D2ChatManager* __fastcall Hooked_ChatManager_PushChatEntry(
+    D2ChatManager* pMgr,
+    blz_string& msg,
+    uint32_t color,
+    bool a4,
+    ChatMsg& typeMsg,
+    ChatOptionalStruct& a6,
+    ChatOptionalStruct& a7,
+    ChatOptionalStruct& a8,
+    ChatOptionalStruct& a9)
+{
+    if (IsFloatingDamageActive())
+    {
+        char text[512]{};
+        if (ReadBlzStringMessage(&msg, text, sizeof(text)))
+            TryQueuePoisonCombatMessage(text);
+    }
+
+    return oChatManager_PushChatEntry(pMgr, msg, color, a4, typeMsg, a6, a7, a8, a9);
+}
+
+static void EnsureChatManagerHook()
+{
+    if (g_ChatManagerHookInstalled || !oChatManager_PushChatEntry)
+        return;
+
+    DetourTransactionBegin();
+    DetourUpdateThread(GetCurrentThread());
+    DetourAttach(&(PVOID&)oChatManager_PushChatEntry, Hooked_ChatManager_PushChatEntry);
+    DetourTransactionCommit();
+    g_ChatManagerHookInstalled = true;
+}
+
+void __fastcall Hooked_BroadcastChatMessage(uint64_t pGame, const char* szMsg, uint8_t color)
+{
+    if (szMsg && IsFloatingDamageActive())
+    {
+        char text[512]{};
+        if (SafeReadShortString(szMsg, text, sizeof(text)))
+            TryQueuePoisonCombatMessage(text);
+    }
+
+    oBroadcastChatMessage(pGame, szMsg, color);
+}
+
+static void EnsureBroadcastChatHook()
+{
+    if (g_BroadcastChatHookInstalled || !oBroadcastChatMessage)
+        return;
+
+    DetourTransactionBegin();
+    DetourUpdateThread(GetCurrentThread());
+    DetourAttach(&(PVOID&)oBroadcastChatMessage, Hooked_BroadcastChatMessage);
+    DetourTransactionCommit();
+    g_BroadcastChatHookInstalled = true;
+}
+
+static void EnsureDamageInfoHook()
+{
+    if (g_DamageInfoHookInstalled)
+        return;
+
+    const uint64_t addr = Pattern::Address(0x27ab90);
+    if (!addr)
+        return;
+
+    oDamageInfo = reinterpret_cast<DamageInfo_t>(addr);
+
+    DetourTransactionBegin();
+    DetourUpdateThread(GetCurrentThread());
+    DetourAttach(&(PVOID&)oDamageInfo, Hooked_DamageInfo);
+    DetourTransactionCommit();
+    g_DamageInfoHookInstalled = true;
+
+    EnsureBroadcastChatHook();
+    EnsureChatManagerHook();
+    EnsureSunitdmHook();
+}
+
+void __fastcall Hooked_DamageInfo(void* param1, D2UnitStrc* attacker, D2UnitStrc* target, int baseDamage, int param5, void* param6, int finalDamage, void* param8, char param9, void* param10)
+{
+    char combatText[512]{};
+    CollectHookCombatText(param1, param6, param8, param10, combatText, sizeof(combatText));
+
+    const int actualDamage = finalDamage >> 8;
+    const int parsedDamage = ParseCombatLogDamageAmount(combatText);
+    const bool isPoisonCombat = FindCaseInsensitive(combatText, "POISON:") != nullptr ||
+        FindCaseInsensitive(combatText, " poison damage") != nullptr;
+    int displayDamage = actualDamage > 0 ? actualDamage : parsedDamage;
+    if (isPoisonCombat && parsedDamage > 0)
+        displayDamage = parsedDamage;
+    const FloatingDamage::Element detectedElement = DetectDamageElement(param1, param5, param6, param8, param10);
+
+    oDamageInfo(param1, attacker, target, baseDamage, param5, param6, finalDamage, param8, param9, param10);
+
+    if (!target || !target->pDynamicPath)
+        return;
+
+    if (isPoisonCombat && parsedDamage > 0)
+    {
+        TryQueuePoisonCombatMessage(combatText, target);
+        return;
+    }
+
+    if (displayDamage <= 0)
+        return;
+
+    if (!attacker || !attacker->pDynamicPath)
+        attacker = target;
+
+    const FloatingDamage::Element element = ResolveTargetElement(
+        detectedElement,
+        target->dwUnitType,
+        target->dwUnitId);
+
+    float screenX = 0.0f;
+    float screenY = 0.0f;
+    if (!ComputeScreenPositionForTarget(attacker, target, screenX, screenY))
+        return;
+
+    if (element == FloatingDamage::Element::Poison)
+    {
+        QueuePoisonDamageEvent(
+            displayDamage,
+            screenX,
+            screenY,
+            target->dwUnitType,
+            target->dwUnitId,
+            element);
+        return;
+    }
+
+    QueueTargetDamage(
+        displayDamage,
+        screenX,
+        screenY,
+        target->dwUnitType,
+        target->dwUnitId,
+        FloatingDamage::Kind::Normal,
+        element);
+}
+
+void ShowFloatingDamageMenu()
+{
+    static bool wasOpen = false;
+
+    if (!showFloatingDamageMenu)
+    {
+        if (wasOpen)
+            SaveFullGrailConfig(configFilePath, false);
+        wasOpen = false;
+        return;
+    }
+
+    wasOpen = true;
+
+    float menuScale = GetMenuScaleFactor();
+    ImVec2 windowSize = ImVec2(860.0f * menuScale, 820.0f * menuScale);
+    ImGui::SetNextWindowSize(windowSize, ImGuiCond_FirstUseEver);
+
+    if (ImGui::Begin("Floating Damage", &showFloatingDamageMenu, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoTitleBar))
+    {
+        DrawWindowTitleAndClose("Floating Damage", &showFloatingDamageMenu);
+        FloatingDamage::DrawSettingsPanel(menuScale);
+    }
+    ImGui::End();
 }
 
 #pragma endregion
@@ -10746,66 +11995,32 @@ void D2RHUD::OnDraw() {
         DetourTransactionCommit();
     }
 
-    if ((settings.HPRollover || cachedSettings.HPRollover || settings.sunderedMonUMods || cachedSettings.sunderedMonUMods) && !oSUNITDMG_ApplyResistancesAndAbsorb) {
-        DetourTransactionBegin();
-        DetourUpdateThread(GetCurrentThread());
-        oSUNITDMG_ApplyResistancesAndAbsorb = reinterpret_cast<SUNITDMG_ApplyResistancesAndAbsorb_t>(Pattern::Address(0x3253d0));
-        DetourAttach(&(PVOID&)oSUNITDMG_ApplyResistancesAndAbsorb, HookedSUNITDMG_ApplyResistancesAndAbsorb);
+    if ((settings.HPRollover || cachedSettings.HPRollover || settings.sunderedMonUMods || cachedSettings.sunderedMonUMods) && !g_SunitdmHookInstalled)
+        EnsureSunitdmHook();
 
-        if (settings.FloatingDamage || cachedSettings.FloatingDamage)
-            DetourAttach(&(PVOID&)oDamageInfo, Hooked_DamageInfo);
-
-        DetourTransactionCommit();
-    }
-
-    if (settings.FloatingDamage || cachedSettings.FloatingDamage)
-    {
-        // ================= Floating Damage Render =================
         {
             ImGuiIO& io = ImGui::GetIO();
-            auto drawList = ImGui::GetBackgroundDrawList();
-            ImVec2 screenSize = io.DisplaySize;
-            int fontIndex = 3;
-            ImFont* chosenFont = (fontIndex >= 0 && fontIndex < io.Fonts->Fonts.Size) ? io.Fonts->Fonts[fontIndex] : nullptr;
+        g_LastDisplaySize = io.DisplaySize;
 
-            if (chosenFont)
-                ImGui::PushFont(chosenFont);
+        const bool floatingDamageEnabled = IsFloatingDamageActive();
+        const bool floatingDamagePreview =
+            showFloatingDamageMenu || FloatingDamage::HasDisplayActivity();
 
-            auto now = std::chrono::steady_clock::now();
-            const float riseSpeed = 300.0f;      // pixels/sec
-            const float perValueDelay = 0.05f;   // stagger for readability
+        if (floatingDamageEnabled)
+        {
+            EnsureDamageInfoHook();
+            FloatingDamage::GetConfig().enabled = true;
+            UpdatePoisonDoTWatch();
+        }
+        else
+        {
+            FloatingDamage::GetConfig().enabled = false;
+        }
 
-            for (size_t i = 0; i < g_FloatingDamageList.size(); )
-            {
-                FloatingDamage& d = g_FloatingDamageList[i];
-
-                // Use chrono for elapsed time
-                auto now = std::chrono::steady_clock::now();
-                float elapsed = std::chrono::duration<float>(now - d.spawnTime).count();
-
-                if (elapsed >= 2.0f)
-                {
-                    if (i != g_FloatingDamageList.size() - 1)
-                        g_FloatingDamageList[i] = std::move(g_FloatingDamageList.back());
-                    g_FloatingDamageList.pop_back();
-                    continue;
-                }
-
-                // Compute rise, fade, etc.
-                float rise = elapsed * riseSpeed + d.displayIndex * perValueDelay * riseSpeed;
-                int alpha = (int)(255 * (1.0f - elapsed * d.invLifetime));
-                ImVec2 pos(
-                    screenSize.x * 0.5f + d.offsetX - d.textSize.x * 0.5f,
-                    screenSize.y * 0.5f - d.offsetY - rise
-                );
-                drawList->AddText(pos, IM_COL32(255, 64, 64, alpha), d.text.c_str());
-
-                ++i;
-            }
-
-
-            if (chosenFont)
-                ImGui::PopFont();
+        if (floatingDamageEnabled || floatingDamagePreview)
+        {
+            FloatingDamage::Update(io.DeltaTime);
+            FloatingDamage::Render(ImGui::GetBackgroundDrawList(), io.DisplaySize);
         }
     }
 
@@ -10813,7 +12028,7 @@ void D2RHUD::OnDraw() {
 
     // Scale all menu UI by 200% on 4K resolution
     {
-        bool anyMenuOpen = showMainMenu || showHUDSettingsMenu || showD2RHUDMenu || showSettingsPanel || showLootMenu || showHotkeyMenu || showGrailMenu || showCameraMenu;
+        bool anyMenuOpen = showMainMenu || showHUDSettingsMenu || showD2RHUDMenu || showSettingsPanel || showLootMenu || showHotkeyMenu || showGrailMenu || showCameraMenu || showFloatingDamageMenu;
         ImGuiIO& io = ImGui::GetIO();
         io.FontGlobalScale = anyMenuOpen ? GetMenuScaleFactor() : 1.0f;
     }

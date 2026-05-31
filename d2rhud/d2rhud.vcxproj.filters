@@ -4,6 +4,49 @@
     <None Include="vcpkg.json" />
   </ItemGroup>
   <ItemGroup>
+    <Filter Include="fonts">
+      <UniqueIdentifier>{a1b2c3d4-e5f6-7890-abcd-ef1234567890}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="fonts\0.otf">
+      <Filter>fonts</Filter>
+    </None>
+    <None Include="fonts\1.otf">
+      <Filter>fonts</Filter>
+    </None>
+    <None Include="fonts\2.otf">
+      <Filter>fonts</Filter>
+    </None>
+    <None Include="fonts\3.otf">
+      <Filter>fonts</Filter>
+    </None>
+    <None Include="fonts\4.otf">
+      <Filter>fonts</Filter>
+    </None>
+    <None Include="fonts\5.otf">
+      <Filter>fonts</Filter>
+    </None>
+    <None Include="fonts\6.otf">
+      <Filter>fonts</Filter>
+    </None>
+    <None Include="fonts\7.otf">
+      <Filter>fonts</Filter>
+    </None>
+    <None Include="fonts\8.otf">
+      <Filter>fonts</Filter>
+    </None>
+    <None Include="fonts\9.otf">
+      <Filter>fonts</Filter>
+    </None>
+    <None Include="fonts\10.otf">
+      <Filter>fonts</Filter>
+    </None>
+    <None Include="fonts\11.otf">
+      <Filter>fonts</Filter>
+    </None>
+  </ItemGroup>
+  <ItemGroup>
     <ClCompile Include="dllmain.cpp" />
     <ClCompile Include="D3D12Hook.cpp" />
     <ClCompile Include="plugin\PluginManager.cpp" />
@@ -12,7 +55,12 @@
     <ClCompile Include="plugin\KeyMappings.cpp" />
     <ClCompile Include="plugin\ItemFilter\ItemFilter.cpp" />
     <ClCompile Include="plugin\StashSearch\StashSearch.cpp" />
+    <ClCompile Include="plugin\FloatingDamage.cpp" />
+    <ClCompile Include="plugin\GrailTracker.cpp" />
     <ClCompile Include="plugin\StashSearch\WndProcHook.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ResourceCompile Include="d2rhud.rc" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="D3D12Hook.h" />
@@ -31,6 +79,8 @@
     <ClInclude Include="stb_image.h" />
     <ClInclude Include="d3dx12.h" />
     <ClInclude Include="d2\json.hpp" />
+    <ClInclude Include="resource.h" />
+    <ClInclude Include="plugin\FloatingDamage.h" />
     <ClInclude Include="plugin\GrailStatus.h" />
   </ItemGroup>
 </Project>

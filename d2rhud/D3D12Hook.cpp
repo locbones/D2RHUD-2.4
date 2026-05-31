@@ -1,4 +1,5 @@
 #include "D3D12Hook.h"
+#include "resource.h"
 #include <d3d12.h>
 #include <dxgi1_4.h>
 #include <imgui.h>
@@ -18,6 +19,9 @@
 #include "plugin/D2RHUD/D2RHUD.h"
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
+#include <algorithm>
+#include <vector>
+#include <cctype>
 
 
 #if __has_include(<detours/detours.h>)
@@ -115,6 +119,113 @@ namespace D3D12 {
 		if (dir.empty() || !std::filesystem::exists(dir))
 			dir = (std::filesystem::current_path() / "D2RHUD_Images").string();
 		return dir;
+	}
+
+	static std::string GetD2RHUDFontsDir()
+	{
+		std::string dir;
+		char buf[MAX_PATH];
+		if (g_DllModule && GetModuleFileNameA(g_DllModule, buf, MAX_PATH)) {
+			std::filesystem::path p(buf);
+			dir = (p.parent_path() / "D2RHUD_Fonts").string();
+		}
+		if (dir.empty() || !std::filesystem::exists(dir)) {
+			if (GetModuleFileNameA(NULL, buf, MAX_PATH)) {
+				std::filesystem::path p(buf);
+				dir = (p.parent_path() / "D2RHUD_Fonts").string();
+			}
+		}
+		if (dir.empty() || !std::filesystem::exists(dir))
+			dir = (std::filesystem::current_path() / "D2RHUD_Fonts").string();
+		return dir;
+	}
+
+	static const int kEmbeddedFloatingDamageFontResourceIds[D3D12::kFloatingDamageFontCount] = {
+		IDR_FD_FONT_0, IDR_FD_FONT_1, IDR_FD_FONT_2, IDR_FD_FONT_3,
+		IDR_FD_FONT_4, IDR_FD_FONT_5, IDR_FD_FONT_6, IDR_FD_FONT_7,
+		IDR_FD_FONT_8, IDR_FD_FONT_9, IDR_FD_FONT_10, IDR_FD_FONT_11
+	};
+
+	static std::vector<std::vector<unsigned char>> g_EmbeddedFloatingDamageFontData;
+	static ImFont* g_BundledFloatingDamageFonts[D3D12::kFloatingDamageFontCount] = {};
+	static bool g_EmbeddedFloatingDamageFontsInitialized = false;
+
+	static bool LoadEmbeddedFloatingDamageFontResource(int index, const unsigned char** outData, size_t* outSize)
+	{
+		if (!outData || !outSize || index < 0 || index >= D3D12::kFloatingDamageFontCount)
+			return false;
+
+		if (!g_DllModule)
+			return false;
+
+		const int resourceId = kEmbeddedFloatingDamageFontResourceIds[index];
+		HRSRC resource = FindResourceW(g_DllModule, MAKEINTRESOURCEW(resourceId), RT_RCDATA);
+		if (!resource)
+			return false;
+
+		HGLOBAL resourceData = LoadResource(g_DllModule, resource);
+		if (!resourceData)
+			return false;
+
+		const void* lockedData = LockResource(resourceData);
+		const DWORD resourceSize = SizeofResource(g_DllModule, resource);
+		if (!lockedData || resourceSize == 0)
+			return false;
+
+		*outData = static_cast<const unsigned char*>(lockedData);
+		*outSize = static_cast<size_t>(resourceSize);
+		return true;
+	}
+
+	static bool TryLoadSingleEmbeddedFloatingDamageFont(int index)
+	{
+		if (index < 0 || index >= D3D12::kFloatingDamageFontCount)
+			return false;
+		if (g_BundledFloatingDamageFonts[index])
+			return true;
+
+		const unsigned char* resourceData = nullptr;
+		size_t resourceSize = 0;
+		if (!LoadEmbeddedFloatingDamageFontResource(index, &resourceData, &resourceSize))
+			return false;
+
+		g_EmbeddedFloatingDamageFontData.emplace_back(resourceData, resourceData + resourceSize);
+		std::vector<unsigned char>& fontData = g_EmbeddedFloatingDamageFontData.back();
+
+		ImGuiIO& io = ImGui::GetIO();
+		ImFontConfig cfg{};
+		cfg.OversampleH = 1;
+		cfg.OversampleV = 1;
+		cfg.PixelSnapH = true;
+		cfg.FontDataOwnedByAtlas = false;
+		std::string fontLabel = "FloatingDamageFont" + std::to_string(index);
+		if (fontLabel.size() >= IM_ARRAYSIZE(cfg.Name))
+			fontLabel.resize(IM_ARRAYSIZE(cfg.Name) - 1);
+		strcpy_s(cfg.Name, fontLabel.c_str());
+
+		const float rasterSize = (index == 0) ? 24.0f : 32.0f;
+		ImFont* font = io.Fonts->AddFontFromMemoryTTF(
+			fontData.data(),
+			static_cast<int>(fontData.size()),
+			rasterSize,
+			&cfg,
+			io.Fonts->GetGlyphRangesDefault());
+		if (!font)
+			return false;
+
+		g_BundledFloatingDamageFonts[index] = font;
+		return true;
+	}
+
+	static void LoadAllEmbeddedFloatingDamageFonts()
+	{
+		if (g_EmbeddedFloatingDamageFontsInitialized)
+			return;
+
+		for (int i = 0; i < D3D12::kFloatingDamageFontCount; ++i)
+			TryLoadSingleEmbeddedFloatingDamageFont(i);
+
+		g_EmbeddedFloatingDamageFontsInitialized = true;
 	}
 
 	static bool LoadGearTextureFromPath(ID3D12Device* pD3DDevice, const std::string& fullPath)
@@ -566,6 +677,28 @@ namespace D3D12 {
 				g_pD3DSrvDescHeap->GetCPUDescriptorHandleForHeapStart(),
 				g_pD3DSrvDescHeap->GetGPUDescriptorHandleForHeapStart());
 
+			// UI fonts first, then embedded floating-damage fonts, then one atlas upload.
+			{
+				namespace fs = std::filesystem;
+				const std::string fontPath = "Mods/" + modName + "/" + modName + ".mpq/data/hd/ui/fonts/exocetblizzardot-medium.otf";
+				if (fs::exists(fontPath)) {
+					std::cout << "Adding fonts from file..." << std::endl;
+					io.Fonts->AddFontFromFileTTF(fontPath.c_str(), 12.0f);
+					io.Fonts->AddFontFromFileTTF(fontPath.c_str(), 15.0f);
+					io.Fonts->AddFontFromFileTTF(fontPath.c_str(), 18.0f);
+					io.Fonts->AddFontFromFileTTF(fontPath.c_str(), 24.0f);
+					io.Fonts->AddFontFromFileTTF(fontPath.c_str(), 36.0f);
+					io.Fonts->AddFontFromFileTTF(fontPath.c_str(), 48.0f);
+					FontLoaded = true;
+				}
+				else {
+					std::cerr << "Font file does not exist: " << fontPath << std::endl;
+				}
+			}
+
+			LoadAllEmbeddedFloatingDamageFonts();
+			ImGui_ImplDX12_CreateDeviceObjects();
+
 			// Load settings icon from D2RHUD_Images/ (default gear.png)
 			{
 				std::string imagesDir = GetD2RHUDImagesDir();
@@ -582,27 +715,6 @@ namespace D3D12 {
 			g_Initialized = true;
 
 			pD3DDevice->Release();
-
-
-			//Add Default D2R font to drawtable
-			namespace fs = std::filesystem;
-
-			std::string fontPath = "Mods/" + modName + "/" + modName + ".mpq/data/hd/ui/fonts/exocetblizzardot-medium.otf";
-
-			if (fs::exists(fontPath)) {
-				std::cout << "Adding fonts from file..." << std::endl;
-				const ImWchar* ranges = io.Fonts->GetGlyphRangesCyrillic();
-				io.Fonts->AddFontFromFileTTF(fontPath.c_str(), 12.0f); //Add multiple font sizes
-				io.Fonts->AddFontFromFileTTF(fontPath.c_str(), 15.0f);
-				io.Fonts->AddFontFromFileTTF(fontPath.c_str(), 18.0f);
-				io.Fonts->AddFontFromFileTTF(fontPath.c_str(), 24.0f);
-				io.Fonts->AddFontFromFileTTF(fontPath.c_str(), 36.0f);
-				io.Fonts->AddFontFromFileTTF(fontPath.c_str(), 48.0f);
-				FontLoaded = true;
-			}
-			else {
-				std::cerr << "Font file does not exist: " << fontPath << std::endl;
-			}
 		}
 
 		// Pending settings icon reload (user chose a different image in Settings)
@@ -1084,6 +1196,18 @@ namespace D3D12 {
 	void GetCameraButtonTextureSize(int* outWidth, int* outHeight) {
 		if (outWidth) *outWidth = g_CameraButtonTextureWidth;
 		if (outHeight) *outHeight = g_CameraButtonTextureHeight;
+	}
+
+	std::string GetD2RHUDFontsPath()
+	{
+		return GetD2RHUDFontsDir();
+	}
+
+	ImFont* GetFloatingDamageFont(int index)
+	{
+		if (index < 0 || index >= kFloatingDamageFontCount)
+			return nullptr;
+		return g_BundledFloatingDamageFonts[index];
 	}
 
 }

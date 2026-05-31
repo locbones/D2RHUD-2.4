@@ -91,12 +91,30 @@
     <ClCompile Include="plugin\KeyMappings.cpp" />
     <ClCompile Include="plugin\PluginManager.cpp" />
     <ClCompile Include="plugin\D2RHUD\D2RHUD.cpp" />
+    <ClCompile Include="plugin\FloatingDamage.cpp" />
     <ClCompile Include="plugin\GrailTracker.cpp" />
     <ClCompile Include="plugin\StashSearch\StashSearch.cpp" />
     <ClCompile Include="plugin\StashSearch\WndProcHook.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ResourceCompile Include="d2rhud.rc" />
+  </ItemGroup>
+  <ItemGroup>
     <None Include="vcpkg.json" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="fonts\0.otf" />
+    <None Include="fonts\1.otf" />
+    <None Include="fonts\2.otf" />
+    <None Include="fonts\3.otf" />
+    <None Include="fonts\4.otf" />
+    <None Include="fonts\5.otf" />
+    <None Include="fonts\6.otf" />
+    <None Include="fonts\7.otf" />
+    <None Include="fonts\8.otf" />
+    <None Include="fonts\9.otf" />
+    <None Include="fonts\10.otf" />
+    <None Include="fonts\11.otf" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\..\..\Downloads\json.hpp" />
@@ -109,6 +127,8 @@
     <ClInclude Include="d3dx12.h" />
     <ClInclude Include="Logging.h" />
     <ClInclude Include="Pattern.h" />
+    <ClInclude Include="resource.h" />
+    <ClInclude Include="plugin\FloatingDamage.h" />
     <ClInclude Include="plugin\GrailStatus.h" />
     <ClInclude Include="plugin\GrailTracker.h" />
     <ClInclude Include="plugin\ItemFilter\ItemFilter.h" />
