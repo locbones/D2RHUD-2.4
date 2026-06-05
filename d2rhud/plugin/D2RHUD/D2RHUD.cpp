@@ -59,7 +59,7 @@
 #pragma region Global Static/Structs
 
 std::string lootFile = "../D2R/lootfilter.lua";
-std::string Version = "1.7.3";
+std::string Version = "1.7.4";
 
 using json = nlohmann::json;
 static MonsterStatsDisplaySettings cachedSettings;
@@ -1315,12 +1315,114 @@ static void EnsureSunitdmHook();
 static void QueuePoisonDamageEvent(int amount, float screenX, float screenY, uint32_t unitType, uint32_t unitId, FloatingDamage::Element element);
 static void UpdatePoisonDoTWatch();
 static void SyncPoisonWatchHp(uint32_t unitType, uint32_t unitId);
+static bool IsChatSoundsEnabled();
+static void PlayChatNotificationSound();
+static void QueueChatNotificationForSender(const char* sender, uint32_t unitType, uint32_t unitId, bool hasUnit);
+static void ProcessPendingChatNotificationSound();
+static void RefreshLocalChatFilterNameCache();
+
+static char g_cachedLocalChatFilterName[64] = {};
+static uint32_t g_cachedLocalUnitId = UINT32_MAX;
+static uint32_t g_cachedLocalUnitType = UINT32_MAX;
+
+// C-only helper: client-slot character name (host slot 0 is not always local).
+static bool SafeGetLocalChatName_Read(char* out, size_t outSize)
+{
+    static int32_t* gpClientPlayerListIndex = reinterpret_cast<int32_t*>(Pattern::Address(0x1d442d8));
+    if (!out || outSize == 0 || !gpClientList || !gpClientPlayerListIndex)
+        return false;
+
+    const int32_t idx = *gpClientPlayerListIndex;
+    if (idx < 0 || idx >= 8)
+        return false;
+
+    D2ClientStrc* pClient = gpClientList[idx];
+    if (!pClient || !pClient->szName[0])
+        return false;
+
+    strncpy_s(out, outSize, pClient->szName, _TRUNCATE);
+    return out[0] != '\0';
+}
+
+static void RefreshLocalChatFilterNameCache()
+{
+    if (!IsPlayerInGame())
+    {
+        g_cachedLocalChatFilterName[0] = '\0';
+        g_cachedLocalUnitId = UINT32_MAX;
+        g_cachedLocalUnitType = UINT32_MAX;
+        return;
+    }
+
+    static auto s_lastRefresh = std::chrono::steady_clock::time_point{};
+    const auto now = std::chrono::steady_clock::now();
+    if (g_cachedLocalChatFilterName[0] && now - s_lastRefresh < std::chrono::milliseconds(500))
+        return;
+    s_lastRefresh = now;
+
+    g_cachedLocalChatFilterName[0] = '\0';
+    g_cachedLocalUnitId = UINT32_MAX;
+    g_cachedLocalUnitType = UINT32_MAX;
+
+    if (D2UnitStrc* pLocal = GetClientPlayerUnit())
+    {
+        g_cachedLocalUnitId = pLocal->dwUnitId;
+        g_cachedLocalUnitType = pLocal->dwUnitType;
+        D2PlayerDataStrc* pData = pLocal->pPlayerData;
+        if (pData && pData->szName[0])
+            strncpy_s(g_cachedLocalChatFilterName, pData->szName, _TRUNCATE);
+    }
+
+    if (!g_cachedLocalChatFilterName[0])
+        SafeGetLocalChatName_Read(g_cachedLocalChatFilterName, sizeof(g_cachedLocalChatFilterName));
+}
+
+static bool IsPendingChatFromLocalUnit(uint32_t unitType, uint32_t unitId)
+{
+    if (g_cachedLocalUnitId == UINT32_MAX)
+        return false;
+    return g_cachedLocalUnitType == unitType && g_cachedLocalUnitId == unitId;
+}
+
+static bool IsChatSenderOtherPlayer(const char* sender)
+{
+    if (!sender || !sender[0])
+        return false;
+    if (!g_cachedLocalChatFilterName[0])
+        return false;
+
+    return _stricmp(sender, g_cachedLocalChatFilterName) != 0;
+}
+
+static char g_pendingChatSoundSender[64] = {};
+static uint32_t g_pendingChatSoundUnitType = 0;
+static uint32_t g_pendingChatSoundUnitId = 0;
+static volatile LONG g_hasPendingChatSound = 0;
+static volatile LONG g_pendingChatSoundHasUnit = 0;
+
+static void QueueChatNotificationForSender(const char* sender, uint32_t unitType, uint32_t unitId, bool hasUnit)
+{
+    if (!sender || !sender[0])
+        return;
+
+    strncpy_s(g_pendingChatSoundSender, sender, _TRUNCATE);
+    if (hasUnit)
+    {
+        g_pendingChatSoundUnitType = unitType;
+        g_pendingChatSoundUnitId = unitId;
+        InterlockedExchange(&g_pendingChatSoundHasUnit, 1);
+    }
+    else
+        InterlockedExchange(&g_pendingChatSoundHasUnit, 0);
+
+    InterlockedExchange(&g_hasPendingChatSound, 1);
+}
 
 bool __fastcall Process_SCMD_CHATSTART_Hook(SCMD_CHATSTART_PACKET* pPacket) {
     if (IsFloatingDamageActive() && pPacket && pPacket->message[0])
         TryQueuePoisonCombatMessage(pPacket->message);
 
-    if (pPacket->msgType == 0xFF) {
+    if (pPacket && pPacket->msgType == 0xFF) {
         auto pChatMgr = GetChatManager();
         blz_string msg = { pPacket->message, strlen(pPacket->message), strlen(pPacket->message) };
         int colorValue = mapColorToInt(settings.channelColor);
@@ -1328,9 +1430,16 @@ bool __fastcall Process_SCMD_CHATSTART_Hook(SCMD_CHATSTART_PACKET* pPacket) {
         ChatOptionalStruct opt = {};
 
         oChatManager_PushChatEntry(pChatMgr, msg, colorValue, false, gameChatMsgType, opt, opt, opt, opt);
+
+        if (pPacket->sender[0] && pPacket->message[0])
+            QueueChatNotificationForSender(pPacket->sender, pPacket->unitType, pPacket->id, true);
         return true;
     }
-    return Process_SCMD_CHATSTART_Orig(pPacket);
+
+    const bool result = Process_SCMD_CHATSTART_Orig(pPacket);
+    if (pPacket && pPacket->sender[0] && pPacket->message[0])
+        QueueChatNotificationForSender(pPacket->sender, pPacket->unitType, pPacket->id, true);
+    return result;
 }
 
 void __fastcall GameMenuOnClickHandlerHook(uint64_t a1, Widget* pWidget) {
@@ -3643,6 +3752,8 @@ struct D2RHUDConfig
     bool TransmogVisuals = true;
     bool ExtendedItemcodes = true;
     bool FloatingDamage = true;
+    bool ChatSounds = true;
+    std::string ChatSoundPath;
     std::vector<std::string> DLLsToLoad = { "D2RHUD.dll" };
     std::array<CameraPreset, 3> CameraPresets{};
     bool CameraAutoloadLastPreset = false;
@@ -4607,6 +4718,112 @@ static void PlaySoundFile(const std::string& path)
     }
 }
 
+bool SaveFullGrailConfig(const std::string& userPath, bool isAutoBackup);
+
+#pragma region Chat Sounds
+
+static bool IsChatSoundsEnabled()
+{
+    return d2rHUDConfig.ChatSounds;
+}
+
+static std::atomic<bool> g_chatSoundPathCacheDirty{ true };
+static std::string g_cachedChatSoundPlayPath;
+
+static void InvalidateChatSoundPathCache()
+{
+    g_chatSoundPathCacheDirty.store(true, std::memory_order_release);
+}
+
+static std::string ResolveChatNotificationSoundPath()
+{
+    if (!g_chatSoundPathCacheDirty.load(std::memory_order_acquire))
+        return g_cachedChatSoundPlayPath;
+
+    g_chatSoundPathCacheDirty.store(false, std::memory_order_release);
+    g_cachedChatSoundPlayPath.clear();
+
+    try
+    {
+        if (!d2rHUDConfig.ChatSoundPath.empty() && std::filesystem::exists(d2rHUDConfig.ChatSoundPath))
+            g_cachedChatSoundPlayPath = d2rHUDConfig.ChatSoundPath;
+        else
+        {
+            const auto soundFiles = GetSoundFilesFromBothLocations();
+            if (!soundFiles.empty() && std::filesystem::exists(soundFiles.front().first))
+                g_cachedChatSoundPlayPath = soundFiles.front().first;
+        }
+    }
+    catch (...)
+    {
+        g_cachedChatSoundPlayPath.clear();
+    }
+
+    return g_cachedChatSoundPlayPath;
+}
+
+static void PlayChatNotificationSoundOnWorker(std::string path)
+{
+    static auto lastPlay = std::chrono::steady_clock::time_point{};
+    const auto now = std::chrono::steady_clock::now();
+    if (now - lastPlay < std::chrono::milliseconds(350))
+        return;
+    lastPlay = now;
+
+    try
+    {
+        if (!path.empty())
+            PlaySoundFile(path);
+        else
+            MessageBeep(MB_OK);
+    }
+    catch (...)
+    {
+        MessageBeep(MB_OK);
+    }
+}
+
+static void PlayChatNotificationSound()
+{
+    PlayChatNotificationSoundOnWorker(ResolveChatNotificationSoundPath());
+}
+
+static void ProcessPendingChatNotificationSound()
+{
+    if (InterlockedExchange(&g_hasPendingChatSound, 0) == 0)
+        return;
+    if (!IsChatSoundsEnabled() || !IsPlayerInGame())
+        return;
+
+    RefreshLocalChatFilterNameCache();
+
+    char sender[64] = {};
+    strncpy_s(sender, g_pendingChatSoundSender, _TRUNCATE);
+
+    if (InterlockedExchange(&g_pendingChatSoundHasUnit, 0) != 0)
+    {
+        if (IsPendingChatFromLocalUnit(g_pendingChatSoundUnitType, g_pendingChatSoundUnitId))
+            return;
+    }
+
+    if (!IsChatSenderOtherPlayer(sender))
+        return;
+
+    PlayChatNotificationSound();
+}
+
+static void EnsureChatManagerHook();
+
+static void UpdateChatSoundsFeature()
+{
+    if (IsChatSoundsEnabled())
+        EnsureChatManagerHook();
+}
+
+static bool DrawChatSoundSelector(float menuScale);
+
+#pragma endregion
+
 static bool CopyModFilterToActive(const std::string& filterName);
 void LoadLootFilterConfig(const std::string& path);
 void LoadLootFilterLogic(const std::string& path);
@@ -4746,6 +4963,165 @@ static void DrawImportSoundsPathRow()
         ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "%s", s_importSoundsPathError.c_str());
     ImGui::Separator();
     ImGui::Spacing();
+}
+
+static char s_chatSoundCustomPathBuf[1024] = {};
+static bool s_chatSoundCustomPathBufInit = false;
+static bool s_chatSoundUseCustomPath = false;
+
+static float GetOptionsLeftColumnContentWidth()
+{
+    const float pad = ImGui::GetStyle().WindowPadding.x;
+    return (std::max)(1.0f, ImGui::GetColumnWidth(0) - pad * 2.0f);
+}
+
+static void SetOptionsLeftColumnContentStartX()
+{
+    ImGui::SetCursorPosX(ImGui::GetColumnOffset(0) + ImGui::GetStyle().WindowPadding.x);
+}
+
+static bool DrawChatSoundSelector(float menuScale)
+{
+    bool changed = false;
+    if (!d2rHUDConfig.ChatSounds)
+        ImGui::BeginDisabled();
+
+    const auto soundFiles = GetSoundFilesFromBothLocations();
+    const int kAutoIdx = 0;
+    const int kCustomIdx = 1 + static_cast<int>(soundFiles.size());
+
+    int currentIdx = kAutoIdx;
+    if (!d2rHUDConfig.ChatSoundPath.empty())
+    {
+        bool matched = false;
+        for (size_t i = 0; i < soundFiles.size(); ++i)
+        {
+            if (soundFiles[i].first == d2rHUDConfig.ChatSoundPath)
+            {
+                currentIdx = 1 + static_cast<int>(i);
+                matched = true;
+                s_chatSoundUseCustomPath = false;
+                break;
+            }
+        }
+        if (!matched)
+        {
+            currentIdx = kCustomIdx;
+            s_chatSoundUseCustomPath = true;
+        }
+    }
+    else if (s_chatSoundUseCustomPath)
+        currentIdx = kCustomIdx;
+
+    const bool customMode = (currentIdx == kCustomIdx);
+
+    std::string preview = soundFiles.empty() ? "Auto (system beep)" : "Auto (first in folder)";
+    if (customMode)
+        preview = "Custom path...";
+    else if (currentIdx > 0 && currentIdx <= static_cast<int>(soundFiles.size()))
+        preview = soundFiles[static_cast<size_t>(currentIdx - 1)].second;
+
+    const float playBtnW = 45.0f + ImGui::GetStyle().FramePadding.x * 2.0f;
+    const float comboW = (std::max)(80.0f, ImGui::GetContentRegionAvail().x - playBtnW - ImGui::GetStyle().ItemSpacing.x);
+    ImGui::PushItemWidth(comboW);
+    BeginFrameBgImageRegion();
+    if (ImGui::BeginCombo("##chat_sound", preview.c_str()))
+    {
+        const bool autoSelected = (currentIdx == kAutoIdx);
+        if (ImGui::Selectable(soundFiles.empty() ? "Auto (system beep)" : "Auto (first in folder)", autoSelected))
+        {
+            if (!autoSelected)
+            {
+                d2rHUDConfig.ChatSoundPath.clear();
+                s_chatSoundUseCustomPath = false;
+                s_chatSoundCustomPathBufInit = false;
+                changed = true;
+            }
+        }
+        for (size_t i = 0; i < soundFiles.size(); ++i)
+        {
+            const int idx = 1 + static_cast<int>(i);
+            if (ImGui::Selectable(soundFiles[i].second.c_str(), currentIdx == idx))
+            {
+                if (currentIdx != idx)
+                {
+                    d2rHUDConfig.ChatSoundPath = soundFiles[i].first;
+                    s_chatSoundUseCustomPath = false;
+                    s_chatSoundCustomPathBufInit = false;
+                    changed = true;
+                }
+            }
+        }
+        if (ImGui::Selectable("Custom path...", customMode))
+        {
+            if (!customMode)
+            {
+                strncpy_s(s_chatSoundCustomPathBuf, d2rHUDConfig.ChatSoundPath.c_str(), _TRUNCATE);
+                s_chatSoundUseCustomPath = true;
+                s_chatSoundCustomPathBufInit = true;
+                changed = true;
+            }
+        }
+        ImGui::EndCombo();
+    }
+    EndFrameBgImageRegion();
+    ImGui::PopItemWidth();
+
+    ImGui::SameLine();
+    if (ThemeButton("Play##chatsound", ImVec2(45.0f, 0.0f)))
+    {
+        std::string path;
+        if (customMode)
+        {
+            path = TrimPathPaste(s_chatSoundCustomPathBuf);
+            if (path.empty())
+                path = d2rHUDConfig.ChatSoundPath;
+        }
+        else if (currentIdx == kAutoIdx)
+        {
+            if (!soundFiles.empty())
+                path = soundFiles.front().first;
+        }
+        else if (currentIdx > 0 && currentIdx <= static_cast<int>(soundFiles.size()))
+            path = soundFiles[static_cast<size_t>(currentIdx - 1)].first;
+
+        if (!path.empty() && std::filesystem::exists(path))
+            PlaySoundFile(path);
+        else
+            MessageBeep(MB_OK);
+    }
+
+    if (customMode)
+    {
+        if (!s_chatSoundCustomPathBufInit)
+        {
+            strncpy_s(s_chatSoundCustomPathBuf, d2rHUDConfig.ChatSoundPath.c_str(), _TRUNCATE);
+            s_chatSoundCustomPathBufInit = true;
+        }
+        ImGui::Dummy(ImVec2(0.0f, 2.0f));
+        SetOptionsLeftColumnContentStartX();
+        ImGui::PushItemWidth(GetOptionsLeftColumnContentWidth());
+        BeginFrameBgImageRegion();
+        ImGui::InputText("##chat_sound_custom", s_chatSoundCustomPathBuf, sizeof(s_chatSoundCustomPathBuf));
+        EndFrameBgImageRegion();
+        ImGui::PopItemWidth();
+        if (ImGui::IsItemDeactivatedAfterEdit())
+        {
+            const std::string path = TrimPathPaste(s_chatSoundCustomPathBuf);
+            if (path != d2rHUDConfig.ChatSoundPath)
+            {
+                d2rHUDConfig.ChatSoundPath = path;
+                changed = true;
+            }
+        }
+    }
+    else
+        s_chatSoundCustomPathBufInit = false;
+
+    if (!d2rHUDConfig.ChatSounds)
+        ImGui::EndDisabled();
+
+    return changed;
 }
 
 // Draw inline path row when Import is expanded. No popup, no directory iteration.
@@ -5487,6 +5863,9 @@ void LoadD2RHUDConfig(const std::string& path)
         d2rHUDConfig.FloatingDamage = FloatingDamage::GetConfig().enabled;
         settings.FloatingDamage = d2rHUDConfig.FloatingDamage;
         cachedSettings.FloatingDamage = d2rHUDConfig.FloatingDamage;
+        d2rHUDConfig.ChatSounds = j.value("ChatSounds", d2rHUDConfig.ChatSounds);
+        d2rHUDConfig.ChatSoundPath = j.value("ChatSoundPath", d2rHUDConfig.ChatSoundPath);
+        InvalidateChatSoundPathCache();
 
         if (j.contains("DLLsToLoad"))
             d2rHUDConfig.DLLsToLoad = j["DLLsToLoad"].get<std::vector<std::string>>();
@@ -5772,6 +6151,9 @@ bool SaveFullGrailConfig(const std::string& userPath, bool isAutoBackup)
         j["CombatLog"] = d2rHUDConfig.CombatLog;
         j["TransmogVisuals"] = d2rHUDConfig.TransmogVisuals;
         j["ExtendedItemcodes"] = d2rHUDConfig.ExtendedItemcodes;
+        j["ChatSounds"] = d2rHUDConfig.ChatSounds;
+        if (!d2rHUDConfig.ChatSoundPath.empty())
+            j["ChatSoundPath"] = d2rHUDConfig.ChatSoundPath;
         FloatingDamage::GetConfig().enabled = d2rHUDConfig.FloatingDamage;
         FloatingDamage::SaveToJson(j);
         j["Options"] = ordered_json{
@@ -9596,6 +9978,31 @@ void ShowD2RHUDMenu()
         drawCheckbox("Combat Log", &d2rHUDConfig.CombatLog, "Combat Log", "- Displays real-time combat logs in system chat\n    - RNG rolls for Hit, Block and Dodge results\n    - Elemental Type, +DMG%, Length and Final Damage\n    - Remaining Monster Health\n- Uses data retrieved directly from the game for accuracy\n\n", "This feature is also utilized by the 'attackinfo 1' cheat\nExpect formatting and usage to adapt over time", GetLockInfo(modName, &ModOverrideSettings::CombatLog));
         drawCheckbox("Transmog Visuals", &d2rHUDConfig.TransmogVisuals, "Transmog Visuals", "- Allows you to transform visuals of applicable items\n(Make your Hand Axe look like a Short Sword, etc)\n- Requires mod to provide items/sets/uniques.json\n- Mod Author decides all transmog possibilities\n- Applies both in-game and at the main menu\n\n", "Currently only basic status text is added to the item\nExpect it to include the target item name in the future", GetLockInfo(modName, &ModOverrideSettings::TransmogVisuals));
         drawCheckbox("Extended Itemcodes", &d2rHUDConfig.ExtendedItemcodes, "Extended Itemcodes", "- Allows you to use 4-length item codes\n(Such as ic69, twrk, 1337, etc)\n- Without this, 4-length item codes will have no visuals\n- Visuals are applied to both inventory and world views\n\n", "Currently requires the Transmog Visuals option to be enabled", GetLockInfo(modName, &ModOverrideSettings::ExtendedItemcodes));
+        drawCheckbox("Chat Sounds", &d2rHUDConfig.ChatSounds, "Chat Sounds", "- Plays a notification sound when other players send chat\n- Does not play for your own messages\n- Controlled by D2RHUD options (not chat panel widget)\n\n", "Toggle this to enable or disable chat notification sounds", nullptr);
+        if (ImGui::IsItemDeactivatedAfterEdit())
+            SaveFullGrailConfig(configFilePath, false);
+
+        bool chatSoundSelectionChanged = false;
+        drawLabeledInput(
+            "Chat Sound",
+            [&]() {
+                chatSoundSelectionChanged = DrawChatSoundSelector(menuScale);
+            },
+            "Chat Sound",
+            "- Sound played when another player sends chat (if Chat Sounds is enabled)\n"
+            "- Auto uses the first file in My Filters/sounds or the mod sounds folder\n"
+            "- Pick a listed file or choose Custom path for any .wav, .mp3, or .flac\n\n",
+            "Add sounds in D2RLoot Settings > Sounds, or paste a full path for custom",
+            false,
+            35.0f,
+            nullptr
+        );
+        if (chatSoundSelectionChanged)
+        {
+            InvalidateChatSoundPathCache();
+            SaveFullGrailConfig(configFilePath, false);
+        }
+
         drawCheckbox("Floating Damage", &d2rHUDConfig.FloatingDamage, "Floating Damage", "- Displays floating damage values above monsters\n- Coalesces rapid ticks (poison, fire, etc.)\n- Optional DPS meter with rolling window\n- Customize appearance in the Floating Damage menu\n\n", "Enable or disable floating damage display", GetLockInfo(modName, &ModOverrideSettings::FloatingDamage));
         if (ImGui::IsItemDeactivatedAfterEdit())
         {
@@ -11199,6 +11606,38 @@ static bool ReadBlzStringMessage(const blz_string* msg, char* dst, size_t dstSiz
     return SafeReadBlzString(msg, dst, dstSize);
 }
 
+// "ÿc4Playerÿc1: hello" or "Player: hello" -> Player
+static bool TryParsePlayerChatSender(const char* text, std::string& outSender)
+{
+    if (!text || !text[0])
+        return false;
+
+    const char* p = text;
+    while ((unsigned char)p[0] == 0xFF && p[1] == 'c' && p[2])
+        p += 3;
+
+    const char* colon = strchr(p, ':');
+    if (!colon || colon == p || colon[1] != ' ')
+        return false;
+
+    const size_t nameLen = static_cast<size_t>(colon - p);
+    if (nameLen == 0 || nameLen > 60)
+        return false;
+
+    for (size_t i = 0; i < nameLen; ++i)
+    {
+        const unsigned char c = static_cast<unsigned char>(p[i]);
+        if (c == '\n' || c == '\r' || c == 0xFF)
+            return false;
+    }
+
+    outSender.assign(p, nameLen);
+    while (!outSender.empty() && (outSender.back() == ' ' || outSender.back() == '\t'))
+        outSender.pop_back();
+
+    return !outSender.empty();
+}
+
 static D2UnitStrc* FindCachedPoisonTarget()
 {
     const auto now = std::chrono::steady_clock::now();
@@ -11714,14 +12153,23 @@ D2ChatManager* __fastcall Hooked_ChatManager_PushChatEntry(
     ChatOptionalStruct& a8,
     ChatOptionalStruct& a9)
 {
-    if (IsFloatingDamageActive())
+    char text[512]{};
+    const bool hasText = ReadBlzStringMessage(&msg, text, sizeof(text));
+
+    if (IsFloatingDamageActive() && hasText)
+        TryQueuePoisonCombatMessage(text);
+
+    D2ChatManager* result = oChatManager_PushChatEntry(pMgr, msg, color, a4, typeMsg, a6, a7, a8, a9);
+
+    // After the game finishes pushing chat (re-entrancy safe). Joiners usually only get this path.
+    if (hasText)
     {
-        char text[512]{};
-        if (ReadBlzStringMessage(&msg, text, sizeof(text)))
-            TryQueuePoisonCombatMessage(text);
+        std::string sender;
+        if (TryParsePlayerChatSender(text, sender))
+            QueueChatNotificationForSender(sender.c_str(), 0, 0, false);
     }
 
-    return oChatManager_PushChatEntry(pMgr, msg, color, a4, typeMsg, a6, a7, a8, a9);
+    return result;
 }
 
 static void EnsureChatManagerHook()
@@ -11738,6 +12186,8 @@ static void EnsureChatManagerHook()
 
 void __fastcall Hooked_BroadcastChatMessage(uint64_t pGame, const char* szMsg, uint8_t color)
 {
+    // Disabled for chat sounds to avoid triggering on system/status broadcasts.
+
     if (szMsg && IsFloatingDamageActive())
     {
         char text[512]{};
@@ -11894,7 +12344,8 @@ void D2RHUD::OnDraw() {
         configLoaded = true;
     }
 
-
+    RefreshLocalChatFilterNameCache();
+    ProcessPendingChatNotificationSound();
 
     if (!menuClickHookInstalled)
     {
@@ -11913,12 +12364,15 @@ void D2RHUD::OnDraw() {
         DetourUpdateThread(GetCurrentThread());
         DetourAttach(&(PVOID&)Process_SCMD_CHATSTART_Orig, Process_SCMD_CHATSTART_Hook);
         DetourTransactionCommit();
+        EnsureChatManagerHook();
         menuClickHookInstalled = true;
 
         g_ItemFilterStatusMessage = std::format("D2RHUD {} Loaded Successfully!", Version);
         g_ShouldShowItemFilterMessage = true;
         g_ItemFilterMessageStartTime = std::chrono::steady_clock::now();
     }
+
+    UpdateChatSoundsFeature();
 
     if (g_ShouldShowItemFilterMessage)
     {
