@@ -1317,7 +1317,7 @@ static void UpdatePoisonDoTWatch();
 static void SyncPoisonWatchHp(uint32_t unitType, uint32_t unitId);
 static bool IsChatSoundsEnabled();
 static void PlayChatNotificationSound();
-static void QueueChatNotificationForSender(const char* sender, uint32_t unitType, uint32_t unitId, bool hasUnit);
+static void QueueChatNotificationForSender(const char* sender, const char* message, uint32_t unitType, uint32_t unitId, bool hasUnit);
 static void ProcessPendingChatNotificationSound();
 static void RefreshLocalChatFilterNameCache();
 
@@ -1394,18 +1394,103 @@ static bool IsChatSenderOtherPlayer(const char* sender)
     return _stricmp(sender, g_cachedLocalChatFilterName) != 0;
 }
 
+static const char* SkipD2ColorCodesForChat(const char* p)
+{
+    while (p && (unsigned char)p[0] == 0xFF && p[1] == 'c' && p[2])
+        p += 3;
+    return p;
+}
+
+static bool StartsWithIgnoreCase(const char* text, const char* prefix)
+{
+    if (!text || !prefix || !prefix[0])
+        return false;
+    return _strnicmp(text, prefix, strlen(prefix)) == 0;
+}
+
+static bool StartsWithPhraseIgnoreCase(const char* text, const char* phrase)
+{
+    if (!StartsWithIgnoreCase(text, phrase))
+        return false;
+
+    const size_t len = strlen(phrase);
+    const char next = text[len];
+    return next == '\0' || next == ' ' || next == '.' || next == '!' || next == '?';
+}
+
+static bool IsLikelySystemFeedbackMessage(const char* text)
+{
+    if (!text || !text[0])
+        return true;
+
+    const char* p = SkipD2ColorCodesForChat(text);
+    if (!p[0])
+        return true;
+
+    static const char* kPhrases[] = {
+        "Out of mana",
+        "Not enough mana",
+        "Not enough gold",
+        "Not here",
+        "Not in town",
+        "I can't carry",
+        "I can't get there",
+        "I can't do that",
+        "I cannot carry",
+        "I cannot get there",
+        "I cannot do that",
+        "You can't carry",
+        "You can't do that",
+        "You cannot carry",
+        "You cannot do that",
+        "Cannot carry",
+        "Cannot equip",
+        "Need more gold",
+        "Need more mana",
+        "Requires level",
+        "Locked",
+        "No room",
+        "No space",
+        "Inventory is full",
+        "Imbued unbalanced",
+        "That is not yours",
+        "That is owned",
+        "This is not yours",
+        "Must identify",
+        nullptr
+    };
+
+    for (const char** it = kPhrases; *it; ++it)
+    {
+        if (StartsWithPhraseIgnoreCase(p, *it))
+            return true;
+    }
+
+    return false;
+}
+
+static bool IsGameSystemChatEntry(const ChatMsg& typeMsg)
+{
+    const ChatMsg* pGameMsgType = reinterpret_cast<const ChatMsg*>(Pattern::Address(gameChatMsgTypeOffset));
+    return pGameMsgType && typeMsg.type == pGameMsgType->type;
+}
+
 static char g_pendingChatSoundSender[64] = {};
+static char g_pendingChatSoundMessage[256] = {};
 static uint32_t g_pendingChatSoundUnitType = 0;
 static uint32_t g_pendingChatSoundUnitId = 0;
 static volatile LONG g_hasPendingChatSound = 0;
 static volatile LONG g_pendingChatSoundHasUnit = 0;
 
-static void QueueChatNotificationForSender(const char* sender, uint32_t unitType, uint32_t unitId, bool hasUnit)
+static void QueueChatNotificationForSender(const char* sender, const char* message, uint32_t unitType, uint32_t unitId, bool hasUnit)
 {
-    if (!sender || !sender[0])
+    if (!sender || !sender[0] || !message || !message[0])
+        return;
+    if (IsLikelySystemFeedbackMessage(message))
         return;
 
     strncpy_s(g_pendingChatSoundSender, sender, _TRUNCATE);
+    strncpy_s(g_pendingChatSoundMessage, message, _TRUNCATE);
     if (hasUnit)
     {
         g_pendingChatSoundUnitType = unitType;
@@ -1432,13 +1517,13 @@ bool __fastcall Process_SCMD_CHATSTART_Hook(SCMD_CHATSTART_PACKET* pPacket) {
         oChatManager_PushChatEntry(pChatMgr, msg, colorValue, false, gameChatMsgType, opt, opt, opt, opt);
 
         if (pPacket->sender[0] && pPacket->message[0])
-            QueueChatNotificationForSender(pPacket->sender, pPacket->unitType, pPacket->id, true);
+            QueueChatNotificationForSender(pPacket->sender, pPacket->message, pPacket->unitType, pPacket->id, true);
         return true;
     }
 
     const bool result = Process_SCMD_CHATSTART_Orig(pPacket);
     if (pPacket && pPacket->sender[0] && pPacket->message[0])
-        QueueChatNotificationForSender(pPacket->sender, pPacket->unitType, pPacket->id, true);
+        QueueChatNotificationForSender(pPacket->sender, pPacket->message, pPacket->unitType, pPacket->id, true);
     return result;
 }
 
@@ -4805,6 +4890,9 @@ static void ProcessPendingChatNotificationSound()
         if (IsPendingChatFromLocalUnit(g_pendingChatSoundUnitType, g_pendingChatSoundUnitId))
             return;
     }
+
+    if (IsLikelySystemFeedbackMessage(g_pendingChatSoundMessage))
+        return;
 
     if (!IsChatSenderOtherPlayer(sender))
         return;
@@ -11638,6 +11726,22 @@ static bool TryParsePlayerChatSender(const char* text, std::string& outSender)
     return !outSender.empty();
 }
 
+static bool TryParsePlayerChatLine(const char* text, std::string& outSender, std::string& outBody)
+{
+    outSender.clear();
+    outBody.clear();
+    if (!TryParsePlayerChatSender(text, outSender))
+        return false;
+
+    const char* p = SkipD2ColorCodesForChat(text);
+    const char* colon = strchr(p, ':');
+    if (!colon || colon[1] != ' ')
+        return false;
+
+    outBody = SkipD2ColorCodesForChat(colon + 2);
+    return !outBody.empty();
+}
+
 static D2UnitStrc* FindCachedPoisonTarget()
 {
     const auto now = std::chrono::steady_clock::now();
@@ -12161,12 +12265,16 @@ D2ChatManager* __fastcall Hooked_ChatManager_PushChatEntry(
 
     D2ChatManager* result = oChatManager_PushChatEntry(pMgr, msg, color, a4, typeMsg, a6, a7, a8, a9);
 
+    if (IsGameSystemChatEntry(typeMsg))
+        return result;
+
     // After the game finishes pushing chat (re-entrancy safe). Joiners usually only get this path.
     if (hasText)
     {
         std::string sender;
-        if (TryParsePlayerChatSender(text, sender))
-            QueueChatNotificationForSender(sender.c_str(), 0, 0, false);
+        std::string body;
+        if (TryParsePlayerChatLine(text, sender, body))
+            QueueChatNotificationForSender(sender.c_str(), body.c_str(), 0, 0, false);
     }
 
     return result;
