@@ -59,7 +59,7 @@
 #pragma region Global Static/Structs
 
 std::string lootFile = "../D2R/lootfilter.lua";
-std::string Version = "1.7.4";
+std::string Version = "1.7.5";
 
 using json = nlohmann::json;
 static MonsterStatsDisplaySettings cachedSettings;
@@ -208,7 +208,7 @@ void ApplyUModArray(const uint32_t* offsets, size_t count, uint32_t remainder, c
             //LogSunder(statName + " UMod already at expected value at 0x" + std::to_string(addr) + " index=" + std::to_string(i) + " value=" + std::to_string(currentValue));
             continue;
         }
-
+        
         //LogSunder(statName + " Applying remainder to UModAddr[" + std::to_string(i) + "] @0x" + std::to_string(addr) + " original=" + std::to_string(originalValue) + " old=" + std::to_string(currentValue) + " new=" + std::to_string(expectedValue));
 
         DWORD oldProtect;
@@ -1851,7 +1851,7 @@ uint32_t SubtractResistances(D2UnitStrc* pUnit, D2C_ItemStats nStatId, int nValu
     default: break; // ignore other stats
     }
 
-    //LogSunder("SU Monster Value: " + std::to_string(nCurrentValue) + ", SU Function Value: " + std::to_string(nValue) + ", SU New Value: " + std::to_string(newValue) + ", SU Remainder: " + std::to_string(remainder));
+    LogSunder("SU Monster Value: " + std::to_string(nCurrentValue) + ", SU Function Value: " + std::to_string(nValue) + ", SU New Value: " + std::to_string(newValue) + ", SU Remainder: " + std::to_string(remainder));
 
     return remainder;
 }
@@ -1881,11 +1881,11 @@ static void ApplySunderForStat(D2UnitStrc* pUnit, D2C_ItemStats statId, int maxV
         return;
 
     int rem = SubtractResistances(pUnit, statId, maxVal);
-    //LogSunder(statName + " max=" + std::to_string(maxVal) + " SubtractResistances rem=" + std::to_string(rem));
+    LogSunder(statName + " max=" + std::to_string(maxVal) + " SubtractResistances rem=" + std::to_string(rem));
 
     for (size_t i = 0; i < umodArrays.size(); ++i)
     {
-        //LogSunder(statName + " UMod[" + std::string(umodCaps[i].first) + "] cap=" + std::to_string(umodCaps[i].second) + " final=" + std::to_string(rem));
+        LogSunder(statName + " UMod[" + std::string(umodCaps[i].first) + "] cap=" + std::to_string(umodCaps[i].second) + " final=" + std::to_string(rem));
 
         const std::vector<uint8_t>& groupOriginal = (i < originalGroups.size()) ? originalGroups[i] : std::vector<uint8_t>{};
 
@@ -1898,15 +1898,15 @@ void __fastcall ApplyGhettoSunder(D2GameStrc* pGame, D2ActiveRoomStrc* pRoom, D2
 {
     if (!pGame || !pUnit)
     {
-        //LogSunder("Invalid game/unit pointer in ApplyGhettoSunder");
+        LogSunder("Invalid game/unit pointer in ApplyGhettoSunder");
         return;
     }
 
-    //LogSunder("=== Begin ApplyGhettoSunder ===");
+    LogSunder("=== Begin ApplyGhettoSunder ===");
 
     ApplySunderClampToMonster(pGame, pUnit, false);
 
-    //LogSunder("=== End ApplyGhettoSunder ===");
+    LogSunder("=== End ApplyGhettoSunder ===");
 }
 
 
@@ -2722,7 +2722,7 @@ MonsterTreasureResult GetMonsterTreasure(const std::vector<MonsterTreasureClass>
 
     for (size_t i = 0; i < tcexEntries.size(); ++i) {
         if (tcexEntries[i] == treasureClassValue) {
-            result.treasureIndex = static_cast<int>(i) - 1;
+            result.treasureIndex = static_cast<int>(i) + 1;
             break;
         }
     }
