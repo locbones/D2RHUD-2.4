@@ -4659,12 +4659,58 @@ static std::string GetModD2RLANFiltersDir()
     return tryPath("d2rlan");
 }
 
-// Returns the mod's D2RLAN/filters/sounds directory path. May not exist.
+// Returns the first existing sounds directory under a mod data folder.
+// Prefers <folder>/Sounds, then the legacy <folder>/filters/sounds path.
+// Checks the .mpq data path, then the extracted data path, then a lowercase folder name.
+static std::string FindModSoundsDir(const std::string& dataFolder)
+{
+    std::string modName = GetModName();
+    if (modName.empty() || dataFolder.empty()) return "";
+
+    auto existsDir = [](const std::filesystem::path& p) {
+        std::error_code ec;
+        return std::filesystem::exists(p, ec) && std::filesystem::is_directory(p, ec);
+    };
+
+    auto tryFolder = [&](const std::string& folder) -> std::string {
+        std::filesystem::path exe(GetExecutableDir());
+        const std::filesystem::path bases[] = {
+            exe / "Mods" / modName / (modName + ".mpq") / "data" / folder,
+            exe / "Mods" / modName / "data" / folder
+        };
+        const char* relative[] = { "Sounds", "sounds", "filters/Sounds", "filters/sounds" };
+        for (const char* rel : relative)
+        {
+            for (const auto& base : bases)
+            {
+                std::filesystem::path p = base / rel;
+                if (existsDir(p))
+                    return p.string();
+            }
+        }
+        return "";
+    };
+
+    std::string found = tryFolder(dataFolder);
+    if (!found.empty()) return found;
+
+    std::string lower = dataFolder;
+    std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) { return (char)std::tolower(c); });
+    if (lower != dataFolder)
+        return tryFolder(lower);
+    return "";
+}
+
+// Pandemonium/Sounds is the default mod sounds folder. May not exist.
+static std::string GetModPandemoniumSoundsDir()
+{
+    return FindModSoundsDir("Pandemonium");
+}
+
+// D2RLAN/Sounds (or legacy D2RLAN/filters/sounds). May not exist.
 static std::string GetModD2RLANSoundsDir()
 {
-    std::string filtersDir = GetModD2RLANFiltersDir();
-    if (filtersDir.empty()) return "";
-    return (std::filesystem::path(filtersDir) / "sounds").string();
+    return FindModSoundsDir("D2RLAN");
 }
 
 // Appends filter names from dir (dirs and .lua base names, excludes Sounds folder) into names set.
@@ -4706,10 +4752,13 @@ static std::string GetModSoundsDir()
 
 static bool IsSoundExtension(const std::filesystem::path& p);
 
-// Lists sound files from both My Filters/sounds and mod's D2RLAN/sounds. Returns (fullPath, filename) for each.
+// Lists sound files from My Filters/sounds, Pandemonium/Sounds, and D2RLAN/Sounds.
+// Same filename keeps the earlier source: user imports, then Pandemonium (default), then D2RLAN.
+// Returns (fullPath, filename) for each.
 static std::vector<std::pair<std::string, std::string>> GetSoundFilesFromBothLocations()
 {
     std::vector<std::pair<std::string, std::string>> out;
+    std::set<std::string> seen;
     std::error_code ec;
     auto addFromDir = [&](const std::string& dir) {
         if (dir.empty() || !std::filesystem::exists(dir, ec)) return;
@@ -4718,10 +4767,14 @@ static std::vector<std::pair<std::string, std::string>> GetSoundFilesFromBothLoc
             if (!entry.is_regular_file(ec)) continue;
             if (!IsSoundExtension(entry.path())) continue;
             std::string name = entry.path().filename().string();
+            std::string key = name;
+            std::transform(key.begin(), key.end(), key.begin(), [](unsigned char c) { return (char)std::tolower(c); });
+            if (!seen.insert(key).second) continue;
             out.push_back({ entry.path().string(), name });
         }
         };
     addFromDir(GetModSoundsDir());
+    addFromDir(GetModPandemoniumSoundsDir());
     addFromDir(GetModD2RLANSoundsDir());
     std::sort(out.begin(), out.end(), [](const auto& a, const auto& b) { return a.second < b.second; });
     return out;
@@ -8870,7 +8923,7 @@ void ShowLootMenu()
             std::vector<std::pair<std::string, std::string>> soundFiles = GetSoundFilesFromBothLocations();
             if (soundFiles.empty())
             {
-                ImGui::TextWrapped("No sounds in My Filters/sounds or mod yet. Use \"Import sounds\" to add .mp3, .flac or .wav files.");
+                ImGui::TextWrapped("No sounds in My Filters/sounds, Pandemonium/Sounds, or D2RLAN/Sounds yet. Use \"Import sounds\" to add .mp3, .flac or .wav files.");
             }
             else
             {
@@ -10078,7 +10131,7 @@ void ShowD2RHUDMenu()
             },
             "Chat Sound",
             "- Sound played when another player sends chat (if Chat Sounds is enabled)\n"
-            "- Auto uses the first file in My Filters/sounds or the mod sounds folder\n"
+            "- Auto uses the first file in My Filters/sounds, Pandemonium/Sounds, or D2RLAN/Sounds\n"
             "- Pick a listed file or choose Custom path for any .wav, .mp3, or .flac\n\n",
             "Add sounds in D2RLoot Settings > Sounds, or paste a full path for custom",
             false,
