@@ -1,4 +1,7 @@
 #include "D3D12Hook.h"
+#include "WineQueue.h"
+#include <mutex>
+#include <atomic>
 #include "resource.h"
 #include <d3d12.h>
 #include <dxgi1_4.h>
@@ -64,6 +67,15 @@ namespace D3D12 {
 	static CComPtr<ID3D12DescriptorHeap> g_pD3DRtvDescHeap = NULL;
 	static CComPtr<ID3D12DescriptorHeap> g_pD3DSrvDescHeap = NULL;
 	static CComPtr<ID3D12CommandQueue> g_pD3DCommandQueue = NULL;
+    static std::mutex g_QueueMutex;
+    static std::recursive_mutex g_RenderMutex;
+    static std::atomic<bool> g_HooksReady{false};
+    static bool g_QueueHookInstalled = false, g_PresentHookInstalled = false, g_ResizeHookInstalled = false;
+    static bool g_WineMacOS = false;
+    static bool g_UseSwapchainQueue = false;
+    static WineQueue::Layout g_WineQueueLayout;
+    static IDXGISwapChain3* g_RenderSwapchain = nullptr; // identity only; owned by the game
+    static std::array<uintptr_t, 18> g_SwapchainMethods{};
 	static CComPtr<ID3D12GraphicsCommandList> g_pD3DCommandList = NULL;
 
 	static HMODULE g_DllModule = NULL;
@@ -568,7 +580,7 @@ namespace D3D12 {
 	typedef long(__fastcall* Present) (IDXGISwapChain3* pSwapChain, UINT SyncInterval, UINT Flags);
 	static Present OriginalPresent;
 
-	typedef void(*ExecuteCommandLists)(ID3D12CommandQueue* queue, UINT NumCommandLists, ID3D12CommandList* ppCommandLists);
+	typedef void(*ExecuteCommandLists)(ID3D12CommandQueue* queue, UINT NumCommandLists, ID3D12CommandList* const* ppCommandLists);
 	static ExecuteCommandLists OriginalExecuteCommandLists;
 
 	typedef long(__fastcall* ResizeBuffers)(IDXGISwapChain3* pSwapChain, UINT BufferCount, UINT Width, UINT Height, DXGI_FORMAT NewFormat, UINT SwapChainFlags);
@@ -579,20 +591,17 @@ namespace D3D12 {
 	bool FontLoaded = false;
 
 	static uint64_t* g_MethodsTable = NULL;
-	static bool g_Initialized = false;
+	static std::atomic<bool> g_Initialized{false};
 
 
 	static PluginManager* g_PluginManager;
 
-	long __fastcall HookPresent(IDXGISwapChain3* pSwapChain, UINT SyncInterval, UINT Flags) {
-		if (g_pD3DCommandQueue == nullptr) {
-			return OriginalPresent(pSwapChain, SyncInterval, Flags);
-		}
+	void DrawPresent(IDXGISwapChain3* pSwapChain, ID3D12CommandQueue* queue) {
 		if (!g_Initialized) {
-			ID3D12Device* pD3DDevice;
+			CComPtr<ID3D12Device> pD3DDevice;
 
 			if (FAILED(pSwapChain->GetDevice(__uuidof(ID3D12Device), (void**)&pD3DDevice))) {
-				return OriginalPresent(pSwapChain, SyncInterval, Flags);
+				return;
 			}
 
 			{
@@ -614,7 +623,7 @@ namespace D3D12 {
 				desc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
 
 				if (pD3DDevice->CreateDescriptorHeap(&desc, IID_PPV_ARGS(&g_pD3DSrvDescHeap)) != S_OK) {
-					return OriginalPresent(pSwapChain, SyncInterval, Flags);
+					return;
 				}
 			}
 
@@ -626,7 +635,7 @@ namespace D3D12 {
 				desc.NodeMask = 1;
 
 				if (pD3DDevice->CreateDescriptorHeap(&desc, IID_PPV_ARGS(&g_pD3DRtvDescHeap)) != S_OK) {
-					return OriginalPresent(pSwapChain, SyncInterval, Flags);
+					return;
 				}
 
 				const auto rtvDescriptorSize = pD3DDevice->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
@@ -643,19 +652,19 @@ namespace D3D12 {
 			}
 
 			{
-				ID3D12CommandAllocator* allocator;
+				CComPtr<ID3D12CommandAllocator> allocator;
 				if (pD3DDevice->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&allocator)) != S_OK) {
-					return OriginalPresent(pSwapChain, SyncInterval, Flags);
+					return;
 				}
 
 				for (size_t i = 0; i < g_FrameBufferCount; i++) {
 					if (pD3DDevice->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&g_FrameContext[i].command_allocator)) != S_OK) {
-						return OriginalPresent(pSwapChain, SyncInterval, Flags);
+						return;
 					}
 				}
 
 				if (pD3DDevice->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, g_FrameContext[0].command_allocator, NULL, IID_PPV_ARGS(&g_pD3DCommandList)) != S_OK || g_pD3DCommandList->Close() != S_OK) {
-					return OriginalPresent(pSwapChain, SyncInterval, Flags);
+					return;
 				}
 			}
 
@@ -714,7 +723,7 @@ namespace D3D12 {
 
 			g_Initialized = true;
 
-			pD3DDevice->Release();
+			pD3DDevice.Release();
 		}
 
 		// Pending settings icon reload (user chose a different image in Settings)
@@ -817,13 +826,46 @@ namespace D3D12 {
 		g_pD3DCommandList->ResourceBarrier(1, &barrier);
 		g_pD3DCommandList->Close();
 
-		g_pD3DCommandQueue->ExecuteCommandLists(1, (ID3D12CommandList**)&g_pD3DCommandList);
+		queue->ExecuteCommandLists(1, (ID3D12CommandList**)&g_pD3DCommandList);
+		return;
+	}
+
+    long __fastcall HookPresent(IDXGISwapChain3* pSwapChain, UINT SyncInterval, UINT Flags) {
+        if (g_HooksReady.load(std::memory_order_acquire) && !(Flags & DXGI_PRESENT_TEST)) {
+            std::lock_guard<std::recursive_mutex> renderLock(g_RenderMutex);
+            CComPtr<ID3D12CommandQueue> queue;
+            if (g_UseSwapchainQueue) {
+                // Do not render another swapchain using the current chain's backbuffers.
+                uintptr_t table = 0;
+                std::array<uintptr_t, 18> methods{};
+                const bool compatible = (!g_RenderSwapchain || g_RenderSwapchain == pSwapChain)
+                    && WineQueue::Read(reinterpret_cast<uintptr_t>(pSwapChain), &table, sizeof(table))
+                    && WineQueue::Read(table, methods.data(), sizeof(methods)) && methods == g_SwapchainMethods;
+                const auto address = compatible
+                    ? WineQueue::Resolve(reinterpret_cast<uintptr_t>(pSwapChain), g_WineQueueLayout) : 0;
+                if (address) {
+                    auto candidate = reinterpret_cast<ID3D12CommandQueue*>(address);
+                    if (candidate->GetDesc().Type == D3D12_COMMAND_LIST_TYPE_DIRECT) {
+                        queue = candidate; // retain only after the complete vtable has matched
+                        g_RenderSwapchain = pSwapChain;
+                    }
+                }
+            } else {
+                std::lock_guard<std::mutex> queueLock(g_QueueMutex);
+                queue = g_pD3DCommandQueue;
+            }
+            if (queue) DrawPresent(pSwapChain, queue);
+        }
+        // Forward outside our locks. The driver may wait for another game thread.
 		return OriginalPresent(pSwapChain, SyncInterval, Flags);
 	}
 
-	void HookExecuteCommandLists(ID3D12CommandQueue* queue, UINT NumCommandLists, ID3D12CommandList* ppCommandLists) {
+	void HookExecuteCommandLists(ID3D12CommandQueue* queue, UINT NumCommandLists, ID3D12CommandList* const* ppCommandLists) {
+        {
+            std::lock_guard<std::mutex> queueLock(g_QueueMutex);
 		if (!g_pD3DCommandQueue && queue->GetDesc().Type == D3D12_COMMAND_LIST_TYPE_DIRECT) {
 			g_pD3DCommandQueue = queue;
+            }
 		}
 
 		OriginalExecuteCommandLists(queue, NumCommandLists, ppCommandLists);
@@ -835,7 +877,11 @@ namespace D3D12 {
 			ImGui_ImplWin32_Shutdown();
 			ImGui_ImplDX12_Shutdown();
 		}
-		g_pD3DCommandQueue = nullptr;
+        {
+            std::lock_guard<std::mutex> queueLock(g_QueueMutex);
+            g_pD3DCommandQueue.Release();
+        }
+        g_RenderSwapchain = nullptr;
 		g_FrameContext.clear();
 		g_pD3DCommandList = nullptr;
 		g_pD3DRtvDescHeap = nullptr;
@@ -867,11 +913,13 @@ namespace D3D12 {
 	}
 
 	long HookResizeBuffers(IDXGISwapChain3* pSwapChain, UINT BufferCount, UINT Width, UINT Height, DXGI_FORMAT NewFormat, UINT SwapChainFlags) {
+        std::lock_guard<std::recursive_mutex> renderLock(g_RenderMutex);
 		ResetState();
 		return OriginalResizeBuffers(pSwapChain, BufferCount, Width, Height, NewFormat, SwapChainFlags);
 	}
 
 	Status Init() {
+        g_WineMacOS = WineQueue::IsMacOS();
 		WNDCLASSEX windowClass;
 		windowClass.cbSize = sizeof(WNDCLASSEX);
 		windowClass.style = CS_HREDRAW | CS_VREDRAW;
@@ -1007,6 +1055,42 @@ namespace D3D12 {
 		::memcpy(g_MethodsTable + 44 + 19 + 9, *(uint64_t**)(void*)commandList, 60 * sizeof(uint64_t));
 		::memcpy(g_MethodsTable + 44 + 19 + 9 + 60, *(uint64_t**)(void*)swapChain, 18 * sizeof(uint64_t));
 
+        if (g_WineMacOS) {
+            // A second live queue and swapchain rule out a single incidental pointer.
+            // Inspired by REFramework PR #1847's wrapped-pointer adjustment; this
+            // calibration performs read-only checks instead of calling arbitrary COM objects.
+            std::copy_n(g_MethodsTable + 132, g_SwapchainMethods.size(), g_SwapchainMethods.begin());
+            HWND secondWindow = ::CreateWindow(windowClass.lpszClassName, L"Queue calibration",
+                WS_OVERLAPPEDWINDOW, 0, 0, 100, 100, NULL, NULL, windowClass.hInstance, NULL);
+            CComPtr<ID3D12CommandQueue> secondQueue;
+            CComPtr<IDXGISwapChain> secondSwapchain;
+            auto secondDesc = swapChainDesc;
+            secondDesc.OutputWindow = secondWindow;
+            if (secondWindow
+                && SUCCEEDED(device->CreateCommandQueue(&queueDesc, IID_PPV_ARGS(&secondQueue)))
+                && SUCCEEDED(factory->CreateSwapChain(secondQueue, &secondDesc, &secondSwapchain))) {
+                WineQueue::Methods firstMethods{}, secondMethods{};
+                if (WineQueue::ReadMethods(reinterpret_cast<uintptr_t>(commandQueue.p), firstMethods)
+                    && WineQueue::ReadMethods(reinterpret_cast<uintptr_t>(secondQueue.p), secondMethods)
+                    && firstMethods == secondMethods) {
+                    const auto first = WineQueue::Capture(reinterpret_cast<uintptr_t>(swapChain.p), reinterpret_cast<uintptr_t>(commandQueue.p));
+                    const auto second = WineQueue::Capture(reinterpret_cast<uintptr_t>(secondSwapchain.p), reinterpret_cast<uintptr_t>(secondQueue.p));
+                    g_WineQueueLayout = WineQueue::Calibrate(first, second, firstMethods);
+                    // Validate the actual reader on both known objects, too.
+                    if (WineQueue::Resolve(reinterpret_cast<uintptr_t>(swapChain.p), g_WineQueueLayout) != reinterpret_cast<uintptr_t>(commandQueue.p)
+                        || WineQueue::Resolve(reinterpret_cast<uintptr_t>(secondSwapchain.p), g_WineQueueLayout) != reinterpret_cast<uintptr_t>(secondQueue.p))
+                        g_WineQueueLayout.valid = false;
+                }
+            }
+            secondSwapchain.Release();
+            secondQueue.Release();
+            if (secondWindow) {
+                ::DestroyWindow(secondWindow);
+            }
+        }
+
+        // Preserve window-before-swapchain teardown on D3DMetal.
+        // The local COM pointers then release in reverse order.
 		::DestroyWindow(window);
 		::UnregisterClass(windowClass.lpszClassName, windowClass.hInstance);
 		return Status::Success;
@@ -1016,10 +1100,15 @@ namespace D3D12 {
 		void* target = (void*)g_MethodsTable[_index];
 #ifdef USE_DETOURS
 		* _original = target;
-		DetourTransactionBegin();
-		DetourUpdateThread(GetCurrentThread());
-		DetourAttach(&(PVOID&)*_original, _function);
-		DetourTransactionCommit();
+        if (DetourTransactionBegin() != NO_ERROR)
+            return Status::UnknownError;
+        if (DetourUpdateThread(GetCurrentThread()) != NO_ERROR
+            || DetourAttach(&(PVOID&)*_original, _function) != NO_ERROR) {
+            DetourTransactionAbort();
+            return Status::UnknownError;
+        }
+        if (DetourTransactionCommit() != NO_ERROR)
+            return Status::UnknownError;
 #endif
 #ifdef USE_MINHOOK
 		if (MH_CreateHook(target, _function, _original) != MH_OK || MH_EnableHook(target) != MH_OK) {
@@ -1078,26 +1167,39 @@ namespace D3D12 {
 	}
 
 	Status InstallHooks() {
+        if (!g_MethodsTable) return Status::NotInitializedError;
 #ifdef USE_DETOURS
 		DetourRestoreAfterWith();
 #endif
 #ifdef USE_MINHOOK
 		MH_Initialize();
 #endif
-
-		Hook(54, (void**)&OriginalExecuteCommandLists, HookExecuteCommandLists);
-		Hook(140, (void**)&OriginalPresent, HookPresent);
-		Hook(145, (void**)&OriginalResizeBuffers, HookResizeBuffers);
-
 		g_PluginManager = new PluginManager();
-
+        g_UseSwapchainQueue = g_WineMacOS && g_WineQueueLayout.valid;
+        if (!g_UseSwapchainQueue) {
+            MEMORY_BASIC_INFORMATION memory{};
+            const bool nativeMacTarget = g_WineMacOS
+                && (!VirtualQuery(reinterpret_cast<void*>(g_MethodsTable[54]), &memory, sizeof(memory)) || memory.State != MEM_COMMIT);
+            if (nativeMacTarget) {
+                return Status::NotSupportedError;
+            }
+            g_QueueHookInstalled = Hook(54, (void**)&OriginalExecuteCommandLists, HookExecuteCommandLists) == Status::Success;
+            if (!g_QueueHookInstalled) return Status::UnknownError;
+        }
+        g_PresentHookInstalled = Hook(140, (void**)&OriginalPresent, HookPresent) == Status::Success;
+        if (!g_PresentHookInstalled) return Status::UnknownError;
+        g_ResizeHookInstalled = Hook(145, (void**)&OriginalResizeBuffers, HookResizeBuffers) == Status::Success;
+        if (!g_ResizeHookInstalled) return Status::UnknownError;
+        // Publish only after callbacks' shared state and all required hooks exist.
+        g_HooksReady.store(true, std::memory_order_release);
 		return Status::Success;
 	}
 
 	Status RemoveHooks() {
-		Unhook(54, (void**)&OriginalExecuteCommandLists, HookExecuteCommandLists);
-		Unhook(140, (void**)&OriginalPresent, HookPresent);
-		Unhook(145, (void**)&OriginalResizeBuffers, HookResizeBuffers);
+        g_HooksReady.store(false, std::memory_order_release);
+        if (g_QueueHookInstalled) Unhook(54, (void**)&OriginalExecuteCommandLists, HookExecuteCommandLists);
+        if (g_PresentHookInstalled) Unhook(140, (void**)&OriginalPresent, HookPresent);
+        if (g_ResizeHookInstalled) Unhook(145, (void**)&OriginalResizeBuffers, HookResizeBuffers);
 
 		if (Window && OriginalWndProc) {
 			SetWindowLongPtr(Window, GWLP_WNDPROC, (__int3264)(LONG_PTR)OriginalWndProc);

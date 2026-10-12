@@ -62,6 +62,9 @@ BOOL APIENTRY DllMain( HMODULE hModule,
         break;
     }
     case DLL_PROCESS_DETACH: {
+        // At process termination another thread may have died holding a mutex.
+        // Let the OS reclaim resources without waiting or attempting to unhook.
+        if (lpReserved != nullptr) break;
         D3D12::RemoveHooks();
         FreeConsole();
         UninstallWndProcHook();
