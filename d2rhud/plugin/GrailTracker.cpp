@@ -1,5 +1,6 @@
 #include "GrailTracker.h"
 #include "../d2/json.hpp"
+#include "ItemFilter/CatalogTables.h"
 #include <fstream>
 #include <sstream>
 #include <iostream>
@@ -982,12 +983,15 @@ void LoadGrailProgress(const std::string& filepath)
     }
 }
 
-static bool LoadUniqueItemsFromFile(const std::string& filepath)
+static std::filesystem::path GrailInstallDirectory()
 {
-    std::ifstream file(filepath);
-    if (!file.is_open())
-        return false;
+    wchar_t path[32768]{};
+    if (!GetModuleFileNameW(nullptr, path, DWORD(std::size(path)))) return std::filesystem::current_path();
+    return std::filesystem::path(path).parent_path();
+}
 
+static bool LoadUniqueItemsFromStream(std::istream& file)
+{
     std::string line;
     std::getline(file, line);
     auto header = SplitTab(line);
@@ -1032,10 +1036,38 @@ static bool LoadUniqueItemsFromFile(const std::string& filepath)
     return !g_UniqueItems.empty();
 }
 
+static bool LoadUniqueItemsFromFile(const std::string& filepath)
+{
+    std::ifstream file(filepath);
+    return file && LoadUniqueItemsFromStream(file);
+}
+
 bool LoadUniqueItems(const std::string& filepath)
 {
     g_UniqueItems.clear();
 
+    try {
+        GameAssets assets(GrailInstallDirectory(), modName);
+        const auto files = assets.ReadTable("uniqueitems");
+        if (!files.text.empty()) {
+            std::istringstream source(std::string(files.text.begin(), files.text.end()));
+            return LoadUniqueItemsFromStream(source);
+        } else if (!files.binary.empty()) {
+            using namespace LootFilterConfig::Builder::Tables;
+            Binary rows(files.binary, 0x150);
+            const auto names=assets.ReadTableNames("uniqueitems");
+            for (size_t i = 0; i < rows.count; ++i) {
+                const auto row = rows[i];
+                if (!(Field<uint32_t>(row, 0x2c) & 1)) continue;
+                UniqueItemEntry entry{};entry.id=entry.index=int(i);
+                entry.name=NamedItemKey(row,i,names);entry.code=Text(row,0x28,4);entry.itemName=entry.code;entry.enabled=true;
+                if (!entry.name.empty() && !entry.code.empty()) g_UniqueItems.push_back(std::move(entry));
+            }
+            return !g_UniqueItems.empty();
+        }
+    } catch (const std::exception& error) { g_UniqueItems.clear();std::cerr << "Grail unique table: " << error.what() << '\n';return false; }
+
+    if (LoadUniqueItemsFromFile(filepath)) return true;
     if (modName == "RMD-MP")
     {
         const int arraySize = sizeof(g_StaticUniqueItemsRMD) / sizeof(g_StaticUniqueItemsRMD[0]);
@@ -1045,8 +1077,9 @@ bool LoadUniqueItems(const std::string& filepath)
     }
     
 
-    // Use static array for Retail Mods if file doesn't exist
-    if (!std::filesystem::exists("Mods/" + modName + "/" + modName + ".mpq/data/global/excel/uniqueitems.txt") && modName != "RMD-MP")
+    // Only known retail IDs are safe without an accessible table. An unknown
+    // custom mod must never silently inherit stale retail unique/set IDs.
+    if (modName.empty())
     {
         int arraySize = sizeof(g_StaticUniqueItems) / sizeof(g_StaticUniqueItems[0]);
         for (int i = 0; i < arraySize; ++i)
@@ -1056,15 +1089,11 @@ bool LoadUniqueItems(const std::string& filepath)
         return true;
     }
 
-    return LoadUniqueItemsFromFile(filepath);
+    return false;
 }
 
-static bool LoadSetItemsFromFile(const std::string& filepath)
+static bool LoadSetItemsFromStream(std::istream& file)
 {
-    std::ifstream file(filepath);
-    if (!file.is_open())
-        return false;
-
     std::string line;
     std::getline(file, line);
     auto header = SplitTab(line);
@@ -1104,10 +1133,44 @@ static bool LoadSetItemsFromFile(const std::string& filepath)
     return !g_SetItems.empty();
 }
 
+static bool LoadSetItemsFromFile(const std::string& filepath)
+{
+    std::ifstream file(filepath);
+    return file && LoadSetItemsFromStream(file);
+}
+
 bool LoadSetItems(const std::string& filepath)
 {
     g_SetItems.clear();
 
+    try {
+        GameAssets assets(GrailInstallDirectory(), modName);
+        const auto files=assets.ReadTable("setitems");
+        if (!files.text.empty()) {
+            std::istringstream source(std::string(files.text.begin(),files.text.end()));
+            return LoadSetItemsFromStream(source);
+        } else if (!files.binary.empty()) {
+            using namespace LootFilterConfig::Builder::Tables;
+            const auto labels=LoadLabels(assets);const auto sets=assets.ReadTable("sets",true);
+            std::vector<std::string> setNames;
+            if (!sets.binary.empty()) {
+                Binary rows(sets.binary,0x128);setNames.resize(rows.count);
+                for(size_t i=0;i<rows.count;++i)setNames[i]=labels.ById(Field<uint16_t>(rows[i],2),"Set "+std::to_string(i));
+            } else if (!sets.text.empty()) {
+                std::istringstream source(std::string(sets.text.begin(),sets.text.end()));std::string line;std::getline(source,line);const auto header=SplitTab(line);const int column=FindColumn(header,"index");
+                while(std::getline(source,line)){const auto fields=SplitTab(line);if(column>=0&&size_t(column)<fields.size()&&!fields[column].empty()&&fields[column]!="Expansion")setNames.push_back(fields[column]);}
+            }
+            Binary rows(files.binary,0x1bc);
+            const auto names=assets.ReadTableNames("setitems");
+            for(size_t i=0;i<rows.count;++i){const auto row=rows[i];SetItemEntry entry{};entry.id=int(i);entry.name=NamedItemKey(row,i,names);entry.code=Text(row,0x28,4);entry.itemName=entry.code;
+                const auto set=Field<uint16_t>(row,0x2c);entry.setName=set<setNames.size()?setNames[set]:"Set "+std::to_string(set);
+                if(!entry.name.empty()&&!entry.code.empty())g_SetItems.push_back(std::move(entry));
+            }
+            return !g_SetItems.empty();
+        }
+    } catch(const std::exception& error){g_SetItems.clear();std::cerr << "Grail set table: " << error.what() << '\n';return false;}
+
+    if (LoadSetItemsFromFile(filepath)) return true;
     if (modName == "RMD-MP")
     {
         const int arraySize = sizeof(g_StaticSetItemsRMD) / sizeof(g_StaticSetItemsRMD[0]);
@@ -1116,8 +1179,7 @@ bool LoadSetItems(const std::string& filepath)
         return true;
     }
 
-    // Use static array for Retail Mods if file doesn't exist
-    if (!std::filesystem::exists(filepath))
+    if (modName.empty())
     {
         const int arraySize = sizeof(g_StaticSetItems) / sizeof(g_StaticSetItems[0]);
         for (int i = 0; i < arraySize; ++i)
@@ -1125,7 +1187,7 @@ bool LoadSetItems(const std::string& filepath)
         return true;
     }
 
-    return LoadSetItemsFromFile(filepath);
+    return false;
 }
 
 void LoadExcludedGrailItems(const std::string& filepath)
@@ -1626,6 +1688,22 @@ static void EnsureValidBaseItemCodesLoaded()
         return;
     g_ValidBaseItemCodesLoaded = true;
 
+    g_ValidBaseItemCodes.clear();
+    try {
+        GameAssets assets(GrailInstallDirectory(), modName);
+        for(const char* name:{"weapons","armor","misc"}){
+            const auto files=assets.ReadTable(name);
+            if(!files.text.empty()){
+                std::istringstream source(std::string(files.text.begin(),files.text.end()));std::string line;std::getline(source,line);const int column=FindColumn(SplitTab(line),"code");
+                while(column>=0&&std::getline(source,line)){const auto fields=SplitTab(line);if(size_t(column)<fields.size()){const auto code=TrimItemCode(fields[column]);if(code.size()>=3&&code.size()<=4)g_ValidBaseItemCodes.insert(code);}}
+            }else if(!files.binary.empty()){
+                using namespace LootFilterConfig::Builder::Tables;Binary rows(files.binary,0x1b4);
+                for(size_t i=0;i<rows.count;++i){const auto code=Text(rows[i],0x80,4);if(code.size()>=3&&code.size()<=4)g_ValidBaseItemCodes.insert(code);}
+            }
+        }
+        if(!g_ValidBaseItemCodes.empty())return;
+    } catch(const std::exception& error){std::cerr << "Grail base table: " << error.what() << '\n';}
+
     const std::string dllDir = GetGrailPluginDirectory();
     if (!dllDir.empty())
     {
@@ -2086,6 +2164,15 @@ void LoadAllItemData()
         LoadUniqueItems(modExcel + "uniqueitems.txt");
     if (g_SetItems.empty())
         LoadSetItems(modExcel + "setitems.txt");
+
+    // Compiled base rows keep localization IDs, not their source-only *ItemName
+    // comments. Resolve the displayed base through those IDs for both formats.
+    try {
+        GameAssets assets(GrailInstallDirectory(),modName);
+        const auto catalog=LootFilterConfig::Builder::Tables::Load(assets);
+        for(auto& item:g_UniqueItems){const auto base=catalog.bases.find(item.code);if(base!=catalog.bases.end())item.itemName=base->second.name;}
+        for(auto& item:g_SetItems){const auto base=catalog.bases.find(item.code);if(base!=catalog.bases.end())item.itemName=base->second.name;}
+    } catch(const std::exception& error){std::cerr << "Grail base labels: " << error.what() << '\n';}
 
     SortItemLists();
     g_ValidBaseItemCodesLoaded = false;

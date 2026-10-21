@@ -93,6 +93,11 @@ tests\run-buff-icons.cmd C:\deps\x64-windows-static C:\temp\d2rhud-buff-tests
 tests\run-buff-icons.cmd C:\deps\x64-windows-static C:\temp\d2rhud-buff-tests "C:\Games\D2R" RMD-MP
 ```
 
+The optional installation also exercises real source/compiled buff table parity
+in all eight TXT/BIN combinations, mod BIN versus loose TXT precedence, damaged
+tables, and mixed-table link requirements using private copies. Its loose
+`data/global/excel` folder must contain matching source and compiled tables.
+
 Checks absolute server expiration, relative client duration, pause/recast,
 expiration and early state removal, unreadable/cyclic lists, configuration
 validation/round trips, and RGBA/BC3 sprite headers. The optional game directory

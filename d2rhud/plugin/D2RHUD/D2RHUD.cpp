@@ -1,8 +1,11 @@
-#pragma region Includes
+﻿#pragma region Includes
 
 #include "D2RHUD.h"
 #include "TerrorZoneRotation.h"
 #include "TerrorZonePaths.h"
+#include "TerrorZoneTables.h"
+#include "../CompiledNames.h"
+#include "../ItemFilter/CatalogTables.h"
 #include "../GrailTracker.h"
 #include "../FloatingDamage.h"
 #include "../BuffIcons.h"
@@ -3033,110 +3036,21 @@ void InitRandomStatsForAllMonsters(bool forceNew = false) {
 
 void __fastcall ForceTCDrops(D2GameStrc* pGame, D2UnitStrc* pMonster, D2UnitStrc* pPlayer, int32_t nTCId, int32_t nQuality, int32_t nItemLevel, int32_t a7, D2UnitStrc** ppItems, int32_t* pnItemsDropped, int32_t nMaxItems)
 {
-    // Cached file data
-    static bool filesLoaded = false;
-    static decltype(ReadMonsterTreasureFile("")) monsters;
-    static decltype(ReadMonsterTreasureFileSU("")) superuniques;
-    static std::vector<std::string> TCEx;
-
-    if (!filesLoaded)
-    {
-        const auto install = GetExecutableDir();
-        const auto mod = GetModName();
-        const auto MONFile = TerrorZoneDataPath(install, mod, "global/excel/monstats.txt").string();
-        const auto SUFile = TerrorZoneDataPath(install, mod, "global/excel/superuniques.txt").string();
-        const auto TCEXFile = TerrorZoneDataPath(install, mod, "global/excel/treasureclassex.txt").string();
-
-        monsters = ReadMonsterTreasureFile(MONFile);
-        superuniques = ReadMonsterTreasureFileSU(SUFile);
-        TCEx = ReadTCexFile(TCEXFile);
-
-        filesLoaded = true;
+    static const auto tables=[](){
+        GameAssets assets(GetExecutableDir(),GetModName());
+        return TerrorZoneTables::Load(assets,[](const std::string& name){return CompiledNames::Resolve(0x1c9f6a8,name.c_str());});
+    }();
+    if(pMonster && pMonster->pMonsterData){
+        const auto flags=pMonster->pMonsterData->nTypeFlag;
+        const int superunique=(flags&MONTYPEFLAG_SUPERUNIQUE)?MONSTERUNIQUE_GetSuperUniqueBossHcIdx(pGame,pMonster):-1;
+        const int monster=pMonster->dwClassId;
+        const bool boss=monster==156 || monster==211 || monster==242 || monster==243 || monster==544;
+        const int variant=boss ? 2 : (flags&(MONTYPEFLAG_CHAMPION|MONTYPEFLAG_POSSESSED|MONTYPEFLAG_GHOSTLY)) ? 1 :
+            (flags&MONTYPEFLAG_UNIQUE) || ((settings.minionEquality||cachedSettings.minionEquality)&&(flags&MONTYPEFLAG_MINION)) ? 2 : 0;
+        const int difficulty=pGame?pGame->nDifficulty:-1;
+        nTCId=TerrorZoneTables::Adjust(tables,monster,boss?-1:superunique,difficulty,variant,nTCId);
     }
-
-    D2MonStatsTxt* pMonStatsTxtRecord = MONSTERMODE_GetMonStatsTxtRecord(pMonster->dwClassId);
-    if (!pMonStatsTxtRecord)
-    {
-        MessageBoxA(nullptr, "Failed to get monster stats record.", "Debug", MB_OK | MB_ICONERROR);
-        return;
-    }
-
-    auto pMonsterFlag = pMonster->pMonsterData->nTypeFlag;
-    const int32_t nSuperUniqueId = MONSTERUNIQUE_GetSuperUniqueBossHcIdx(pGame, pMonster);
-
-    if (pMonStatsTxtRecord->nId >= monsters.size())
-    {
-        MessageBoxA(nullptr, "Monster ID out of range in monsters vector.", "Debug", MB_OK | MB_ICONERROR);
-        return;
-    }
-
-    D2UnitStrc* pUnitPlayer = UNITS_GetServerUnitByTypeAndId(pGame, UNIT_PLAYER, 1);
-    if (!pUnitPlayer)
-    {
-        MessageBoxA(nullptr, "Failed to get player unit.", "Debug", MB_OK | MB_ICONERROR);
-        return;
-    }
-
-    int difficulty = GetPlayerDifficulty(pUnitPlayer);
-    if (difficulty < 0 || difficulty > 2)
-    {
-        MessageBoxA(nullptr, "Invalid difficulty detected.", "Debug", MB_OK | MB_ICONERROR);
-        return;
-    }
-
-    // Adjust for Expansion Row
-    int adjustedSID = (nSuperUniqueId >= 42) ? nSuperUniqueId + 1 : nSuperUniqueId;
-    int adjustedNID = (pMonStatsTxtRecord->nId >= 410) ? pMonStatsTxtRecord->nId + 1 : pMonStatsTxtRecord->nId;
-
-    MonsterTreasureResult regResult = GetMonsterTreasure(monsters, adjustedNID, difficulty, 0, TCEx);
-    MonsterTreasureResult champResult = GetMonsterTreasure(monsters, adjustedNID, difficulty, 1, TCEx);
-    MonsterTreasureResult uniqResult = GetMonsterTreasure(monsters, adjustedNID, difficulty, 2, TCEx);
-    MonsterTreasureResult superuniqResult = GetMonsterTreasureSU(superuniques, adjustedSID, difficulty, TCEx);
-
-    // Base TC
-    int tcCheckRegular = regResult.tcCheckIndex;
-    int tcCheckChamp = champResult.tcCheckIndex;
-    int tcCheckUnique = uniqResult.tcCheckIndex;
-    int tcCheckSuperUnique = superuniqResult.tcCheckIndex;
-
-    // Terror TC
-    int indexRegular = (regResult.treasureIndex == -1) ? tcCheckRegular : regResult.treasureIndex;
-    int indexChamp = (champResult.treasureIndex == -1) ? tcCheckChamp : champResult.treasureIndex;
-    int indexUnique = (uniqResult.treasureIndex == -1) ? tcCheckUnique : uniqResult.treasureIndex;
-    int indexSuperUnique = (superuniqResult.treasureIndex == -1) ? tcCheckSuperUnique : superuniqResult.treasureIndex;
-
-    LogDebug(std::format("---------------------\nnTCId: {}, indexRegular: {}, indexChamp: {},  indexUnique: {}, indexSuperUnique: {},", nTCId, indexRegular, indexChamp, indexUnique, indexSuperUnique));
-
-    if (nTCId == 0)
-        oDropTCTest(pGame, pMonster, pPlayer, nTCId, nQuality, nItemLevel, a7, ppItems, pnItemsDropped, nMaxItems);
-
-    if ((regResult.treasureIndex == -1 || champResult.treasureIndex == -1 || uniqResult.treasureIndex == -1) && superuniqResult.treasureIndex == -1)
-        oDropTCTest(pGame, pMonster, pPlayer, nTCId, nQuality, nItemLevel, a7, ppItems, pnItemsDropped, nMaxItems);
-
-    else
-    {
-        // Force Boss Drops
-        if (pMonStatsTxtRecord->nId == 156 || pMonStatsTxtRecord->nId == 211 || pMonStatsTxtRecord->nId == 242 || pMonStatsTxtRecord->nId == 243 || pMonStatsTxtRecord->nId == 544)
-        {
-            nTCId = nTCId + (uniqResult.treasureIndex - tcCheckUnique);
-            oDropTCTest(pGame, pMonster, pPlayer, nTCId, nQuality, nItemLevel, a7, ppItems, pnItemsDropped, nMaxItems);
-            LogDebug(std::format("nTCId Applied to Monster: {}\n---------------------\n", nTCId));
-        }
-        else
-        {
-            if (pMonsterFlag & MONTYPEFLAG_SUPERUNIQUE)
-                nTCId = nTCId + (superuniqResult.treasureIndex - tcCheckSuperUnique);
-            else if (pMonsterFlag & (MONTYPEFLAG_CHAMPION | MONTYPEFLAG_POSSESSED | MONTYPEFLAG_GHOSTLY))
-                nTCId = nTCId + (champResult.treasureIndex - tcCheckChamp);
-            else if ((pMonsterFlag & MONTYPEFLAG_UNIQUE) || ((settings.minionEquality || cachedSettings.minionEquality) && (pMonsterFlag & MONTYPEFLAG_MINION)))
-                nTCId = nTCId + (uniqResult.treasureIndex - tcCheckUnique);
-            else nTCId = nTCId + (regResult.treasureIndex - tcCheckRegular);
-
-            LogDebug(std::format("nTCId Applied to Monster: {}\n---------------------\n", nTCId));
-            oDropTCTest(pGame, pMonster, pPlayer, nTCId, nQuality, nItemLevel, a7, ppItems, pnItemsDropped, nMaxItems);
-        }
-    }
-
+    oDropTCTest(pGame,pMonster,pPlayer,nTCId,nQuality,nItemLevel,a7,ppItems,pnItemsDropped,nMaxItems);
 }
 
 void UpdateActiveZoneInfoText(time_t currentUtc)
@@ -7932,16 +7846,8 @@ static const LootFilterConfig::Builder::Catalog& GetLootFilterBuilderCatalog()
         const auto install = std::filesystem::path(GetExecutableDir());
         const auto mod = modName;
         state->loading = std::async(std::launch::async, [install, mod]() {
-            Catalog catalog;
             GameAssets assets(install, mod);
-            for (const char* table : {"weapons", "armor", "misc", "itemtypes", "itemstatcost", "levels", "uniqueitems", "setitems"}) {
-                auto bytes = assets.Read("global/excel/" + std::string(table) + ".txt");
-                AddTable(catalog, table, std::string(bytes.begin(), bytes.end()));
-            }
-            SortCatalog(catalog);
-            catalog.loaded = true;
-            if (catalog.items.empty()) catalog.status = "Item names are unavailable. Category and quality conditions can still be used.";
-            return catalog;
+            return LootFilterConfig::Builder::Tables::Load(assets);
         });
     }
     if (state->loading.valid() && state->loading.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
@@ -9311,10 +9217,10 @@ void ShowD2RHUDMenu()
 
         drawCheckbox("Monster Stats Display", &d2rHUDConfig.MonsterStatsDisplay, "Monster Stats Display", "- Displays HP and Resistances of Monsters in real-time\n- Uses data retrieved directly from the game for accuracy\n- Values for -Enemy Resistance% (when applied by items) are not shown, they don't actually affect monsters\n\n", "This setting is best displayed using either of the Advanced Display Modes in D2RLAN", GetLockInfo(modName, &ModOverrideSettings::MonsterStatsDisplay));
         drawCheckbox("Sundered Monster UMods", &d2rHUDConfig.SunderedMonUMods, "Sundered Monster UMods", "- Applies immunity reduction to MonUMod bonuses\n(Bonuses such as Cold Enchanted, Stone Skin, etc)\n- Refreshes on damage, monster hover, and UMod changes\n\n", "If the monster is under 100 resistance (sunder threshold), then this edit will not apply", GetLockInfo(modName, &ModOverrideSettings::SunderedMonUMods));
-        drawCheckbox("Minion Equality", &d2rHUDConfig.MinionEquality, "Minion Equality", "- Champ/Uniques minions assume their master's drops\n(Determined by your TreasureClassEx.txt entries)\n\n", "Requires TreasureClassEx.txt, Levels.txt, Monstats.txt and SuperUniques.txt to correctly map the drops between types", GetLockInfo(modName, &ModOverrideSettings::MinionEquality));
+        drawCheckbox("Minion Equality", &d2rHUDConfig.MinionEquality, "Minion Equality", "- Champ/Uniques minions assume their master's drops\n(Determined by your TreasureClassEx.txt entries)\n\n", "Uses TXT or BIN tables. Custom terror drop columns in BIN-only releases use the exported HUD table metadata.", GetLockInfo(modName, &ModOverrideSettings::MinionEquality));
         drawCheckbox("Gamble Cost Control", &d2rHUDConfig.GambleCostControl, "Gamble Cost Control", "- Allows the gamble cost column to be used by AMW.txt\n- If a value of -1 is specified, it will use retail cost logic\n- If Disabled, only ring and amulet costs may be changed\n\n", "The maximum gamble cost will be determined by your in-game gold limits (defined in Memory Edits)", GetLockInfo(modName, &ModOverrideSettings::GambleCostControl));
         drawCheckbox("Combat Log", &d2rHUDConfig.CombatLog, "Combat Log", "- Displays real-time combat logs in system chat\n    - RNG rolls for Hit, Block and Dodge results\n    - Elemental Type, +DMG%, Length and Final Damage\n    - Remaining Monster Health\n- Uses data retrieved directly from the game for accuracy\n\n", "This feature is also utilized by the 'attackinfo 1' cheat\nExpect formatting and usage to adapt over time", GetLockInfo(modName, &ModOverrideSettings::CombatLog));
-        drawCheckbox("Transmog Visuals", &d2rHUDConfig.TransmogVisuals, "Transmog Visuals", "- Allows you to transform visuals of applicable items\n(Make your Hand Axe look like a Short Sword, etc)\n- Uses the mod's transmog stat and transmog_table.txt\n- Mod Author decides all transmog possibilities\n- Applies both in-game and at the main menu\n\n", "Four-character item codes work independently when native HD support is active", GetLockInfo(modName, &ModOverrideSettings::TransmogVisuals));
+        drawCheckbox("Transmog Visuals", &d2rHUDConfig.TransmogVisuals, "Transmog Visuals", "- Allows you to transform visuals of applicable items\n(Make your Hand Axe look like a Short Sword, etc)\n- Uses the mod's transmog stat and transmog TXT/JSON mapping\n- Mod Author decides all transmog possibilities\n- Applies both in-game and at the main menu\n\n", "Four-character item codes work independently when native HD support is active", GetLockInfo(modName, &ModOverrideSettings::TransmogVisuals));
         const float pickupLabelWidth = ImGui::CalcTextSize("Disable Right-Click Item Pickup").x + ImGui::GetFrameHeight() + ImGui::GetStyle().ItemInnerSpacing.x;
         const char* pickupLabel = pickupLabelWidth <= ImGui::GetContentRegionAvail().x
             ? "Disable Right-Click Item Pickup###DisableRightClickItemPickup"
@@ -9404,7 +9310,7 @@ void ShowD2RHUDMenu()
             ImGui::EndTooltip();
         }
         if (!ItemCodes::Installed()) {
-            drawCheckbox("Extended Itemcodes (legacy)", &d2rHUDConfig.ExtendedItemcodes, "Extended Itemcodes", "- Legacy visual fallback for four-character item codes\n- Uses transmog_table.txt when native HD support is unavailable\n\n", "Used when native four-character HD support is unavailable", GetLockInfo(modName, &ModOverrideSettings::ExtendedItemcodes));
+            drawCheckbox("Extended Itemcodes (legacy)", &d2rHUDConfig.ExtendedItemcodes, "Extended Itemcodes", "- Legacy visual fallback for four-character item codes\n- Uses transmog TXT/JSON mapping when native HD support is unavailable\n\n", "Used when native four-character HD support is unavailable", GetLockInfo(modName, &ModOverrideSettings::ExtendedItemcodes));
         }
         drawCheckbox("Chat Sounds", &d2rHUDConfig.ChatSounds, "Chat Sounds", "- Plays a notification sound when other players send chat\n- Does not play for your own messages\n- Controlled by D2RHUD options (not chat panel widget)\n\n", "Toggle this to enable or disable chat notification sounds", nullptr);
         if (ImGui::IsItemDeactivatedAfterEdit())
@@ -9542,7 +9448,7 @@ void ShowD2RHUDMenu()
                     ImGui::SetNextWindowPos(ImVec2(mouse.x+70.0f,mouse.y),ImGuiCond_Always);
                     ImGui::BeginTooltip();
                     ImGui::PushTextWrapPos(ImGui::GetCursorPos().x+440.0f*menuScale);
-                    ImGui::TextUnformatted("Unfinished Workshop prototype. Baal unlocks Act VI; its final quest unlocks the next difficulty. Requires the Act VI data pack and -txt. Full D2R restart required. Prototype content; use a separate test character.");
+                    ImGui::TextUnformatted("Unfinished Workshop prototype. Baal unlocks Act VI; its final quest unlocks the next difficulty. Requires a matching compiled Act VI data pack (or -txt when compiling source tables). Full D2R restart required. Prototype content; use a separate test character.");
                     if(ExtendedActs::Requested()!=ExtendedActs::Active())ImGui::TextUnformatted("Restart D2R to apply the selected option.");
                     ImGui::Separator();ImGui::TextWrapped("%s",ExtendedActs::Status());
                     ImGui::PopTextWrapPos();ImGui::EndTooltip();
@@ -9902,7 +9808,7 @@ void ShowMainMenu()
         if (ThemeButton("Grail Tracker", ImVec2(buttonWidth, buttonHeight)))
             showGrailMenu = true;
         ShowGrailMenu();
-        if (ImGui::IsItemHovered()) { descriptionTitle = "Grail Tracker"; descriptionText = "View the progress of your Set/Unique item hunting\n\n- Grail Entries are manually stored for now\n- This feature works for all mods* (or TCP)\n(Mod must have included set/unique items.txt files)\n- Grail Progress/Settings are stored in D2RLAN/D2R/HUD_Settings_ModName.json"; }
+        if (ImGui::IsItemHovered()) { descriptionTitle = "Grail Tracker"; descriptionText = "View the progress of your Set/Unique item hunting\n\n- Grail Entries are manually stored for now\n- This feature works for all mods* (or TCP)\n(Uses the mod’s set/unique TXT or BIN tables)\n- Grail Progress/Settings are stored in D2RLAN/D2R/HUD_Settings_ModName.json"; }
 
         if (ThemeButton("Hotkey Controls", ImVec2(buttonWidth, buttonHeight)))
             showHotkeyMenu = true;

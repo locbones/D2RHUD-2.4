@@ -17,9 +17,11 @@ same combination, including the existing conditional Thul quest recipe.
 
 ## Values and capacity
 
-Values come from the **loaded single-rune deposit recipes**, with `RB-Low`,
-`RB-Mid`, `RB-High` and `RB-Ultra` resolved against the loaded properties and stat
-tables. Keep those single-rune rows as the definitions; quantity-specific rows
+Values come from the **loaded single-rune deposit recipes**. Their compiled
+property-to-stat links identify the bag's four saved balances (`RB_Low`,
+`RB_Mid`, `RB_High`, `RB_Ultra` in RMD-MP), without TXT name lookups or fixed
+numeric IDs. **BIN-only installations work without TXT files or `-txt`.**
+Keep those single-rune rows as the definitions; quantity-specific rows
 may remain but are unnecessary for this helper. Changing a rune's single deposit
 value changes mixed deposits after the game loads the updated tables.
 
@@ -39,6 +41,9 @@ conflicting definitions, missing definitions and random-value deposits refuse
 rather than guessing. Loaded save/send widths, native signed integer limits and
 existing single-deposit upper bounds constrain the final balances. If any tier
 would exceed capacity, the entire deposit is refused before consumption.
+The compiled single-rune definitions must identify exactly four distinct,
+serializable saved stats, with one property per stat. Ambiguous mappings are
+refused. Conditional upper bounds must reference a balance granted by that row.
 
 All four saved-stat updates are checked before calling the native output
 routine. A refused inventory preflight restores the original balances. Native
@@ -53,6 +58,8 @@ Fully close D2R before replacing the DLL, then relaunch. No mod table edit is
 required for this update. In multiplayer, the game host must have this HUD build.
 The native matcher/output hooks are guarded for the project's supported
 executable; `D2R.exe` is not edited on disk.
+The local `%LOCALAPPDATA%\D2RHUD\feature-status.txt` report includes a
+`Cube recipes / Rune deposits` installation status for troubleshooting.
 
 For a local/custom DLL, enable the launcher's existing **Disable update checks**
 setting before launching. Pandemonium's HUD updater otherwise compares the DLL

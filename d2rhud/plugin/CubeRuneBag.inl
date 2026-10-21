@@ -28,8 +28,7 @@ void RuneAdded(bool result,Unit* player,const uint32_t* ids,size_t count){
        std::find(ids,ids+count,runeTransaction->id)!=ids+count)runeTransaction->committed=true;
 }
 int RuneName(uint32_t address,const char* name){
-    const auto linker=RuneField<void*>(Native<void*>(address));
-    return linker ? Native<int(__fastcall*)(void*,const char*)>(0x6d0470)(linker,name) : -1;
+    return CompiledNames::Resolve(address,name);
 }
 bool RuneType(int type,const uint8_t* types,size_t count,std::vector<bool>& visited){
     std::vector<int> pending{type};
@@ -76,35 +75,23 @@ RunePlan PlanRunes(Game* game,Unit* player){
     plan.applicable=true;
     // Native output preparation has fixed arrays for 256 cube items.
     if(unsafe || runes.size()>=256)return plan;
-    constexpr std::array statNames{"RB_Low","RB_Mid","RB_High","RB_Ultra"};
-    constexpr std::array propertyNames{"RB-Low","RB-Mid","RB-High","RB-Ultra"};
     const auto costs=RuneField<uint8_t*>(Native<void*>(0x1c9fb78));
     const auto costCount=RuneField<uint64_t>(Native<void*>(0x1c9fb80));
     const auto properties=RuneField<uint8_t*>(Native<void*>(0x1c9ebc0));
     const auto propertyCount=RuneField<uint64_t>(Native<void*>(0x1c9ebc8));
     if(!costs || !costCount || costCount>512 || !properties || propertyCount>65536)return plan;
-    std::array<int64_t,4> capacity{};
-    for(size_t i=0;i<4;++i){
-        plan.stats[i]=RuneName(0x1c9fb90,statNames[i]);plan.properties[i]=RuneName(0x1c9ebd8,propertyNames[i]);
-        if(plan.stats[i]<0 || uint64_t(plan.stats[i])>=costCount || plan.properties[i]<0 || uint64_t(plan.properties[i])>=propertyCount)return plan;
-        const auto prop=properties+size_t(plan.properties[i])*0x2e;
-        if(prop[0x18]!=17 || RuneField<uint16_t>(prop,0x20)!=plan.stats[i])return plan;
-        for(size_t n=1;n<7;++n)if(prop[0x18+n])return plan;
-        const auto cost=costs+size_t(plan.stats[i])*0x144;const auto bits=cost[0x15];
-        if(!bits || bits>32 || cost[0x14] || !cost[8] || cost[8]>32)return plan;
-        capacity[i]=(int64_t(1)<<bits)-1-RuneField<uint32_t>(cost,0x18);
-        // Native signed saved-stat values cannot exceed INT_MAX even if the
-        // serialized field has a positive bias or 32 unsigned bits.
-        capacity[i]=(std::min)(capacity[i],int64_t(INT_MAX));
-        if(cost[8]<32)capacity[i]=(std::min)(capacity[i],(int64_t(1)<<(cost[8]-1))-1);
-    }
     const auto recipeTable=RuneField<Recipe*>(Native<void*>(0x1ca0b18));
     const auto recipeCount=RuneField<uint64_t>(Native<void*>(0x1ca0b20));
     if(!recipeTable || !recipeCount || recipeCount>100000)return plan;
     std::vector<Recipe> recipes(size_t(recipeCount),Recipe{});
     SIZE_T read=0;if(!ReadProcessMemory(GetCurrentProcess(),recipeTable,recipes.data(),recipes.size()*sizeof(Recipe),&read) || read!=recipes.size()*sizeof(Recipe))return plan;
-    struct Value {std::array<int64_t,4> points{};size_t row=0;bool ambiguous=false;};
-    std::map<uint16_t,Value> values;
+    // BIN records retain property -> saved-stat IDs, but their TXT name
+    // linkers are empty without -txt. Discover the four bag balances from
+    // eligible single-rune deposits instead of relying on those linkers or
+    // hardcoding IDs that can move when the mod's tables change.
+    struct Balance {int property;int64_t capacity;};
+    std::map<int,Balance> balances;
+    std::vector<size_t> deposits;
     for(size_t r=0;r<recipes.size();++r){
         const auto& recipe=recipes[r];const auto& h=recipe.header;const auto& out=recipe.outputs[0];
         if(!h[0] || h[1] || h[2]>game->nDifficulty || h[3]!=255 || h[0x10]!=2 || (h[4]!=0 && h[4]!=16) ||
@@ -115,18 +102,53 @@ RunePlan PlanRunes(Game* game,Unit* player){
            recipe.outputs[1].type || recipe.outputs[2].type)continue;
         for(auto prefix:out.prefixes)extra|=prefix!=0;for(auto suffix:out.suffixes)extra|=suffix!=0;if(extra)continue;
         const auto rune=RuneField<uint16_t>(h.data(),0x1e);if(rune>=rows || !RuneDefinition(table+size_t(rune)*0x1b4,types,size_t(typeCount)))continue;
-        Value value;value.row=r;bool valid=true,any=false;
+        std::map<int,Balance> rowBalances;bool valid=true;
         for(const auto& mod:out.mods)if(mod.property>=0){
-            const auto property=std::find(plan.properties.begin(),plan.properties.end(),mod.property);
-            if(property==plan.properties.end() || mod.param || mod.chance || mod.min<=0 || mod.min!=mod.max){valid=false;break;}
-            value.points[property-plan.properties.begin()]+=mod.min;any=true;
+            if(uint64_t(mod.property)>=propertyCount || mod.param || mod.chance || mod.min<=0 || mod.min!=mod.max){valid=false;break;}
+            const auto prop=properties+size_t(mod.property)*0x2e;
+            const int stat=RuneField<uint16_t>(prop,0x20);
+            if(prop[0x18]!=17 || uint64_t(stat)>=costCount){valid=false;break;}
+            for(size_t n=1;n<7;++n)if(prop[0x18+n])valid=false;
+            const auto cost=costs+size_t(stat)*0x144;const auto bits=cost[0x15];
+            if(!valid || !bits || bits>32 || cost[0x14] || !cost[8] || cost[8]>32){valid=false;break;}
+            auto capacity=(std::min)((int64_t(1)<<bits)-1-RuneField<uint32_t>(cost,0x18),int64_t(INT_MAX));
+            if(cost[8]<32)capacity=(std::min)(capacity,(int64_t(1)<<(cost[8]-1))-1);
+            const auto [found,added]=rowBalances.try_emplace(stat,Balance{mod.property,capacity});
+            if(!added && found->second.property!=mod.property){valid=false;break;}
         }
-        if(!valid || !any)continue;
+        if(!valid || rowBalances.empty())continue;
+        // A conditional deposit must cap a balance that this row grants.
+        // Ignore quest/other-stat conditions rather than adopting their stats.
         if(h[4]==16){
             const int stat=RuneField<int>(h.data(),8),limit=RuneField<int>(h.data(),12);
-            const auto slot=std::find(plan.stats.begin(),plan.stats.end(),stat);
-            if(slot==plan.stats.end() || limit<=0)continue;
-            capacity[slot-plan.stats.begin()]=(std::min)(capacity[slot-plan.stats.begin()],int64_t(limit));
+            const auto slot=rowBalances.find(stat);
+            if(slot==rowBalances.end() || limit<=0)continue;
+            slot->second.capacity=(std::min)(slot->second.capacity,int64_t(limit));
+        }
+        for(const auto& [stat,balance]:rowBalances){
+            const auto [found,added]=balances.try_emplace(stat,balance);
+            if(!added){
+                if(found->second.property!=balance.property)return plan;
+                found->second.capacity=(std::min)(found->second.capacity,balance.capacity);
+            }
+        }
+        if(balances.size()>4)return plan; // Ambiguous bag format: never guess.
+        deposits.push_back(r);
+    }
+    if(balances.size()!=4)return plan;
+    std::array<int64_t,4> capacity{};size_t slot=0;
+    for(const auto& [stat,balance]:balances){
+        plan.stats[slot]=stat;plan.properties[slot]=balance.property;capacity[slot]=balance.capacity;++slot;
+    }
+    struct Value {std::array<int64_t,4> points{};size_t row=0;bool ambiguous=false;};
+    std::map<uint16_t,Value> values;
+    for(const auto r:deposits){
+        const auto& recipe=recipes[r];const auto rune=RuneField<uint16_t>(recipe.header.data(),0x1e);
+        Value value;value.row=r;
+        for(const auto& mod:recipe.outputs[0].mods)if(mod.property>=0){
+            const auto property=std::find(plan.properties.begin(),plan.properties.end(),mod.property);
+            if(property==plan.properties.end())return plan;
+            value.points[property-plan.properties.begin()]+=mod.min;
         }
         auto [found,added]=values.try_emplace(rune,value);
         if(!added && found->second.points!=value.points)found->second.ambiguous=true;

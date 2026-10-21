@@ -2,9 +2,26 @@
 #include <cassert>
 #include <iostream>
 #include <cstdlib>
+#include <tuple>
 
 using namespace ExtendedClasses;
 uintptr_t testImage=0;
+void CompiledClassTables(){
+    const auto root=std::filesystem::temp_directory_path()/("class-bin-tables-"+std::to_string(GetCurrentProcessId()));
+    assert(!std::filesystem::exists(root));std::filesystem::create_directory(root);
+    for(const auto& entry:std::array<std::tuple<const char*,size_t,size_t>,3>{{{"charstats",0xd0,0x20},{"playerclass",0x34,0},{"plrtype",0x24,0}}}){
+        const auto [name,stride,offset]=entry;const auto path=root/(std::string(name)+".bin");
+        std::vector<uint8_t> bytes(4+8*stride);uint32_t count=8;memcpy(bytes.data(),&count,4);memcpy(bytes.data()+4+7*stride+offset,"Warlock",8);
+        auto write=[&]{std::ofstream f(path,std::ios::binary);f.write(reinterpret_cast<char*>(bytes.data()),bytes.size());};
+        write();assert(WarlockTable(root,name,stride,offset));
+        bytes[4+7*stride+offset]='X';write();assert(!WarlockTable(root,name,stride,offset));
+        bytes[4+7*stride+offset]='W';bytes.pop_back();write();assert(!WarlockTable(root,name,stride,offset));
+        std::filesystem::remove(path);
+    }
+    assert(std::filesystem::canonical(root).parent_path()==std::filesystem::canonical(std::filesystem::temp_directory_path()) && root.filename().string().starts_with("class-bin-tables-"));
+    std::filesystem::remove(root);
+    std::cout<<"Compiled class tables validate Warlock's eighth-row identity and reject truncated/wrong-class data without TXT.\n";
+}
 std::vector<uint8_t> capturedSave;
 DWORD64 Pattern::Address(uint32_t rva){return testImage+rva;}
 Map registry{};
@@ -301,6 +318,7 @@ void SkillsTest(){
 }
 int wmain(int argc,wchar_t** argv){
     assert(argc==2 || argc==3);
+    CompiledClassTables();
     if(argc==3){
         std::ifstream save(std::filesystem::path(argv[2]),std::ios::binary|std::ios::ate);assert(save);
         capturedSave.resize(size_t(save.tellg()));save.seekg(0);save.read(reinterpret_cast<char*>(capturedSave.data()),capturedSave.size());assert(save);

@@ -34,6 +34,7 @@ int main(int argc,char** argv){try{
     hero.dwUnitType=secondHero.dwUnitType=0;hero.dwUnitId=1;secondHero.dwUnitId=2;hero.dwAnimMode=secondHero.dwAnimMode=1;hero.pPlayerData=&playerData;secondHero.pPlayerData=&otherData;hero.pInventory=&inventory;secondHero.pInventory=&otherInventory;inventory.dwSignature=otherInventory.dwSignature=0x1020304;inventory.pOwner=&hero;otherInventory.pOwner=&secondHero;
     playerData.pClient=&client;otherData.pClient=&otherClient;client.pGame=otherClient.pGame=&game;client.pPlayer=&hero;otherClient.pPlayer=&secondHero;client.dwUnitGUID=1;otherClient.dwUnitGUID=2;client.dwClientState=otherClient.dwClientState=4;
     bindings[0x1d442d8]=uintptr_t(&selector);bindings[0x6b050]=uintptr_t(+[](uint32_t)->Unit*{return local;});bindings[0x18682b0]=1;bindings[0x422ac0]=uintptr_t(CaptureSend);
+    uint64_t uniqueCount=20,setCount=20;bindings[0x1c9fc78]=uintptr_t(&uniqueCount);bindings[0x1c9fc58]=uintptr_t(&setCount);
     void* linker=reinterpret_cast<void*>(1);bindings[0x1c9fc68]=uintptr_t(&linker);bindings[0x6d0470]=uintptr_t(+[](void*,const char* name)->int{return !strcmp(name,"Barrier1")?10:-1;});bindings[0x1e5620]=uintptr_t(+[](Unit* item,uint32_t stat,uint16_t)->int{return item==&statue&&stat==398?legacyStage:0;});
     Configure(root,"RMD-MP",Source(),"");SetAvailable(true);auto bytes=Save("Hero");Load(hero,client,bytes);Check(Inspect(&game,&hero).available,"new journal unavailable");
     auto first=Snapshot();Check(first.completed==0&&!first.ready&&(first.flags&2),"initial snapshot wrong");Check(Receive(reinterpret_cast<uint8_t*>(&first),sizeof(first))&&CurrentView().character=="Hero","client journal missing");
@@ -45,6 +46,16 @@ int main(int argc,char** argv){try{
     // inventory and its original quest checkpoint, rather than replaying claims.
     Removed(&game,&hero);Load(hero,client,bytes);Check(Inspect(&game,&hero).completed==0&&!Inspect(&game,&hero).objectiveReady,"old save matched newer checkpoint");
     statue.dwUnitType=4;statue.dwUnitId=50;statue.pItemData=&statueData;statueData.dwQualityNo=7;statueData.dwFileIndex=10;statueData.pExtraData.pParentInv=&inventory;inventory.pFirstItem=&statue;
+    {
+        const auto previous=CompiledNames::database.load();auto names=std::make_shared<CompiledNames::Database>();
+        (*names)[0x1c9fc68]["barrier1"]=10;(*names)[0x1c9fc48]["test set"]=3;CompiledNames::database=names;linker=nullptr;
+        Check(LegacyCompleted(&hero,2)==1,"BIN-only legacy import could not resolve Barrier1");
+        Definition::Item condition;condition.unique="Barrier1";Check(Matches(&statue,condition),"BIN-only unique objective failed");
+        --uniqueCount;(*names)[0x1c9fc68]["barrier1"]=99;Check(!Matches(&statue,condition)&&!LegacyCompleted(&hero,2),"invalid compiled unique metadata accepted");
+        ++uniqueCount;(*names)[0x1c9fc68]["barrier1"]=10;
+        condition.unique.clear();condition.set="Test Set";statueData.dwQualityNo=5;statueData.dwFileIndex=3;Check(Matches(&statue,condition),"BIN-only set objective failed");
+        statueData.dwQualityNo=7;statueData.dwFileIndex=10;linker=reinterpret_cast<void*>(1);CompiledNames::database=previous;
+    }
     auto legacy=Snapshot();Check(legacy.legacyCompleted==1,"legacy statue not detected");CommandAction(1,2);Check(Inspect(&game,&hero).completed==0,"forged legacy proposal accepted");CommandAction(1);Check(Inspect(&game,&hero).completed==1,"explicit legacy import failed");CommandAction(1);Check(Inspect(&game,&hero).completed==1,"legacy import repeated");
     gate=Bindings()->gates[2];Check(Begin(&game,&hero,gate),"second objective refused");Finish(&game,&hero,gate,Outcome::Ambiguous);Check(!Inspect(&game,&hero).available,"partial outputs did not lock progress");auto partial=Save("Hero",300);Saved(&game,&hero,partial.data(),partial.size());Removed(&game,&hero);Load(hero,client,partial);Check(!Inspect(&game,&hero).available&&(Snapshot().flags&1),"ambiguous lock was not persistent");
     // Mismatched/corrupt state is never silently replaced or reset.

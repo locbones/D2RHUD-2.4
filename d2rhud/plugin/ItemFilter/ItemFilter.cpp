@@ -1,4 +1,4 @@
-#define SOL_ALL_SAFETIES_ON 1
+﻿#define SOL_ALL_SAFETIES_ON 1
 
 #include "ItemFilter.h"
 #include "LuaConfigIO.h"
@@ -6,6 +6,8 @@
 #include "../TooltipText.h"
 #include "../ItemCodes.h"
 #include "../CubeVisual.h"
+#include "../GameAssets.h"
+#include "../CompiledNames.h"
 #include <detours/detours.h>
 #include <sol/sol.hpp>
 #include <filesystem>
@@ -878,47 +880,10 @@ const char* GetTransmog(D2UnitStrc* pItem)
 
 	// Initialize transmog stat index and table
 	std::call_once(initFlag, [&]() {
-		std::string statFile = std::format("{}/Mods/{}/{}.mpq/data/global/excel/itemstatcost.txt", GetExeDir(), ModName, ModName);
-		std::ifstream file(statFile);
-		if (!file.is_open()) return;
-
-		std::string line;
-		std::vector<std::string> headers;
-		if (std::getline(file, line)) {
-			std::stringstream ss(line);
-			std::string col;
-			while (std::getline(ss, col, '\t')) headers.push_back(col);
-		}
-
-		int statColIndex = -1;
-		for (size_t i = 0; i < headers.size(); ++i) {
-			if (_stricmp(headers[i].c_str(), "Stat") == 0) {
-				statColIndex = static_cast<int>(i);
-				break;
-			}
-		}
-		if (statColIndex == -1) return;
-
-		int rowIndex = 0;
-		while (std::getline(file, line)) {
-			std::stringstream ss(line);
-			std::string col;
-			int colIndex = 0;
-			std::string statName;
-			while (std::getline(ss, col, '\t')) {
-				if (colIndex == statColIndex) { statName = col; break; }
-				++colIndex;
-			}
-			if (_stricmp(statName.c_str(), "transmog") == 0) {
-				transmogStatIndex = rowIndex;
-				break;
-			}
-			++rowIndex;
-		}
-
-		std::string transmogFile = std::format("{}/Mods/{}/{}.mpq/data/global/excel/transmog_table.txt", GetExeDir(), ModName, ModName);
-		std::ifstream tableFile(transmogFile);
-		if (!tableFile.is_open()) return;
+        transmogStatIndex = CompiledNames::Resolve(0x1c9fb90,"transmog");
+        GameAssets assets(GetExeDir(),ModName);
+        std::istringstream tableFile(assets.ReadAuxiliaryTable("transmog_table"));
+        std::string line;
 
 		std::getline(tableFile, line); // skip header
 		while (std::getline(tableFile, line)) {
@@ -1315,44 +1280,7 @@ uint8_t* Hooked_ITEMS_GetColor(D2UnitStrc* pPlayer, D2UnitStrc* pItem, int32_t* 
 	static std::once_flag colorDyeInitFlag;
 
 	std::call_once(colorDyeInitFlag, [&]() {
-		std::string basePath = std::format("{}/Mods/{}/{}.mpq/data/global/excel/", GetExeDir(), ModName, ModName);
-		std::string statFile = basePath + "itemstatcost.txt";
-		std::ifstream file(statFile);
-		if (!file.is_open()) return;
-
-		std::string line;
-		std::vector<std::string> headers;
-		if (std::getline(file, line)) {
-			std::stringstream ss(line);
-			std::string col;
-			while (std::getline(ss, col, '\t')) headers.push_back(col);
-		}
-
-		int statColIndex = -1;
-		for (size_t i = 0; i < headers.size(); ++i) {
-			if (_stricmp(headers[i].c_str(), "Stat") == 0) {
-				statColIndex = static_cast<int>(i);
-				break;
-			}
-		}
-		if (statColIndex == -1) return;
-
-		int rowIndex = 0;
-		while (std::getline(file, line)) {
-			std::stringstream ss(line);
-			std::string col;
-			int colIndex = 0;
-			std::string statName;
-			while (std::getline(ss, col, '\t')) {
-				if (colIndex == statColIndex) { statName = col; break; }
-				++colIndex;
-			}
-			if (_stricmp(statName.c_str(), "color_dye") == 0) {
-				colorDyeStatIndex = rowIndex;
-				break;
-			}
-			++rowIndex;
-		}
+        colorDyeStatIndex = CompiledNames::Resolve(0x1c9fb90,"color_dye");
 		});
 
 	if (colorDyeStatIndex == -1) return result;

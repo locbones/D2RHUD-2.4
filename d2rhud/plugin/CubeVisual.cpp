@@ -3,6 +3,7 @@
 #include "CubeMapData.h"
 #include "LegacyTransmogData.h"
 #include "GameAssets.h"
+#include "CompiledNames.h"
 #include "QuestJournal.h"
 #include <intrin.h>
 #include <set>
@@ -64,10 +65,10 @@ void LoadSource() {
     const std::string name=mod;
     if(!name.empty())for(const auto& part:std::filesystem::path(name))if(part==".." || part=="." || part.has_root_path())return;
     GameAssets assets(root,name);
-    const auto bytes=assets.Read("global/excel/cubemain.txt");
+    const auto text=assets.ReadTableSource("cubemain");
     const auto questConfig=assets.Read("D2RHUD/quests.json");
-    QuestJournal::Configure(root,name,std::string(bytes.begin(),bytes.end()),std::string(questConfig.begin(),questConfig.end()));
-    auto table=ParseSource(std::string(bytes.begin(),bytes.end()));
+    QuestJournal::Configure(root,name,text,std::string(questConfig.begin(),questConfig.end()));
+    auto table=ParseSource(text);
     std::lock_guard lock(sourceMutex);
     sourceTable=std::move(table);
     installRoot=root;sourceMod=name;
@@ -136,11 +137,15 @@ constexpr std::array<LegacyTransmog::Data::Signature,18> Signatures{{
 }};
 int StatId(int value=0) {
     uintptr_t linker=0,table=0;uint64_t count=0;
-    if(!Read(Pattern::Address(0x1c9fb90),linker) || !linker ||
-       !Read(Pattern::Address(0x1c9fb78),table) || !table || !Read(Pattern::Address(0x1c9fb80),count))return -1;
-    const auto lookup=Native<int(__fastcall*)(void*,const char*)>(0x6d0470);
-    int id=lookup(reinterpret_cast<void*>(linker),"hud_visual");
-    if(id<0)id=lookup(reinterpret_cast<void*>(linker),"transmog");
+    if(!Read(Pattern::Address(0x1c9fb78),table) || !table || !Read(Pattern::Address(0x1c9fb80),count))return -1;
+    int id=-1;
+    if(Read(Pattern::Address(0x1c9fb90),linker) && linker){
+        const auto lookup=Native<int(__fastcall*)(void*,const char*)>(0x6d0470);
+        id=lookup(reinterpret_cast<void*>(linker),"hud_visual");
+        if(id<0)id=lookup(reinterpret_cast<void*>(linker),"transmog");
+    }
+    if(id<0)id=CompiledNames::Resolve(0x1c9fb90,"hud_visual");
+    if(id<0)id=CompiledNames::Resolve(0x1c9fb90,"transmog");
     if(id<0 || id>=511 || uint64_t(id)>=count)return -1;
     std::array<uint8_t,0x144> record{};
     if(!Read(table+size_t(id)*record.size(),record))return -1;
@@ -156,14 +161,31 @@ Target Resolve(const std::string& name,int row,int output) {
     // The native set-name branch fills a valid record but returns zero. Its
     // linker ignores that return too; validate the resolved record and tables.
     Native<Parser>(0x2616b0)(&parsed,text.data(),row,output);
-    if(parsed.type!=252)return {};
-    if(parsed.flags&8) {
-        if(!parsed.special)return {};
-        if(parsed.quality==7)return {1,int(parsed.special)-1};
-        if(parsed.quality==5)return {2,int(parsed.special)-1};
-        return {};
+    if(parsed.type==252){
+        if(!(parsed.flags&8) && parsed.base<IndexSlots)return {0,parsed.base};
+        if(parsed.special && parsed.quality==7)return {1,int(parsed.special)-1};
+        if(parsed.special && parsed.quality==5)return {2,int(parsed.special)-1};
     }
-    return {0,parsed.base};
+    // The BIN tables retain item codes and set/unique names even when the
+    // source-only parser linkers are empty. Resolve against those records.
+    uintptr_t table=0;uint64_t count=0;
+    if(!name.empty() && name.size()<=4 && Read(Pattern::Address(0x1ca0390),table) && table &&
+       Read(Pattern::Address(0x1ca0398),count) && count<=1000000){
+        uint32_t wanted=0x20202020;memcpy(&wanted,name.data(),name.size());
+        for(size_t i=0;i<count;++i){uint32_t code=0;if(!Read(table+i*0x1b4+0x80,code))break;if(code==wanted)return {0,int(i)};}
+    }
+    for(const int kind:{1,2}){
+        const uint32_t address=kind==1 ? 0x1c9fc70 : 0x1c9fc50;
+        const size_t stride=kind==1 ? 0x150 : 0x1bc;
+        if(!Read(Pattern::Address(address),table) || !table || !Read(Pattern::Address(address+8),count) || count>65536)continue;
+        for(size_t i=0;i<count;++i){
+            std::array<char,32> title{};if(!Read(table+i*stride+2,title))break;
+            const auto end=std::find(title.begin(),title.end(),'\0');
+            const std::string value(title.begin(),end);
+            if(!_stricmp(value.c_str(),name.c_str()))return {kind,int(i)};
+        }
+    }
+    return {};
 }
 bool Base(Target target,uint32_t& id) {
     if(!target.Valid())return false;

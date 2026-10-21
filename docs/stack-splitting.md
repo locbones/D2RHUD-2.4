@@ -32,6 +32,8 @@ supported. A full destination leaves the original stack unchanged and displays
 an error. Existing stacks are not merged and items are not dropped on the ground.
 Transmog-enabled items keep their conversion behavior. Quantity-one items keep
 their ordinary behavior. Items containing nested items cannot be split.
+Town Portal and Identify tomes (`tbk` and `ibk`) keep their ordinary right-click
+use and are excluded from splitting, regardless of their scroll quantity.
 
 This uses native stackable/quantity-bearing item definitions, including custom
 mod items. Native saved-item serialization copies quality and saved modifiers

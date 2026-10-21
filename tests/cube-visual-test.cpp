@@ -10,6 +10,7 @@
 GameAssets::GameAssets(const std::filesystem::path&,const std::string&) {}
 GameAssets::~GameAssets() {}
 std::vector<uint8_t> GameAssets::Read(const std::string&) {return {};}
+std::string GameAssets::ReadTableSource(const std::string&) {return {};}
 
 using namespace CubeVisual;
 using namespace CubeVisual::Data;
@@ -117,6 +118,22 @@ void Bind(){
         {0x1e5620,reinterpret_cast<uintptr_t>(Get)},{0x1e5270,reinterpret_cast<uintptr_t>(SetSaved)},
         {0x1e4700,reinterpret_cast<uintptr_t>(AllocateSaved)},{0x1e4ea0,reinterpret_cast<uintptr_t>(AttachSaved)},
         {0x2616b0,reinterpret_cast<uintptr_t>(ParseTarget)},{0x42d430,reinterpret_cast<uintptr_t>(Asset)}};
+}
+void CompiledVisualNames(){
+    Bind();Reset();const auto previous=CompiledNames::database.load();
+    auto names=std::make_shared<CompiledNames::Database>();(*names)[0x1c9fb90]["hud_visual"]=0;CompiledNames::database=names;
+    uintptr_t empty=0;bindings[0x1c9fb90]=reinterpret_cast<uintptr_t>(&empty);
+    bindings[0x2616b0]=reinterpret_cast<uintptr_t>(+[](Output*,char*,int,int)->int{return 0;});
+    memcpy(unique.data()+2,"The Unique",11);memcpy(set.data()+2,"The Set",8);
+    assert(Resolve("cap",0,0).index==1 && Resolve("Z004",0,0).index==3);
+    assert(Resolve("the unique",0,0).kind==1 && Resolve("The Set",0,0).kind==2);
+    assert(!Resolve("Unknown target",0,0).Valid());
+    Recipe recipe{};std::string output="useitem,vis=cap";LinkerHook(output.data(),&recipe,0,0,1,0);
+    Input inputs[3]{{&item,0,75},{},{}};CreateHook(nullptr,&player,&recipe,inputs);
+    assert(createCalls==1 && stored==Target(0,1).Encode());
+    (*names)[0x1c9fb90]["hud_visual"]=511;assert(StatId()<0);
+    CompiledNames::database=previous;Bind();Reset();
+    std::cout<<"BIN visual recipes resolve compiled item codes/set/unique names and validated saved-stat metadata without TXT linkers.\n";
 }
 int mapPrepares=0,mapCreates=0;bool mapAllowed=true,mapReuse=false;
 int mapResolved=0;
@@ -343,5 +360,5 @@ int main(int argc,char** argv){
     assert(!Parse("useitem,eth").present);
     for(const auto& text:{"useitem,vis=","useitem,vis=cap,visual=cap","usetype,vis=cap","useitem,vis=cap,qty=2","useitem,visual=\"bad"})assert(!Parse(text).valid);
     for(int kind=0;kind<3;++kind)for(int index:{0,4095}){Target target{kind,index};auto other=Target::Decode(target.Encode());assert(other.kind==kind && other.index==index);}
-    Bind();Reset();Adapters();MapRecipes();RuneBagTest::Run();if(argc>2)RuneBagTest::LoadedTables(argv[2]);if(argc>1)Executable(argv[1]);
+    Bind();Reset();CompiledVisualNames();Adapters();MapRecipes();RuneBagTest::Run();if(argc>2)RuneBagTest::LoadedTables(argv[2]);if(argc>1)Executable(argv[1]);
 }

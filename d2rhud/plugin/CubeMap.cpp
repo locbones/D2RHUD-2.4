@@ -1,4 +1,4 @@
-#include "CubeMap.h"
+﻿#include "CubeMap.h"
 #include "CubeMapData.h"
 #include "CubeMapAutomapData.h"
 #include "CubeMapNative.h"
@@ -16,6 +16,7 @@
 #include "SummonPersistence.h"
 #include "QuestJournal.h"
 #include "CubeVisual.h"
+#include "CompiledNames.h"
 #include "LegacyTransmogData.h"
 #include "../Pattern.h"
 #include "../CrashDiagnostics.h"
@@ -242,7 +243,7 @@ Position Location(Unit* unit){
 Unit* Lookup(Game* game,uint32_t type,uint32_t id){return Native<Unit*(__fastcall*)(Game*,int,uint32_t)>(0x2c49c0)(game,int(type),id);}
 int Stat(Unit* unit,int stat){return Native<int(__fastcall*)(Unit*,uint32_t,uint16_t)>(0x1e5620)(unit,stat,0);}
 void UnitStat(Unit* unit,int stat,int value){Native<void(__fastcall*)(Unit*,int,int,uint16_t)>(0x1e5440)(unit,stat,value,0);}
-int LookupName(uint32_t global,const char* name){const auto linker=Field<void*>(Native<void*>(global),0);return linker ? Native<int(__fastcall*)(void*,const char*)>(0x6d0470)(linker,name) : -1;}
+int LookupName(uint32_t global,const char* name){return CompiledNames::Resolve(global,name);}
 int MapState(){
     const int id=LookupName(0x1c9ec08,"hud_cube_map");
     const auto count=Field<uint64_t>(Native<void*>(0x1c9ebf8),0);
@@ -1038,7 +1039,7 @@ bool Prepare(Game* game,Unit* player,CubeVisual::Data::Recipe& recipe){
     if(state.run && !CanReplaceMap(game,*state.run)){status.store("Map recipe refused: everyone must leave the current map before replacing it; active events must finish.");return false;}
     if(!state.restoreLevels.empty()){status.store("Map recipe refused: the previous area's normal population is still being restored.");return false;}
     const int mapState=MapState();
-    if(mapState<0){status.store("Map recipe refused: add a sendable hud_cube_map state to states.txt and restart.");return false;}
+    if(mapState<0){status.store("Map recipe refused: hud_cube_map must exist in the loaded state table; BIN-only releases also need matching HUD table metadata.");return false;}
     auto run=std::make_unique<Run>();run->id=++serial;if(!run->id)run->id=++serial;
     run->creator=player->dwUnitId;run->characterLevel=(std::max)(1,Stat(player,12));
     run->level=destination;run->state=mapState;run->created=game->dwGameFrame;run->entrance=Location(player);

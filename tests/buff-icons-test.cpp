@@ -5,6 +5,9 @@
 #include <cassert>
 #include <iostream>
 #include <limits>
+#include <fstream>
+
+#include "buff-icons-bin-test.inl"
 
 DWORD64 Pattern::Address(uint32_t) { return 0; }
 uint64_t D3D12::GetBuffIconAtlas(const std::string&, const BuffIcons::SpriteAtlas&) { return 0; }
@@ -122,6 +125,7 @@ int main(int argc, char** argv) {
     set32(20, 3); assert(!ReadSprite(bytes, atlas));
 
     if (argc > 1) {
+        BinaryBuffTables(argv[1]);
         auto db = LoadDatabase(argv[1], argc > 2 ? argv[2] : "");
         if (!db.error.empty()) { std::cerr << db.error << '\n'; return 1; }
         assert(db.skills.count(138)); // Shout

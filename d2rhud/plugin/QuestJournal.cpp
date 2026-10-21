@@ -1,6 +1,7 @@
 #include "QuestJournal.h"
 #include "QuestJournalData.h"
 #include "CubeMap.h"
+#include "CompiledNames.h"
 #include "../Pattern.h"
 #include "../d2/Reclass.h"
 #include <atomic>
@@ -59,8 +60,11 @@ std::optional<Data::History> LegacyTimestampJournal(const Data::Identity& identi
 }
 int LegacyCompleted(Unit* player,int count){
     if(!player||!player->pInventory)return 0;
-    const auto link=Field<void*>(Native<void*>(0x1c9fc68));if(!link)return 0;
-    std::array<int,4> ids{};for(int n=0;n<4;++n){const auto name="Barrier"+std::to_string(n+1);ids[n]=Native<int(__fastcall*)(void*,const char*)>(0x6d0470)(link,name.c_str());}
+    const auto uniqueCount=Field<uint64_t>(Native<void*>(0x1c9fc78));if(!uniqueCount || uniqueCount>65536)return 0;
+    std::array<int,4> ids{};for(int n=0;n<4;++n){
+        const auto name="Barrier"+std::to_string(n+1);ids[n]=CompiledNames::Resolve(0x1c9fc68,name.c_str());
+        if(ids[n]<0 || uint64_t(ids[n])>=uniqueCount)ids[n]=-1;
+    }
     int result=0;std::set<Unit*> seen;
     for(auto item=player->pInventory->pFirstItem;item&&seen.size()<4096;){
         if(!seen.insert(item).second||item->dwUnitType!=4||!item->pItemData)break;

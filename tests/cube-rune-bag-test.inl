@@ -67,6 +67,7 @@ void Reset(size_t runeCount=5){
         {0x1c9fb78,uintptr_t(&costTable)},{0x1c9fb80,uintptr_t(&costRows)},{0x1c9fb90,uintptr_t(&statLink)},
         {0x1c9ebc0,uintptr_t(&propTable)},{0x1c9ebc8,uintptr_t(&propRows)},{0x1c9ebd8,uintptr_t(&propLink)},
         {0x1ca0b18,uintptr_t(&recipeTable)},{0x1ca0b20,uintptr_t(&recipeRows)},{0x6d0470,uintptr_t(Name)},{0x1e5620,uintptr_t(Stat)},{0x1e5270,uintptr_t(Set)},{0x2c49c0,uintptr_t(Lookup)}};
+    statLink=reinterpret_cast<void*>(11);propLink=reinterpret_cast<void*>(12);
     installed=true;current=nullptr;runeTransaction=nullptr;originalRuneMatch=Match;originalCreate=Create;originalAdd=Add;originalNotify=Notify;
 }
 void Run(){
@@ -77,6 +78,32 @@ void Run(){
     CreateHook(&game,&owner,recipeTable+match.row,inputs);
     assert(consumed==5 && nativeCreates==1 && publication==1 && balances[0].value==15 && balances[1].value==21 && balances[2].value==1054 && balances[3].value==41 && balances[4].value==98765);
     assert(!memcmp(&bag,&units[0],sizeof(bag)) && !memcmp(&metadata,&data[0],sizeof(metadata)) && !memcmp(beforeRecipes.data(),recipes.data(),recipes.size()*sizeof(Recipe)));
+    // No TXT source is provided by GameAssets in this test. BIN startup may
+    // leave either null linkers or allocated linkers containing no names.
+    for(const bool emptyLinkers:{false,true})for(const size_t count:{size_t(1),size_t(5)}){
+        Reset(count);
+        if(!emptyLinkers)statLink=propLink=nullptr;
+        bindings[0x6d0470]=uintptr_t(+[](void*,const char*)->int{assert(false && "Rune deposits must not query TXT name linkers");return -1;});
+        const auto old=balances;
+        RuneMatchHook(&match,&game,&owner,inputs);assert(match.matched && !writes);
+        CreateHook(&game,&owner,recipeTable+match.row,inputs);
+        assert(consumed==count && nativeCreates==1 && publication==1);
+        assert(balances[0].value==old[0].value+(count==1 ? 1 : 5));
+        assert(balances[1].value==old[1].value+(count==1 ? 0 : 1));
+        assert(balances[2].value==old[2].value+(count==1 ? 0 : 1024));
+        assert(balances[3].value==old[3].value+(count==1 ? 0 : 1));
+        assert(balances[4].value==old[4].value);
+    }
+    // Compiled property IDs can move independently of their saved-stat IDs.
+    Reset();std::swap(props[0],props[2]);
+    for(auto& recipe:recipes)for(auto& mod:recipe.outputs[0].mods){if(mod.property==0)mod.property=2;else if(mod.property==2)mod.property=0;}
+    assert((PlanRunes(&game,&owner).values==std::array<int,4>{5,1,1024,1}));
+    // Reject ambiguous or unserializable compiled balances without consuming.
+    Reset();Put(props[1].data(),0x20,uint16_t(0));assert(!PlanRunes(&game,&owner).valid);
+    Reset();costs[1][0x15]=0;assert(!PlanRunes(&game,&owner).valid);
+    Reset();props[1][0x19]=17;assert(!PlanRunes(&game,&owner).valid);
+    Reset();recipes[0].header[4]=16;Put(recipes[0].header.data(),8,int(0));Put(recipes[0].header.data(),12,int(14));
+    assert(!PlanRunes(&game,&owner).valid);Put(recipes[0].header.data(),12,int(15));assert(PlanRunes(&game,&owner).valid);
     // Every existing rune keeps its own value, rather than reusing the first
     // rune's recipe value for all inputs; custom inherited runes can add four stats.
     Reset(37);for(int n=1;n<=37;++n)units[n].dwClassId=n;
@@ -124,19 +151,23 @@ void LoadedTables(const std::filesystem::path& directory){
     itemTable=weapons.data();itemRows=weapons.size()/0x1b4;typeTable=nativeTypes.data();typeRows=nativeTypes.size()/0xe4;
     costTable=nativeCosts.data();costRows=nativeCosts.size()/0x144;propTable=nativeProps.data();propRows=nativeProps.size()/0x2e;
     recipeTable=reinterpret_cast<Recipe*>(nativeRecipes.data());recipeRows=nativeRecipes.size()/sizeof(Recipe);
-    bindings[0x6d0470]=uintptr_t(+[](void* linker,const char* name)->int{
-        constexpr std::array statNames{"RB_Low","RB_Mid","RB_High","RB_Ultra"};constexpr std::array propertyNames{"RB-Low","RB-Mid","RB-High","RB-Ultra"};
-        constexpr std::array statIds{292,293,294,476},propertyIds{264,265,263,266};
-        for(int n=0;n<4;++n)if(!strcmp(name,linker==statLink ? statNames[n] : propertyNames[n]))return linker==statLink ? statIds[n] : propertyIds[n];return -1;
-    });
+    statLink=propLink=nullptr;
+    bindings[0x6d0470]=uintptr_t(+[](void*,const char*)->int{assert(false && "BIN fixtures have no TXT names");return -1;});
     bindings[0x1e5620]=uintptr_t(+[](Unit*,uint32_t,uint16_t)->int{return 0;});
     for(size_t n=0;n<itemRows;++n){const auto code=RuneField<uint32_t>(itemTable+n*0x1b4,0x80);if(code==0x2031305a)units[0].dwClassId=uint32_t(n);
         for(unsigned rune=1;rune<=36;++rune){const auto wanted=uint32_t('r')|uint32_t('0'+rune/10)<<8|uint32_t('0'+rune%10)<<16|uint32_t(' ')<<24;if(code==wanted)units[rune].dwClassId=uint32_t(n);}}
     const auto plan=PlanRunes(&game,&owner);
     assert(plan.applicable && plan.valid && plan.runes==36 && (plan.values==std::array<int,4>{2047,2047,2047,7}));
+    assert((plan.stats==std::array<int,4>{292,293,294,476}) && (plan.properties==std::array<int,4>{264,265,263,266}));
+    for(size_t rune=1;rune<=36;++rune){
+        data[0].pExtraData.pNextItem=&units[rune];data[rune].pExtraData.pNextItem=nullptr;
+        const auto single=PlanRunes(&game,&owner);std::array<int,4> expected{};
+        const size_t tier=rune<=33 ? (rune-1)/11 : 3;expected[tier]=1<<((rune<=33 ? rune-1 : rune-34)%11);
+        assert(single.valid && single.runes==1 && single.values==expected);
+    }
     itemTable=definitions[0].data();itemRows=40;typeTable=types[0].data();typeRows=3;costTable=costs[0].data();costRows=4;propTable=props[0].data();propRows=4;
     bindings=savedBindings;
-    std::cout<<"The actual exported mod BIN tables resolve exact Z01, all 36 rune types, native default quantities, property/stat IDs and point sums: 2047 low/mid/high and 7 ultra.\n";
+    std::cout<<"BIN-only tables with no TXT/name linkers resolve all 36 individual rune deposits and mixed totals: 2047 low/mid/high and 7 ultra.\n";
 }
 int nativePreflights=0;
 void NativeOutputRefusal(uint8_t* image){

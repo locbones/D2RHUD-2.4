@@ -1,5 +1,6 @@
 #include "BuffIcons.h"
 #include "BuffIconsData.h"
+#include "BuffIconsTables.h"
 #include "GameAssets.h"
 #include "../d2/D2Ptrs.h"
 #include "../D3D12Hook.h"
@@ -125,13 +126,12 @@ std::vector<LiveSkill> ReadAvailableSkills(uintptr_t player, StatusFor&& statusF
     return result;
 }
 
-using Row = std::unordered_map<std::string, std::string>;
+using Row = Tables::Row;
 std::string Lower(std::string value) {
     for (char& c : value) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
     return value;
 }
-std::vector<Row> Table(GameAssets& assets, const std::string& name) {
-    const auto bytes = assets.Read("global/excel/" + name + ".txt");
+std::vector<Row> TextTable(const std::vector<uint8_t>& bytes) {
     if (bytes.empty()) return {};
     std::string text(bytes.begin(), bytes.end());
     if (text.compare(0, 3, "\xef\xbb\xbf") == 0) text.erase(0, 3);
@@ -150,9 +150,18 @@ std::vector<Row> Table(GameAssets& assets, const std::string& name) {
         std::istringstream fields(line);
         size_t column = 0;
         while (column < headers.size() && std::getline(fields, value, '\t')) row[headers[column++]] = value;
+        if (!headers.empty() && row[headers.front()] == "Expansion") continue;
+        row["@rowid"] = std::to_string(rows.size());
         rows.push_back(std::move(row));
     }
     return rows;
+}
+struct TableData { std::vector<Row> rows; bool binary = false; std::vector<uint8_t> companion; };
+TableData Table(GameAssets& assets, const std::string& name, bool companion = false) {
+    auto files = assets.ReadTable(name, companion);
+    if (!files.text.empty()) return {TextTable(files.text), false, std::move(files.binary)};
+    if (!files.binary.empty()) return {Tables::Decode(files.binary, name), true, {}};
+    return {};
 }
 std::string Field(const Row& row, const std::string& key) {
     const auto it = row.find(key);
@@ -168,9 +177,27 @@ Database LoadDatabase(const std::filesystem::path& install, const std::string& m
     Database result;
     try {
         GameAssets assets(install, mod);
-        const auto skills = Table(assets, "skills"), descriptions = Table(assets, "skilldesc"), states = Table(assets, "states");
+        const auto stateTable = Table(assets, "states"), descriptionTable = Table(assets, "skilldesc");
+        auto skillTable = Table(assets, "skills", stateTable.binary || descriptionTable.binary);
+        const auto& descriptions = descriptionTable.rows;
+        const auto& states = stateTable.rows;
+        if (!skillTable.binary && (stateTable.binary || descriptionTable.binary) && !skillTable.rows.empty()) {
+            if (skillTable.companion.empty()) throw std::runtime_error("Mixed TXT/BIN buff tables need a matching skills.bin in the skills.txt data folder to resolve compiled state/description IDs.");
+            std::map<int, Row> compiled;
+            for (auto& row : Tables::Decode(skillTable.companion, "skills")) compiled.emplace(Number(Field(row, "id")), std::move(row));
+            for (auto& row : skillTable.rows) {
+                const auto id = Number(Field(row, "*id"), Number(Field(row, "id")));
+                if (id < 0) continue;
+                const auto entry = compiled.find(id);
+                if (entry == compiled.end() || Lower(Field(row, "skill")).compare(0, Field(entry->second, "skill").size(), Lower(Field(entry->second, "skill"))) != 0)
+                    throw std::runtime_error("skills.txt and its companion skills.bin do not match; recompile the buff tables.");
+                if (stateTable.binary) for (const char* field : {"aurastate", "auratargetstate", "passivestate"}) row[field] = Field(entry->second, field);
+                if (descriptionTable.binary) row["skilldesc"] = Field(entry->second, "skilldesc");
+            }
+        }
+        const auto& skills = skillTable.rows;
         if (skills.empty() || descriptions.empty() || states.empty()) {
-            result.error = "Could not read skills.txt, skilldesc.txt or states.txt from this mod/game installation.";
+            result.error = "Could not read skills, skilldesc or states tables (.txt or D2R 2.4 .bin) from this mod/game installation.";
             return result;
         }
         std::map<std::string, int> stateIds;
@@ -178,18 +205,27 @@ Database LoadDatabase(const std::filesystem::path& install, const std::string& m
             const auto& row = states[i];
             if (Field(row, "state") == "Expansion") continue;
             // Self buffs and beneficial target states; curses are not buff choices.
-            if (Number(Field(row, "curse"), 0) == 0)
-                stateIds[Lower(Field(row, "state"))] = Number(Field(row, "*id"), Number(Field(row, "id"), static_cast<int>(i)));
+            if (Number(Field(row, "curse"), 0) == 0) {
+                // *ID is a source comment; compiled state IDs follow row order.
+                const int id = Number(Field(row, "@rowid"), static_cast<int>(i));
+                stateIds[Lower(Field(row, "state"))] = id;
+                stateIds[Tables::Id(id)] = id;
+            }
         }
         std::map<std::string, Row> desc;
-        for (const auto& row : descriptions) desc[Lower(Field(row, "skilldesc"))] = row;
+        for (const auto& row : descriptions) {
+            desc[Lower(Field(row, "skilldesc"))] = row;
+            desc[Tables::Id(Number(Field(row, "@rowid")))] = row;
+        }
         std::map<std::string, std::string> names;
         const auto strings = assets.Read("local/lng/strings/skills.json");
         if (!strings.empty()) {
             auto json = nlohmann::json::parse(strings.begin(), strings.end(), nullptr, false);
             if (json.is_array()) for (const auto& row : json) {
-                if (row.is_object() && row.contains("Key") && row["Key"].is_string() && row.contains("enUS") && row["enUS"].is_string())
+                if (row.is_object() && row.contains("Key") && row["Key"].is_string() && row.contains("enUS") && row["enUS"].is_string()) {
                     names[row["Key"].get<std::string>()] = row["enUS"].get<std::string>();
+                    if (row.contains("id") && row["id"].is_number_integer()) names[Tables::Id(row["id"].get<int>())] = row["enUS"].get<std::string>();
+                }
             }
         }
         // The HUD uses this array for both native skills and item-granted skills.
@@ -221,9 +257,11 @@ Database LoadDatabase(const std::filesystem::path& install, const std::string& m
             skill.name = Field(row, "skill");
             auto description = desc.find(Lower(Field(row, "skilldesc")));
             if (description != desc.end()) {
-                auto name = names.find(Field(description->second, "str name"));
+                const auto stringId = Field(description->second, "@strid");
+                auto name = names.find(stringId.empty() ? Field(description->second, "str name") : Tables::Id(Number(stringId)));
                 if (name != names.end()) skill.name = name->second;
-                skill.frame = Number(Field(description->second, "iconcel"));
+                // Empty source byte fields compile to zero in skilldesc.bin.
+                skill.frame = Number(Field(description->second, "iconcel"), 0);
             }
             auto cls = classes.find(Lower(Field(row, "charclass")));
             if (skill.frame >= 0) {

@@ -131,6 +131,27 @@ bool Write(uint32_t rva,const void* data,size_t size) {
     DWORD unused=0;VirtualProtect(target,size,old,&unused);return true;
 }
 enum class Configuration { Disabled, Warlock, Invalid };
+bool WarlockTable(const std::filesystem::path& excel,const char* name,size_t stride,size_t nameOffset){
+    std::ifstream text(excel/(std::string(name)+".txt"));
+    if(text){
+        std::string line;unsigned rows=0;bool warlock=false;std::getline(text,line);
+        while(std::getline(text,line)){
+            auto field=line.substr(0,line.find('\t'));
+            if(!field.empty()&&field.back()=='\r')field.pop_back();
+            if(field.empty() || field=="Expansion" || field=="expansion")continue;
+            if(rows==7 && field=="Warlock")warlock=true;
+            ++rows;
+        }
+        return rows==8 && warlock;
+    }
+    // These three native BIN layouts retain the class display name. Check the
+    // eighth row's identity rather than trusting a count or a manifest alone.
+    std::ifstream binary(excel/(std::string(name)+".bin"),std::ios::binary|std::ios::ate);
+    if(!binary || binary.tellg()!=std::streamoff(4+8*stride))return false;
+    uint32_t count=0;binary.seekg(0);if(!binary.read(reinterpret_cast<char*>(&count),4) || count!=8)return false;
+    std::array<char,8> title{};binary.seekg(4+7*stride+nameOffset);
+    return bool(binary.read(title.data(),title.size())) && !memcmp(title.data(),"Warlock",8);
+}
 Configuration Config() {
     wchar_t exe[32768]{};char mod[128]{};
     if(!GetModuleFileNameW(nullptr,exe,32768) || !Read(Pattern::Address(0x1bf084f),mod,sizeof(mod)))return Configuration::Invalid;
@@ -144,17 +165,8 @@ Configuration Config() {
         const auto config=nlohmann::json::parse(file);
         if(config.value("version",0)!=1 || !config.value("warlock",false))return Configuration::Invalid;
         // A class manifest cannot silently reinterpret a different eighth row.
-        for(const auto& entry:{std::pair{"charstats.txt","Warlock"},std::pair{"playerclass.txt","Warlock"},std::pair{"plrtype.txt","Warlock"}}) {
-            std::ifstream table(data/"global/excel"/entry.first);std::string line;unsigned rows=0;bool warlock=false;
-            std::getline(table,line);
-            while(std::getline(table,line)) {
-                auto field=line.substr(0,line.find('\t'));
-                if(field.empty() || field=="Expansion" || field=="expansion")continue;
-                if(rows==7 && field==entry.second)warlock=true;
-                ++rows;
-            }
-            if(rows!=8 || !warlock)return Configuration::Invalid;
-        }
+        const auto excel=data/"global/excel";
+        if(!WarlockTable(excel,"charstats",0xd0,0x20) || !WarlockTable(excel,"playerclass",0x34,0) || !WarlockTable(excel,"plrtype",0x24,0))return Configuration::Invalid;
         if(!std::filesystem::is_regular_file(data/(Model+5)))return Configuration::Invalid;
         return Configuration::Warlock;
     } catch(...) { return Configuration::Invalid; }

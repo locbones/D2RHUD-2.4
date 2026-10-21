@@ -123,6 +123,24 @@ void StartupDataTests(const char* sourcePath){
     assert(ConfigureData(data,config,true,true,6)==Config::Enabled && !pendingRestart);check(true,true);
     assert(ConfigureData(data,config,false,true,6)==Config::Enabled && pendingRestart);check(false,true);
     assert(ConfigureData(data,config,false,true,5)==Config::Disabled);check(false,false);
+    // Distribute only compiled tables and the existing JSON/layout assets.
+    // No authoring or enabled/disabled template TXT is needed for startup.
+    for(const auto& path:std::filesystem::recursive_directory_iterator(data))if(path.is_regular_file()&&path.path().extension()==".txt")std::filesystem::remove(path.path());
+    assert(ConfigureData(data,config,false,false,5)==Config::Disabled && !compileText);
+    assert(ConfigureData(data,config,true,false,5)==Config::Disabled && pendingRestart);
+    auto bin=[&](const char* name,size_t stride,uint32_t count){
+        std::vector<uint8_t> bytes(4+size_t(count)*stride);memcpy(bytes.data(),&count,4);
+        if(std::string(name)=="actinfo")for(uint32_t n=0;n<count;++n){const auto id=n+1;memcpy(bytes.data()+4+size_t(n)*stride,&id,4);}
+        if(std::string(name)=="levels")for(uint32_t n=0;n<count;++n){auto row=bytes.data()+4+size_t(n)*stride;memcpy(row,&n,4);if(n>=240&&n<249){row[7]=5;row[0xe8]=uint8_t(39+n-240);}}
+        std::ofstream file(data/"global/excel"/(std::string(name)+".bin"),std::ios::binary);file.write(reinterpret_cast<char*>(bytes.data()),bytes.size());
+    };
+    bin("actinfo",0x8c,6);bin("levels",0x184,249);
+    assert(ConfigureData(data,config,true,false,6)==Config::Enabled && !pendingRestart && !compileText);
+    assert(ConfigureData(data,config,false,false,6)==Config::Enabled && pendingRestart);
+    bin("levels",0x184,248);bool bad=false;
+    try{ConfigureData(data,config,true,false,6);}catch(...){bad=true;}assert(bad);
+    bin("levels",0x184,249);bin("actinfo",0x8c,5);bad=false;
+    try{ConfigureData(data,config,true,false,6);}catch(...){bad=true;}assert(bad);
     configured=false;configuredManifest={};configuredData.clear();
     assert(std::filesystem::canonical(data).parent_path()==temp && data.filename().string().starts_with("act6-startup-test-"));
     std::filesystem::remove_all(data);

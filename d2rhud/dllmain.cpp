@@ -26,6 +26,8 @@
 #include "plugin/States512.h"
 #include "plugin/ExtendedClasses.h"
 #include "plugin/ExtendedActs.h"
+#include "plugin/CompiledNames.h"
+#include "plugin/TableMetadataExport.h"
 
 LONG WINAPI ExceptionHandler(PEXCEPTION_POINTERS pExceptionInfo);
 
@@ -55,9 +57,12 @@ static void WriteFeatureStatus(HMODULE hud) {
         report << "D2RHUD build: " << __DATE__ << ' ' << __TIME__ << '\n'
             << "Game: " << utf8(gamePath) << '\n'
             << "HUD: " << utf8(hudPath) << '\n'
+            << "TXT/BIN table metadata: " << CompiledNames::Status() << '\n'
+            << "Automatic table metadata export: " << TableMetadataExport::Status() << '\n'
             << "Right-click item conversion: " << LegacyTransmog::Status() << '\n'
             << "Right-click stack splitting: " << LegacyTransmog::StackSplitStatus() << '\n'
             << "Automatic stack socketing: " << LegacyTransmog::SocketStackStatus() << '\n'
+            << "Cube recipes / Rune deposits: " << CubeVisual::Status() << '\n'
             << "Cube maps / Survivors: " << CubeMap::Status() << '\n'
             << "Character save/load: " << CubeMap::SummonLifecycleStatus() << '\n'
             << "Persistent Summons: " << SummonPersistence::Status() << '\n'
@@ -101,6 +106,11 @@ DWORD WINAPI AttachThread(LPVOID lParam) {
     D3D12::SetDllModule(hModule);
     const bool statesReady=States512::Install(false);
     D2Ptrs::Initialize();
+    wchar_t exe[32768]{};char selectedMod[128]{};SIZE_T selectedRead=0;
+    if(GetModuleFileNameW(nullptr,exe,32768) && ReadProcessMemory(GetCurrentProcess(),reinterpret_cast<void*>(Pattern::Address(0x1bf084f)),selectedMod,sizeof(selectedMod),&selectedRead)){
+        selectedMod[127]=0;
+        CompiledNames::Load(std::filesystem::path(exe).parent_path(),selectedMod);
+    }
     ItemCodes::Install();
     RestartGame::Install();
     AutomapLayers::Install();
@@ -117,6 +127,7 @@ DWORD WINAPI AttachThread(LPVOID lParam) {
     // Install after features that verify the original player allocator bytes.
     const bool classesReady=ExtendedClasses::Install();
     const bool actsReady=ExtendedActs::Install();
+    if(statesReady && classesReady && actsReady && exe[0])TableMetadataExport::Start(std::filesystem::path(exe).parent_path(),selectedMod);
     States512::FinishStartup(statesReady && classesReady && actsReady);
     WriteFeatureStatus(hModule);
     if(!statesReady || !classesReady || !actsReady)return 0;

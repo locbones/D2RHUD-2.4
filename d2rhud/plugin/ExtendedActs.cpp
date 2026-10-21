@@ -145,6 +145,26 @@ size_t Column(const Rows& table,const char* name) {
 enum class Config {Disabled,Enabled,Invalid,NeedsText};
 enum class DataGroup {All,Launch,Layouts};
 struct NeedsCompilation {};
+void ValidateCompiledActs(const std::filesystem::path& data,uint64_t loadedActs,const std::array<int,9>& areas){
+    auto read=[&](const char* name,size_t stride){
+        std::ifstream input(data/"global/excel"/(std::string(name)+".bin"),std::ios::binary|std::ios::ate);
+        if(!input || input.tellg()<4 || input.tellg()>64*1024*1024)throw std::runtime_error(std::string("Missing compiled Act VI table: ")+name+".bin");
+        std::vector<uint8_t> bytes(size_t(input.tellg()));input.seekg(0);uint32_t count=0;
+        if(!input.read(reinterpret_cast<char*>(bytes.data()),bytes.size()))throw std::runtime_error("Unreadable compiled Act VI table");
+        memcpy(&count,bytes.data(),4);
+        if(!count || count>4096 || bytes.size()!=4+size_t(count)*stride)throw std::runtime_error("Unsupported compiled Act VI table layout");
+        return bytes;
+    };
+    const auto acts=read("actinfo",0x8c);uint32_t count=0;memcpy(&count,acts.data(),4);
+    if(count!=loadedActs)throw std::runtime_error("ActInfo.bin does not match the native loaded act count");
+    for(size_t i=0;i<count;++i){uint32_t id=0;memcpy(&id,acts.data()+4+i*0x8c,4);if(id!=i+1)throw std::runtime_error("Compiled ActInfo order is invalid");}
+    const auto levels=read("levels",0x184);memcpy(&count,levels.data(),4);
+    for(size_t n=0;n<areas.size();++n){
+        if(size_t(areas[n])>=count)throw std::runtime_error("Compiled Act VI level is missing");
+        const auto row=levels.data()+4+size_t(areas[n])*0x184;uint32_t id=0;memcpy(&id,row,4);
+        if(id!=areas[n] || row[7]!=5 || row[0xe8]!=39+n)throw std::runtime_error("Compiled Act VI level/waypoint does not match its manifest");
+    }
+}
 bool SelectData(const std::filesystem::path& data,const nlohmann::json& config,bool enabled,bool canCompile=true,DataGroup group=DataGroup::All) {
     struct Replacement {std::filesystem::path path;std::string before,after;};
     std::vector<Replacement> replacements;
@@ -191,7 +211,21 @@ Config ConfigureData(const std::filesystem::path& data,const nlohmann::json& con
     // The startup injector pauses at States, after ActInfo has compiled. Match
     // the current process to its loaded tables, not the next launch's checkbox.
     const bool running=loadedActs ? loadedActs==6 : want;
-    if(!txt && (want || running))return Config::NeedsText;
+    if(!txt){
+        // An already compiled package can run without any authoring TXT
+        // templates. The loaded tables determine this process's native mode.
+        // Switching modes still needs a matching five/six-act BIN package;
+        // never pretend that changing a checkbox changes compiled tables.
+        if(!loadedActs)throw std::runtime_error("Native ActInfo is not available for compiled-data validation");
+        if(running)ValidateCompiledActs(data,loadedActs,levels);
+        if(!SelectData(data,config,running,true,DataGroup::Layouts))throw std::runtime_error("Act VI layout selection could not be written");
+        configuredData=data;configuredManifest=config;configured=true;compileText=false;pendingRestart=running!=want;
+        if(pendingRestart)ConfigurationMessage(running ?
+            "Act VI remains active: this package contains six-act BIN tables. Install the five-act compiled package to disable it after restarting." :
+            "Act VI requested, but this package contains five-act BIN tables. Install the six-act compiled package and restart to activate it.");
+        else ConfigurationMessage(running ? "Act VI uses the validated six-act BIN package; TXT compilation is not required." : "Act VI disabled. Five-act BIN progression is active.");
+        return running?Config::Enabled:Config::Disabled;
+    }
     if(!SelectData(data,config,want,txt,DataGroup::Launch) ||
        !SelectData(data,config,running,true,DataGroup::Layouts))throw std::runtime_error("Act VI data selection could not be written");
     // Validate the enabled templates even when this process is still five-act.
@@ -297,7 +331,9 @@ bool Install() {
     if(config==Config::NeedsText){message="Act VI unavailable: launch the prototype with -txt to compile all six-act tables.";return false;}
     if(config!=Config::Enabled)return false;
     const bool ready=Activate();
-    if(ready && pendingRestart)message="Act VI remains active for this process. Fully restart D2R to apply the disabled option.";
+    if(ready && pendingRestart)message=compileText ?
+        "Act VI remains active for this process. Fully restart D2R to apply the disabled option." :
+        "Act VI remains active: this package contains six-act BIN tables. Install the five-act compiled package and restart to disable it.";
     return ready;
 }
 void Tick(D2GameStrc* game) {
@@ -349,6 +385,12 @@ void SetRequested(bool value){
     std::lock_guard lock(selectionMutex);
     if(requested.exchange(value)==value || !configured)return;
     try{
+        if(!compileText){
+            pendingRestart=(Field<uint64_t>(At<void*>(0x1c9ea88))==6)!=value;
+            message=pendingRestart ? "Act VI preference saved. Install matching five/six-act BIN tables and restart to change the compiled act count." :
+                value ? "Act VI preference matches the loaded six-act BIN package." : "Act VI disabled. Five-act BIN progression is active.";
+            return;
+        }
         // Tables/strings are startup resources; prepare them now, while leaving
         // current-process quest/waypoint layouts and hooks in their current mode.
         if(!SelectData(configuredData,configuredManifest,value,compileText,DataGroup::Launch))throw std::runtime_error("Could not write startup data");

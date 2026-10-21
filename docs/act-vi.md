@@ -4,12 +4,20 @@ This unfinished Workshop prototype explores engine limits and supports future
 modding plans.
 
 **RMD-MP only.** Enable **Act VI** in **D2RHUD Options > Workshop**, then fully restart D2R
-with `-txt`. The option defaults off. Changing the checkbox prepares the next
+with a matching compiled six-act package, or use `-txt` when authoring its tables.
+The option defaults off. With source tables, changing the checkbox prepares the next
 launch's tables and strings on disk, while the current process retains its
 loaded tables and matching quest/waypoint layouts. The startup injector reaches
 its States gate after ActInfo has already compiled, so it must accept the
 current five- or six-act snapshot. Native UI hooks and layouts follow that
 snapshot. A full restart then applies the prepared preference.
+
+BIN-only packages do not require the TXT templates or `-txt`. Their native
+loaded act count controls the current mode; a six-act package also validates
+its compiled ActInfo order and Act VI level/waypoint IDs. Changing between
+five- and six-act modes requires installing the matching compiled package.
+The checkbox reports this requirement and never reinterprets five-act BINs as
+six acts or blocks an ordinary disabled five-act HUD startup.
 
 If a preference was edited externally instead of through the checkbox, startup
 prepares its data and retains the current loaded mode, with a restart notice.

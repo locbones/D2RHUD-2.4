@@ -1,5 +1,8 @@
 # Sanctuary Survivors
 
+Skill upgrade names use `skills.txt` when present and fall back to the retained
+IDs/names in `skills.bin`; arena startup does not need TXT skill tables.
+
 A native D2R survival arena, inspired by [D2 Survivors](https://d2survivors.lol/)
 and Vampire Survivors. This unfinished Workshop prototype explores engine limits
 and supports future modding plans. It defaults **off**. Enable **Survivor Arena**

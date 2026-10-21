@@ -31,7 +31,10 @@ bool SplitEligible(Unit* player,Unit* item,bool authoritative){
     // its contents. Ordinary magic/rare/unique stack modifiers are supported.
     if(i.pInventory){D2InventoryStrc children{};if(!Read(reinterpret_cast<uintptr_t>(i.pInventory),children) || children.pFirstItem)return false;}
     std::array<uint8_t,ItemRecordSize> record{};
-    return Read(table+size_t(i.dwClassId)*record.size(),record) && !record[0x141] && record[0x13a] && ItemQuantity(item)>1;
+    if(!Read(table+size_t(i.dwClassId)*record.size(),record))return false;
+    // Tomes retain their native right-click use rather than splitting scrolls.
+    if(!memcmp(record.data()+0x80,"tbk ",4) || !memcmp(record.data()+0x80,"ibk ",4))return false;
+    return !record[0x141] && record[0x13a] && ItemQuantity(item)>1;
 }
 std::string SplitName(Unit* item){
     uintptr_t table=0;uint16_t index=0;

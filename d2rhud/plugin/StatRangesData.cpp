@@ -1,5 +1,6 @@
 #include "StatRangesData.h"
 #include "GameAssets.h"
+#include "StatRangesBinTables.h"
 #include "../json.hpp"
 #include <cctype>
 #include <regex>
@@ -14,24 +15,6 @@ std::string Lower(std::string s) { for (auto& c : s) c = static_cast<char>(std::
 std::string Field(const Row& row, const std::string& key) { auto i = row.find(key); return i == row.end() ? "" : i->second; }
 int Number(const std::string& s, int fallback = 0) {
     try { size_t used; int n = std::stoi(s, &used); return used == s.size() ? n : fallback; } catch (...) { return fallback; }
-}
-std::vector<Row> Table(GameAssets& assets, const std::string& name) {
-    auto bytes = assets.Read("global/excel/" + name + ".txt");
-    std::string text(bytes.begin(), bytes.end());
-    if (text.compare(0, 3, "\xef\xbb\xbf") == 0) text.erase(0, 3);
-    std::istringstream input(text); std::string line, value; std::vector<std::string> headers; std::vector<Row> rows;
-    if (!std::getline(input, line)) return rows;
-    if (!line.empty() && line.back() == '\r') line.pop_back();
-    std::istringstream header(line);
-    while (std::getline(header, value, '\t')) headers.push_back(Lower(value));
-    while (std::getline(input, line)) {
-        if (!line.empty() && line.back() == '\r') line.pop_back();
-        if (line.empty()) continue;
-        Row row; std::istringstream fields(line); size_t column = 0;
-        while (column < headers.size() && std::getline(fields, value, '\t')) row[headers[column++]] = value;
-        rows.push_back(std::move(row));
-    }
-    return rows;
 }
 void PropertyFrom(Properties& to, const Row& row, const std::string& code, const std::string& param, const std::string& min, const std::string& max) {
     auto c = Field(row, code);
@@ -149,9 +132,10 @@ std::string PlainText(const std::string& text) {
 
 Database LoadDatabase(GameAssets& assets) {
     Database db;
+    Binary::Tables tables(assets);
     try {
-        auto costs = Table(assets, "itemstatcost"), properties = Table(assets, "properties");
-        if (costs.empty() || properties.empty()) { db.error = "Could not load properties.txt and itemstatcost.txt from the game/mod."; return db; }
+        auto costs = tables.Get("itemstatcost"), properties = tables.Get("properties");
+        if (costs.empty() || properties.empty()) { db.error = "Could not load properties/itemstatcost tables (TXT or D2R 2.4 BIN) from the game/mod."; return db; }
         for (const auto& row : costs) {
             int id = Number(Field(row, "*id"), Number(Field(row, "id"), -1));
             if (id >= 0) db.statIds[Lower(Field(row, "stat"))] = id;
@@ -175,34 +159,34 @@ Database LoadDatabase(GameAssets& assets) {
             }
         }
         // The native loader concatenates these three tables in this exact order.
-        for (const char* table : { "magicsuffix", "magicprefix", "automagic" }) for (const auto& row : Table(assets, table)) {
+        for (const char* table : { "magicsuffix", "magicprefix", "automagic" }) for (const auto& row : tables.Get(table)) {
             Properties props;
             for (int i = 1; i <= 3; ++i) { auto n = std::to_string(i); PropertyFrom(props, row, "mod" + n + "code", "mod" + n + "param", "mod" + n + "min", "mod" + n + "max"); }
             db.affixes.push_back(std::move(props));
         }
         int ordinal = 0;
-        for (const auto& row : Table(assets, "qualityitems")) {
+        for (const auto& row : tables.Get("qualityitems")) {
             Properties props;
             for (int i = 1; i <= 2; ++i) { auto n = std::to_string(i); PropertyFrom(props, row, "mod" + n + "code", "mod" + n + "param", "mod" + n + "min", "mod" + n + "max"); }
             db.superior[ordinal++] = std::move(props);
         }
         ordinal = 0;
-        for (const auto& row : Table(assets, "charstats")) {
+        for (const auto& row : tables.Get("charstats")) {
             if (Field(row, "class") == "Expansion") continue;
             db.classSkills[ordinal] = Field(row, "strallskills");
             for (int tab = 0; tab < 3; ++tab) db.tabSkills[ordinal * 8 + tab] = Field(row, "strskilltab" + std::to_string(tab + 1));
             ++ordinal;
         }
         ordinal = 0;
-        for (const char* name : { "weapons", "armor", "misc" }) for (const auto& row : Table(assets, name)) {
+        for (const char* name : { "weapons", "armor", "misc" }) for (const auto& row : tables.Get(name)) {
             if (Field(row, "name") == "Expansion") continue;
             db.baseItems[ordinal++] = { Lower(Field(row, "code")), Number(Field(row, "gemapplytype")), Lower(Field(row, "type")), Lower(Field(row, "type2")) };
         }
-        for (const auto& row : Table(assets, "itemtypes")) {
+        for (const auto& row : tables.Get("itemtypes")) {
             auto& parents = db.itemTypes[Lower(Field(row, "code"))];
             for (const char* key : { "equiv1", "equiv2" }) { auto s = Lower(Field(row, key)); if (!s.empty()) parents.push_back(s); }
         }
-        for (const auto& row : Table(assets, "runes")) if (Number(Field(row, "complete"))) {
+        for (const auto& row : tables.Get("runes")) if (Number(Field(row, "complete"))) {
             Runeword word;
             for (int i = 1; i <= 6; ++i) { auto code = Lower(Field(row, "rune" + std::to_string(i))); if (!code.empty()) word.runes.push_back(code); }
             for (int i = 1; i <= 6; ++i) { auto type = Lower(Field(row, "itype" + std::to_string(i))); if (!type.empty()) word.include.push_back(type); }
@@ -210,7 +194,7 @@ Database LoadDatabase(GameAssets& assets) {
             for (int i = 1; i <= 7; ++i) { auto n = std::to_string(i); PropertyFrom(word.properties, row, "t1code" + n, "t1param" + n, "t1min" + n, "t1max" + n); }
             if (!word.runes.empty()) db.runewords.push_back(std::move(word));
         }
-        for (const auto& row : Table(assets, "gems")) {
+        for (const auto& row : tables.Get("gems")) {
             auto& variants = db.gems[Lower(Field(row, "code"))];
             int type = 0;
             for (const char* context : { "weapon", "helm", "shield" }) {
@@ -222,12 +206,12 @@ Database LoadDatabase(GameAssets& assets) {
             }
         }
         ordinal = 0;
-        for (const auto& row : Table(assets, "uniqueitems")) {
+        for (const auto& row : tables.Get("uniqueitems")) {
             if (Field(row, "index") == "Expansion") continue;
             db.uniques[Number(Field(row, "*id"), ordinal++)] = ItemProperties(row, 12);
         }
         ordinal = 0;
-        for (const auto& row : Table(assets, "setitems")) {
+        for (const auto& row : tables.Get("setitems")) {
             if (Field(row, "index") == "Expansion") continue;
             SetItem item; item.base = ItemProperties(row, 9); item.set = Lower(Field(row, "set"));
             for (int i = 1; i <= 5; ++i) {
@@ -237,7 +221,7 @@ Database LoadDatabase(GameAssets& assets) {
             }
             db.sets[Number(Field(row, "*id"), ordinal++)] = std::move(item);
         }
-        for (const auto& row : Table(assets, "sets")) {
+        for (const auto& row : tables.Get("sets")) {
             auto& bonuses = db.setBonuses[Lower(Field(row, "index"))];
             for (int i = 2; i <= 5; ++i) {
                 Properties bonus;
@@ -259,11 +243,13 @@ Database LoadDatabase(GameAssets& assets) {
                     auto s = it.value().get<std::string>();
                     if (!s.empty() && std::find(translations.begin(), translations.end(), s) == translations.end()) translations.push_back(std::move(s));
                 }
+                if (row.contains("id") && row["id"].is_number_integer())
+                    db.strings[Binary::Alias("string",row["id"].get<int>())] = translations;
             }
         }
         std::map<std::string, std::string> desc;
-        for (const auto& row : Table(assets, "skilldesc")) desc[Lower(Field(row, "skilldesc"))] = Field(row, "str name");
-        for (const auto& row : Table(assets, "skills")) {
+        for (const auto& row : tables.Get("skilldesc")) desc[Lower(Field(row, "skilldesc"))] = Field(row, "str name");
+        for (const auto& row : tables.Get("skills")) {
             int id = Number(Field(row, "*id"), Number(Field(row, "id"), -1)); if (id < 0) continue;
             db.skillIds[Lower(Field(row, "skill"))] = id;
             db.skillNames[id] = desc[Lower(Field(row, "skilldesc"))];

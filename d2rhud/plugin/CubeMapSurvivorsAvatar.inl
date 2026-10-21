@@ -278,7 +278,27 @@ void LoadSurvivorSkillNames(){
     if(name.find_first_of("/\\:")!=name.npos || name=="." || name=="..")return;
     const auto root=std::filesystem::path(exe).parent_path();
     const auto data=name.empty()?root/"data":root/"Mods"/name/(name+".mpq")/"data";
-    std::ifstream input(data/"global/excel/skills.txt");std::string line;
+    auto excel=data/"global/excel";
+    if(!name.empty() && !std::filesystem::is_regular_file(excel/"skills.txt") && !std::filesystem::is_regular_file(excel/"skills.bin"))excel=root/"data/global/excel";
+    auto set=[&](int number,const std::string& title){
+        for(size_t cls=0;cls<Survivors::Classes.size();++cls)for(size_t i=0;i<3;++i)
+            if(!(cls==1 && !i) && Survivors::Classes[cls].ids[i]==number && !title.empty())survivorSkillNames[cls][i]=title;
+    };
+    std::ifstream input(excel/"skills.txt");std::string line;
+    if(!input){
+        // skills.bin retains both the numeric skill ID and its 32-byte name.
+        // TXT row positions and their *Id comment column are not required.
+        std::ifstream binary(excel/"skills.bin",std::ios::binary|std::ios::ate);
+        if(!binary || binary.tellg()<4 || binary.tellg()>64*1024*1024)return;
+        const auto size=binary.tellg();binary.seekg(0);uint32_t count=0;
+        if(!binary.read(reinterpret_cast<char*>(&count),4) || !count || count>65536 || size!=std::streamoff(4+size_t(count)*0x284))return;
+        for(size_t i=0;i<count;++i){
+            std::array<uint8_t,0x284> record{};if(!binary.read(reinterpret_cast<char*>(record.data()),record.size()))return;
+            int16_t id=-1;memcpy(&id,record.data(),2);const auto begin=reinterpret_cast<const char*>(record.data()+2);
+            const auto end=static_cast<const char*>(memchr(begin,0,32));set(id,std::string(begin,end?size_t(end-begin):32));
+        }
+        return;
+    }
     auto fields=[](const std::string& row){std::vector<std::string> result;std::istringstream values(row);std::string cell;while(std::getline(values,cell,'\t'))result.push_back(CubeVisual::Data::Trim(cell));return result;};
     if(!std::getline(input,line))return;const auto header=fields(line);int id=-1,title=-1;
     for(size_t i=0;i<header.size();++i){if(header[i]=="*Id" || header[i]=="Id" || header[i]=="id")id=int(i);if(header[i]=="skill")title=int(i);}
@@ -287,7 +307,6 @@ void LoadSurvivorSkillNames(){
         const auto row=fields(line);if(row.size()<=size_t((std::max)(id,title)))continue;
         int number=-1;const auto& value=row[id];const auto parsed=std::from_chars(value.data(),value.data()+value.size(),number);
         if(parsed.ec!=std::errc{} || parsed.ptr!=value.data()+value.size())continue;
-        for(size_t cls=0;cls<Survivors::Classes.size();++cls)for(size_t i=0;i<3;++i)
-            if(!(cls==1 && !i) && Survivors::Classes[cls].ids[i]==number && !row[title].empty())survivorSkillNames[cls][i]=row[title];
+        set(number,row[title]);
     }
 }

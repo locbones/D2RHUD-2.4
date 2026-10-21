@@ -115,6 +115,8 @@
     <ClCompile Include="plugin\ExtendedClasses.cpp" />
     <ClCompile Include="plugin\ExtendedActs.cpp" />
     <ClCompile Include="plugin\GameAssets.cpp" />
+    <ClCompile Include="plugin\CompiledNames.cpp" />
+    <ClCompile Include="plugin\TableMetadataExport.cpp" />
     <ClCompile Include="plugin\GrailTracker.cpp" />
     <ClCompile Include="plugin\StashSearch\StashSearch.cpp" />
     <ClCompile Include="plugin\StashSearch\WndProcHook.cpp" />
@@ -232,6 +234,13 @@
     <ClInclude Include="plugin\AutomapLayersData.h" />
     <ClInclude Include="plugin\Sunder.h" />
     <ClInclude Include="plugin\BuffIconsData.h" />
+    <ClInclude Include="plugin\BuffIconsTables.h" />
+    <ClInclude Include="plugin\D2RHUD\TerrorZoneTables.h" />
+    <ClInclude Include="plugin\ItemFilter\CatalogTables.h" />
+    <ClInclude Include="plugin\StatRangesBinTables.h" />
+    <ClInclude Include="plugin\TableMetadata.h" />
+    <ClInclude Include="plugin\TableMetadataExport.h" />
+    <ClInclude Include="plugin\CompiledNames.h" />
     <ClInclude Include="plugin\GameAssets.h" />
     <ClInclude Include="plugin\GrailStatus.h" />
     <ClInclude Include="plugin\GrailTracker.h" />

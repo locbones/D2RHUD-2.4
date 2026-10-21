@@ -19,10 +19,10 @@ bool Matches(Unit* item,const Definition::Item& predicate){
     if(!predicate.code.empty()&&Code(item)!=ItemCode(predicate.code))return false;
     if(!predicate.type.empty()&&!IsType(item,predicate.type))return false;
     if(!predicate.unique.empty()||!predicate.set.empty()){
-        const bool unique=!predicate.unique.empty();const auto link=Field<void*>(Native<void*>(unique?0x1c9fc68:0x1c9fc48));
-        if(!link||int(data->dwQualityNo)!=(unique?7:5))return false;
-        const int id=Native<int(__fastcall*)(void*,const char*)>(0x6d0470)(link,(unique?predicate.unique:predicate.set).c_str());
-        if(id<0||int(data->dwFileIndex)!=id)return false;
+        const bool unique=!predicate.unique.empty();if(int(data->dwQualityNo)!=(unique?7:5))return false;
+        const auto count=Field<uint64_t>(Native<void*>(unique?0x1c9fc78:0x1c9fc58));
+        const int id=CompiledNames::Resolve(unique?0x1c9fc68:0x1c9fc48,(unique?predicate.unique:predicate.set).c_str());
+        if(!count||count>65536||id<0||uint64_t(id)>=count||int(data->dwFileIndex)!=id)return false;
     }
     if(predicate.stat>=0){const int value=ItemStat(item,predicate.stat);if(value<predicate.min||value>predicate.max)return false;}
     return true;

@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include "QuestJournal.h"
 #include "SummonPersistenceData.h"
 #include <algorithm>
@@ -22,7 +22,7 @@ inline std::pair<int,bool> QuestName(const std::string& name){
 }
 inline std::shared_ptr<Rules> ParseRules(const std::string& text,const std::string& config){
     auto rules=std::make_shared<Rules>();std::istringstream input(text);std::string line;
-    if(!std::getline(input,line)){rules->error="cubemain.txt is unavailable.";return rules;}
+    if(!std::getline(input,line)){rules->error="Quest recipe definitions are unavailable (cubemain source or matching BIN metadata).";return rules;}
     auto header=Fields(line);if(!header.empty()&&header[0].starts_with("\xef\xbb\xbf"))header[0].erase(0,3);std::map<std::string,size_t> columns;
     for(size_t i=0;i<header.size();++i)columns[header[i]]=i;
     for(const char* name:{"description","enabled","numinputs","op","param","value","input 1","output"})if(!columns.contains(name)){rules->error="cubemain.txt is missing required quest columns.";return rules;}
