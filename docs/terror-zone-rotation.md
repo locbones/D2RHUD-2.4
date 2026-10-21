@@ -1,5 +1,14 @@
 # Terror-zone rotation
 
+Both monster initialization and manual zone selection resolve the configuration
+from the selected game data root. Launching without `-mod`, including the BINS
+shortcut's `-direct -txt`, uses `GAME/data/hd/global/excel/desecratedzones.json`.
+A named mod uses `GAME/Mods/NAME/NAME.mpq/data/hd/global/excel/desecratedzones.json`,
+with the extracted `GAME/Mods/NAME/data/...` location as its fallback. It never
+borrows another mod's configuration. A failed manual reload leaves the current
+selection alone. The monster/unique/treasure-class text readers use the same
+data-root selection.
+
 The display and monster selectors use the same UTC-based rotation function.
 Automatic selection advances once per full terror-duration plus break period,
 retaining the random starting offset generated when the configuration loads:

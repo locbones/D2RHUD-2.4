@@ -90,6 +90,7 @@
     <ClInclude Include="plugin\Plugin.h" />
     <ClInclude Include="plugin\D2RHUD\D2RHUD.h" />
     <ClInclude Include="plugin\D2RHUD\TerrorZoneRotation.h" />
+    <ClInclude Include="plugin\D2RHUD\TerrorZonePaths.h" />
     <ClInclude Include="Pattern.h" />
     <ClInclude Include="d2\D2Ptrs.h" />
     <ClInclude Include="Logging.h" />

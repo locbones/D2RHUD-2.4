@@ -2,6 +2,7 @@
 
 #include "D2RHUD.h"
 #include "TerrorZoneRotation.h"
+#include "TerrorZonePaths.h"
 #include "../GrailTracker.h"
 #include "../FloatingDamage.h"
 #include "../BuffIcons.h"
@@ -2726,14 +2727,6 @@ MonsterTreasureResult GetMonsterTreasureSU(const std::vector<MonsterTreasureClas
 bool LoadDesecratedZones(const std::string& filename) {
     std::ifstream file(filename);
     if (!file.is_open()) {
-        // Fallback: try path with .mpq stripped (e.g. extracted mod folder: Mods/ModName/data/...)
-        std::string alt = filename;
-        size_t pos = alt.find(".mpq/data");
-        if (pos != std::string::npos)
-            alt.replace(pos, 9, "/data");
-        file.open(alt);
-    }
-    if (!file.is_open()) {
         MessageBoxA(nullptr, ("Failed to open desecrated zones config file.\nTried: " + filename).c_str(), "Error", MB_ICONERROR);
         return false;
     }
@@ -3048,10 +3041,11 @@ void __fastcall ForceTCDrops(D2GameStrc* pGame, D2UnitStrc* pMonster, D2UnitStrc
 
     if (!filesLoaded)
     {
-        std::string basePath = std::format("{}/Mods/{}/{}.mpq/data/global/excel/", GetExecutableDir(), GetModName(), GetModName());
-        std::string MONFile = basePath + "monstats.txt";
-        std::string SUFile = basePath + "superuniques.txt";
-        std::string TCEXFile = basePath + "treasureclassex.txt";
+        const auto install = GetExecutableDir();
+        const auto mod = GetModName();
+        const auto MONFile = TerrorZoneDataPath(install, mod, "global/excel/monstats.txt").string();
+        const auto SUFile = TerrorZoneDataPath(install, mod, "global/excel/superuniques.txt").string();
+        const auto TCEXFile = TerrorZoneDataPath(install, mod, "global/excel/treasureclassex.txt").string();
 
         monsters = ReadMonsterTreasureFile(MONFile);
         superuniques = ReadMonsterTreasureFileSU(SUFile);
@@ -3400,8 +3394,8 @@ void __fastcall ApplyGhettoTerrorZone(D2GameStrc* pGame, D2ActiveRoomStrc* pRoom
 
 static void ToggleManualZoneGroupInternal(bool forward)
 {
-    std::string path = std::format("{0}/Mods/{1}/{1}.mpq/data/hd/global/excel/desecratedzones.json", GetExecutableDir(), GetModName());
-    LoadDesecratedZones(path);
+    const auto path = TerrorZoneConfigPath(GetExecutableDir(), GetModName());
+    if (!LoadDesecratedZones(path.string())) return;
     double now = static_cast<double>(std::time(nullptr));
 
     if ((now - gLastManualToggleTime) <= 0.3)
@@ -10032,12 +10026,7 @@ void __fastcall HookedMONSTER_InitializeStatsAndSkills(D2GameStrc* pGame, D2Acti
     // Build the file path ONCE (outside the lambda)
     if (gZonesFilePath.empty())
     {
-        gZonesFilePath = GetExecutableDir();
-        gZonesFilePath += "/Mods/";
-        gZonesFilePath += modName;
-        gZonesFilePath += "/";
-        gZonesFilePath += modName;
-        gZonesFilePath += ".mpq/data/hd/global/excel/desecratedzones.json";
+        gZonesFilePath = TerrorZoneConfigPath(GetExecutableDir(), modName).string();
     }
 
     std::call_once(gZonesLoadedFlag, []() {
