@@ -114,7 +114,8 @@ static void ShowQuestJournalMenu(){
                 selected=std::clamp(selected,0,int(rules->quests.size())-1);const auto& quest=rules->quests[selected];
                 const auto title="Quest "+std::to_string(quest.id);Skin::Plate(title.c_str(),scale);ImGui::TextColored(Skin::Gold,"%s",quest.title.c_str());
                 const bool current=view.connected&&selected==view.completed,done=view.connected&&selected<view.completed;
-                if(done)ImGui::TextColored({.5f,.7f,.45f,1},"Complete / reward already claimed");
+                if(view.connected&&view.blocked)ImGui::TextColored({.95f,.35f,.25f,1},"Journal locked / see the status message above.");
+                else if(done)ImGui::TextColored({.5f,.7f,.45f,1},"Complete / reward already claimed");
                 else if(current&&view.legacyAvailable)ImGui::TextColored(Skin::Gold,"Choose Start at Quest 1 or import above.");
                 else if(current)ImGui::TextColored(Skin::Gold,"%s",view.objectiveReady?"Objective complete / reward ready":"Current objective");
                 else ImGui::TextDisabled("%s",view.connected?"Complete earlier quests to unlock this one.":"Preview / enter a game to track progress.");
