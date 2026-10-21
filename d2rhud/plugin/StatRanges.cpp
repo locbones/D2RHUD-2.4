@@ -14,9 +14,11 @@
 #include <cmath>
 #include <deque>
 #include <future>
+#include <fstream>
 #include <memory>
 #include <mutex>
 #include <set>
+#include <sstream>
 
 namespace StatRanges {
 namespace {
@@ -30,6 +32,11 @@ Activation activation;
 std::atomic<bool> active{ false };
 std::atomic<std::shared_ptr<const Database>> database;
 std::atomic<bool> showFixed{ true };
+std::atomic<uint64_t> builtCount{}, tooltipCount{}, resolvedCount{}, totalsCount{}, layoutCount{}, matchedCount{}, renderedCount{};
+std::mutex diagnosticMutex;
+std::string diagnosticSample, diagnosticFile;
+std::atomic<ULONGLONG> diagnosticSampleAt{};
+std::string loadedMod;
 // Publish immutable font measurements on the ImGui thread. Native tooltip
 // hooks can then measure annotations without accessing ImGui or its font atlas.
 struct RangeMetrics {
@@ -162,6 +169,7 @@ void RememberBuiltItem(D2UnitStrc* unit, const void* result) {
     candidates.push_back(std::move(entry));
 }
 void* __fastcall HookBuild(void* output, D2UnitStrc* viewer, D2UnitStrc* owner, D2UnitStrc* item, int32_t context, bool details) {
+    ++builtCount;
     auto result = originalBuild(output, viewer, owner, item, context, details);
     try { RememberBuiltItem(item, result); } catch (const std::exception&) { /* Native tooltip remains usable. */ }
     return result;
@@ -256,6 +264,10 @@ std::vector<DrawLine> CollectLines(const void* layout, const TextContext& contex
     static thread_local bool lastFixed = false;
     static thread_local int lastIndex = -1, lastQuality = 0;
     const bool fixed = showFixed.load(std::memory_order_relaxed);
+    const auto now=GetTickCount64();
+    const bool sample=now-diagnosticSampleAt.load(std::memory_order_relaxed)>=1000;
+    std::ostringstream capture;
+    if(sample)capture<<"Item quality="<<tooltip.quality<<", index="<<tooltip.index<<", stat ranges="<<tooltip.totals.size()<<'\n';
     if (lastDatabase != tooltip.db.get() || lastTotals != tooltip.totals || lastLevel != tooltip.level || lastFixed != fixed || lastIndex != tooltip.index || lastQuality != tooltip.quality) {
         matched.clear(); lastTotals = tooltip.totals; lastDatabase = tooltip.db.get(); lastLevel = tooltip.level; lastFixed = fixed; lastIndex = tooltip.index; lastQuality = tooltip.quality;
     }
@@ -291,7 +303,10 @@ std::vector<DrawLine> CollectLines(const void* layout, const TextContext& contex
         if (found->second.found) result.push_back({ rect[0] + (lines[row].x + right) / 64.0f,
             rect[1] + (shift + step * static_cast<int>(row)) / 64.0f + cell * 0.5f,
             FormatAnnotation(found->second, tooltip.metrics ? tooltip.metrics->format : DefaultRangeFormat) });
+        if(sample && row<64)capture<<PlainText(text)<<" => "<<(found->second.found?found->second.text:"no match")<<'\n';
     }
+    ++layoutCount;matchedCount.fetch_add(result.size(),std::memory_order_relaxed);
+    if(sample){std::lock_guard<std::mutex> lock(diagnosticMutex);diagnosticSample=capture.str();diagnosticSampleAt.store(now,std::memory_order_relaxed);}
     return result;
 }
 void CaptureLayout(const void* layout) {
@@ -377,6 +392,7 @@ void Install() {
 }
 
 void BeginTooltip(D2UnitStrc* unit, const void* panel) {
+    ++tooltipCount;
     tooltip = {};
     unit = TooltipItem(unit, panel);
     uint32_t unitId = 0;
@@ -387,11 +403,13 @@ void BeginTooltip(D2UnitStrc* unit, const void* panel) {
     Item item; uint32_t seed = 0, flags = 0;
     const auto address = reinterpret_cast<uintptr_t>(unit);
     if (!Snapshot(address, item, seed, flags) || !(flags & 0x10) || item.quality == 8 || item.quality == 9) return;
+    ++resolvedCount;
     const char* text = nullptr;
     if (!Read(reinterpret_cast<uintptr_t>(panel), text) || !text) return;
     tooltip.db = std::move(db); tooltip.text = text;
     tooltip.metrics = rangeMetrics.load();
     tooltip.totals = tooltip.db->ForItem(item);
+    if(!tooltip.totals.empty())++totalsCount;
     tooltip.index = item.index; tooltip.quality = item.quality;
     Read(address + 8, tooltip.unitId);
     // Socketed jewels retain their own affixes. Gems/runes use the parent item's
@@ -436,6 +454,30 @@ void BeginTooltip(D2UnitStrc* unit, const void* panel) {
 }
 void EndTooltip() { tooltip = {}; TooltipText::EndPanel(); }
 
+void SaveDiagnosticReport() {
+    try {
+        wchar_t local[32768]{},exe[32768]{};
+        const auto n=GetEnvironmentVariableW(L"LOCALAPPDATA",local,32768);
+        if(!n || n>=32768)return;
+        const auto path=std::filesystem::path(local)/"D2RHUD/stat-ranges-diagnostics.txt";
+        std::filesystem::create_directories(path.parent_path());
+        std::ofstream report(path,std::ios::binary|std::ios::trunc);
+        if(!report){diagnosticFile="Could not write the stat-range diagnostic report.";return;}
+        GetModuleFileNameW(nullptr,exe,32768);
+        const auto game=std::filesystem::path(exe).u8string();
+        report<<"Stat Ranges build: "<<__DATE__<<' '<<__TIME__<<"\nGame: "<<std::string(reinterpret_cast<const char*>(game.data()),game.size())
+            <<"\nMod: "<<loadedMod<<"\nStatus: "<<status<<"\nHooks installed: "<<installed
+            <<"\nMode: "<<(config.hotkey?(config.hold?"hotkey hold":"hotkey toggle"):"always on/off")<<", enabled="<<config.enabled<<", active="<<active.load()
+            <<", fixed="<<config.fixed<<", alpha="<<config.color.w<<", size="<<config.size<<", spacing="<<config.spacing
+            <<"\nActivity: built="<<builtCount.load()<<", tooltips="<<tooltipCount.load()<<", resolved="<<resolvedCount.load()
+            <<", with_ranges="<<totalsCount.load()<<", layouts="<<layoutCount.load()<<", matches="<<matchedCount.load()<<", rendered="<<renderedCount.load()<<'\n';
+        if(const auto db=database.load())report<<"\nTables: stats="<<db->stats.size()<<", properties="<<db->properties.size()<<", uniques="<<db->uniques.size()
+            <<", sets="<<db->sets.size()<<", affixes="<<db->affixes.size()<<", strings="<<db->strings.size()<<"\nError: "<<db->error<<'\n'<<db->diagnostics;
+        {std::lock_guard<std::mutex> lock(diagnosticMutex);report<<"\nLast active tooltip sample:\n"<<diagnosticSample;}
+        if(report){const auto name=path.u8string();diagnosticFile="Saved: "+std::string(reinterpret_cast<const char*>(name.data()),name.size());}
+    }catch(const std::exception&){diagnosticFile="Could not write the stat-range diagnostic report.";}
+}
+
 void Update(const std::string& mod, bool inGame, bool menusOpen, bool bindingDown, bool previewOpen) {
     const auto& io = ImGui::GetIO();
     const float resolution = io.DisplaySize.x >= 3840 || io.DisplaySize.y >= 2160 ? 2.0f : 1.0f;
@@ -443,14 +485,16 @@ void Update(const std::string& mod, bool inGame, bool menusOpen, bool bindingDow
     PublishMetrics(resolution);
     if (!loadStarted) {
         loadStarted = true;
+        loadedMod=mod;
         wchar_t path[MAX_PATH]{}; GetModuleFileNameW(nullptr, path, MAX_PATH);
         loading = std::async(std::launch::async, [install = std::filesystem::path(path).parent_path(), mod]() { GameAssets assets(install, mod); return LoadDatabase(assets); });
         status = "Loading item properties and localized stat descriptions...";
     }
     if (loading.valid() && loading.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
         auto result = std::make_shared<const Database>(loading.get());
-        if (installed) status = result->error.empty() ? "Item property tables loaded." : result->error;
+        if (installed) status = result->error.empty() ? "Item property tables loaded ("+std::to_string(result->stats.size())+" stats, "+std::to_string(result->strings.size())+" localized keys)." : result->error;
         database.store(std::move(result));
+        SaveDiagnosticReport();
     }
     DWORD foreground = 0; GetWindowThreadProcessId(GetForegroundWindow(), &foreground);
     if (!inGame) {
@@ -470,6 +514,7 @@ void Render(float resolutionScale) {
         else drawLines.clear();
     }
     if (lines.empty()) return;
+    renderedCount.fetch_add(lines.size(),std::memory_order_relaxed);
     auto& io = ImGui::GetIO();
     auto font = io.Fonts->Fonts.Size > 2 ? io.Fonts->Fonts[2] : ImGui::GetFont();
     const float size = metrics ? metrics->size : config.size * resolutionScale, gap = metrics ? metrics->gap : config.spacing * resolutionScale;
@@ -539,6 +584,9 @@ void DrawSettingsPanel(float scale) {
     ImGui::TextWrapped("Ranges use this item's unique/set properties and its actual affix IDs. Multiple contributions to the same stat and skill are added together. Set bonuses are handled as separate lines.");
     ImGui::TextWrapped("Ranges show possible rolls for these properties. Combined damage lines format each roll range separately, separated by /.");
     ImGui::Spacing(); ImGui::TextWrapped("%s", status.c_str());
+    if(ImGui::Button("Save diagnostic report"))SaveDiagnosticReport();
+    ImGui::TextWrapped("Hover an identified item with ranges enabled, then save this report to diagnose missing ranges.");
+    if(!diagnosticFile.empty())ImGui::TextWrapped("%s",diagnosticFile.c_str());
     ImGui::TextWrapped("%s", TooltipText::LimitsExtended() ? "Extended stat descriptions: 16,384 bytes." : "Native stat descriptions: 1,024 bytes (extension unavailable for this executable).");
 }
 }

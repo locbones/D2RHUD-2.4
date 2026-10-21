@@ -14,7 +14,7 @@ void Finish(D2GameStrc*,D2UnitStrc*,const RecipeGate&,Outcome outcome){testQuest
 void Configure(const std::filesystem::path&,const std::string&,const std::string&,const std::string&){}
 void SetProofRecovery(ProofRecovery){}
 void SetRewardClaim(RewardClaim){}
-void Crafted(D2GameStrc*,D2UnitStrc*,size_t row,const std::vector<uint32_t>& inputs,const std::vector<D2UnitStrc*>& outputs){testQuestCrafts.push_back({row,inputs,outputs.size()});}
+void Crafted(D2GameStrc*,D2UnitStrc*,size_t row,const std::vector<uint32_t>& inputs,const std::vector<D2UnitStrc*>& outputs,Outcome outcome){if(outcome==Outcome::Committed)testQuestCrafts.push_back({row,inputs,outputs.size()});}
 void DepositedRune(D2GameStrc*,D2UnitStrc*,uint32_t){}
 void BeforeLoad(D2GameStrc*,D2ClientStrc*){}
 void AfterLoad(D2GameStrc*,D2ClientStrc*,D2UnitStrc*,bool){}

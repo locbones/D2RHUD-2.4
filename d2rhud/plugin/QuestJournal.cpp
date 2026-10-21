@@ -38,6 +38,15 @@ bool Safe(Game* game,Unit* player){return Owner(game,player)&&!(player->dwFlags&
 int ItemStat(Unit* item,int stat){return Native<int(__fastcall*)(Unit*,uint32_t,uint16_t)>(0x1e5620)(item,stat,0);}
 uint32_t Code(Unit* item){auto table=Field<const uint8_t*>(Native<void*>(0x1ca0390));auto count=Field<uint64_t>(Native<void*>(0x1ca0398));return table&&count<1000000&&item&&item->dwClassId<count?Field<uint32_t>(table+item->dwClassId*0x1b4,0x80):0;}
 bool SameFile(const Data::History& h,const Data::Identity& identity,uint64_t digest){return SummonPersistence::Data::SameIdentity(h.identity,identity)&&h.digest==digest;}
+void BackupUnusedJournal(const std::filesystem::path& path,const std::string& original,uint64_t digest){
+    auto backup=path;backup+=".unused-"+Data::Hex(digest)+"-"+Data::Hex(Data::Hash(original))+".bak";
+    std::error_code error;
+    if(!std::filesystem::exists(backup))std::filesystem::copy_file(path,backup,std::filesystem::copy_options::none,error);
+    if(error)throw std::runtime_error("Could not back up the unused quest journal: "+error.message());
+    std::ifstream input(backup,std::ios::binary|std::ios::ate);
+    if(!input||input.tellg()!=std::streamoff(original.size()))throw std::runtime_error("Unused quest journal backup could not be verified.");
+    std::string text(original.size(),'\0');input.seekg(0);if(!input.read(text.data(),text.size())||text!=original)throw std::runtime_error("Unused quest journal backup differs from the original.");
+}
 std::optional<Data::History> LegacyTimestampJournal(const Data::Identity& identity,const Rules& rules,const Data::Checkpoint& current){
     if(!std::filesystem::exists(directory))return {};
     std::optional<Data::History> candidate;
@@ -152,10 +161,22 @@ void AfterLoad(Game* game,Client* client,Unit* player,bool success){
         if(std::filesystem::exists(s.path)){
             std::ifstream input(s.path,std::ios::binary|std::ios::ate);const auto length=input.tellg();if(!input||length<=0||length>std::streamoff(Data::MaxBytes))throw std::runtime_error("Quest file is unreadable or oversized.");
             std::string text(size_t(length),'\0');input.seekg(0);if(!input.read(text.data(),text.size()))throw std::runtime_error("Quest file could not be read.");
-            auto history=Data::Decode(text,int(rules->quests.size()));if(!history||!SameFile(*history,value.identity,rules->digest))throw std::runtime_error("Quest file identity or quest definitions do not match.");
-            auto state=Data::Find(*history,value.point.checksum,value.point.saveSize);if(!state)throw std::runtime_error("Quest file does not match this character save. Restore matching backups.");
+            auto history=Data::Decode(text,int(rules->quests.size()));
+            if(!history||!SummonPersistence::Data::SameIdentity(history->identity,value.identity))throw std::runtime_error("Quest file character identity does not match.");
+            auto state=Data::Find(*history,value.point.checksum,value.point.saveSize);
+            const bool recovering=history->digest!=rules->digest||!state;
+            if(recovering){
+                // A never-started journal has no observations, choices or
+                // claims to lose/replay. Compilation can change definitions
+                // while intervening native saves leave its old checkpoint
+                // behind. Recover only when EVERY historical state is empty.
+                if(!Data::Pristine(*history))throw std::runtime_error(history->digest!=rules->digest?"Quest definitions changed for a journal with existing progress. Restore matching quest data and journal backups.":"Quest file does not match this character save. Restore matching backups.");
+                BackupUnusedJournal(s.path,text,history->digest);
+                history->digest=rules->digest;Data::Append(*history,value.point);state=value.point.state;
+                std::string error;if(!Data::AtomicWrite(s.path,*history,error))throw std::runtime_error("Could not update the unused quest journal: "+error);
+            }
             s.history=std::move(*history);s.state=*state;s.blocked=s.state.uncertain;
-            s.message=s.blocked?"An incomplete quest transaction requires a matching backup.":"Quest journal loaded for this character.";
+            s.message=s.blocked?"An incomplete quest transaction requires a matching backup.":recovering?"Unused journal updated; original backed up. Choose Start at Quest 1 or import legacy progress.":"Quest journal loaded for this character.";
         }else{
             s.history.checkpoints.push_back(value.point);std::string error;if(!Data::AtomicWrite(s.path,s.history,error))throw std::runtime_error(error);
             s.message="New journal. Existing characters may explicitly import legacy progress once.";
@@ -239,16 +260,35 @@ void Killed(Game* game,Unit* player,uint32_t victimId,uint32_t,int,int unique){
         if(q.trigger=="countessThul"&&unique==q.boss){s.state.countess=true;if(s.state.thul)Evidence(s,q.id);}
     }AdvanceEvents(s,*rules);sent.erase(game);
 }
-void Crafted(Game* game,Unit* player,size_t row,const std::vector<uint32_t>& inputCodes,const std::vector<Unit*>& outputs){
+void Crafted(Game* game,Unit* player,size_t row,const std::vector<uint32_t>& inputCodes,const std::vector<Unit*>& outputs,Outcome outcome){
     if(!available||!game||!player)return;std::lock_guard lock(mutex);auto rules=definitions.load();auto it=sessions.find({game,player->dwUnitId});
-    if(!rules||!rules->events||it==sessions.end()||it->second.player!=player||it->second.blocked||!Safe(game,player))return;auto& s=it->second;
+    if(!rules||!rules->events)return;
+    const bool session=it!=sessions.end()&&it->second.player==player;
+    const bool safe=Safe(game,player);
+    // One bounded local diagnostic per cube operation, never per render/tick.
+    // This also explains native refusals and journal/save mismatches which
+    // otherwise look like the operation was never observed.
+    if(!directory.empty())try{
+        const auto path=directory.parent_path().parent_path().parent_path()/"quest-events.log";
+        std::error_code ec;const auto size=std::filesystem::file_size(path,ec);
+        std::ofstream log(path,std::ios::binary|(!ec&&size>1024*1024?std::ios::trunc:std::ios::app));
+        log<<"tick="<<GetTickCount64()<<" player="<<player->dwUnitId<<" recipe="<<row
+           <<" result="<<(outcome==Outcome::Committed?"committed":outcome==Outcome::Rejected?"rejected":"incomplete")
+           <<" session="<<session<<" safe="<<safe;
+        if(session){log<<" blocked="<<it->second.blocked<<" started="<<it->second.state.legacyClosed<<" completed="<<it->second.state.completed;if(it->second.blocked)log<<" reason="<<it->second.message;}
+        log<<" inputs=";for(auto code:inputCodes){char text[5]{};memcpy(text,&code,4);log<<text<<',';}log<<" outputs="<<outputs.size()<<'\n';
+    }catch(...){}
+    if(outcome!=Outcome::Committed||!session||it->second.blocked||!safe)return;auto& s=it->second;
+    const auto before=s.state.evidence;
     for(const auto& q:rules->quests){
         const bool recipe=std::find(q.recipes.begin(),q.recipes.end(),row)!=q.recipes.end();
         if(q.trigger=="recipe"&&recipe)Evidence(s,q.id);
         else if(q.trigger=="depositSkull"&&recipe&&std::any_of(inputCodes.begin(),inputCodes.end(),[](uint32_t code){return (code&65535)==0x6b73;}))Evidence(s,q.id);
         else if(q.trigger=="countessThul"&&recipe){s.state.thul=true;s.dirty=true;if(s.state.countess)Evidence(s,q.id);}
         else if(q.trigger=="craft"&&(q.recipes.empty()||recipe)&&std::any_of(outputs.begin(),outputs.end(),[&](Unit* item){return item&&item->pItemData&&item->pItemData->pExtraData.pParentInv==player->pInventory&&Matches(item,q);}))Evidence(s,q.id);
-    }AdvanceEvents(s,*rules);sent.erase(game);
+    }
+    if(s.state.evidence!=before&&!s.state.legacyClosed)Message(s,"Activity recorded. Choose Start at Quest 1 or import legacy progress to continue.");
+    AdvanceEvents(s,*rules);sent.erase(game);
 }
 void DepositedRune(Game* game,Unit* player,uint32_t code){
     if(code!=ItemCode("r10")||!available||!game||!player)return;std::lock_guard lock(mutex);auto rules=definitions.load();auto it=sessions.find({game,player->dwUnitId});

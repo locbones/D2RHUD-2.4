@@ -52,6 +52,18 @@ Save & Exit and disconnect restore the original player. The temporary avatar
 and its native inventory are freed. Arena death does not mark the normal hero
 as dead, including a Hardcore entry character.
 
+The parked normal hero retains a logical reference to its pinned town room,
+while remaining absent from collision and room update lists. Native pet
+relocation can still resolve that owner's room. The reference is cleared before
+native teleport restores the hero's actual room membership.
+
+Hit recovery, blocking and knockback do not count as death. A temporarily
+missing player/room/client gets up to two seconds to reconcile, without
+spawning waves or extending the run deadline. End-of-run diagnostics in
+`%LOCALAPPDATA%/D2RHUD/map-events.log` record the ending reason and each
+participant's class, difficulty, animation/death flags, current/previous life,
+maximum life, level and arrival readiness before the normal hero is restored.
+
 ## Combat and controls
 
 A ten-second briefing precedes an empty cow arena. The usual three-second
@@ -76,8 +88,9 @@ Fire Ball / Ice Bolt / Charged Bolt, Teeth / Bone Spear / Poison Nova,
 Blessed Hammer / Holy Bolt / Fist of the Heavens, Bash / Battle Cry / Berserk,
 Fissure / Volcano / Tornado, and Fire Blast / Shock Web / Wake of Fire.
 Sorceress's Fire Ball is resolved by its compiled skill-table name, including
-RMD-MP's moved ID 41 instead of vanilla ID 47. Other slots use the original
-class skill IDs; native class ownership is validated
+RMD-MP's moved ID 41 instead of vanilla ID 47. Fire Ball resolution reads names retained in the loaded native
+skill records; empty or absent TXT name linkers cannot block BIN-only entry.
+Other slots use the original class skill IDs; native class ownership is validated
 before switching players. Loose mod `skills.txt` names appear in the menu,
 including RMD-MP's renamed skills. Damage and projectile mechanics remain those
 of the mod. Barbarian's second slot uses Battle Cry because Whirlwind controls

@@ -2,7 +2,10 @@
 
 Stat-range tooltips accept the game's D2R 2.4 TXT or BIN tables. The selected
 mod's BIN overrides source TXT from a lower-priority data layer. Within a layer,
-TXT remains preferred. The numeric BIN path requires neither TXT files, `-txt`,
+Stat Ranges prefers BIN so leftover or incomplete TXT cannot override the game's
+compiled values. TXT remains a fallback when that layer has no BIN. Source names
+for compiled inputs come only from checksum-bound metadata, never loose TXT.
+The numeric BIN path requires neither TXT files, `-txt`,
 nor a populated native name linker.
 
 The reader decodes these compiled tables:
@@ -22,6 +25,15 @@ unsupported tables produce a stat-range loading error instead of guessed data.
 Source `*ID` columns are comments: compiled IDs/ordinals are authoritative.
 Native unique/set BIN row ID fields are initialized at runtime and are zero
 on disk, so these tables use their compiled row ordinals.
+
+The settings panel reports missing localized descriptions as a loading error,
+even if the numeric tables loaded. For installation-specific failures, enable
+ranges, hover an identified item, then click **Save diagnostic report** in that
+panel. `%LOCALAPPDATA%/D2RHUD/stat-ranges-diagnostics.txt` records the selected
+table paths/formats/checksums, localization availability, activation settings,
+hook/capture/draw counters, and a sample of the last active tooltip's matched
+and unmatched lines. A startup report is also written after the tables load;
+save again after hovering to include tooltip activity. No network upload occurs.
 
 For a mixed TXT/BIN installation, symbolic property/stat/set/description names
 that the compiler removes can be supplied by the shared, checksum-bound table

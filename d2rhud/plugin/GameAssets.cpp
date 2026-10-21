@@ -54,9 +54,9 @@ std::string GameAssets::MetadataField(const std::string& name,const TableFiles& 
         return (*entry)[field].is_string()?(*entry)[field].get<std::string>():std::string{};
     }catch(...){return {};}
 }
-std::vector<std::string> GameAssets::ReadTableNames(const std::string& name) {
+std::vector<std::string> GameAssets::ReadTableNames(const std::string& name, bool preferBinary) {
     const auto files=ReadTable(name,true);
-    if(!files.text.empty()){
+    if(!files.text.empty() && !(preferBinary && !files.binary.empty())){
         auto names=TableMetadata::Names(files.text,name);
         if(name=="treasureclassex")try{const auto base=MetadataField(name,files,"id_base");if(!base.empty()){const auto n=std::stoul(base);if(n<=65535)names.insert(names.begin(),n,"");}}catch(...){}
         return names;
@@ -74,9 +74,9 @@ std::vector<std::string> GameAssets::ReadTableLabels(const std::string& name) {
     try{if(!text.empty())return nlohmann::json::parse(text).get<std::vector<std::string>>();}catch(...){}
     return {};
 }
-std::string GameAssets::ReadTableSource(const std::string& name) {
-    const auto files=ReadTable(name);
-    if(!files.text.empty())return {files.text.begin(),files.text.end()};
+std::string GameAssets::ReadTableSource(const std::string& name, bool preferBinary) {
+    const auto files=ReadTable(name,preferBinary);
+    if(!files.text.empty() && !(preferBinary && !files.binary.empty()))return {files.text.begin(),files.text.end()};
     return MetadataField(name,files,"source");
 }
 std::string GameAssets::ReadTableOverlay(const std::string& name) {

@@ -3,6 +3,10 @@
 D2RHUD prefers a selected mod's data over install-level or retail files, then
 prefers TXT over BIN within that same layer. A mod's BIN never loses to retail
 TXT. Supported native layouts are the project's D2R 2.4 executable/table format.
+Stat Ranges additionally prefers BIN within its selected layer, matching the
+game's compiled data even when stale or incomplete TXT files are left behind.
+Cube/quest recipe source also comes from the matching BIN companion on normal
+launches; source TXT is preferred during `-txt` compilation.
 Unsupported or malformed records are rejected rather than interpreted using a
 different layout.
 

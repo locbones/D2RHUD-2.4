@@ -50,6 +50,13 @@ SurvivorAvatar* AvatarFor(Game* game,Unit* unit){
     for(auto& [client,a]:survivorAvatars)if(a->game==game && a->avatar==unit)return a.get();
     return nullptr;
 }
+void SurvivorParkedRoom(SurvivorAvatar& a,bool parked){
+    // Owned pets still resolve their original player during inactive-room
+    // relocation (38d1a0). A detached player with no room crashes that native
+    // path at 38d21b. Retain only the logical owner room: the hero stays out of
+    // collision and room update lists, and the existing pin owns its lifetime.
+    if(a.hero && a.hero->pDynamicPath)Set(a.hero->pDynamicPath,0x20,parked?a.townRoom:nullptr);
+}
 // The native loader is bypassed ONLY during our synchronous re-assignment.
 // The normal save-file loader and its error handling remain the default.
 int __fastcall SurvivorLoadHook(Game* game,Client* client,Unit** output){
@@ -205,6 +212,7 @@ Unit* CreateSurvivor(Game* game,Unit* hero,const Survivors::Build& build){
     Native<void(__fastcall*)(Room*,int,uint32_t)>(0x1d1280)(a->townRoom,0,hero->dwUnitId);
     Native<void(__fastcall*)(Unit*,int)>(0x1f73e0)(hero,1);
     Native<void(__fastcall*)(Unit*)>(0x22e8a0)(hero);
+    SurvivorParkedRoom(*a,true);
     Set(hero->pPlayerData,0xf0,&a->saved);
     Set(client,8,build.classId);Set(client,0xa,Field<uint16_t>(&a->creation,0xa));
     // Clear only skill hotkeys; networking, save buffers and account identity
@@ -232,6 +240,9 @@ bool RestoreSurvivor(Game* game,Unit* unit,bool notify){
     memcpy(reinterpret_cast<uint8_t*>(client)+0x468,reinterpret_cast<uint8_t*>(&a->saved)+0x468,0x80);
     Native<void(__fastcall*)(Client*,Unit*)>(0x29d890)(client,a->hero);
     Native<void(__fastcall*)(Unit*,Client*)>(0x2c52e0)(a->hero,client);
+    // Remove the logical owner reference before native teleport reattaches
+    // the hero to room/update/collision lists. It was never a list membership.
+    SurvivorParkedRoom(*a,false);
     // Teleport supports a detached room with an existing dynamic path.
     Native<int(__fastcall*)(Game*,Unit*,Room*,int,int,int)>(0x2c7a90)(game,a->hero,a->townRoom,a->town.x,a->town.y,1);
     a->creation.pPlayer=unit;a->creation.dwUnitGUID=avatarId;

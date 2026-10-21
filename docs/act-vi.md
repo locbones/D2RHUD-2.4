@@ -3,6 +3,11 @@
 This unfinished Workshop prototype explores engine limits and supports future
 modding plans.
 
+Only installed UI theme variants participate in template switching. Historical
+`D2RLAN/UI Theme` entries do not block startup when that optional theme folder
+is absent. Required global layouts and existing theme edits are still checked;
+missing-file errors identify the exact path.
+
 **RMD-MP only.** Enable **Act VI** in **D2RHUD Options > Workshop**, then fully restart D2R
 with a matching compiled six-act package, or use `-txt` when authoring its tables.
 The option defaults off. With source tables, changing the checkbox prepares the next

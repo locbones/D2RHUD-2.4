@@ -182,6 +182,8 @@ struct Run {
         std::set<uint32_t> elites;
         std::map<uint32_t,uint32_t> corpses;
         std::map<uint32_t,int> life;
+        std::map<uint32_t,int> playerLife;
+        std::optional<uint32_t> unavailableSince;
         uint32_t nextWave=0,boss=0;
         uint16_t wave=0;
         bool bossSpawned=false;
@@ -1298,7 +1300,7 @@ void DrawCelebration(float scale,bool clientReady=true){
     };
     if(phase==EventPhase::Finished || phase==EventPhase::Cancelled){
         if(elapsed>6000)return;
-        text(phase==EventPhase::Cancelled ? "The event could not begin" : TimedEvent(packet.event) && packet.success ? "Ten-minute bonus granted!" : packet.success ? "Victory!" : "Time has run out",48,height*0.12f);
+        text(phase==EventPhase::Cancelled ? "The event could not begin" : TimedEvent(packet.event) && packet.success ? "Ten-minute bonus granted!" : packet.success ? "Victory!" : packet.event==Event::Survivors ? "Survivor run ended" : "Time has run out",48,height*0.12f);
         if(TimedEvent(packet.event) && phase!=EventPhase::Cancelled)text(Info(packet.event).name,28,height*0.12f+65*ui);
         if(phase==EventPhase::Cancelled)text(FailureMessage(packet.failure),24,height*0.12f+65*ui);
         if(packet.reward==2)text("You received +2 stat points",28,height*0.12f+65*ui);

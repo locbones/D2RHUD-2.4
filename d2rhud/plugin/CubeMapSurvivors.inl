@@ -9,9 +9,20 @@ bool SurvivorMobileSkill(const void* row){
 }
 int SurvivorSkillId(uint8_t cls,size_t slot){
     if(cls>=Survivors::Classes.size() || slot>=3)return -1;
-    // RMD moves Fire Ball from vanilla's slot 47 to 41. Resolve its actual
-    // compiled-table name so learning, selection and casting use one skill.
-    if(cls==1 && !slot && Field<void*>(Native<void*>(0x1c9fae8),0))return LookupName(0x1c9fae8,"Fire Ball");
+    // RMD moves Fire Ball from vanilla's slot 47 to 41. BIN-only games may
+    // have an allocated but empty name linker. Names survive in the loaded
+    // skill records, so resolve from the authoritative table instead.
+    if(cls==1 && !slot){
+        const auto rows=Field<uint8_t*>(Native<void*>(0x1c9fad0),0);
+        const auto count=Field<uint64_t>(Native<void*>(0x1c9fad8),0);
+        if(!rows || !count || count>65536)return -1;
+        for(size_t i=0;i<count;++i){
+            const auto row=rows+i*0x284;
+            const auto name=reinterpret_cast<const char*>(row+2);
+            if(Field<int16_t>(row,0)==int(i) && Field<uint8_t>(row,0x2c)==cls && memchr(name,0,32) && !_stricmp(name,"Fire Ball"))return int(i);
+        }
+        return -1;
+    }
     return Survivors::Classes[cls].ids[slot];
 }
 #include "CubeMapSurvivorsAvatar.inl"
@@ -411,6 +422,14 @@ Unit* SurvivorSpawn(Game* game,Run& run,Unit* player,int monster,bool elite){
     }return nullptr;
 }
 void SurvivorReturn(Game* game,Run& run,bool success){
+    EventTrace(game,run,success ? "survivor-victory" : (game->dwGameFrame-run.eventStarted)/25>=Survivors::Duration ? "survivor-timeout" : "survivor-no-living-participant");
+    for(const auto& [id,position]:run.returns)if(auto player=Lookup(game,0,id)){
+        char details[320];const auto previous=run.survival.playerLife.find(id);
+        snprintf(details,sizeof(details),"survivor-exit player=%u class=%u difficulty=%u mode=%u flags=%08x hp=%d maxhp=%d previoushp=%d level=%d ready=%u",
+            id,player->dwClassId,unsigned(game->nDifficulty),player->dwAnimMode,player->dwFlags,Stat(player,6),Stat(player,7),
+            previous==run.survival.playerLife.end()?-1:previous->second,Level(player),unsigned(run.ready.contains(id)));
+        EventTrace(game,run,details);
+    }
     run.success=success;run.timedOut=!success;run.phase=Phase::Returning;run.eventPhase=EventPhase::Returning;run.eventFrame=game->dwGameFrame;
     for(const auto& [id,p]:run.returns)run.returning.insert(id);
 }
@@ -418,7 +437,24 @@ void ProcessSurvivors(Game* game,Run& run,const std::vector<Unit*>& connected){
     using namespace Survivors;
     const uint32_t frame=game->dwGameFrame,seconds=(frame-run.eventStarted)/25;
     std::vector<Unit*> players;for(auto p:connected)if(!Dead(p) && Level(p)==run.level && run.ready.contains(p->dwUnitId))players.push_back(p);
-    if(players.empty() || seconds>=Duration){SurvivorReturn(game,run,false);return;}
+    if(seconds>=Duration){SurvivorReturn(game,run,false);return;}
+    if(players.empty()){
+        // A missing lookup, room transition, or temporarily unready client is
+        // not proof of death. Allow a short reconciliation window, without
+        // attacking/spawning or extending the ten-minute arena deadline.
+        bool unresolved=false;
+        for(const auto& [id,position]:run.returns){
+            const auto unit=Lookup(game,0,id);
+            if(!unit || (!Dead(unit) && (!Level(unit) || Level(unit)==run.level)))unresolved=true;
+        }
+        if(unresolved){
+            if(!run.survival.unavailableSince)run.survival.unavailableSince=frame;
+            if(frame-*run.survival.unavailableSince<50)return;
+        }
+        SurvivorReturn(game,run,false);return;
+    }
+    run.survival.unavailableSince.reset();
+    for(auto player:players)run.survival.playerLife[player->dwUnitId]=Stat(player,6);
     // Bound work and network churn independently of render rate.
     if(frame%5)return;
     std::vector<uint32_t> living;

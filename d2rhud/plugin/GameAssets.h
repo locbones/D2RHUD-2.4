@@ -19,9 +19,11 @@ public:
     TableFiles ReadTable(const std::string& name, bool companionBinary = false);
     // BIN drops source symbols/comments and custom non-native columns. The
     // exporter preserves those in a checksum-bound, same-layer JSON companion.
-    std::vector<std::string> ReadTableNames(const std::string& name);
+    // Compiled consumers must not take symbols from unrelated/stale TXT when
+    // a BIN exists. In that mode only matching companion metadata is accepted.
+    std::vector<std::string> ReadTableNames(const std::string& name, bool preferBinary = false);
     std::vector<std::string> ReadTableLabels(const std::string& name);
-    std::string ReadTableSource(const std::string& name);
+    std::string ReadTableSource(const std::string& name, bool preferBinary = false);
     std::string ReadTableOverlay(const std::string& name);
     std::string ReadAuxiliaryTable(const std::string& name);
 private:

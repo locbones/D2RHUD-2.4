@@ -130,12 +130,13 @@ std::string PlainText(const std::string& text) {
     return start == std::string::npos ? "" : out.substr(start);
 }
 
-Database LoadDatabase(GameAssets& assets) {
+Database LoadDatabase(GameAssets& assets, bool preferBinary) {
     Database db;
-    Binary::Tables tables(assets);
+    Binary::Tables tables(assets,preferBinary);
+    std::ostringstream localization;
     try {
         auto costs = tables.Get("itemstatcost"), properties = tables.Get("properties");
-        if (costs.empty() || properties.empty()) { db.error = "Could not load properties/itemstatcost tables (TXT or D2R 2.4 BIN) from the game/mod."; return db; }
+        if (costs.empty() || properties.empty()) { db.error = "Could not load properties/itemstatcost tables (TXT or D2R 2.4 BIN) from the game/mod."; db.diagnostics=tables.Diagnostics(); return db; }
         for (const auto& row : costs) {
             int id = Number(Field(row, "*id"), Number(Field(row, "id"), -1));
             if (id >= 0) db.statIds[Lower(Field(row, "stat"))] = id;
@@ -236,6 +237,7 @@ Database LoadDatabase(GameAssets& assets) {
         for (const char* file : { "item-modifiers", "skills", "item-nameaffixes", "ui", "classes" }) {
             auto bytes = assets.Read(std::string("local/lng/strings/") + file + ".json");
             auto json = nlohmann::json::parse(bytes.begin(), bytes.end(), nullptr, false);
+            localization<<file<<".json: "<<bytes.size()<<" bytes, "<<(json.is_array()?std::to_string(json.size())+" entries":"missing or invalid JSON array")<<'\n';
             if (!json.is_array()) continue;
             for (const auto& row : json) if (row.is_object() && row.contains("Key") && row["Key"].is_string()) {
                 auto& translations = db.strings[row["Key"].get<std::string>()];
@@ -255,7 +257,12 @@ Database LoadDatabase(GameAssets& assets) {
             db.skillNames[id] = desc[Lower(Field(row, "skilldesc"))];
         }
         if (db.affixes.empty() || db.uniques.empty() || db.sets.empty()) db.error = "Some item property tables could not be loaded.";
+        size_t descriptions=0;
+        for(const auto& [id,stat]:db.stats)if(!Strings(db,stat.positive).empty() || !Strings(db,stat.negative).empty())++descriptions;
+        localization<<"Localized stat descriptions: "<<descriptions<<" / "<<db.stats.size()<<'\n';
+        if(!descriptions && db.error.empty())db.error="No matching localized stat descriptions were loaded. Check data/local/lng/strings/item-modifiers.json and the compiled table versions.";
     } catch (const std::exception& e) { db.error = e.what(); }
+    db.diagnostics=tables.Diagnostics()+localization.str();
     return db;
 }
 

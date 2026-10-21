@@ -10,7 +10,7 @@
 GameAssets::GameAssets(const std::filesystem::path&,const std::string&) {}
 GameAssets::~GameAssets() {}
 std::vector<uint8_t> GameAssets::Read(const std::string&) {return {};}
-std::string GameAssets::ReadTableSource(const std::string&) {return {};}
+std::string GameAssets::ReadTableSource(const std::string&,bool) {return {};}
 
 using namespace CubeVisual;
 using namespace CubeVisual::Data;

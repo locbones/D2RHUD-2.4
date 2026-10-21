@@ -477,6 +477,13 @@ void Executable(const std::filesystem::path& path){
     }
     for(const auto signature:NativeData::Signatures){image[signature.rva]^=1;assert(!Supported());image[signature.rva]^=1;}
     DWORD old=0;assert(VirtualProtect(image,nt->OptionalHeader.SizeOfImage,PAGE_EXECUTE_READWRITE,&old));
+    const auto exceptionDirectory=nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXCEPTION];
+    auto functions=reinterpret_cast<RUNTIME_FUNCTION*>(image+exceptionDirectory.VirtualAddress);
+    auto ownerRoomFunction=std::find_if(functions,functions+exceptionDirectory.Size/sizeof(RUNTIME_FUNCTION),[](const auto& f){return f.BeginAddress==0x38d1a0;});
+    assert(ownerRoomFunction!=functions+exceptionDirectory.Size/sizeof(RUNTIME_FUNCTION));
+    assert(RtlAddFunctionTable(ownerRoomFunction,1,reinterpret_cast<DWORD64>(image)));
+    NativeSurvivorOwnerRoom(image);
+    assert(RtlDeleteFunctionTable(ownerRoomFunction));
     // An unrelated Survivors mismatch must leave character persistence usable.
     // A mismatch in either actual save/load entry must still reject those hooks.
     for(const auto damaged:{0x70065u,0x28f2b0u,0x2934b0u,0x318c80u}){

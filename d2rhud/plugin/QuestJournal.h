@@ -55,7 +55,7 @@ void Removed(D2GameStrc*,D2UnitStrc*);
 void Destroyed(D2GameStrc*);
 void Tick(D2GameStrc*);
 void Killed(D2GameStrc*,D2UnitStrc*,uint32_t victimId,uint32_t spawnSeed,int monsterClass,int superUniqueId);
-void Crafted(D2GameStrc*,D2UnitStrc*,size_t recipe,const std::vector<uint32_t>& inputCodes,const std::vector<D2UnitStrc*>& outputs);
+void Crafted(D2GameStrc*,D2UnitStrc*,size_t recipe,const std::vector<uint32_t>& inputCodes,const std::vector<D2UnitStrc*>& outputs,Outcome outcome=Outcome::Committed);
 void DepositedRune(D2GameStrc*,D2UnitStrc*,uint32_t code);
 using RewardClaim=bool(*)(D2GameStrc*,D2UnitStrc*,int);
 void SetRewardClaim(RewardClaim);

@@ -169,6 +169,20 @@ void Native(uint8_t* image){
     // Direct scope checks also cover failure before any output callback, using
     // native GUID/ownership/quantity snapshots rather than a void return value.
     reset(2);{QuestOutputScope scope(&game,&owner,rules->gates[0],recipes[0]);assert(scope.Outcome()==QuestJournal::Outcome::Rejected);exists[1]=false;assert(scope.Outcome()==QuestJournal::Outcome::Ambiguous);}
+    // Native's final Add restores unconsumed quantities, even after every
+    // ordinary output succeeded. A stacked skull/remover is not a failure.
+    reset(1);{QuestOutputScope transaction(&game,&owner,rules->gates[0],recipes[0]);questOutput=&transaction;
+        const uint32_t output=units[0].dwUnitId,remainder=units[1].dwUnitId;
+        QuestAdded(true,&owner,&output,1,Pattern::Address(0x30812a));
+        QuestAdded(true,&owner,&remainder,1,Pattern::Address(0x3085d2));
+        assert(transaction.finalSeen&&transaction.Outcome()==QuestJournal::Outcome::Committed);
+        QuestAdded(false,&owner,&remainder,1,Pattern::Address(0x3085d2));
+        assert(transaction.Outcome()==QuestJournal::Outcome::Ambiguous);questOutput=nullptr;}
+    reset(3);{QuestOutputScope transaction(&game,&owner,rules->gates[0],recipes[0]);questOutput=&transaction;
+        const uint32_t output=units[0].dwUnitId,remainder=units[1].dwUnitId;
+        QuestAdded(true,&owner,&output,1,Pattern::Address(0x30812a));
+        QuestAdded(true,&owner,&remainder,1,Pattern::Address(0x3085d2));
+        assert(transaction.Outcome()==QuestJournal::Outcome::Ambiguous);questOutput=nullptr;}
     reset(1);::testQuestBegin=true;rules->events=true;rules->quests.resize(1);rules->quests[0].milestone=true;
     rules->gates={{0,1,true,1,4,18,398,7}};recipes[0].header[0x10]=4;
     metadata[1].pExtraData.pNextItem=&units[2];exists[2]=true;nextCreated=3;

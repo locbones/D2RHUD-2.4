@@ -39,7 +39,9 @@ compiled recipe table or player item progress stats.
   bag deposit/withdrawal, Daylight forging, amulet socketing, belt enhancement,
   Safety ring, Blood Contract, dye, jewel upconversion, Codex and Limit Break.
   Failed or partial output placement grants no crafting evidence. A successful
-  mixed-rune helper deposit also records Thul.
+  recipe may return unused quantities from an input stack to the cube; that
+  normal remainder step does not prevent completion. A successful mixed-rune
+  helper deposit also records Thul.
 - Dropping an equipped weapon and placing a Mythos Statue in the cube are
   observed directly. Weapon tracking continues while holding the equipped
   weapon on the cursor, and completes when it reaches the ground. Putting it
@@ -68,6 +70,20 @@ definitions and mod tables. Progress is authoritative on the host; journals for
 TCP/IP characters are stored on that host. Offline journals are stored locally.
 Supported native signatures are checked before enabling the feature. The
 feature report includes quest hook status and the actual companion folder.
+
+BIN-only distributions need `cubemain.bin`, `D2RHUD/quests.json` and the
+matching `D2RHUD/table-metadata.json`. The companion retains recipe descriptions
+which the game does not store in the BIN. Ordinary launches use the companion
+bound to the compiled table even if old TXT files remain; `-txt` launches use
+the source being compiled. The skull/Thul deposits, skull/Amn withdrawals,
+Safety rings and jewel upconversion resolve their current activity recipes
+instead of trusting the old exported row numbers. Correcting those legacy
+bindings preserves the existing journal identity and claimed rewards.
+
+`%LOCALAPPDATA%/D2RHUD/quest-events.log` records each observed ordinary cube
+transaction's recipe row, input codes, native outcome and journal/session
+status. Rejected or incomplete transactions never grant evidence. The log is
+bounded to roughly 1 MiB and is written only on cube operations.
 
 Quest data is stored below:
 

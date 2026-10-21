@@ -17,6 +17,7 @@
 #include <mutex>
 #include <optional>
 #include <climits>
+#include <shellapi.h>
 
 namespace CubeVisual {
 namespace {
@@ -56,6 +57,7 @@ SourceTable sourceTable;
 std::filesystem::path sourcePath;
 std::filesystem::path installRoot;
 std::string sourceMod;
+bool sourceCompilation=false;
 std::filesystem::file_time_type sourceTime{};
 void LoadSource() {
     wchar_t exe[MAX_PATH]{};char mod[128]{};
@@ -65,14 +67,18 @@ void LoadSource() {
     const std::string name=mod;
     if(!name.empty())for(const auto& part:std::filesystem::path(name))if(part==".." || part=="." || part.has_root_path())return;
     GameAssets assets(root,name);
-    const auto text=assets.ReadTableSource("cubemain");
+    int argc=0;auto args=CommandLineToArgvW(GetCommandLineW(),&argc);
+    bool compiling=false;if(args){for(int n=1;n<argc;++n)if(!_wcsicmp(args[n],L"-txt"))compiling=true;LocalFree(args);}
+    // Ordinary games execute BIN recipes even if leftover TXT files exist.
+    // Only a compilation launch may bind its freshly edited source instead.
+    const auto text=assets.ReadTableSource("cubemain",!compiling);
     const auto questConfig=assets.Read("D2RHUD/quests.json");
     QuestJournal::Configure(root,name,text,std::string(questConfig.begin(),questConfig.end()));
     auto table=ParseSource(text);
     std::lock_guard lock(sourceMutex);
     sourceTable=std::move(table);
-    installRoot=root;sourceMod=name;
-    sourcePath=name.empty() ? root/"data/global/excel/cubemain.txt" : root/"Mods"/name/(name+".mpq")/"data/global/excel/cubemain.txt";
+    installRoot=root;sourceMod=name;sourceCompilation=compiling;
+    sourcePath=compiling?(name.empty() ? root/"data/global/excel/cubemain.txt" : root/"Mods"/name/(name+".mpq")/"data/global/excel/cubemain.txt"):std::filesystem::path{};
     std::error_code error;sourceTime=std::filesystem::last_write_time(sourcePath,error);
 }
 std::optional<SourceRecipe> SourceOptions(Recipe* recipe) {
@@ -88,7 +94,7 @@ std::optional<SourceRecipe> SourceOptions(Recipe* recipe) {
         const std::string name=currentMod;
         if(name!=sourceMod && name.find_first_of("/\\:")==name.npos && name!=".." && name!=".") {
             sourceMod=name;
-            sourcePath=name.empty() ? installRoot/"data/global/excel/cubemain.txt" : installRoot/"Mods"/name/(name+".mpq")/"data/global/excel/cubemain.txt";
+            sourcePath=sourceCompilation?(name.empty() ? installRoot/"data/global/excel/cubemain.txt" : installRoot/"Mods"/name/(name+".mpq")/"data/global/excel/cubemain.txt"):std::filesystem::path{};
             sourceTime={};sourceTable={};
         }
     }

@@ -59,11 +59,14 @@ struct Database {
     // Native IDs are 1 based: suffixes, then prefixes, then automagic.
     std::vector<Properties> affixes;
     std::string error;
+    std::string diagnostics;
     void Apply(Totals& totals, const Properties& source) const;
     Totals ForItem(const Item& item) const;
     const Properties* ForRuneword(int baseId, const std::vector<std::string>& socketCodes) const;
 };
-Database LoadDatabase(GameAssets& assets);
+// Prefer the compiled tables used by the game. Source mode is retained for
+// authoring validation and for tables with no same-layer BIN.
+Database LoadDatabase(GameAssets& assets, bool preferBinary = true);
 std::string PlainText(const std::string& text);
 inline constexpr char DefaultRangeFormat[] = "[%d-%d]";
 inline constexpr size_t MaxRangeFormatLength = 128;

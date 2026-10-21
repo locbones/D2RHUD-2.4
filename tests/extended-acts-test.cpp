@@ -128,6 +128,17 @@ void StartupDataTests(const char* sourcePath){
     for(const auto& path:std::filesystem::recursive_directory_iterator(data))if(path.is_regular_file()&&path.path().extension()==".txt")std::filesystem::remove(path.path());
     assert(ConfigureData(data,config,false,false,5)==Config::Disabled && !compileText);
     assert(ConfigureData(data,config,true,false,5)==Config::Disabled && pendingRestart);
+    // Current releases removed the D2RLAN themes but retain their historical
+    // manifest entries. They must not fail the extended-state startup gate.
+    size_t absentThemes=0;
+    for(const auto& entry:config["native_layouts"]){const auto relative=entry.get<std::string>();if(relative.starts_with("D2RLAN/UI Theme/")){assert(std::filesystem::remove(data/relative));++absentThemes;}}
+    assert(absentThemes>0);
+    assert(ConfigureData(data,config,false,false,5)==Config::Disabled);
+    assert(ConfigureData(data,config,true,false,5)==Config::Disabled && pendingRestart);
+    const auto required=data/"global/ui/layouts/questlogpanelexpansionhd.json";
+    std::filesystem::rename(required,required.string()+".backup");bool missingRequired=false;
+    try{ConfigureData(data,config,false,false,5);}catch(const std::exception& e){missingRequired=std::string(e.what()).find("global/ui/layouts/questlogpanelexpansionhd.json")!=std::string::npos;}
+    assert(missingRequired);std::filesystem::rename(required.string()+".backup",required);
     auto bin=[&](const char* name,size_t stride,uint32_t count){
         std::vector<uint8_t> bytes(4+size_t(count)*stride);memcpy(bytes.data(),&count,4);
         if(std::string(name)=="actinfo")for(uint32_t n=0;n<count;++n){const auto id=n+1;memcpy(bytes.data()+4+size_t(n)*stride,&id,4);}

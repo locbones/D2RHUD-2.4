@@ -168,16 +168,22 @@ void ValidateCompiledActs(const std::filesystem::path& data,uint64_t loadedActs,
 bool SelectData(const std::filesystem::path& data,const nlohmann::json& config,bool enabled,bool canCompile=true,DataGroup group=DataGroup::All) {
     struct Replacement {std::filesystem::path path;std::string before,after;};
     std::vector<Replacement> replacements;
-    auto read=[](const std::filesystem::path& path){std::ifstream f(path,std::ios::binary);if(!f)throw std::runtime_error("Act VI data missing");return std::string(std::istreambuf_iterator<char>(f),{});};
+    auto read=[](const std::filesystem::path& path){std::ifstream f(path,std::ios::binary);if(!f){const auto name=path.u8string();throw std::runtime_error("Act VI data missing: "+std::string(reinterpret_cast<const char*>(name.data()),name.size()));}return std::string(std::istreambuf_iterator<char>(f),{});};
     auto hash=[](const std::string& text){return LegacyTransmog::Data::Hash({reinterpret_cast<const uint8_t*>(text.data()),text.size()});};
     auto path=[&](const std::string& relative){auto p=std::filesystem::path(relative);if(p.is_absolute() || p.has_root_name())throw std::runtime_error("Invalid Act VI path");for(const auto& part:p)if(part=="..")throw std::runtime_error("Invalid Act VI path");return data/p;};
     std::set<std::string> layouts;
-    if(group!=DataGroup::All)for(const auto& name:config.at("native_layouts"))layouts.insert(name.get<std::string>());
+    if(config.contains("native_layouts"))for(const auto& name:config.at("native_layouts"))layouts.insert(name.get<std::string>());
     for(const auto& file:config.at("switch_files")) {
         const auto relative=file.at("path").get<std::string>();
         const bool layout=layouts.contains(relative);
         if((group==DataGroup::Launch && layout) || (group==DataGroup::Layouts && !layout))continue;
-        const auto target=path(file.at("path"));const auto before=read(target);
+        const auto target=path(file.at("path"));
+        // Theme variants are optional installed content. In particular, modern
+        // Pandemonium packages no longer ship the old D2RLAN theme folder.
+        // Required global layouts and existing edited themes remain validated.
+        const bool theme=relative.starts_with("D2RLAN/UI Theme/") || relative.starts_with("Pandemonium/UI Theme/");
+        if(layout && theme && !std::filesystem::exists(target))continue;
+        const auto before=read(target);
         const uint64_t on=file.at("enabled_hash"),off=file.at("disabled_hash");
         if(hash(before)!=on && hash(before)!=off)throw std::runtime_error("Act VI target was edited: "+relative);
         const auto after=read(path(file.at(enabled?"enabled":"disabled")));

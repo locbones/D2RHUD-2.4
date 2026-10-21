@@ -20,6 +20,29 @@ inline std::pair<int,bool> QuestName(const std::string& name){
     const auto suffix=name.empty()?' ':name.back();if(suffix!='a'&&suffix!='b')return {};
     const int id=Number(name.substr(6,name.size()-7));return id>=1&&id<=MaxQuests?std::pair{id,suffix=='b'}:std::pair<int,bool>{};
 }
+// These v2 lessons predate stable activity bindings. Their exported row
+// numbers move when unrelated recipes are inserted, but their activities do
+// not. Resolve them against the selected cubemain source (also retained by
+// the hash-bound BIN companion), without changing the saved lesson identity.
+inline bool ActivityRecipe(const Definition& quest,const std::map<std::string,std::string>& row){
+    auto get=[&](const char* key){auto it=row.find(key);return it==row.end()?std::string{}:it->second;};
+    if(Number(get("enabled"))!=1)return false;
+    const auto name=get("description");
+    auto series=[&](std::string_view base){
+        if(name==base)return true;
+        const auto prefix=std::string(base)+" x";
+        return name.starts_with(prefix)&&Number(name.substr(prefix.size()))>0;
+    };
+    if(quest.id==19&&quest.trigger=="craft")return name.starts_with("Safety Ring");
+    if(quest.id==32&&quest.trigger=="craft")return name=="Upconvert Magic Jewels";
+    if(get("input 1")!="Z01"||get("output")!="useitem")return false;
+    if(quest.id==1&&quest.trigger=="depositSkull")return series("Add Gem");
+    if(quest.id==7&&quest.trigger=="countessThul")return series("Add Rune - Thul");
+    if(quest.id==2&&quest.trigger=="recipe")return name=="Remove Gem - Skull"&&get("input 2")=="Z08";
+    if(quest.id==8&&quest.trigger=="recipe")return name=="Remove Rune - Amn"&&get("input 2")=="Z19";
+    return false;
+}
+inline bool NamedActivity(const Definition& q){return (q.id==1&&q.trigger=="depositSkull")||(q.id==2&&q.trigger=="recipe")||(q.id==7&&q.trigger=="countessThul")||(q.id==8&&q.trigger=="recipe")||((q.id==19||q.id==32)&&q.trigger=="craft");}
 inline std::shared_ptr<Rules> ParseRules(const std::string& text,const std::string& config){
     auto rules=std::make_shared<Rules>();std::istringstream input(text);std::string line;
     if(!std::getline(input,line)){rules->error="Quest recipe definitions are unavailable (cubemain source or matching BIN metadata).";return rules;}
@@ -90,6 +113,21 @@ inline std::shared_ptr<Rules> ParseRules(const std::string& text,const std::stri
         }
         if(rules->events&&used.size()!=rules->quests.size())throw std::runtime_error("Every quest requires an event definition.");
     }catch(const std::exception& e){rules->error=std::string("Quest description configuration is invalid: ")+e.what();}
+    // Hash the original configuration above so correcting legacy row drift
+    // neither resets progress nor permits previously claimed rewards again.
+    if(rules->events&&rules->error.empty()){
+        for(auto& q:rules->quests)if(NamedActivity(q))q.recipes.clear();
+        for(size_t n=0;n<sourceRows.size();++n){
+            const auto values=Fields(sourceRows[n]);std::map<std::string,std::string> row;
+            for(const char* key:{"description","enabled","input 1","input 2","output"}){
+                const auto index=columns.find(key);if(index!=columns.end()&&index->second<values.size())row.emplace(key,values[index->second]);
+            }
+            for(auto& q:rules->quests)if(NamedActivity(q)&&ActivityRecipe(q,row))q.recipes.push_back(n);
+        }
+        for(const auto& q:rules->quests)if(NamedActivity(q)&&q.recipes.empty()){
+            rules->error="Quest "+std::to_string(q.id)+" activity recipe is missing from the selected cube table.";break;
+        }
+    }
     rules->digest=digest;return rules;
 }
 struct State {int completed=0;bool objectiveReady=false,legacyClosed=false,uncertain=false;uint32_t kills=0;uint64_t evidence=0;bool countess=false,thul=false;uint16_t menus=0;bool operator==(const State&)const=default;};

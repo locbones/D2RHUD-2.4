@@ -65,6 +65,14 @@ void SurvivorsCombat(){
     game->dwGameFrame+=5;ProcessSurvivors(game,run,{&player});auto& build=run.survival.builds.at(55);assert(build.kills==1 && build.xp==3 && !survivorOrder);
     game->dwGameFrame+=5;ProcessSurvivors(game,run,{&player});assert(build.kills==1 && build.xp==3 && survivorHits==1);
     for(uint8_t cls=1;cls<Survivors::Classes.size();++cls)assert(run.survival.builds.at(1000+cls).xp==cls && !run.survival.builds.at(1000+cls).kills);
+    for(unsigned mode:{4u,9u,19u}){ // Hit recovery, block and knockback are alive.
+        player.dwAnimMode=mode;player.dwFlags=0x8000;game->dwGameFrame+=5;
+        ProcessSurvivors(game,run,{&player});assert(run.eventPhase==EventPhase::Active && !run.timedOut);
+    }
+    player.dwAnimMode=1;player.dwFlags=0;
+    // A transient missing participant must not immediately end a live run.
+    game->dwGameFrame+=5;ProcessSurvivors(game,run,{});assert(run.eventPhase==EventPhase::Active && run.survival.unavailableSince);
+    game->dwGameFrame+=5;ProcessSurvivors(game,run,{&player});assert(run.eventPhase==EventPhase::Active && !run.survival.unavailableSince);
     run.survival.bossSpawned=true;run.survival.boss=90;survivorMonsters[1].dwAnimMode=12;
     run.census.Observe(99,false);game->dwGameFrame+=5;ProcessSurvivors(game,run,{&player});assert(!run.success && !run.clearedAt);run.census.Observe(99,true);
     game->dwGameFrame+=5;ProcessSurvivors(game,run,{&player});assert(!run.success && run.eventPhase==EventPhase::Active);
@@ -72,6 +80,8 @@ void SurvivorsCombat(){
     game->dwGameFrame+=50;ProcessSurvivors(game,run,{&player});assert(run.success && run.eventPhase==EventPhase::Returning && run.returning.contains(55));
     run.success=false;run.eventPhase=EventPhase::Active;run.phase=Phase::Running;game->dwGameFrame=100+600*25;
     ProcessSurvivors(game,run,{&player});assert(!run.success && run.timedOut && run.eventPhase==EventPhase::Returning);
+    run.eventPhase=EventPhase::Active;run.phase=Phase::Running;run.timedOut=false;game->dwGameFrame=200;player.dwAnimMode=0;
+    ProcessSurvivors(game,run,{&player});assert(run.eventPhase==EventPhase::Returning && !run.success);
     games.clear();populationCode=nullptr;installed=false;
     std::cout<<"Survivors auto-attacks respect range/cooldown, execute engine damage in order, credit deaths once, require the boss and remaining adds, and enforce the ten-minute deadline.\n";
 }
@@ -191,14 +201,14 @@ void SurvivorAvatarBindings(){
     bindings[0x2d5e10]=reinterpret_cast<uintptr_t>(+[](Unit* player,void*,uint32_t* id,int update,bool inventory){assert(player==&eventPlayers[1] && *id==123 && update==1 && !inventory);return !survivorStarterFail;});
     bindings[0x2f70a0]=reinterpret_cast<uintptr_t>(+[](Game*,Unit* item){assert(item==&survivorStarterItem);});
     originalSurvivorStarter=+[](Unit*,Game*){assert(!survivorStarter);++survivorStarterCalls;};
-    for(size_t cls=0;cls<Survivors::Classes.size();++cls)for(int id:Survivors::Classes[cls].ids){Put(survivorSkillRows[id].data(),0,int16_t(id));Put(survivorSkillRows[id].data(),0x2c,uint8_t(cls));}
+    for(size_t cls=0;cls<Survivors::Classes.size();++cls)for(size_t slot=0;slot<3;++slot){const int id=Survivors::Classes[cls].ids[slot];Put(survivorSkillRows[id].data(),0,int16_t(id));Put(survivorSkillRows[id].data(),0x2c,uint8_t(cls));strcpy_s(reinterpret_cast<char*>(survivorSkillRows[id].data()+2),32,Survivors::Classes[cls].skills[slot]);}
     auto& hero=eventPlayers[0];hero.dwClassId=5;hero.pInventory=reinterpret_cast<D2InventoryStrc*>(uintptr_t(0x1234));Put(&eventClients[0],8,uint8_t(5));Put(&eventClients[0],0xa,uint16_t(0x225));Put(&eventClients[0],0x468,int(123));Put(survivorHeroSlot.data(),0,&hero);Put(fixture.GamePtr(),0x21e8,survivorHeroSlot.data());
     bindings[0x1c9fad0]=reinterpret_cast<uintptr_t>(&survivorSkillTable);bindings[0x1c9fad8]=reinterpret_cast<uintptr_t>(&survivorSkillCount);
     bindings[0x31a280]=reinterpret_cast<uintptr_t>(SurvivorCreate);bindings[0x29d890]=reinterpret_cast<uintptr_t>(SurvivorClientBind);bindings[0x2c52e0]=reinterpret_cast<uintptr_t>(SurvivorUnitBind);
     bindings[0x1d1280]=reinterpret_cast<uintptr_t>(+[](Room*,int,uint32_t){});bindings[0x1f73e0]=reinterpret_cast<uintptr_t>(+[](Unit*,int){});bindings[0x22e8a0]=reinterpret_cast<uintptr_t>(+[](Unit* u){Put(u->pDynamicPath,0x20,static_cast<Room*>(nullptr));});
     bindings[0x29d8f0]=reinterpret_cast<uintptr_t>(+[](Client*,Unit*,Game*,Room*,int,int){});bindings[0x341670]=reinterpret_cast<uintptr_t>(+[](Game*,Unit*,Client*){});bindings[0x29de20]=reinterpret_cast<uintptr_t>(SurvivorReassign);
     bindings[0x1e5440]=reinterpret_cast<uintptr_t>(SurvivorSet);bindings[0x2aaa00]=reinterpret_cast<uintptr_t>(+[](Unit*,Unit*,int){});
-    bindings[0x2192d0]=reinterpret_cast<uintptr_t>(+[](Unit*,int,int,int){});bindings[0x2c7a90]=reinterpret_cast<uintptr_t>(+[](Game*,Unit*,Room*,int,int,int){return 1;});
+    bindings[0x2192d0]=reinterpret_cast<uintptr_t>(+[](Unit*,int,int,int){});bindings[0x2c7a90]=reinterpret_cast<uintptr_t>(+[](Game*,Unit* hero,Room* room,int,int,int){assert(!Field<void*>(hero->pDynamicPath,0x20));Put(hero->pDynamicPath,0x20,room);return 1;});
     bindings[0x2cce40]=reinterpret_cast<uintptr_t>(+[](Client* client,Unit* unit,uint16_t skill,uint8_t level,uint8_t flags){assert(client==&eventClients[0] && unit==&eventPlayers[1] && !flags);survivorPublished[skill]=level;});
     bindings[0x29a2a0]=reinterpret_cast<uintptr_t>(+[](Unit* unit,int left,int skill,int owner){assert(unit==&eventPlayers[1] && !left && owner==-1);survivorSelected=skill;});
     originalRemove=SurvivorRemoveAvatar;originalSurvivorSave=SurvivorSaveOriginal;
@@ -229,6 +239,7 @@ void SurvivorsNpcEntry(){
     assert(command() && State(game).run);auto& run=*State(game).run;
     assert(run.event==Event::Survivors && run.eventPhase==EventPhase::Briefing && run.phase==Phase::Closed && run.state==259 && run.returns.contains(56) && run.survival.builds.at(56).ranks[0]==1 && run.characterLevel==1);
     assert(client.dwUnitGUID==56 && Field<uint8_t>(&client,8)==0 && player.dwClassId==5 && player.pInventory==reinterpret_cast<D2InventoryStrc*>(uintptr_t(0x1234)) && Field<Client*>(player.pPlayerData,0xf0)->dwClientId==UINT32_MAX);
+    assert(Field<void*>(player.pDynamicPath,0x20)==fixture.r1[0].data());
     uint32_t saved=0;survivorSaves=0;assert(SurvivorSaveHook(game,&eventPlayers[1],nullptr,&saved,8192)==0 && saved==100 && survivorSaves==1);
     assert(Field<Client*>(player.pPlayerData,0xf0)->dwClientId==UINT32_MAX && Field<void*>(game,0x21e8)==survivorAvatarSlot.data());
     assert(RestoreSurvivor(game,&eventPlayers[1]) && survivorAvatars.empty());assert(client.dwUnitGUID==55 && Field<uint8_t>(&client,8)==5 && Field<uint16_t>(&client,0xa)==0x225 && Field<int>(&client,0x468)==123 && Field<void*>(game,0x21e8)==survivorHeroSlot.data() && run.returns.contains(55));
@@ -265,8 +276,15 @@ void SurvivorsNpcEntry(){
     bindings[0x1c9fae8]=reinterpret_cast<uintptr_t>(&skillLinker);
     bindings[0x6d0470]=reinterpret_cast<uintptr_t>(+[](void* linker,const char* name)->int{if(linker==reinterpret_cast<void*>(2))return !strcmp(name,"Fire Ball")?41:-1;return EncounterName(linker,name);});
     Put(survivorSkillRows[41].data(),0,int16_t(41));Put(survivorSkillRows[41].data(),0x2c,uint8_t(1));
+    memset(survivorSkillRows[47].data()+2,0,32);strcpy_s(reinterpret_cast<char*>(survivorSkillRows[41].data()+2),32,"Fire Ball");
     Survivors::Build moved;moved.classId=1;auto sorceress=CreateSurvivor(game,&player,moved);
     assert(sorceress && survivorSelected==41 && survivorPublished.at(41)==1 && RestoreSurvivor(game,sorceress));
+    // The same handoff must work with either missing or empty native linkers.
+    skillLinker=nullptr;
+    sorceress=CreateSurvivor(game,&player,moved);assert(sorceress && survivorSelected==41 && RestoreSurvivor(game,sorceress));
+    skillLinker=reinterpret_cast<void*>(2);
+    bindings[0x6d0470]=reinterpret_cast<uintptr_t>(+[](void*,const char*){return -1;});
+    sorceress=CreateSurvivor(game,&player,moved);assert(sorceress && survivorSelected==41 && RestoreSurvivor(game,sorceress));
     bindings.erase(0x1c9fae8);bindings[0x6d0470]=reinterpret_cast<uintptr_t>(EncounterName);
     survivorStarterCalls=0;SurvivorStarterHook(&player,game);assert(survivorStarterCalls==1);
     survivorStarterFail=true;assert(!CreateSurvivor(game,&player,Survivors::Build{}) && !survivorStarter && survivorAvatars.empty() && client.pPlayer==&player && Field<void*>(game,0x21e8)==survivorHeroSlot.data());survivorStarterFail=false;
@@ -394,15 +412,15 @@ void NativeMobileSurvivorEffect(uint8_t* image){
     // Fire Ball ID. Only the native projectile creation boundary is mocked.
     Put(image,0x1c9fae8,reinterpret_cast<void*>(1));
     stub(0x6d0470,+[](void* linker,const char* name){assert(linker==reinterpret_cast<void*>(1) && !strcmp(name,"Fire Ball"));return 41;});
-    assert(SurvivorSkillId(1,0)==41 && Survivors::Classes[1].ids[0]==47);
     survivorNativeChecks=0;
     stub(0x3151a0,+[](Game*,void* p)->Unit*{
         assert(Field<Unit*>(p,8)==&eventPlayers[0] && Field<int>(p,0x20)==22 && Field<int>(p,0x3c)==41 && Field<int>(p,0x40)==1);
         assert(Field<int>(p,0x24)==12 && Field<int>(p,0x28)==34 && Field<int>(p,0x2c)==72 && Field<int>(p,0x30)==84);++survivorNativeChecks;return &survivorMonsters[1];
     });
     auto game=fixture.GamePtr();Put(fixture.level.data(),0x1f8,int(39));
-    std::vector<Bytes<0x284>> rows(263);Put(rows[41].data(),0,int16_t(41));Put(rows[41].data(),0x4e,int16_t(0));Put(rows[41].data(),0x66,int16_t(22));
+    std::vector<Bytes<0x284>> rows(263);Put(rows[41].data(),0,int16_t(41));Put(rows[41].data(),0x2c,uint8_t(1));strcpy_s(reinterpret_cast<char*>(rows[41].data()+2),32,"Fire Ball");Put(rows[41].data(),0x4e,int16_t(0));Put(rows[41].data(),0x66,int16_t(22));
     Put(image,0x1c9fad0,rows.data());Put(image,0x1c9fad8,uint64_t(rows.size()));Put(image,0x1c9fa48,int(100));
+    assert(SurvivorSkillId(1,0)==41 && Survivors::Classes[1].ids[0]==47);
     Put(image,0x14bf500,uintptr_t(0));
     Bytes<16> formula{};Put(image,0x1c9eab8,formula.data());Put(image,0x1c9eac0,uint64_t(formula.size()));
     auto& player=eventPlayers[0];player={};player.dwClassId=1;player.dwUnitId=55;player.dwAnimMode=3;player.dwFlags=2;
@@ -429,7 +447,8 @@ void NativeMobileSurvivorEffect(uint8_t* image){
     assert(!SurvivorCast(game,&player,&target,b,0) && survivorNativeChecks==3 && survivorNativePackets.size()==3 && !memcmp(&path,&originalPath,sizeof(path)));
     Put(rows[41].data(),0x4c,int16_t(38));assert(!SurvivorMobileSkill(rows[41].data()));
     stub(0x6d0470,+[](void*,const char*){return -1;});FlushInstructionCache(GetCurrentProcess(),image,0x2000000);
-    assert(SurvivorSkillId(1,0)==-1); // Do not silently use Meteor if absent.
+    assert(SurvivorSkillId(1,0)==41); // Empty linkers cannot hide compiled Fire Ball.
+    memset(rows[41].data()+2,0,32);assert(SurvivorSkillId(1,0)==-1); // Never substitute Meteor.
     Put(image,0x1c9fae8,static_cast<void*>(nullptr));game->pClientList=nullptr;
     std::cout<<"Native Fire Ball resolves RMD's moved skill ID, aims projectiles and client effects at the same enemy, preserves idle/walk/run paths, and sends nothing on failed preparation.\n";
 }
@@ -671,6 +690,41 @@ void NativeSurvivorSaveDispatch(uint8_t* image){
     for(const auto rva:SurvivorsNative::SaveLimitPatchSites)image[rva]=0x20;
     Put(image,clientSlot,previousClient);FlushInstructionCache(GetCurrentProcess(),image,0x261a000);
     std::cout<<"Native save dispatch fills and transmits 8-KiB/32-KiB buffers with its real stack probe, cookie and register slots intact.\n";
+}
+using NativePetReturn=int(__fastcall*)(Game*,Unit*,Unit*);
+uintptr_t survivorPetFault=0;Room* survivorPetOwnerRoom=nullptr;int survivorPetMoves=0;
+LONG SurvivorPetException(EXCEPTION_POINTERS* exception){
+    if(exception->ExceptionRecord->ExceptionCode!=EXCEPTION_ACCESS_VIOLATION)return EXCEPTION_CONTINUE_SEARCH;
+    survivorPetFault=reinterpret_cast<uintptr_t>(exception->ExceptionRecord->ExceptionAddress);return EXCEPTION_EXECUTE_HANDLER;
+}
+int SurvivorTryPetReturn(NativePetReturn function,Game* game,Unit* owner,Unit* pet){
+    __try{return function(game,owner,pet);}__except(SurvivorPetException(GetExceptionInformation())){return -1;}
+}
+void NativeSurvivorOwnerRoom(uint8_t* image){
+    // Execute the exact native pet relocation routine from the live crash.
+    // Its owner-room dereference and native GetRoom remain unmodified.
+    std::map<uint32_t,Bytes<14>> saved;
+    auto stub=[&](uint32_t rva,auto function){Bytes<14> bytes{};memcpy(bytes.data(),image+rva,bytes.size());saved.emplace(rva,bytes);
+        const uint8_t jump[]{0xff,0x25,0,0,0,0};memcpy(image+rva,jump,6);auto target=reinterpret_cast<uintptr_t>(function);memcpy(image+rva+6,&target,8);};
+    survivorPetOwnerRoom=reinterpret_cast<Room*>(fixture.r1[0].data());survivorPetMoves=0;
+    stub(0x25b420,+[](void* room,int,int)->void*{assert(room==Field<void*>(survivorPetOwnerRoom,0x18));return room;});
+    stub(0x2dc620,+[](Game*,Room*,void*,int,int*,int*,int){return 0;});
+    stub(0x2090c0,+[](Unit*)->uint32_t{return (60u<<16)|40u;});
+    stub(0x2232c0,+[](Room* room,int,int)->Room*{assert(room==survivorPetOwnerRoom);return room;});
+    stub(0x2c7a90,+[](Game*,Unit* pet,Room* room,int,int,int){assert(pet->dwUnitType==1 && room==survivorPetOwnerRoom);++survivorPetMoves;return 1;});
+    stub(0x22e750,+[](Unit*){});stub(0x3c3da0,+[](Game*,Unit*,int){});
+    Unit hero{},pet{};hero.dwUnitType=0;pet.dwUnitType=1;pet.dwClassId=2;D2DynamicPathStrc path{};hero.pDynamicPath=&path;
+    Put(&path,2,uint16_t(40));Put(&path,6,uint16_t(60));
+    SurvivorAvatar avatar;avatar.hero=&hero;avatar.townRoom=survivorPetOwnerRoom;
+    const auto relocate=reinterpret_cast<NativePetReturn>(image+0x38d1a0);
+    FlushInstructionCache(GetCurrentProcess(),image,0x400000);
+    assert(SurvivorTryPetReturn(relocate,fixture.GamePtr(),&hero,&pet)==-1 && survivorPetFault==reinterpret_cast<uintptr_t>(image)+0x38d21b);
+    SurvivorParkedRoom(avatar,true);
+    assert(GetRoom(&hero)==survivorPetOwnerRoom && SurvivorTryPetReturn(relocate,fixture.GamePtr(),&hero,&pet)==1 && survivorPetMoves==1);
+    SurvivorParkedRoom(avatar,false);assert(!GetRoom(&hero));
+    for(const auto& [rva,bytes]:saved)memcpy(image+rva,bytes.data(),bytes.size());
+    FlushInstructionCache(GetCurrentProcess(),image,0x400000);
+    std::cout<<"Actual native pet relocation reproduces the parked-owner 38d21b crash; retaining its pinned town room permits relocation and clears before hero reattachment.\n";
 }
 void NativeSurvivorsABI(uint8_t* image){
     auto stub=[&](uint32_t rva,auto fn){const uint8_t jump[]{0xff,0x25,0,0,0,0};memcpy(image+rva,jump,6);auto target=reinterpret_cast<uintptr_t>(fn);memcpy(image+rva+6,&target,8);};

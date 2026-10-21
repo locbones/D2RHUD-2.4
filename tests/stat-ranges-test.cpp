@@ -357,14 +357,26 @@ int main(int argc, char** argv) {
         ImGui::Render(); assert(ImGui::GetDrawData()->TotalVtxCount>0);
     }
     ImGui::DestroyContext();
+    // A report distinguishes activation/hooks from data and tooltip matching.
+    wchar_t previousLocal[32768]{};const auto oldLocal=GetEnvironmentVariableW(L"LOCALAPPDATA",previousLocal,32768);
+    const auto reportRoot=std::filesystem::temp_directory_path()/("d2rhud-stat-range-report-"+std::to_string(GetCurrentProcessId()));
+    SetEnvironmentVariableW(L"LOCALAPPDATA",reportRoot.c_str());
+    database.store(std::make_shared<const Database>(db));diagnosticSample="+25 to Strength => [20-30]\n";
+    SaveDiagnosticReport();
+    std::ifstream savedReport(reportRoot/"D2RHUD/stat-ranges-diagnostics.txt");
+    const std::string report((std::istreambuf_iterator<char>(savedReport)),{});
+    assert(report.find("Hooks installed:")!=std::string::npos && report.find("Activity: built=")!=std::string::npos);
+    assert(report.find("+25 to Strength => [20-30]")!=std::string::npos);
+    SetEnvironmentVariableW(L"LOCALAPPDATA",oldLocal?previousLocal:nullptr);
     if (argc > 1) {
         CheckNativeExecutable(std::filesystem::path(argv[1])/"D2R.exe");
         GameAssets assets(argv[1], argc > 2 ? argv[2] : ""); auto real = LoadDatabase(assets);
         assert(real.error.empty() && !real.affixes.empty() && !real.uniques.empty() && !real.sets.empty());
         std::cout << "Loaded " << real.uniques.size() << " unique, " << real.sets.size() << " set, " << real.affixes.size() << " affix records.\n";
         if (argc > 2 && std::string(argv[2]) == "RMD-MP") {
-            assert(real.classSkills.at(1) == "ModStr3d");
-            assert(real.tabSkills.at(8) == "StrSklTabItem15");
+            // BIN tables retain localized numeric string IDs rather than keys.
+            assert(real.strings.at(real.classSkills.at(1)) == real.strings.at("ModStr3d"));
+            assert(real.strings.at(real.tabSkills.at(8)) == real.strings.at("StrSklTabItem15"));
             Item rakescar; rakescar.quality=7; rakescar.index=10;
             auto values=real.ForItem(rakescar);
             assert(MatchLine(real, values, "+100% Enhanced Damage", true).text == "[75-150]");

@@ -19,7 +19,10 @@ struct QuestOutputScope {
         }
     }
     QuestJournal::Outcome Outcome()const{
-        if(!finalSeen&&!failed&&expected&&placed.size()==expected)return QuestJournal::Outcome::Committed;
+        // The final native Add returns unused input quantities to the cube.
+        // It also runs on successful recipes with stacked gems/removers; only
+        // a failed return or missing output makes that transaction incomplete.
+        if(!failed&&expected&&placed.size()==expected)return QuestJournal::Outcome::Committed;
         if(attempted||!placed.empty())return QuestJournal::Outcome::Ambiguous;
         for(const auto& old:before){auto item=Native<Unit*(__fastcall*)(Game*,int,uint32_t)>(0x2c49c0)(game,4,old.id);
             if(item!=old.pointer||!item->pItemData||item->pItemData->pExtraData.pParentInv!=old.parent||item->pItemData->nPage!=old.page||GetStat(item,70)!=old.quantity)return QuestJournal::Outcome::Ambiguous;
@@ -86,10 +89,8 @@ void ObserveCraft(Game* game,Unit* player,Recipe* recipe,Input* inputs,size_t ro
     QuestJournal::RecipeGate gate;gate.row=row;QuestOutputScope transaction(game,player,gate,*recipe);
     struct Scope {QuestOutputScope* previous;Scope(QuestOutputScope* q):previous(questOutput){questOutput=q;}~Scope(){questOutput=previous;}} scope(&transaction);
     originalCreate(game,player,recipe,inputs);
-    if(transaction.Outcome()==QuestJournal::Outcome::Committed){
-        std::vector<Unit*> outputs;for(auto id:transaction.placed)outputs.push_back(Native<Unit*(__fastcall*)(Game*,int,uint32_t)>(0x2c49c0)(game,4,id));
-        QuestJournal::Crafted(game,player,row,transaction.inputCodes,outputs);
-    }
+    std::vector<Unit*> outputs;for(auto id:transaction.placed)outputs.push_back(Native<Unit*(__fastcall*)(Game*,int,uint32_t)>(0x2c49c0)(game,4,id));
+    QuestJournal::Crafted(game,player,row,transaction.inputCodes,outputs,transaction.Outcome());
 }
 bool ClaimQuestBonus(Game* game,Unit* player,int quest){
     const auto rules=QuestJournal::Bindings();if(!installed.load()||!rules||!rules->events||!game||!player||!player->pInventory||quest<1||quest>int(rules->quests.size())||!rules->quests[quest-1].bonus)return false;

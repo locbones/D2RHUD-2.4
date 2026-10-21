@@ -1,6 +1,7 @@
 #define NOMINMAX
 #include "../d2rhud/plugin/GameAssets.h"
 #include "../d2rhud/plugin/TableMetadata.h"
+#include "../d2rhud/plugin/QuestJournalData.h"
 #include "../d2rhud/plugin/D2RHUD/TerrorZoneTables.h"
 #include <Windows.h>
 #include <cassert>
@@ -20,10 +21,30 @@ int main(int argc,char** argv){
     const auto stats=bins.ReadTableNames("itemstatcost"),props=bins.ReadTableNames("properties"),tcs=bins.ReadTableNames("treasureclassex");
     assert(stats.size()==487 && stats[292]=="RB_Low" && props[264]=="RB-Low");
     assert(bins.ReadTableSource("cubemain")==Text(source/"cubemain.txt"));
+    const auto questConfig=Text(data/"D2RHUD/quests.json");
+    const auto textRules=QuestJournal::Data::ParseRules(Text(source/"cubemain.txt"),questConfig);
+    const auto binRules=QuestJournal::Data::ParseRules(bins.ReadTableSource("cubemain",true),questConfig);
+    assert(textRules->error.empty()&&binRules->error.empty()&&binRules->quests.size()==45&&binRules->digest==textRules->digest);
+    for(size_t n=0;n<45;++n)assert(binRules->quests[n].recipes==textRules->quests[n].recipes);
+    // Leftover source must not override the recipes actually compiled for a
+    // normal (non -txt) launch, or rebind a journal to an unrelated revision.
+    Write(excel/"cubemain.txt","description\tenabled\nwrong_recipe\t1\n");
+    GameAssets staleCubeText(root,"OnlyBin");
+    const auto compiledRules=QuestJournal::Data::ParseRules(staleCubeText.ReadTableSource("cubemain",true),questConfig);
+    assert(compiledRules->error.empty()&&compiledRules->digest==binRules->digest);
+    fs::remove(excel/"cubemain.txt");
+    // A player's leftover source contained only three usable stat IDs. Compiled
+    // consumers must use bound BIN symbols, never those unrelated source names.
+    Write(excel/"itemstatcost.txt","Stat\t*ID\nwrong_0\t0\nwrong_1\t1\nwrong_2\t2\n");
+    GameAssets staleText(root,"OnlyBin");
+    assert(staleText.ReadTableNames("itemstatcost").size()==3);
+    assert(staleText.ReadTableNames("itemstatcost",true)==stats);
+    fs::remove(excel/"itemstatcost.txt");
     std::map<std::string,int> indices;for(size_t i=0;i<tcs.size();++i)if(!tcs[i].empty())indices.emplace(tcs[i],int(i));
     assert(indices.at("Act 1 H2H A")==567); // Engine-generated TC prefix is 225 rows, not a TXT header offset.
     const auto resolver=[&](const std::string& name){const auto it=indices.find(name);return it==indices.end()?-1:it->second;};
-    const auto reference=TerrorZoneTables::Load(bins,resolver);assert(reference.valid && reference.monsters.size()==943 && reference.superuniques.size()==80);
+    const auto nativeCount=[&](const char* name){const auto bytes=Text(source/(std::string(name)+".bin"));assert(bytes.size()>=4);uint32_t count=0;memcpy(&count,bytes.data(),4);return count;};
+    const auto reference=TerrorZoneTables::Load(bins,resolver);assert(reference.valid && reference.monsters.size()==nativeCount("monstats") && reference.superuniques.size()==nativeCount("superuniques"));
     size_t comparisons=0;
     for(unsigned mask=0;mask<4;++mask){
         for(size_t i=0;i<2;++i){const auto name=i?"superuniques":"monstats";const auto target=excel/(std::string(name)+".txt");if(mask&(1u<<i))fs::copy_file(source/(std::string(name)+".txt"),target,fs::copy_options::overwrite_existing);else fs::remove(target);}

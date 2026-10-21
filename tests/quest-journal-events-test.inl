@@ -2,6 +2,13 @@ void EventTests(const std::filesystem::path& root,const char* cube,const char* c
     const auto source=ReadText(cube),description=ReadText(config);
     Configure(root,"RMD-MP",source,description);auto rules=Bindings();
     Check(rules->events&&rules->error.empty(),"event definitions unavailable");
+    std::vector<std::map<std::string,std::string>> rows;
+    {std::istringstream input(source);std::string line;std::getline(input,line);const auto columns=Data::Fields(line);
+        while(std::getline(input,line)){const auto cells=Data::Fields(line);std::map<std::string,std::string> row;for(size_t n=0;n<columns.size()&&n<cells.size();++n)row[columns[n]]=cells[n];rows.push_back(std::move(row));}}
+    auto rowFor=[&](const char* name){for(size_t n=0;n<rows.size();++n)if(rows[n]["description"]==name)return n;throw std::runtime_error("Activity fixture missing");};
+    Check(rules->quests[1].recipes==std::vector<size_t>{rowFor("Remove Gem - Skull")},"skull withdrawal retained a stale recipe ordinal");
+    Check(rules->quests[7].recipes==std::vector<size_t>{rowFor("Remove Rune - Amn")},"Amn withdrawal retained a stale recipe ordinal");
+    for(const auto& q:rules->quests)if(Data::NamedActivity(q))for(auto row:q.recipes)Check(Data::ActivityRecipe(q,rows.at(row)),"activity binding points to a different operation");
     for(const auto& q:rules->quests){
         Check(!q.trigger.empty()&&q.objectiveRecipes.empty(),"legacy proof objective exposed");
         Check(q.milestone==(q.id==15||q.id==30||q.id==45),"milestone choice changed");
@@ -10,12 +17,19 @@ void EventTests(const std::filesystem::path& root,const char* cube,const char* c
     auto& s=sessions.at({&game,hero.dwUnitId});
     Check(s.state.legacyClosed&&!s.blocked,"event journal did not start");
     const auto code=[](const char* text){return ItemCode(text);};
+    Crafted(&game,&hero,rules->quests[0].recipes[0],{code("Z01"),code("skz")},{},Outcome::Rejected);
+    Crafted(&game,&hero,rules->quests[0].recipes[0],{code("Z01"),code("skz")},{},Outcome::Ambiguous);
+    Check(!s.state.evidence&&!s.state.completed,"failed native deposit granted evidence");
     Crafted(&game,&hero,rules->quests[0].recipes[0],{code("Z01"),code("gpv")},{});
     Check(s.state.completed==0,"non-skull gem completed skull deposit");
     Crafted(&game,&hero,rules->quests[0].recipes[0],{code("Z01"),code("skc")},{});
     Check(s.state.completed==1&&!s.state.objectiveReady,"actual skull deposit did not auto-complete");
+    Crafted(&game,&hero,rowFor("Remove Gem - Ruby"),{code("Z01"),code("Z06")},{});
+    Check(s.state.completed==1,"ruby withdrawal completed skull lesson");
     Crafted(&game,&hero,rules->quests[1].recipes[0],{code("Z01"),code("Z08")},{});
     Check(s.state.completed==2,"actual skull withdrawal did not auto-complete");
+    auto missing=source;const auto skullName=missing.find("Remove Gem - Skull");Check(skullName!=missing.npos,"missing skull row");missing.replace(skullName,18,"Removed operation");
+    Check(!Data::ParseRules(missing,description)->error.empty(),"missing activity silently retained stale numeric binding");
     // A successful operation can be remembered before its lesson unlocks.
     Crafted(&game,&hero,rules->quests[7].recipes[0],{code("Z01"),code("Z19")},{});
     Check(s.state.evidence&(uint64_t(1)<<7),"future crafting evidence was lost");

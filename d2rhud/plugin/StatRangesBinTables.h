@@ -29,6 +29,8 @@ inline Rows Text(const std::vector<uint8_t>& bytes){
 }
 class Tables {
     GameAssets& assets;std::map<std::string,Rows> cache;
+    bool preferBinary;
+    std::ostringstream diagnostics;
     template<class T>static T Read(const uint8_t* row,size_t offset){T v{};memcpy(&v,row+offset,sizeof(v));return v;}
     static std::string Chars(const uint8_t* row,size_t offset,size_t length){
         std::string out(reinterpret_cast<const char*>(row+offset),length);const auto nul=out.find('\0');if(nul!=out.npos)out.resize(nul);
@@ -50,17 +52,26 @@ class Tables {
         throw std::runtime_error("Invalid BIN item-code reference");
     }
 public:
-    explicit Tables(GameAssets& a):assets(a){}
+    explicit Tables(GameAssets& a,bool compiled=false):assets(a),preferBinary(compiled){}
+    std::string Diagnostics() const { return diagnostics.str(); }
     const Rows& Get(const std::string& name){
         auto old=cache.find(name);if(old!=cache.end())return old->second;
-        auto files=assets.ReadTable(name);auto& rows=cache[name];
+        auto files=assets.ReadTable(name,preferBinary);auto& rows=cache[name];
+        const bool ignoredText=preferBinary && !files.binary.empty() && !files.text.empty();
+        if(preferBinary && !files.binary.empty())files.text.clear();
+        const auto& input=files.text.empty()?files.binary:files.text;
+        uint64_t hash=14695981039346656037ull;for(auto byte:input)hash=(hash^byte)*1099511628211ull;
+        const auto location=files.layer.u8string();
+        diagnostics<<name<<(files.text.empty()?".bin":".txt")<<": "<<input.size()<<" bytes, fnv="<<std::hex<<hash<<std::dec
+            <<", data="<<(location.empty()?"archive/fallback":std::string(reinterpret_cast<const char*>(location.data()),location.size()))<<'\n';
+        if(ignoredText)diagnostics<<"  Using compiled BIN; loose TXT is not authoritative for stat ranges.\n";
         if(!files.text.empty()){rows=Text(files.text);return rows;}
         if(files.binary.empty())return rows;
         const std::map<std::string,size_t> sizes{{"itemstatcost",0x144},{"properties",0x2e},{"magicsuffix",0x8c},{"magicprefix",0x8c},{"automagic",0x8c},{"qualityitems",0x2c},{"charstats",0xd0},{"weapons",0x1b4},{"armor",0x1b4},{"misc",0x1b4},{"itemtypes",0xe4},{"runes",0xe0},{"gems",0xc0},{"uniqueitems",0x150},{"setitems",0x1bc},{"sets",0x128},{"skilldesc",0x128},{"skills",0x284}};
         const auto stride=sizes.at(name);const auto& bytes=files.binary;
         if(bytes.size()<4)throw std::runtime_error("Truncated "+name+".bin");const auto count=Read<uint32_t>(bytes.data(),0);
         if(count>100000 || bytes.size()!=4+size_t(count)*stride)throw std::runtime_error("Unsupported D2R 2.4 "+name+".bin layout");
-        const auto names=assets.ReadTableNames(name);
+        const auto names=assets.ReadTableNames(name,preferBinary);
         auto named=[&](size_t n,const char* kind){return n<names.size()&&!names[n].empty()?Lower(names[n]):Alias(kind,int(n));};
         auto stat=[&](int id){if(id<0)return std::string{};return id<int(names.size())&&!names[id].empty()?Lower(names[id]):StatDefault(id);};
         rows.resize(count);
