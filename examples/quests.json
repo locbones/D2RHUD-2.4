@@ -1,0 +1,1068 @@
+{
+  "version": 2,
+  "quests": [
+    {
+      "id": 1,
+      "title": "Store a skull",
+      "objective": "Deposit a Skull into your Storage Bag",
+      "tips": "All gems stored in the bag are perfect gems when withdrawn\nThese can be withdrawn later or used in various recipes as you progress\nYou can store gems, runes and other valuables in your bag",
+      "reward": "None",
+      "trigger": "depositSkull",
+      "items": [],
+      "recipes": [
+        5563,
+        5564,
+        5565,
+        5566,
+        5567,
+        5568,
+        5569,
+        5570,
+        5571,
+        5572,
+        5573,
+        5574,
+        5575,
+        5576,
+        5577,
+        5578,
+        5579,
+        5580,
+        5581,
+        5582,
+        5583,
+        5584,
+        5585,
+        5586,
+        5587,
+        5588,
+        5589,
+        5590,
+        5591,
+        5592,
+        5593,
+        5594,
+        5595,
+        5596,
+        5597,
+        5598,
+        5599,
+        5600,
+        5601,
+        5602,
+        5603,
+        5604,
+        5605,
+        5606,
+        5607,
+        5608,
+        5609,
+        5610,
+        5611,
+        5612,
+        5613,
+        5614,
+        5615,
+        5616,
+        5617,
+        5618,
+        5619,
+        5620,
+        5621,
+        5622,
+        5623,
+        5624,
+        5625,
+        5626,
+        5627,
+        5628,
+        5629,
+        5630,
+        5631,
+        5632,
+        5633,
+        5634,
+        5635,
+        5636,
+        5637,
+        5638,
+        5639,
+        5640,
+        5641,
+        5642,
+        5643,
+        5644,
+        5645,
+        5646,
+        5647,
+        5648,
+        5649,
+        5650,
+        5651,
+        5652,
+        5653,
+        5654,
+        5655,
+        5656,
+        5657,
+        5658,
+        5659,
+        5660,
+        5661
+      ],
+      "milestone": false,
+      "bonus": false,
+      "turnIn": "Progress is recorded automatically. Stat rewards can be claimed here while carrying your Evil Barrier charm.",
+      "objectiveRecipes": [],
+      "rewardRecipes": []
+    },
+    {
+      "id": 2,
+      "title": "Withdraw a skull",
+      "objective": "Withdraw a Skull from your Storage Bag",
+      "tips": "You can cube a remover alone to change what type of gem, rune, etc it withdraws\nGem (and other) removers allow you to withdraw the corresponding items from your bag\nYou can visit Edyrem's shop to buy removers (Left corner of town)",
+      "reward": "None",
+      "trigger": "recipe",
+      "items": [],
+      "recipes": [
+        6345
+      ],
+      "milestone": false,
+      "bonus": false,
+      "turnIn": "Progress is recorded automatically. Stat rewards can be claimed here while carrying your Evil Barrier charm.",
+      "objectiveRecipes": [],
+      "rewardRecipes": []
+    },
+    {
+      "id": 3,
+      "title": "Your equipped weapon",
+      "objective": "Drop your equipped weapon on the ground",
+      "tips": "You will learn more about these features in future quests\nCharm Weighting, Limit Breaking, Kill/Death stat adjustments, etc rely on it\nWithout it, you will notice you no longer start with +3 All Skills as an example\nYour weapon helps enable various special features in our mod",
+      "reward": "None",
+      "trigger": "dropWeapon",
+      "items": [],
+      "recipes": [],
+      "milestone": false,
+      "bonus": false,
+      "turnIn": "Progress is recorded automatically. Stat rewards can be claimed here while carrying your Evil Barrier charm.",
+      "objectiveRecipes": [],
+      "rewardRecipes": []
+    },
+    {
+      "id": 4,
+      "title": "The Mythos Statue",
+      "objective": "Place your Mythos Statue in the cube",
+      "tips": "You can view your character's advanced stats to see your weight info\nEach class will also gain their own innate stats on the statue itself\nWhen you have exceeded your charm weight, your mana will be reduced to 0\nThe statue helps grant your starting charm weight capacity and display your lifetime kills/deaths",
+      "reward": "None",
+      "trigger": "statueCube",
+      "items": [
+        {
+          "code": "y01"
+        },
+        {
+          "code": "y02"
+        },
+        {
+          "code": "y03"
+        },
+        {
+          "code": "y04"
+        },
+        {
+          "code": "y05"
+        },
+        {
+          "code": "y06"
+        },
+        {
+          "code": "y07"
+        }
+      ],
+      "recipes": [],
+      "milestone": false,
+      "bonus": false,
+      "turnIn": "Progress is recorded automatically. Stat rewards can be claimed here while carrying your Evil Barrier charm.",
+      "objectiveRecipes": [],
+      "rewardRecipes": []
+    },
+    {
+      "id": 5,
+      "title": "One thousand monsters",
+      "objective": "Kill 1000 Monsters",
+      "tips": "For more information about the stat adjustments, view the Itemization tab of our Mod Info menu\nAny stat adjustments applied will be shown in your character's advanced stats\nYour kills/deaths will adjust stats such as your HP% to reflect the burden on your soul",
+      "reward": "+25% Lightning Resistance added to your charm",
+      "trigger": "kills",
+      "items": [
+        {
+          "unique": "Barrier1"
+        }
+      ],
+      "recipes": [],
+      "milestone": false,
+      "bonus": true,
+      "turnIn": "Progress is recorded automatically. Stat rewards can be claimed here while carrying your Evil Barrier charm.",
+      "objectiveRecipes": [],
+      "rewardRecipes": [],
+      "target": 1000
+    },
+    {
+      "id": 6,
+      "title": "The Gnasher",
+      "objective": "Find The Gnasher from Rakanishu (Stony Field)",
+      "tips": "More info about these changes can be found in our Wiki\nMany other items have had similar adjustments made to them\nYou will find varying types of Splash damage on various items in this mod",
+      "reward": "None",
+      "trigger": "item",
+      "items": [
+        {
+          "unique": "The Gnasher"
+        }
+      ],
+      "recipes": [],
+      "milestone": false,
+      "bonus": false,
+      "turnIn": "Progress is recorded automatically. Stat rewards can be claimed here while carrying your Evil Barrier charm.",
+      "objectiveRecipes": [],
+      "rewardRecipes": []
+    },
+    {
+      "id": 7,
+      "title": "Countess and Thul",
+      "objective": "Kill Countess and deposit a Thul rune into your bag",
+      "tips": "Combined with our shortened levels, she is an even better source for this farming task\nCountess rune quality has been increased across all difficulties",
+      "reward": "None",
+      "trigger": "countessThul",
+      "items": [],
+      "recipes": [
+        5684,
+        5717,
+        5750,
+        5783,
+        5816,
+        5849,
+        5882,
+        5915,
+        5948,
+        5981
+      ],
+      "milestone": false,
+      "bonus": false,
+      "turnIn": "Progress is recorded automatically. Stat rewards can be claimed here while carrying your Evil Barrier charm.",
+      "objectiveRecipes": [],
+      "rewardRecipes": [],
+      "boss": 6
+    },
+    {
+      "id": 8,
+      "title": "Withdraw an Amn",
+      "objective": "Withdraw an Amn rune from your bag",
+      "tips": "A rune point converter can be purchased from Edyrem to convert points between types\nThis replaces the need to upgrade or downgrade runes completely\nAll runes use a 2x same rune = next rune format for point totals\nIf you have enough points, you can withdraw runes that may have never dropped for you\nAll deposited runes add to your rune points total",
+      "reward": "None",
+      "trigger": "recipe",
+      "items": [],
+      "recipes": [
+        6312
+      ],
+      "milestone": false,
+      "bonus": false,
+      "turnIn": "Progress is recorded automatically. Stat rewards can be claimed here while carrying your Evil Barrier charm.",
+      "objectiveRecipes": [],
+      "rewardRecipes": []
+    },
+    {
+      "id": 9,
+      "title": "Daylight Tier 2",
+      "objective": "Create the Daylight runeword and Runic Forge it to Tier 2",
+      "tips": "The maximum tier for all runewords is Tier 5, which also requires a 'body part' to complete\nTo increase a runeword's tier, simply cube the required runes with it again\nRunic Forging allows you to upgrade the 'Tier' of a runeword, improving or adding stats",
+      "reward": "None",
+      "trigger": "craft",
+      "items": [
+        {
+          "type": "armo",
+          "stat": 474,
+          "min": 1019,
+          "max": 1019
+        }
+      ],
+      "recipes": [],
+      "milestone": false,
+      "bonus": false,
+      "turnIn": "Progress is recorded automatically. Stat rewards can be claimed here while carrying your Evil Barrier charm.",
+      "objectiveRecipes": [],
+      "rewardRecipes": []
+    },
+    {
+      "id": 10,
+      "title": "Recipes and the Rift Shop",
+      "objective": "View the in-game Cube Recipe Menu and Horadric Rift Shop",
+      "tips": "You will learn more about Forsaken Pacts and Limit Breaking in later quests\nThe Rift Shop will display rotational content that changes with major updates; limited-time purchases, special discounts, etc\nAll cube recipes, Runeword upgrades, Forsaken Pact combinations, and Limit Breaking options are displayed in the receipe menu\nYou can access these menu's from your Horadric Cube Panel",
+      "reward": "+25% Poison Resistance added to your charm",
+      "trigger": "acknowledge",
+      "items": [],
+      "recipes": [],
+      "milestone": false,
+      "bonus": true,
+      "turnIn": "Progress is recorded automatically. Stat rewards can be claimed here while carrying your Evil Barrier charm.",
+      "objectiveRecipes": [],
+      "rewardRecipes": []
+    },
+    {
+      "id": 11,
+      "title": "A beginner's scribblings",
+      "objective": "Purchase the Scribblings of a Clueless Beginner from Edyrem",
+      "tips": "The riddle itself tells you how to complete it and no hints or answers will be provided outside of game\nIf you manage to solve the riddle, you will unlock exclusive rewards only available via this system\nIn your journey, you will find various 'Riddle Rewards', optional content you can pursue or ignore",
+      "reward": "None",
+      "trigger": "item",
+      "items": [
+        {
+          "code": "m27"
+        }
+      ],
+      "recipes": [],
+      "milestone": false,
+      "bonus": false,
+      "turnIn": "Progress is recorded automatically. Stat rewards can be claimed here while carrying your Evil Barrier charm.",
+      "objectiveRecipes": [],
+      "rewardRecipes": []
+    },
+    {
+      "id": 12,
+      "title": "The Gidbinn",
+      "objective": "Collect the Gidbinn (Flayer Dungeon Entrance)",
+      "tips": "These adjustments will make quests more worthwhile to complete and will likely adjust over time\nNPC's such as Ormus, Akara, Qual-Kehk as well as Hellforge will offer increased rewards",
+      "reward": "None",
+      "trigger": "item",
+      "items": [
+        {
+          "code": "g33"
+        }
+      ],
+      "recipes": [],
+      "milestone": false,
+      "bonus": false,
+      "turnIn": "Progress is recorded automatically. Stat rewards can be claimed here while carrying your Evil Barrier charm.",
+      "objectiveRecipes": [],
+      "rewardRecipes": []
+    },
+    {
+      "id": 13,
+      "title": "Socket an amulet",
+      "objective": "Socket an amulet using a Ramaladni's Gift (Diablo quest drop)",
+      "tips": "They can be stacked, but you will need to unstack them before using...else it will use the entire stack\nSome items will never drop with sockets (Throwing weapons as example) and will require these\nAll equip types can be socketed using this item, needing 1 per socket added",
+      "reward": "None",
+      "trigger": "craft",
+      "items": [
+        {
+          "code": "amu",
+          "stat": 194,
+          "min": 1,
+          "max": 1
+        }
+      ],
+      "recipes": [],
+      "milestone": false,
+      "bonus": false,
+      "turnIn": "Progress is recorded automatically. Stat rewards can be claimed here while carrying your Evil Barrier charm.",
+      "objectiveRecipes": [],
+      "rewardRecipes": []
+    },
+    {
+      "id": 14,
+      "title": "Quill of Quality",
+      "objective": "Obtain the Quill of Quality by completing Qual-Kehk's quest (save the prisoners)",
+      "tips": "Every 15 quests completed you will be eligible for a Tier upgrade\nYou will need this item for the next quest, hold onto it for now\nThe Quill of Quality is used to upgrade the tier of your Evil Barrier charm",
+      "reward": "None",
+      "trigger": "item",
+      "items": [
+        {
+          "code": "m30"
+        }
+      ],
+      "recipes": [],
+      "milestone": false,
+      "bonus": false,
+      "turnIn": "Progress is recorded automatically. Stat rewards can be claimed here while carrying your Evil Barrier charm.",
+      "objectiveRecipes": [],
+      "rewardRecipes": []
+    },
+    {
+      "id": 15,
+      "title": "Beacon of Hope",
+      "objective": "Obtain the Beacon of Hope by killing Baal (quest drop)",
+      "tips": "Completion of this quest will allow you to upgrade the Tier of your Evil Barrier charm\n\nYou will learn more about Soul Summons in a later quest\nIt also used to store your Soul Shards, helping you create Soul Summons\nThe Beacon of Hope grants Teleport to all classes",
+      "reward": "Choose one of the five charm upgrades below. The Quill and chosen ingredient are consumed.",
+      "trigger": "item",
+      "items": [
+        {
+          "unique": "Beacon of Hope"
+        }
+      ],
+      "recipes": [],
+      "milestone": true,
+      "bonus": false,
+      "turnIn": "Upgrade your quest charm in the cube with a Quill of Quality and your choice of weapon, armor, ring, amulet or charm. No proof parchment is required.",
+      "objectiveRecipes": [],
+      "rewardRecipes": [
+        "Any Weapon + Quill of Quality + Evil Barrier charm\n+1% Faster Cast Rate per 16 Energy\n+100% Mana Regen\n+10 to All Stats\nPrevent Monster Heal",
+        "Any Armor + Quill of Quality + Evil Barrier charm\n-5% to All Enemy Immunities\n+250 to Attack Rating\n+15% Faster Block Rate",
+        "Any Ring + Quill of Quality + Evil Barrier charm\n+15% Summon HP\nAttacker takes Damage of 2 per Character Level\n+1 Combat Power\n+10% Chance of Open Wounds",
+        "Any Amulet + Quill of Quality + Evil Barrier charm\n+1% Increased Attack Speed per 16 Strength\nCurse Length Reduced by 25%\nMagic and Physical Damage Reduced by 5",
+        "Any Charm + Quill of Quality + Evil Barrier charm\n+25% Chance of Piercing Attack\nLevel 6 Blessed Aim Aura when equipped"
+      ]
+    },
+    {
+      "id": 16,
+      "title": "Hexfire",
+      "objective": "Obtain Hexfire by farming Rakanishu (Stony Field)",
+      "tips": "You may find out more about these drops in our Discord server\nThese flavor drops are not listed anywhere officially and instead are discovered by the community...happy hunting!\nCertain superunique monsters have 'flavor drops', giving them increased odds to drop certain items",
+      "reward": "None",
+      "trigger": "item",
+      "items": [
+        {
+          "unique": "Hexfire"
+        }
+      ],
+      "recipes": [],
+      "milestone": false,
+      "bonus": false,
+      "turnIn": "Progress is recorded automatically. Stat rewards can be claimed here while carrying your Evil Barrier charm.",
+      "objectiveRecipes": [],
+      "rewardRecipes": []
+    },
+    {
+      "id": 17,
+      "title": "Mercenary information",
+      "objective": "Read the Merc Info menu viewable from any hireling Vendor",
+      "tips": "Icon functionality will be restored as soon as we're able, please be patient\nFor now, you can use this info menu to learn more about their unique changes\nDue to current engine limitations, the mercenaries will not correctly display their skill icons",
+      "reward": "None",
+      "trigger": "acknowledge",
+      "items": [],
+      "recipes": [],
+      "milestone": false,
+      "bonus": false,
+      "turnIn": "Progress is recorded automatically. Stat rewards can be claimed here while carrying your Evil Barrier charm.",
+      "objectiveRecipes": [],
+      "rewardRecipes": []
+    },
+    {
+      "id": 18,
+      "title": "Enhance a belt",
+      "objective": "Enhance a belt with 'Magic Damage Reduced' using an enhancement crystal (Edyrem)",
+      "tips": "You will learn more about Limit Breaking later in the quests\nBlacksmiths can gain additional benefits when enhancing items, as part of their Limit Break perk\nSome tiers of crystals have different usage limits, these apply on a per-item basis\nIt will grant you varying stst benefits, but also increases the item's required level\nEnhancements can be a powerful method to customize and diversify your build",
+      "reward": "None",
+      "trigger": "craft",
+      "items": [
+        {
+          "type": "belt",
+          "stat": 35,
+          "min": 5
+        }
+      ],
+      "recipes": [],
+      "milestone": false,
+      "bonus": false,
+      "turnIn": "Progress is recorded automatically. Stat rewards can be claimed here while carrying your Evil Barrier charm.",
+      "objectiveRecipes": [],
+      "rewardRecipes": []
+    },
+    {
+      "id": 19,
+      "title": "Craft a Safety ring",
+      "objective": "Craft a 'Safety' ring (Recipe menu for details)",
+      "tips": "New crafting types such as 'Legion' and 'Disarm' have been added, with more planned in the future\nSafety crafts grant you MDR and PDR, which will greatly impact your survivability\nCrafts can be a powerful option for your build, especially starting out",
+      "reward": "None",
+      "trigger": "craft",
+      "items": [
+        {
+          "code": "rin",
+          "quality": 8,
+          "stat": 35,
+          "min": 1
+        }
+      ],
+      "recipes": [
+        557,
+        617
+      ],
+      "milestone": false,
+      "bonus": false,
+      "turnIn": "Progress is recorded automatically. Stat rewards can be claimed here while carrying your Evil Barrier charm.",
+      "objectiveRecipes": [],
+      "rewardRecipes": []
+    },
+    {
+      "id": 20,
+      "title": "Daylight Tier 5",
+      "objective": "Use Runic Forging to upgrade your Daylight runeword to Tier 5",
+      "tips": "More information about the required parts are listed in the recipe menu\nYou will need a specific 'body part' for each runeword to complete this final upgrade\nAs you might surmise, each runeword will receive different T5 stats/bonuses\nThis is a mini reward for reaching the maximum tier for that runeword\nTier 5 of Runic Forges unlocks more powerful stats or bonuses",
+      "reward": "+25% Cold Resistance added to your charm",
+      "trigger": "craft",
+      "items": [
+        {
+          "type": "armo",
+          "stat": 474,
+          "min": 4019,
+          "max": 4019
+        }
+      ],
+      "recipes": [],
+      "milestone": false,
+      "bonus": true,
+      "turnIn": "Progress is recorded automatically. Stat rewards can be claimed here while carrying your Evil Barrier charm.",
+      "objectiveRecipes": [],
+      "rewardRecipes": []
+    },
+    {
+      "id": 21,
+      "title": "Blood Contract",
+      "objective": "Create a weapon 'Blood Contract' using 10 unique cores",
+      "tips": "The same system applies to Set items, but using Set Cores instead\nWeapons and Armors have different costs and slightly different output patterns\nUsing the recipes listed in the recipe menu, you can use them to forge new uniques\nUnique Cores can be acquired by salvaging unwanted uniques into your Storage Bag",
+      "reward": "None",
+      "trigger": "craft",
+      "items": [
+        {
+          "code": "a00"
+        }
+      ],
+      "recipes": [],
+      "milestone": false,
+      "bonus": false,
+      "turnIn": "Progress is recorded automatically. Stat rewards can be claimed here while carrying your Evil Barrier charm.",
+      "objectiveRecipes": [],
+      "rewardRecipes": []
+    },
+    {
+      "id": 22,
+      "title": "Dye an item",
+      "objective": "Obtain a Color Dye from Bloodwitch the Wild and dye an item of your choosing",
+      "tips": "You cannot pay gems to convert between colors, colors themselves must be found\nYou can also pay gems to change the shade of the color dye you obtained\nColor Dyes can be found which allow you to alter the visuals of your desired item",
+      "reward": "None",
+      "trigger": "craft",
+      "items": [
+        {
+          "type": "armo",
+          "stat": 433,
+          "min": 1
+        },
+        {
+          "type": "weap",
+          "stat": 433,
+          "min": 1
+        }
+      ],
+      "recipes": [],
+      "milestone": false,
+      "bonus": false,
+      "turnIn": "Progress is recorded automatically. Stat rewards can be claimed here while carrying your Evil Barrier charm.",
+      "objectiveRecipes": [],
+      "rewardRecipes": []
+    },
+    {
+      "id": 23,
+      "title": "Skin of the Vipermagi",
+      "objective": "Obtain Skin of the Vipermagi from Fangskin (Claw Viper Temple)",
+      "tips": "Explore all superunique monsters, you never know what goodies you may find...\nFlavor drops will change depending on the monster and difficulty\nThis is another 'flavor drop' item, your last free example of this feature",
+      "reward": "None",
+      "trigger": "item",
+      "items": [
+        {
+          "unique": "Skin of the Vipermagi"
+        }
+      ],
+      "recipes": [],
+      "milestone": false,
+      "bonus": false,
+      "turnIn": "Progress is recorded automatically. Stat rewards can be claimed here while carrying your Evil Barrier charm.",
+      "objectiveRecipes": [],
+      "rewardRecipes": []
+    },
+    {
+      "id": 24,
+      "title": "The Mod Info menu",
+      "objective": "Read the Mod Info menu (Press ESC)",
+      "tips": "Disclaimer: We are actively working on updating this menu with more up-to-date info, please be patient\nIt will not list every change the mod has undergone, just some of the larger ones\nthe Mod Info menu will display more generalized changes for this mod",
+      "reward": "None",
+      "trigger": "acknowledge",
+      "items": [],
+      "recipes": [],
+      "milestone": false,
+      "bonus": false,
+      "turnIn": "Progress is recorded automatically. Stat rewards can be claimed here while carrying your Evil Barrier charm.",
+      "objectiveRecipes": [],
+      "rewardRecipes": []
+    },
+    {
+      "id": 25,
+      "title": "Arm of King Leoric",
+      "objective": "Obtain Arm of King Leoric from Corpus Vesper (Disused Reliquary)",
+      "tips": "As with many things in ReMoDDeD, expect these areas to be further developed over time\nYou may find exclusive drops, special monsters or generally increased farming benefit\nOptional levels have more reasons to visit them in this mod",
+      "reward": "+20% Faster Run/Walk added to your charm",
+      "trigger": "item",
+      "items": [
+        {
+          "unique": "Arm of King Leoric"
+        }
+      ],
+      "recipes": [],
+      "milestone": false,
+      "bonus": true,
+      "turnIn": "Progress is recorded automatically. Stat rewards can be claimed here while carrying your Evil Barrier charm.",
+      "objectiveRecipes": [],
+      "rewardRecipes": []
+    },
+    {
+      "id": 26,
+      "title": "Gem Vein",
+      "objective": "Obtain a 'Gem Vein' by killing Izual",
+      "tips": "These special drop tables will change depending on the difficulty\nIzual's quest drops will guarantee unique items, if they exist for that itemtype\nSome monsters now have new quest drops, giving them special perks for your first kill",
+      "reward": "None",
+      "trigger": "item",
+      "items": [
+        {
+          "code": "y33"
+        }
+      ],
+      "recipes": [],
+      "milestone": false,
+      "bonus": false,
+      "turnIn": "Progress is recorded automatically. Stat rewards can be claimed here while carrying your Evil Barrier charm.",
+      "objectiveRecipes": [],
+      "rewardRecipes": []
+    },
+    {
+      "id": 27,
+      "title": "Soul Crystal",
+      "objective": "Obtain a Soul Crystal by killing Diablo",
+      "tips": "There is much more info about Soul Summons you can learn about on our Wiki\nSoul Summons have a max tier of 10, which also unlocks special perks for them\nThese allies have powerful bonuses that will vary depending on the class you're playing\nSoul Summons are powerful fallen heroes that can be upgraded over the longer term\nSoul Crystals can be deposited into your Beacon of Hope, allowing you to craft Soul Summons",
+      "reward": "None",
+      "trigger": "item",
+      "items": [
+        {
+          "code": "S01"
+        }
+      ],
+      "recipes": [],
+      "milestone": false,
+      "bonus": false,
+      "turnIn": "Progress is recorded automatically. Stat rewards can be claimed here while carrying your Evil Barrier charm.",
+      "objectiveRecipes": [],
+      "rewardRecipes": []
+    },
+    {
+      "id": 28,
+      "title": "Mod credits",
+      "objective": "Read the Mod Credits Page (Character Select Screen)",
+      "tips": "If you MUST, you can speed up the rolling credits by holding the spacebar\nI respectfully request you take a minute to honor their contributions and pay them homage\nWe have many people who made this project possible, supporting it however they were able",
+      "reward": "None",
+      "trigger": "acknowledge",
+      "items": [],
+      "recipes": [],
+      "milestone": false,
+      "bonus": false,
+      "turnIn": "Progress is recorded automatically. Stat rewards can be claimed here while carrying your Evil Barrier charm.",
+      "objectiveRecipes": [],
+      "rewardRecipes": []
+    },
+    {
+      "id": 29,
+      "title": "Unrelenting Will",
+      "objective": "Obtain Unrelenting Will from Rictulus (Abaddon)",
+      "tips": "This will be the last free/known example area you will be told about\nThis is another example of an optional area you may want to visit in this mod",
+      "reward": "None",
+      "trigger": "item",
+      "items": [
+        {
+          "unique": "Unrelenting Will"
+        }
+      ],
+      "recipes": [],
+      "milestone": false,
+      "bonus": false,
+      "turnIn": "Progress is recorded automatically. Stat rewards can be claimed here while carrying your Evil Barrier charm.",
+      "objectiveRecipes": [],
+      "rewardRecipes": []
+    },
+    {
+      "id": 30,
+      "title": "Socket Remover",
+      "objective": "Obtain a 'Socket Remover' by killing Nihlathak",
+      "tips": "Completion of this quest will allow you to upgrade the Tier of your Evil Barrier charm\n\nStandard removers will destory the socketed jewels/runes, Premium removers will preserve them\nSocket Removers come in 2 forms (excluding event options), Standard and Premium\nSocket Removers can be found which allow you to unsocket items",
+      "reward": "Choose one of the five charm upgrades below. The Quill and chosen ingredient are consumed.",
+      "trigger": "item",
+      "items": [
+        {
+          "code": "b64"
+        }
+      ],
+      "recipes": [],
+      "milestone": true,
+      "bonus": false,
+      "turnIn": "Upgrade your quest charm in the cube with a Quill of Quality and your choice of weapon, armor, ring, amulet or charm. No proof parchment is required.",
+      "objectiveRecipes": [],
+      "rewardRecipes": [
+        "Any Weapon + Quill of Quality + Evil Barrier charm\n+20% Movement Speed\n+20% Bone Skill Damage\n+15% Faster Hit Recovery\n+1 Summoning Power",
+        "Any Armor + Quill of Quality + Evil Barrier charm\n-10% to All Enemy Resistances\n+150 Raven Damage\n+30 to Dexterity\n+40% Buff Duration",
+        "Any Ring + Quill of Quality + Evil Barrier charm\n+20% Energy\n5% CtC Level 40 Energy Shield when struck\n20% Damage Taken goes to Mana",
+        "Any Amulet + Quill of Quality + Evil Barrier charm\n+25% Summon Damage\n+10% Life\nHalf Freeze Duration\n10% Chance to reanimate a slain enemy as a Blunderbore",
+        "Any Charm + Quill of Quality + Evil Barrier charm\n-40% Target Defense\n+50% Curse Duration\n+20% Chance to Block\n+5 Life after Demon kill"
+      ]
+    },
+    {
+      "id": 31,
+      "title": "The Grail Tracker",
+      "objective": "Press F12 and view our in-game Automatic Grail Tracker",
+      "tips": "This feature will search/process all 448 tabs of your shared stash automagically\nYou can use it to quickly search, filter and even locate desired items\nThe Grail Tracker will allow you to effortlessly view your collected items",
+      "reward": "None",
+      "trigger": "acknowledge",
+      "items": [],
+      "recipes": [],
+      "milestone": false,
+      "bonus": false,
+      "turnIn": "Progress is recorded automatically. Stat rewards can be claimed here while carrying your Evil Barrier charm.",
+      "objectiveRecipes": [],
+      "rewardRecipes": []
+    },
+    {
+      "id": 32,
+      "title": "Upconvert magic jewels",
+      "objective": "Use an Item Upconverter (Akara) to convert 10 magic jewels into 1 rare jewel",
+      "tips": "There are currently 3 different types, each allowing their own options\nItem Upconverters can help you convert or upgrade various items",
+      "reward": "None",
+      "trigger": "craft",
+      "items": [
+        {
+          "code": "jew",
+          "quality": 6
+        }
+      ],
+      "recipes": [
+        288
+      ],
+      "milestone": false,
+      "bonus": false,
+      "turnIn": "Progress is recorded automatically. Stat rewards can be claimed here while carrying your Evil Barrier charm.",
+      "objectiveRecipes": [],
+      "rewardRecipes": []
+    },
+    {
+      "id": 33,
+      "title": "The Loot Filter",
+      "objective": "Visit the Loot Filter panel in the Pandemonium side-menu",
+      "tips": "If you'd like the most basic of Loot Filters, you can use the ReMoDDeD Default option\nIf you don't like any of the user-made ones and want to create your own, you can do that also\nFind the one that suits you the best, hides/displays items as you'd prefer, etc\nThese filters are created by players like yourself, each with their own goals and display choices\nLoot Filters can be chosen and applied to enhance your farming experience",
+      "reward": "None",
+      "trigger": "acknowledge",
+      "items": [],
+      "recipes": [],
+      "milestone": false,
+      "bonus": false,
+      "turnIn": "Progress is recorded automatically. Stat rewards can be claimed here while carrying your Evil Barrier charm.",
+      "objectiveRecipes": [],
+      "rewardRecipes": []
+    },
+    {
+      "id": 34,
+      "title": "The Guide Compendium",
+      "objective": "Visit 'Kregiur's Guide Compendium' in our Discord",
+      "tips": "If you're looking for some tips or instructions to help make sense of all of our new content, this is a great option\nThis post will help outline all of 'his' guides, and you are free to browse other players submissions in this channel also\nThere are many class build guides created by passionate players, such as from Xan Kreigur",
+      "reward": "None",
+      "trigger": "acknowledge",
+      "items": [],
+      "recipes": [],
+      "milestone": false,
+      "bonus": false,
+      "turnIn": "Progress is recorded automatically. Stat rewards can be claimed here while carrying your Evil Barrier charm.",
+      "objectiveRecipes": [],
+      "rewardRecipes": []
+    },
+    {
+      "id": 35,
+      "title": "Griswold's set",
+      "objective": "Obtain a piece of Griswold's set by farming Griswold",
+      "tips": "The first person in the community to share their discovery gets immortalized in the tooltip for it\nWhen new Forsaken sets are released, the combinations are unknown to the public and must be discovered\nEach Forsaken Set will require different completed sets to create, shown in the recipe menu\nTo create a Forsaken Pact, you will need to sacrifice 2 or more completed sets to fuse them into a Forsaken set\nSet items can also be used to create 'Forsaken Pacts', which are new undroppable sets",
+      "reward": "+100 Life added to your charm",
+      "trigger": "item",
+      "items": [
+        {
+          "set": "Griswold's Valor"
+        },
+        {
+          "set": "Griswold's Heart"
+        },
+        {
+          "set": "Griswolds's Redemption"
+        },
+        {
+          "set": "Griswold's Honor"
+        }
+      ],
+      "recipes": [],
+      "milestone": false,
+      "bonus": true,
+      "turnIn": "Progress is recorded automatically. Stat rewards can be claimed here while carrying your Evil Barrier charm.",
+      "objectiveRecipes": [],
+      "rewardRecipes": []
+    },
+    {
+      "id": 36,
+      "title": "Rainbow Facet",
+      "objective": "Obtain a Rainbow Facet by killing Duriel (Hell)",
+      "tips": "Disclaimer: The Item Database is still in development, please be patient as we finalize and improve it\nOur unique items can be viewed in more detail in the Item Database of our Wiki\nThere are hundreds of new uniques and new twists on old uniques in this mod",
+      "reward": "None",
+      "trigger": "item",
+      "items": [
+        {
+          "code": "jew",
+          "quality": 7
+        }
+      ],
+      "recipes": [],
+      "milestone": false,
+      "bonus": false,
+      "turnIn": "Progress is recorded automatically. Stat rewards can be claimed here while carrying your Evil Barrier charm.",
+      "objectiveRecipes": [],
+      "rewardRecipes": []
+    },
+    {
+      "id": 37,
+      "title": "Essence of Hatred",
+      "objective": "Obtain a Charged Essence of Hatred from Mephisto",
+      "tips": "These can now be used as feeder material to gain High Rune Points, Gems and Set/Unique Cores\nSome items will have varying uses as cube recipes, such as essences",
+      "reward": "None",
+      "trigger": "item",
+      "items": [
+        {
+          "code": "ceh"
+        }
+      ],
+      "recipes": [],
+      "milestone": false,
+      "bonus": false,
+      "turnIn": "Progress is recorded automatically. Stat rewards can be claimed here while carrying your Evil Barrier charm.",
+      "objectiveRecipes": [],
+      "rewardRecipes": []
+    },
+    {
+      "id": 38,
+      "title": "Gold Bar",
+      "objective": "Obtain a Gold Bar from Diablo",
+      "tips": "Gold Bars can also be turned into a gold pile, if you need the gold itself from them\nSome cube recipes will use them as item upgrade material or to complete conversions\nGold Bars can be used to easily stock up or trade large amounts of gold",
+      "reward": "None",
+      "trigger": "item",
+      "items": [
+        {
+          "code": "Y21"
+        }
+      ],
+      "recipes": [],
+      "milestone": false,
+      "bonus": false,
+      "turnIn": "Progress is recorded automatically. Stat rewards can be claimed here while carrying your Evil Barrier charm.",
+      "objectiveRecipes": [],
+      "rewardRecipes": []
+    },
+    {
+      "id": 39,
+      "title": "Ramaladni's Gift",
+      "objective": "Obtain a Ramaladni's Gift from any Torment Trials monster",
+      "tips": "While many more endgame areas and bosses are planned, this is the current endgame grind area\nYou may also find many items found from previous quest-only reward drops\nTorment Trials will offer many endgame rewards, such as Ramaladni's Gifts",
+      "reward": "None",
+      "trigger": "item",
+      "items": [
+        {
+          "code": "Rgx"
+        }
+      ],
+      "recipes": [],
+      "milestone": false,
+      "bonus": false,
+      "turnIn": "Progress is recorded automatically. Stat rewards can be claimed here while carrying your Evil Barrier charm.",
+      "objectiveRecipes": [],
+      "rewardRecipes": []
+    },
+    {
+      "id": 40,
+      "title": "Milk Bottle",
+      "objective": "Obtain a Milk Bottle from the Cow Queen",
+      "tips": "Milk Bottles can only be obtained from the Cow Queen, temporarily enhancing your movement speed\nThe Cow King has become the Cow Queen, correcting SnowCo's gender mistake",
+      "reward": "+100 Mana added to your charm",
+      "trigger": "item",
+      "items": [
+        {
+          "code": "vps"
+        }
+      ],
+      "recipes": [],
+      "milestone": false,
+      "bonus": true,
+      "turnIn": "Progress is recorded automatically. Stat rewards can be claimed here while carrying your Evil Barrier charm.",
+      "objectiveRecipes": [],
+      "rewardRecipes": []
+    },
+    {
+      "id": 41,
+      "title": "A Fallen's gold pile",
+      "objective": "Obtain a gold pile from Hell Fallen while in a Terrorized Zone",
+      "tips": "Terror Zones can be manually cycled, if you're able to solve the Riddle Reward that unlocks this ability\nMonster levels will scale based on your own level and the item levels will reflect this\nThese zones will rotate periodically and be displayed in the top right of your automap\nTerror Zones allow increased monster levels and special drop tables to be applied",
+      "reward": "None",
+      "trigger": "item",
+      "items": [
+        {
+          "code": "Gu1"
+        }
+      ],
+      "recipes": [],
+      "milestone": false,
+      "bonus": false,
+      "turnIn": "Progress is recorded automatically. Stat rewards can be claimed here while carrying your Evil Barrier charm.",
+      "objectiveRecipes": [],
+      "rewardRecipes": []
+    },
+    {
+      "id": 42,
+      "title": "Body parts",
+      "objective": "Obtain a body part from either a monster or vendor",
+      "tips": "More info about this system can be found on our Wiki and Community Database\nDemon Tempered Uniques will also have their own special item images and names, ensuring their special status\nThere are 3 randomized results for every combination, all of which are solely discovered by the community\nEach body part and unique item will have completely different results depending on both the unique item and body part used\nDemon Tempered uniques offer powerful bonuses, that depend entirely on the body part used\nBody Parts are a defining factor in 'Demon Tempering', a new boost option for chosen Unique items",
+      "reward": "None",
+      "trigger": "item",
+      "items": [
+        {
+          "type": "ingr"
+        }
+      ],
+      "recipes": [],
+      "milestone": false,
+      "bonus": false,
+      "turnIn": "Progress is recorded automatically. Stat rewards can be claimed here while carrying your Evil Barrier charm.",
+      "objectiveRecipes": [],
+      "rewardRecipes": []
+    },
+    {
+      "id": 43,
+      "title": "Complete a Codex",
+      "objective": "Complete one Codex by combining 7 of it's Testaments",
+      "tips": "This is a longer term collection system with more info in our Wiki\nAny boss may drop any codex, with recipes available to convert excess duplicates\nTestaments drop only from bosses in the Icy Hell sublevels of Torment Trials (or special events)\nThey represent the 7 Deadly Sins and can be ultimately combined into one 'Mega Charm'\nCodexes and Testaments are and endgame charm creation system with powerful bonuses",
+      "reward": "None",
+      "trigger": "craft",
+      "items": [
+        {
+          "unique": "Trials Charm c1"
+        },
+        {
+          "unique": "Trials Charm c2"
+        },
+        {
+          "unique": "Trials Charm c3"
+        },
+        {
+          "unique": "Trials Charm c4"
+        },
+        {
+          "unique": "Trials Charm c5"
+        },
+        {
+          "unique": "Trials Charm c6"
+        },
+        {
+          "unique": "Trials Charm c7"
+        }
+      ],
+      "recipes": [],
+      "milestone": false,
+      "bonus": false,
+      "turnIn": "Progress is recorded automatically. Stat rewards can be claimed here while carrying your Evil Barrier charm.",
+      "objectiveRecipes": [],
+      "rewardRecipes": []
+    },
+    {
+      "id": 44,
+      "title": "Limit Break I",
+      "objective": "Achieve Limit Break I",
+      "tips": "More info about this system can be viewed in the recipe menu (and Wiki)\nEach of these will offer quite unique build options and perks you won't find anywhere else\nIn addition, there are new Limit Break exclusive skills, items and effects\nThere are 3 tiers of Limit Breaking, each extending the maximum level you can achieve\nLimit Breaking is a new system that allows you exceed the player level 99 cap",
+      "reward": "None",
+      "trigger": "craft",
+      "items": [
+        {
+          "unique": "MythosLogAmazonA"
+        },
+        {
+          "unique": "MythosLogAssassinA"
+        },
+        {
+          "unique": "MythosLogBarbarianA"
+        },
+        {
+          "unique": "MythosLogDruidA"
+        },
+        {
+          "unique": "MythosLogNecromancerA"
+        },
+        {
+          "unique": "MythosLogPaladinA"
+        },
+        {
+          "unique": "MythosLogSorceressA"
+        }
+      ],
+      "recipes": [],
+      "milestone": false,
+      "bonus": false,
+      "turnIn": "Progress is recorded automatically. Stat rewards can be claimed here while carrying your Evil Barrier charm.",
+      "objectiveRecipes": [],
+      "rewardRecipes": []
+    },
+    {
+      "id": 45,
+      "title": "A Limit Break item",
+      "objective": "Obtain a Limit Break only item",
+      "tips": "Disclaimer: This feature is still quite new for us, expect much more development for it over time\nThey will drop only in Terrorized Zones and only when you have reached LB1\nThey may have special perks, exclusive runewords or higher base stats than normal\nAs with Limit Break exclusive skills, LB exclusive items also exist",
+      "reward": "Choose one of the five charm upgrades below. The Quill and chosen ingredient are consumed.",
+      "trigger": "item",
+      "items": [
+        {
+          "type": "lb01"
+        },
+        {
+          "type": "lb02"
+        },
+        {
+          "type": "lb03"
+        },
+        {
+          "type": "lb04"
+        },
+        {
+          "type": "lb05"
+        },
+        {
+          "type": "lb06"
+        },
+        {
+          "type": "lb07"
+        },
+        {
+          "type": "lb08"
+        },
+        {
+          "type": "lb09"
+        },
+        {
+          "type": "lb10"
+        },
+        {
+          "type": "lb11"
+        }
+      ],
+      "recipes": [],
+      "milestone": true,
+      "bonus": false,
+      "turnIn": "Upgrade your quest charm in the cube with a Quill of Quality and your choice of weapon, armor, ring, amulet or charm. No proof parchment is required.",
+      "objectiveRecipes": [],
+      "rewardRecipes": [
+        "Any Weapon + Quill of Quality + Evil Barrier charm\n+20% Cooldown Reduction\n-35% Poison Length Reduction\n+10% Chance of Crushing Blow\n+15 to All Stats",
+        "Any Armor + Quill of Quality + Evil Barrier charm\n+1 Spell Power\n+1000 Defense\n+5% Life and Mana stolen per hit\n+1 to Magic Skills",
+        "Any Ring + Quill of Quality + Evil Barrier charm\n-10% to All Enemy Immunities\n+10% Increased Attack Speed\n+15% Dexterity",
+        "Any Amulet + Quill of Quality + Evil Barrier charm\n+10% Magic Resistance\n+150 Fire/Cold/Lightning Damage\n+10% Faster Cast Rate",
+        "Any Charm + Quill of Quality + Evil Barrier charm\n+1 Blink Strike\nDamage Reduced by 10%"
+      ]
+    }
+  ]
+}

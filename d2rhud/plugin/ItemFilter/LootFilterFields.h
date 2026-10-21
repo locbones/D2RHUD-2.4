@@ -1,0 +1,42 @@
+#pragma once
+
+namespace LootFilterConfig {
+struct FieldHelp { const char* group; const char* name; const char* example; const char* help; };
+inline constexpr FieldHelp Fields[] = {
+    {"Matching", "codes", "{\"rin\", \"amu\"}", "One code or a list; code is a legacy alias. allitems matches every code. Codes are case sensitive."},
+    {"Matching", "quality", "{\"Set\", \"Unique\"}", "Quality names or IDs, lists, NOT, numeric/name comparisons: Unique+, 3-."},
+    {"Matching", "rarity", "\"Elite\"", "Normal=0, Exceptional=1, Elite=2; scalar, list, NOT or comparison."},
+    {"Matching", "index", "{42, 43}", "Unique/set row index: scalar, list, NOT or comparison."},
+    {"Matching", "itype", "{10, 12}", "Item type IDs or names, alternatives, or NOT. Inherited types use native IsType."},
+    {"Matching", "ilvl", "\"80+\"", "Item level: number, comparison, alternatives or NOT."},
+    {"Matching", "sockets", "{0, 4}", "Socket count: number, comparison, alternatives or NOT. Legacy comma strings also work."},
+    {"Matching", "maxsock", "true", "Legacy booleans: true means socket count at least capacity; false means count differs from capacity. A number compares maximum capacity."},
+    {"Matching", "identified", "true", "Match identified (true) or unidentified (false) items."},
+    {"Matching", "ethereal", "false", "Match ethereal (true) or non-ethereal (false) items."},
+    {"Matching", "runeword", "false", "Match runewords (true) or other items (false)."},
+    {"Matching", "grail", "false", "true matches collected grail items; false includes uncollected/non-grail items."},
+    {"Context", "location", "{\"onground\", \"onplayer\"}", "onground (includes dropping), onplayer, equipped, atvendor, or numeric modes. Default is onground."},
+    {"Context", "area", "NOT {\"Rogue Encampment\", \"Kurast Docks\"}", "Area names or IDs; scalar/list/NOT. Unknown names disable the rule with a diagnostic."},
+    {"Context", "difficulty", "{\"Nightmare\", \"Hell\"}", "Names/IDs, scalar/list/NOT or comparison, e.g. Nightmare+."},
+    {"Context", "filter_levels", "{1, \"3+\"}", "Selected filter levels: scalar, list or comparison. Legacy comma strings work."},
+    {"Stats", "stat", "{index = 39, op = \">=\", value = 30}", "Item stat condition; list means AND; OR {...} means any index/parameter; NOT {...} inverts the group."},
+    {"Stats", "pstat", "{index = 12, op = \">=\", value = 60}", "Player stats use the same index/param/op/value structure. between uses {min,max}; missing player fails the condition."},
+    {"Text", "name_override", "\"{gold}{name}\"", "Replace the item name. Supports placeholders, colors and language tables."},
+    {"Text", "prefix", "\"{purple}[G] \"", "Prepend item-name text. All text fields support language tables and placeholders."},
+    {"Text", "suffix", "\" {gray}[{sockets}]\"", "Append item-name text."},
+    {"Text", "prefix_desc", "\"Max sockets: {maxsock}\\n\"", "Native tooltip order is reversed: this appends to the stored description (historical behavior)."},
+    {"Text", "suffix_desc", "\"\\n{green}Keep this\"", "Prepends to the stored description, preserving existing filters."},
+    {"Appearance", "style", "\"valuable\"", "Inherit actions from config.styles. Explicit rule values, including false, take precedence."},
+    {"Appearance", "background", "{30, 10, 40, 230}", "RGB values 0-255 with optional alpha. Out-of-range values are clamped."},
+    {"Appearance", "border", "{240, 160, 40, 230, 2}", "RGB, optional alpha and border thickness in pixels."},
+    {"Appearance", "name_style", "\"Rainbow\"", "Animated/static name preset. Names ignore spaces and case. See guide for all presets."},
+    {"Appearance", "background_style", "\"Ocean Drift\"", "Animated background preset. Names ignore spaces and case."},
+    {"Actions", "hide", "true", "Hide and stop evaluation. Earlier text changes remain committed."},
+    {"Actions", "hide_mismatches", "true", "Hide if code and location match but another condition fails. Inventory is safe with the default ground location."},
+    {"Actions", "notify", "\"{gold}Dropped {link}\"", "Chat notification; {link} creates an item link. Triggers whenever the native filter evaluates the item."},
+    {"Actions", "audio", "\"High rune\"", "Speech or a .wav/.flac/.mp3 path when audioPlayback is enabled."},
+    {"Actions", "print", "\"Hidden {name}\"", "Message on a hide action; true prints the default hide message."},
+    {"Organization", "enabled", "true", "Set false to disable this rule without removing it."},
+    {"Organization", "label", "\"Valuable jewelry\"", "Human-readable rule title for the editor."},
+};
+}

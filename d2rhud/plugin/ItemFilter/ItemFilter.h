@@ -13,6 +13,7 @@ public:
 	void CycleFilter();
 	void ClearInvOverrideCache();
 
+	static const std::string& GetDiagnosticsText();
 	static bool GetShowFilteredItems();
 	static void SetShowFilteredItems(bool show);
 };

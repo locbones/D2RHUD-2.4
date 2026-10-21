@@ -1,9 +1,32 @@
 #pragma region Includes
 
 #include "D2RHUD.h"
+#include "TerrorZoneRotation.h"
 #include "../GrailTracker.h"
 #include "../FloatingDamage.h"
+#include "../BuffIcons.h"
+#include "../StatRanges.h"
+#include "../ItemCodes.h"
+#include "../LegacyTransmog.h"
+#include "../StackSplitSkin.h"
+#include "../CubeVisual.h"
+#include "../CubeMap.h"
+#include "../RestartGame.h"
+#include "../ExtendedActs.h"
+#include "../SummonPersistence.h"
+#include "../QuestJournal.h"
+#include "../D3Whirlwind.h"
+#include "../SelectedAuras.h"
+#include "../States512.h"
+#include "../Sunder.h"
+#include "../ImmunityLabels.h"
 #include <imgui.h>
+#include "../ItemFilter/LootFilterEditorText.h"
+#include "../ItemFilter/LuaConfigIO.h"
+#include "../ItemFilter/LootFilterFields.h"
+#include "../ItemFilter/LootFilterRuleBuilder.h"
+#include "../ItemFilter/LootFilterPreview.h"
+#include "../GameAssets.h"
 #include "../../D2/D2Ptrs.h"
 #include <sstream>
 #include <windows.h>
@@ -19,6 +42,7 @@
 #include <iomanip>
 #include <algorithm>
 #include <cstring>
+#include <cmath>
 #include <thread>
 #include <atomic>
 #include <chrono>
@@ -59,7 +83,7 @@
 #pragma region Global Static/Structs
 
 std::string lootFile = "../D2R/lootfilter.lua";
-std::string Version = "1.7.5";
+std::string Version = "1.7.6";
 
 using json = nlohmann::json;
 static MonsterStatsDisplaySettings cachedSettings;
@@ -383,16 +407,14 @@ D2GAME_UMOD8Array_t oD2GAME_UMOD8Array_1402fc530 = nullptr;
 typedef void* (__fastcall* DrawMonsterHPBar_t)(int param1, void* param2, void* param3);
 static DrawMonsterHPBar_t DrawMonsterHPBar = reinterpret_cast<DrawMonsterHPBar_t>(Pattern::Address(0x830B0));
 
-struct RemainderEntry
+struct AppliedSunderEntry
 {
-    int cold = 0;
-    int fire = 0;
-    int light = 0;
-    int poison = 0;
-    int damage = 0;
-    int magic = 0;
+    D2UnitStrc* unit = nullptr;
+    D2StatListExStrc* stats = nullptr;
+    Sunder::Values reductions{};
 };
-static std::unordered_map<DWORD, RemainderEntry> g_resistRemainders;
+static std::unordered_map<DWORD, AppliedSunderEntry> g_appliedSunder;
+static std::mutex g_sunderMutex;
 
 #pragma endregion
 
@@ -629,6 +651,12 @@ void __fastcall SCMDHANDLER_Custom(uint8_t* pPacket) {
         if (pData->opcode2 == SCMD_SHARED_STASH_OP2) {
             SCMD_HandleSharedStashMessage((SCMD_STASH_PAGE_CHANGE*)pPacket);
         }
+        else if (pData->opcode2 == 7) {
+            QuestJournal::Receive(pPacket, 0xCE);
+        }
+        else if (pData->opcode2 >= 1 && pData->opcode2 <= 6) {
+            CubeMap::Receive(pPacket, 0xCE);
+        }
     }
     else {
         D2CLIENT_PACKETCALLBACK_Rcv0x2B_SCMD_CORRECT_PATH(pPacket);
@@ -636,6 +664,9 @@ void __fastcall SCMDHANDLER_Custom(uint8_t* pPacket) {
 }
 
 int64_t __fastcall CCMDHANDLER_Custom(D2GameStrc* pGame, D2UnitStrc* pUnit, uint8_t* pPacket, int nPacketSize) {
+    if (!pPacket || nPacketSize < 10) return 1;
+    if (QuestJournal::Command(pGame,pUnit,pPacket,size_t(nPacketSize))) return 1;
+    if (CubeMap::Command(pGame,pUnit,pPacket,size_t(nPacketSize))) return 1;
     uint64_t magic = *(uint64_t*)(pPacket + 1);
     if (magic == CMD_MAGIC) {
         CCMD_CUSTOM* pData = (CCMD_CUSTOM*)pPacket;
@@ -1223,7 +1254,7 @@ MonsterStatsDisplaySettings getMonsterStatsDisplaySetting(const std::string& con
     cachedSettings.sunderedMonUMods = getBool({ "SunderedMonUMods" }, true);
     cachedSettings.minionEquality = getBool({ "MinionEquality" }, true);
     cachedSettings.gambleForce = getBool({ "GambleCostControl" }, true);
-    cachedSettings.SunderValue = getInt({ "SunderValue" }, 0);
+    cachedSettings.SunderValue = getInt({ "SunderValue" }, 99);
     cachedSettings.CombatLog = getBool({ "CombatLog" }, true);
     cachedSettings.TransmogVisuals = getBool({ "TransmogVisuals" }, true);
     cachedSettings.ExtendedItemcodes = getBool({ "ExtendedItemcodes" }, true);
@@ -1527,6 +1558,29 @@ bool __fastcall Process_SCMD_CHATSTART_Hook(SCMD_CHATSTART_PACKET* pPacket) {
     return result;
 }
 
+static bool exitQueued = false;
+static void QueueSaveAndExit(uint64_t context) {
+    if (exitQueued) return;
+    exitQueued = true;
+    ExecuteDebugCheatFunc("save 1");
+    g_unitsEdited.clear();
+    itemFilter->ClearInvOverrideCache();
+    auto exit = [context] {
+        // The native ExitGame branch reads only the message's action hash.
+        // Do not retain a pointer to a dispatched message for a timer callback.
+        Widget exitMessage{0, SaveAndExitButtonHash};
+        exitQueued = false;
+        mainMenuClickHandlerOrig(context, &exitMessage);
+    };
+    HWND window = find_main_window(GetCurrentProcessId());
+    if (window && SetTimer(window, 1234, 1000, DelayedActionsTimerProc)) {
+        queuedActions.push({ "delayexit", std::move(exit) });
+        return;
+    }
+    // Keep normal Save and Exit usable if Windows cannot schedule the delay.
+    exit();
+}
+
 void __fastcall GameMenuOnClickHandlerHook(uint64_t a1, Widget* pWidget) {
     WriteToDebugLog("GameMenuOnClickHandlerHook called");
 
@@ -1535,28 +1589,16 @@ void __fastcall GameMenuOnClickHandlerHook(uint64_t a1, Widget* pWidget) {
         return;
     }
 
+    if (pWidget->hash == RestartGame::MessageHash) {
+        if (!exitQueued && RestartGame::Request()) QueueSaveAndExit(a1);
+        WriteToDebugLog(RestartGame::Status());
+        return;
+    }
     if (pWidget->hash == SaveAndExitButtonHash) {
+        if (exitQueued) return;
+        RestartGame::Cancel();
         WriteToDebugLog("Save and Exit button detected. Executing save command");
-
-        ExecuteDebugCheatFunc("save 1");
-        WriteToDebugLog("Executed: 'save 1'");
-        g_unitsEdited.clear();
-        itemFilter->ClearInvOverrideCache();
-
-        queuedActions.push({ "delayexit", [a1, pWidget] {
-            WriteToDebugLog("Executing delayed exit action");
-            mainMenuClickHandlerOrig(a1, pWidget);
-        } });
-
-        HWND mainWindow = find_main_window(GetCurrentProcessId());
-        if (mainWindow) {
-            WriteToDebugLog("Main window found. Setting timer");
-            SetTimer(mainWindow, 1234, 1000, DelayedActionsTimerProc);
-        }
-        else {
-            WriteToDebugLog("Failed to find main window");
-        }
-
+        QueueSaveAndExit(a1);
         return;
     }
 
@@ -1656,11 +1698,11 @@ void __fastcall ScaleDamage(D2DamageInfoStrc* pDamageInfo, D2DamageStatTableStrc
     }
 }
 
-static void ApplySunderClampToMonster(D2GameStrc* pGame, D2UnitStrc* pUnit, bool requireUModSetting);
+static void ApplyLinearSunderToMonster(D2GameStrc* pGame, D2UnitStrc* pUnit, bool requireUModSetting);
 
 void __fastcall HookedSUNITDMG_ApplyResistancesAndAbsorb(D2DamageInfoStrc* pDamageInfo, D2DamageStatTableStrc* pDamageStatTableRecord, int32_t bDontAbsorb) {
     if (pDamageInfo && pDamageInfo->bDefenderIsMonster && pDamageInfo->pDefender)
-        ApplySunderClampToMonster(pDamageInfo->pGame, pDamageInfo->pDefender, true);
+        ApplyLinearSunderToMonster(pDamageInfo->pGame, pDamageInfo->pDefender, true);
 
     oSUNITDMG_ApplyResistancesAndAbsorb(pDamageInfo, pDamageStatTableRecord, bDontAbsorb);
 
@@ -1694,166 +1736,72 @@ static void LogSunder(const std::string& msg)
     log << timebuf << msg << "\n";
 }
 
-struct SunderStatSnapshot
-{
-    int cold = 0;
-    int fire = 0;
-    int light = 0;
-    int poison = 0;
-    int damage = 0;
-    int magic = 0;
-};
-
 static D2GameStrc* g_lastSunderGame = nullptr;
+static uint32_t g_sunderGameSeed = 0;
 
-void StoreRemainder(D2UnitStrc* pUnit, const RemainderEntry& remainders)
+// Caller holds g_sunderMutex. Clear on game changes as well as unit respawns;
+// reused unit IDs/stat-list allocations must not inherit an earlier reduction.
+static void ResetSunderGame(D2GameStrc* game)
 {
-    if (!pUnit) return;
-    g_resistRemainders[pUnit->dwUnitId] = remainders;
-}
-
-RemainderEntry GetRemainder(D2UnitStrc* pUnit)
-{
-    if (!pUnit) return {};
-
-    auto it = g_resistRemainders.find(pUnit->dwUnitId);
-    if (it != g_resistRemainders.end())
-        return it->second;
-
-    return {};
-}
-
-static void MergeSunderStatsFromPlayer(SunderStatSnapshot& stats, D2UnitStrc* pPlayer)
-{
-    if (!pPlayer) return;
-
-    int cold = STATLIST_GetUnitStatSigned(pPlayer, STAT_ITEM_PIERCE_COLD_IMMUNITY, 0);
-    int fire = STATLIST_GetUnitStatSigned(pPlayer, STAT_ITEM_PIERCE_FIRE_IMMUNITY, 0);
-    int light = STATLIST_GetUnitStatSigned(pPlayer, STAT_ITEM_PIERCE_LIGHT_IMMUNITY, 0);
-    int poison = STATLIST_GetUnitStatSigned(pPlayer, STAT_ITEM_PIERCE_POISON_IMMUNITY, 0);
-    int damage = STATLIST_GetUnitStatSigned(pPlayer, STAT_ITEM_PIERCE_DAMAGE_IMMUNITY, 0);
-    int magic = STATLIST_GetUnitStatSigned(pPlayer, STAT_ITEM_PIERCE_MAGIC_IMMUNITY, 0);
-
-    if (cold > stats.cold)     stats.cold = cold;
-    if (fire > stats.fire)     stats.fire = fire;
-    if (light > stats.light)   stats.light = light;
-    if (poison > stats.poison) stats.poison = poison;
-    if (damage > stats.damage) stats.damage = damage;
-    if (magic > stats.magic)   stats.magic = magic;
-}
-
-static SunderStatSnapshot GetActiveSunderStats(D2GameStrc* pGame)
-{
-    SunderStatSnapshot stats{};
-
-    if (pGame)
+    const uint32_t seed = game ? game->dwInitSeed : 0;
+    if (game != g_lastSunderGame || seed != g_sunderGameSeed)
     {
-        for (D2ClientStrc* pClient = pGame->pClientList; pClient; pClient = pClient->pNext)
+        g_appliedSunder.clear();
+        g_lastSunderGame = game;
+        g_sunderGameSeed = seed;
+    }
+}
+
+static void MergeSunderStatsFromPlayer(Sunder::Values& stats, D2UnitStrc* player)
+{
+    if (!player) return;
+    Sunder::Values values{};
+    for (size_t i = 0; i < values.size(); ++i)
+        values[i] = STATLIST_GetUnitStatSigned(player, Sunder::ImmunityStats[i], 0);
+    Sunder::MergeMaximum(stats, values);
+}
+
+static Sunder::Values GetActiveSunderStats(D2GameStrc* game)
+{
+    Sunder::Values stats{};
+    if (game)
+    {
+        for (auto client = game->pClientList; client; client = client->pNext)
         {
-            if (pClient->pGame && pClient->pGame != pGame)
-                continue;
-
-            MergeSunderStatsFromPlayer(stats, pClient->pPlayer);
-
-            if (pClient->dwUnitGUID)
-                MergeSunderStatsFromPlayer(stats, UNITS_GetServerUnitByTypeAndId(pGame, UNIT_PLAYER, pClient->dwUnitGUID));
+            if (client->pGame && client->pGame != game) continue;
+            MergeSunderStatsFromPlayer(stats, client->pPlayer);
+            if (client->dwUnitGUID)
+                MergeSunderStatsFromPlayer(stats, UNITS_GetServerUnitByTypeAndId(game, UNIT_PLAYER, client->dwUnitGUID));
         }
     }
-
     for (int i = 0; i < 8; ++i)
     {
-        auto pClient = gpClientList[i];
-        if (!pClient) continue;
-
-        if (pGame && pClient->pGame && pClient->pGame != pGame)
-            continue;
-
-        MergeSunderStatsFromPlayer(stats, pClient->pPlayer);
-
-        if (pGame && pClient->dwUnitGUID)
-            MergeSunderStatsFromPlayer(stats, UNITS_GetServerUnitByTypeAndId(pGame, UNIT_PLAYER, pClient->dwUnitGUID));
+        auto client = gpClientList[i];
+        if (!client || (game && client->pGame && client->pGame != game)) continue;
+        MergeSunderStatsFromPlayer(stats, client->pPlayer);
+        if (game && client->dwUnitGUID)
+            MergeSunderStatsFromPlayer(stats, UNITS_GetServerUnitByTypeAndId(game, UNIT_PLAYER, client->dwUnitGUID));
     }
-
     return stats;
 }
 
-static void ApplySunderClampToMonster(D2GameStrc* pGame, D2UnitStrc* pUnit, bool requireUModSetting)
+static void ApplyLinearSunderToMonster(D2GameStrc* game, D2UnitStrc* unit, bool requireUModSetting)
 {
-    if (!pGame || !pUnit || !pUnit->pStatListEx)
-        return;
-
-    if (requireUModSetting && settings.sunderedMonUMods != true)
-        return;
-
-    g_lastSunderGame = pGame;
-
-    SunderStatSnapshot sunderStats = GetActiveSunderStats(pGame);
-    RemainderEntry remainders{};
-
-    auto ApplyStat = [&](D2C_ItemStats statId, int sunderValue, int& remainder)
-        {
-            if (sunderValue < 100)
-                return;
-
-            remainder = sunderValue;
-
-            int nCurrentValue = STATLIST_GetUnitStatSigned(pUnit, statId, 0);
-            if (nCurrentValue >= 100)
-                STATLISTEX_SetStatListExStat(pUnit->pStatListEx, statId, settings.SunderValue, 0);
-        };
-
-    ApplyStat(STAT_COLDRESIST, sunderStats.cold, remainders.cold);
-    ApplyStat(STAT_FIRERESIST, sunderStats.fire, remainders.fire);
-    ApplyStat(STAT_LIGHTRESIST, sunderStats.light, remainders.light);
-    ApplyStat(STAT_POISONRESIST, sunderStats.poison, remainders.poison);
-    ApplyStat(STAT_DAMAGERESIST, sunderStats.damage, remainders.damage);
-    ApplyStat(STAT_MAGICRESIST, sunderStats.magic, remainders.magic);
-
-    StoreRemainder(pUnit, remainders);
-}
-
-uint32_t SubtractResistances(D2UnitStrc* pUnit, D2C_ItemStats nStatId, int nValue, uint16_t nLayer = 0)
-{
-    if (!pUnit || nValue <= 0) return 0;
-
-    auto nCurrentValue = STATLIST_GetUnitStatSigned(pUnit, nStatId, nLayer);
-    int newValue = nCurrentValue - nValue;
-    int remainder = 0;
-
-    if (nCurrentValue >= 100)
-    {
-        // Calculate overshoot based on cachedSettings.SunderValue
-        if (newValue < settings.SunderValue) {
-            remainder = settings.SunderValue - newValue;
-            newValue = settings.SunderValue;
-        }
-
-        STATLISTEX_SetStatListExStat(pUnit->pStatListEx, nStatId, newValue, nLayer);
-    }
-    else
-    {
-        remainder = nValue;
-        newValue = nCurrentValue;
-    }
-
-    STATLISTEX_SetStatListExStat(pUnit->pStatListEx, nStatId, newValue, nLayer);
-
-    // Update the proper remainder entry
-    auto& re = g_resistRemainders[pUnit->dwUnitId];
-    switch (nStatId)
-    {
-    case STAT_COLDRESIST:  re.cold = remainder; break;
-    case STAT_FIRERESIST:  re.fire = remainder; break;
-    case STAT_LIGHTRESIST: re.light = remainder; break;
-    case STAT_POISONRESIST: re.poison = remainder; break;
-    case STAT_DAMAGERESIST: re.damage = remainder; break;
-    case STAT_MAGICRESIST:  re.magic = remainder; break;
-    default: break; // ignore other stats
-    }
-
-    LogSunder("SU Monster Value: " + std::to_string(nCurrentValue) + ", SU Function Value: " + std::to_string(nValue) + ", SU New Value: " + std::to_string(newValue) + ", SU Remainder: " + std::to_string(remainder));
-
-    return remainder;
+    if (!game || !unit || unit->dwUnitType != UNIT_MONSTER || !unit->pStatListEx) return;
+    if (requireUModSetting && !settings.sunderedMonUMods) return;
+    std::lock_guard<std::mutex> lock(g_sunderMutex);
+    ResetSunderGame(game);
+    auto& entry = g_appliedSunder[unit->dwUnitId];
+    if (entry.unit != unit || entry.stats != unit->pStatListEx)
+        entry = {unit, unit->pStatListEx, {}};
+    const auto pierce = GetActiveSunderStats(game);
+    if (!sgptDataTables || !sgptDataTables->pItemStatCostTxt || sgptDataTables->nItemStatCostTxtRecordCount <= 45) return;
+    using ReadBaseStat = int(__fastcall*)(D2StatListExStrc*, uint32_t, const D2ItemStatCostTxt*);
+    const auto readBase = reinterpret_cast<ReadBaseStat>(Pattern::Address(0x1e2e00));
+    Sunder::RefreshBase(entry.reductions, pierce, settings.SunderValue,
+        [&](uint32_t stat) { return STATLIST_GetUnitStatSigned(unit, stat, 0); },
+        [&](uint32_t stat) { return readBase(unit->pStatListEx, stat << 16, &sgptDataTables->pItemStatCostTxt[stat]); },
+        [&](uint32_t stat, int value) { return STATLISTEX_SetStatListExStat(unit->pStatListEx, static_cast<D2C_ItemStats>(stat), value, 0) != FALSE; });
 }
 
 void SetStat(D2UnitStrc* pUnit, D2C_ItemStats nStatId, uint32_t nValue) {
@@ -1875,25 +1823,6 @@ void AddToCurrentStat(D2UnitStrc* pUnit, D2C_ItemStats nStatId, uint32_t nValue)
         STATLISTEX_SetStatListExStat(pUnit->pStatListEx, nStatId, currentValue + nValue, 0);
 }
 
-static void ApplySunderForStat(D2UnitStrc* pUnit, D2C_ItemStats statId, int maxVal, const std::vector<std::pair<const char*, int>>& umodCaps, const std::vector<const uint32_t*>& umodArrays, const std::vector<size_t>& umodSizes, const std::string& statName, const std::vector<std::vector<uint8_t>>& originalGroups)   // per-group originals
-{
-    if (maxVal <= INT_MIN)
-        return;
-
-    int rem = SubtractResistances(pUnit, statId, maxVal);
-    LogSunder(statName + " max=" + std::to_string(maxVal) + " SubtractResistances rem=" + std::to_string(rem));
-
-    for (size_t i = 0; i < umodArrays.size(); ++i)
-    {
-        LogSunder(statName + " UMod[" + std::string(umodCaps[i].first) + "] cap=" + std::to_string(umodCaps[i].second) + " final=" + std::to_string(rem));
-
-        const std::vector<uint8_t>& groupOriginal = (i < originalGroups.size()) ? originalGroups[i] : std::vector<uint8_t>{};
-
-        if (settings.sunderedMonUMods || cachedSettings.sunderedMonUMods)
-            ApplyUModArray(umodArrays[i], umodSizes[i], rem, groupOriginal, statName);
-    }
-}
-
 void __fastcall ApplyGhettoSunder(D2GameStrc* pGame, D2ActiveRoomStrc* pRoom, D2UnitStrc* pUnit, int64_t* pMonRegData, D2MonStatsInitStrc* monStatsInit)
 {
     if (!pGame || !pUnit)
@@ -1904,7 +1833,7 @@ void __fastcall ApplyGhettoSunder(D2GameStrc* pGame, D2ActiveRoomStrc* pRoom, D2
 
     LogSunder("=== Begin ApplyGhettoSunder ===");
 
-    ApplySunderClampToMonster(pGame, pUnit, false);
+    ApplyLinearSunderToMonster(pGame, pUnit, false);
 
     LogSunder("=== End ApplyGhettoSunder ===");
 }
@@ -3239,8 +3168,9 @@ void UpdateActiveZoneInfoText(time_t currentUtc)
         int activeGroupIndex = g_ManualZoneGroupOverride;
         if (activeGroupIndex == -1)
         {
-            // Use only the random offset (set at load) so the active zone varies per load and isn't tied to fixed shuffle order
-            activeGroupIndex = zone.random_start_offset % groupCount;
+            // Advance each full terror+break period, preserving the random start.
+            activeGroupIndex = TerrorZoneRotationIndex(currentUtc, zone.start_time_utc,
+                zone.terror_duration_min, zone.terror_break_min, groupCount, zone.random_start_offset);
         }
         else if (activeGroupIndex >= groupCount)
         {
@@ -3360,6 +3290,8 @@ void __fastcall ApplyGhettoTerrorZone(D2GameStrc* pGame, D2ActiveRoomStrc* pRoom
     }
 
     int levelId = GetLevelIdFromRoom(pRoom);
+    if (CubeMap::IsMapLevel(pGame, levelId))
+        return;
     if (levelId == -1)
     {
         isTerrorized = false;
@@ -3400,9 +3332,10 @@ void __fastcall ApplyGhettoTerrorZone(D2GameStrc* pGame, D2ActiveRoomStrc* pRoom
         int cyclePos = minutesSinceStart % totalCycle;
         int posWithinGroup = cyclePos % cycleLengthMin;
 
-        // Use only the random offset (set at load) so the active zone varies per load and isn't tied to fixed shuffle order
+        // Select the same UTC rotation group as the display.
         int activeGroupIndex = (g_ManualZoneGroupOverride == -1)
-            ? (zone.random_start_offset % groupCount)
+            ? TerrorZoneRotationIndex(currentUtc, zone.start_time_utc,
+                zone.terror_duration_min, zone.terror_break_min, groupCount, zone.random_start_offset)
             : g_ManualZoneGroupOverride;
 
         if (activeGroupIndex < 0 || activeGroupIndex >= groupCount)
@@ -3832,6 +3765,13 @@ struct D2RHUDConfig
     bool SunderedMonUMods = true;
     int SunderValue = 99;
     bool MinionEquality = true;
+    bool PersistentSummons = false;
+    bool SurvivorArena = false;
+    bool ActVI = false;
+    bool D3StyleWhirlwind = false;
+    bool QuantityRightClicks = true;
+    bool DisableRightClickItemPickup = false;
+    bool MinimalistQuantityPopup = false;
     bool GambleCostControl = true;
     bool CombatLog = true;
     bool TransmogVisuals = true;
@@ -3846,13 +3786,13 @@ struct D2RHUDConfig
 };
 
 std::vector<std::string> priorityOrder = {
-        "reload", "Debug", "allowOverrides", "audioPlayback", "modTips",
+        "reload", "debug", "allowOverrides", "audioPlayback", "modTips",
         "audioVoice", "filter_titles", "filter_level", "language"
 };
 
 std::unordered_map<std::string, std::string> displayNames = {
     { "reload", "Reload Message" }, { "allowOverrides", "Allow Overrides" },
-    { "modTips", "Mod Tips" }, { "Debug", "Debug Mode" },
+    { "modTips", "Mod Tips" }, { "debug", "Debug Mode" },
     { "audioPlayback", "Audio Playback" }, { "audioVoice", "Audio Voice" },
     { "filter_titles", "Filter Titles" }, { "filter_level", "Filter Level" },
     { "language", "Language" }
@@ -3860,7 +3800,7 @@ std::unordered_map<std::string, std::string> displayNames = {
 
 std::unordered_map<std::string, std::string> g_LuaDescriptions = {
     { "reload", "Displays an in-game chat message whenever the filter is reloaded" },
-    { "Debug", "Outputs details of matched/failed filter rules using in-game chat" },
+    { "debug", "Outputs details of matched/failed filter rules using in-game chat" },
     { "allowOverrides", "Allows the override_rules.lua to be loaded in addition to your own filter\nUsually used by mod authors to add 'default' content as a baseload" },
     { "audioPlayback", "Enables or disables both the Audio Playback and TTS options\nRequires Win10+ and Windows Media framework installed" },
     { "modTips", "Displays helpful mod-related tips at the bottom of item tooltips\nThese tips must be defined by the filter or mod author" },
@@ -3939,13 +3879,18 @@ static void RegisterStartupCommands(const std::string& startupText)
 static char searchBuffer[128] = "";
 static bool filterUncollected = false;
 static bool showMainMenu = false;
+static bool showQuestJournalMenu = false;
 static bool showHUDSettingsMenu = false;
+static bool showBuffIconsMenu = false;
+static bool showStatRangesMenu = false;
 static bool showD2RHUDMenu = false;
 static bool showLootMenu = false;
 static bool showHotkeyMenu = false;
 static bool showGrailMenu = false;
 static bool showCameraMenu = false;
 static bool showFloatingDamageMenu = false;
+static void ShowBuffIconsMenu();
+static void ShowStatRangesMenu();
 static void ShowFloatingDamageMenu();
 static bool showSettingsPanel = false;
 static std::string s_UITheme = "Default";
@@ -4199,15 +4144,18 @@ void EnableAllInput() {
 }
 
 bool D2RHUD::IsAnyMenuOpen() {
-    return showGrailMenu || showHotkeyMenu || showLootMenu || showD2RHUDMenu || showCameraMenu || showFloatingDamageMenu;
+    return showGrailMenu || showHotkeyMenu || showLootMenu || showD2RHUDMenu || showCameraMenu || showFloatingDamageMenu || showBuffIconsMenu || showStatRangesMenu || showQuestJournalMenu;
 }
 
 bool D2RHUD::TryCloseMenuOnEscape()
 {
+    if (showQuestJournalMenu) { showQuestJournalMenu = false; return true; }
     if (showHotkeyMenu) { showHotkeyMenu = false; return true; }
     if (showGrailMenu) { showGrailMenu = false; return true; }
     if (showLootMenu) { showLootMenu = false; return true; }
     if (showCameraMenu) { showCameraMenu = false; return true; }
+    if (showBuffIconsMenu) { showBuffIconsMenu = false; return true; }
+    if (showStatRangesMenu) { showStatRangesMenu = false; return true; }
     if (showFloatingDamageMenu) { showFloatingDamageMenu = false; return true; }
     if (showD2RHUDMenu) { showD2RHUDMenu = false; return true; }
     if (showSettingsPanel) { showSettingsPanel = false; return true; }
@@ -5583,354 +5531,7 @@ static void DrawCreateFilterPopup()
     }
 }
 
-void LoadLootFilterConfig(const std::string& path)
-{
-    g_LuaVariables.clear();
-    g_LuaVariableComments.clear();
-    g_LootFilterHeader = {}; // reset
-    g_LootFilterRules.clear();
-
-    std::ifstream file(path);
-    if (!file.is_open())
-        return;
-
-    std::string line;
-    int nestingLevel = 0; // track { } nesting
-    LootFilterRule currentRule;
-    std::string pendingRuleComment;   // comment text from line before opening {
-    std::string pendingRuleCommentLine; // full line for rawLua
-    std::regex assignRegex(R"(^\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*(.+?),?\s*$)");
-
-    while (std::getline(file, line))
-    {
-        // --- Parse top comment header ---
-        if (line.rfind("---", 0) == 0)
-        {
-            if (line.find("Filter Title:") != std::string::npos)
-                g_LootFilterHeader.Title = line.substr(line.find(":") + 1);
-
-            // Trim leading spaces
-            for (auto* str : { &g_LootFilterHeader.Title })
-                if (!str->empty() && (*str)[0] == ' ') *str = str->substr(1);
-
-            continue;
-        }
-
-        int levelAtStart = nestingLevel;
-
-        // --- Track nesting for Lua table ---
-        for (char c : line)
-        {
-            if (c == '{') nestingLevel++;
-            if (c == '}') nestingLevel--;
-        }
-
-        // Only parse top-level assignments
-        if (nestingLevel == 1)
-        {
-            // --- Split comment from value ---
-            std::string keyValuePart = line;
-            std::string commentPart;
-
-            size_t commentPos = line.find("--");
-            if (commentPos != std::string::npos)
-            {
-                keyValuePart = line.substr(0, commentPos);
-                commentPart = line.substr(commentPos + 2);
-                // Trim leading spaces in comment
-                while (!commentPart.empty() && commentPart.front() == ' ')
-                    commentPart = commentPart.substr(1);
-            }
-
-            // --- Match key/value ---
-            std::smatch match;
-            if (std::regex_match(keyValuePart, match, assignRegex))
-            {
-                std::string key = match[1].str();
-                std::string value = match[2].str();
-
-                // Strip surrounding quotes for strings
-                if (!value.empty() && value.front() == '"' && value.back() == '"')
-                    value = value.substr(1, value.size() - 2);
-
-                g_LuaVariables[key] = value;
-
-                if (!commentPart.empty())
-                    g_LuaVariableComments[key] = commentPart;
-            }
-        }
-
-        // --- Parse rules block (nesting level 2 = inside rules = {, level 3 = inside a rule {}) ---
-        if (levelAtStart == 2)
-        {
-            std::string trimmed = line;
-            size_t start = trimmed.find_first_not_of(" \t");
-            if (start != std::string::npos && trimmed[start] == '{')
-            {
-                currentRule = {};
-                size_t commentPos = line.find("--", start + 1);
-                if (commentPos != std::string::npos)
-                {
-                    std::string sameLine = line.substr(commentPos + 2);
-                    size_t cstart = sameLine.find_first_not_of(" \t-");
-                    if (cstart != std::string::npos) sameLine = sameLine.substr(cstart);
-                    if (!sameLine.empty())
-                    {
-                        currentRule.comment = sameLine;
-                        currentRule.rawLua = line + "\n";
-                    }
-                    else
-                    {
-                        currentRule.rawLua = line + "\n";
-                    }
-                    pendingRuleComment.clear();
-                    pendingRuleCommentLine.clear();
-                }
-                else
-                {
-                    currentRule.rawLua = pendingRuleCommentLine.empty() ? (line + "\n") : (pendingRuleCommentLine + "\n" + line + "\n");
-                    if (!pendingRuleComment.empty())
-                    {
-                        currentRule.comment = pendingRuleComment;
-                        pendingRuleComment.clear();
-                        pendingRuleCommentLine.clear();
-                    }
-                }
-            }
-            else if (start != std::string::npos && trimmed.size() >= 2 && trimmed[start] == '-' && trimmed[start + 1] == '-')
-            {
-                pendingRuleCommentLine = line;
-                pendingRuleComment = trimmed.substr(start + 2);
-                size_t cstart = pendingRuleComment.find_first_not_of(" \t-");
-                if (cstart != std::string::npos) pendingRuleComment = pendingRuleComment.substr(cstart);
-                else pendingRuleComment.clear();
-            }
-            else if (start != std::string::npos && trimmed[start] == '}')
-            {
-                pendingRuleComment.clear();
-                pendingRuleCommentLine.clear();
-            }
-        }
-        else if (levelAtStart == 3)
-        {
-            currentRule.rawLua += line + "\n";
-            std::string keyValuePart = line;
-            size_t commentPos = line.find("--");
-            if (commentPos != std::string::npos)
-                keyValuePart = line.substr(0, commentPos);
-            std::smatch match;
-            if (std::regex_match(keyValuePart, match, assignRegex))
-            {
-                std::string key = match[1].str();
-                std::string value = match[2].str();
-                if (!value.empty() && value.front() == '"' && value.back() == '"')
-                    value = value.substr(1, value.size() - 2);
-                currentRule.fields.push_back({ key, value });
-            }
-            if (nestingLevel == 2)
-            {
-                if (!currentRule.rawLua.empty() || !currentRule.fields.empty() || !currentRule.comment.empty())
-                    g_LootFilterRules.push_back(currentRule);
-                currentRule = {};
-            }
-        }
-    }
-}
-
-static std::string FormatLuaValue(const std::string& value)
-{
-    if (value == "true" || value == "false")
-        return value;
-    if (!value.empty() && value.find_first_not_of("0123456789.-") == std::string::npos)
-        return value;
-    if (!value.empty() && value.front() == '{' && value.back() == '}')
-        return value;  // table literal
-    std::string escaped;
-    escaped.reserve(value.size() + 8);
-    for (char c : value)
-    {
-        if (c == '\\') escaped += "\\\\";
-        else if (c == '"') escaped += "\\\"";
-        else escaped += c;
-    }
-    return "\"" + escaped + "\"";
-}
-
-void SaveLootFilterConfig(const std::string& path)
-{
-    std::ifstream in(path);
-    if (!in.is_open())
-        return;
-    std::vector<std::string> lines;
-    std::string line;
-    while (std::getline(in, line))
-        lines.push_back(line);
-    in.close();
-
-    std::regex assignRegex(R"(^\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*(.+?),?\s*$)");
-    std::regex rulesLineRegex(R"(^\s*rules\s*=\s*\{)");
-    int nestingLevel = 0;
-    std::unordered_set<std::string> writtenKeys;
-    size_t lastLevel1AssignLineIndex = 0;   // last level-1 line that is key = value (not "}" or "rules = {")
-    size_t firstRulesLineIndex = (size_t)-1;
-    size_t rulesEndLineIndex = (size_t)-1;
-    std::string defaultIndent = "    ";
-
-    for (size_t i = 0; i < lines.size(); i++)
-    {
-        int levelBefore = nestingLevel;
-        for (char c : lines[i])
-        {
-            if (c == '{') nestingLevel++;
-            if (c == '}') nestingLevel--;
-        }
-        if (firstRulesLineIndex != (size_t)-1 && levelBefore == 2 && nestingLevel == 1)
-            rulesEndLineIndex = i;
-        if (levelBefore == 1)
-        {
-            std::string keyValuePart = lines[i];
-            size_t commentPos = lines[i].find("--");
-            if (commentPos != std::string::npos)
-                keyValuePart = lines[i].substr(0, commentPos);
-            if (firstRulesLineIndex == (size_t)-1 && std::regex_search(keyValuePart, rulesLineRegex))
-                firstRulesLineIndex = i;
-            std::smatch match;
-            if (std::regex_match(keyValuePart, match, assignRegex))
-            {
-                lastLevel1AssignLineIndex = i;
-                if (defaultIndent == "    ")
-                    defaultIndent = keyValuePart.substr(0, match.position(1));
-                std::string key = match[1].str();
-                auto it = g_LuaVariables.find(key);
-                if (it != g_LuaVariables.end())
-                {
-                    std::string value = it->second;
-                    std::string outValue = FormatLuaValue(value);
-                    std::string indent = keyValuePart.substr(0, match.position(1));
-                    std::string newLine = indent + key + " = " + outValue + ",";
-                    auto cit = g_LuaVariableComments.find(key);
-                    if (cit != g_LuaVariableComments.end() && !cit->second.empty())
-                        newLine += "  -- " + cit->second;
-                    lines[i] = newLine;
-                    writtenKeys.insert(key);
-                }
-            }
-        }
-    }
-
-    // Add any global options that exist in g_LuaVariables but were not in the file.
-    // Insert them above the first "rules" line so they stay with other global options.
-    static const std::vector<std::string> preferredKeyOrder = {
-        "allowOverrides", "modTips", "Debug", "audioPlayback",
-        "reload", "audioVoice", "filter_level", "language", "filter_titles"
-    };
-    std::unordered_set<std::string> unwritten;
-    for (const auto& p : g_LuaVariables)
-        if (writtenKeys.find(p.first) == writtenKeys.end())
-            unwritten.insert(p.first);
-    std::vector<std::string> keysToAdd;
-    for (const auto& k : preferredKeyOrder)
-    {
-        auto it = unwritten.find(k);
-        if (it != unwritten.end()) { keysToAdd.push_back(*it); unwritten.erase(it); }
-    }
-    for (const auto& k : unwritten)
-        keysToAdd.push_back(k);
-
-    size_t insertIndex = (firstRulesLineIndex != (size_t)-1) ? firstRulesLineIndex : (lastLevel1AssignLineIndex + 1);
-    for (size_t j = 0; j < keysToAdd.size(); j++)
-    {
-        const std::string& key = keysToAdd[j];
-        std::string value = g_LuaVariables.at(key);
-        std::string outValue = FormatLuaValue(value);
-        std::string newLine = defaultIndent + key + " = " + outValue + ",";
-        auto cit = g_LuaVariableComments.find(key);
-        if (cit != g_LuaVariableComments.end() && !cit->second.empty())
-            newLine += "  -- " + cit->second;
-        lines.insert(lines.begin() + insertIndex + j, newLine);
-    }
-    if (firstRulesLineIndex != (size_t)-1) firstRulesLineIndex += keysToAdd.size();
-    if (rulesEndLineIndex != (size_t)-1) rulesEndLineIndex += keysToAdd.size();
-
-    // Build rules block content from g_LootFilterRules (use rawLua when present, else build from fields).
-    // Re-apply rule/field indentation so edited content (which may have had spacing stripped in the UI) matches the original file style.
-    auto BuildRulesLines = [&defaultIndent]() -> std::vector<std::string>
-        {
-            std::string ruleIndent = defaultIndent + "    ";
-            std::string fieldIndent = ruleIndent + "    ";
-            auto trimLead = [](std::string s) {
-                size_t start = s.find_first_not_of(" \t");
-                return start != std::string::npos ? s.substr(start) : s;
-                };
-            std::vector<std::string> out;
-            out.push_back(defaultIndent + "rules = {");
-            for (size_t r = 0; r < g_LootFilterRules.size(); r++)
-            {
-                const auto& rule = g_LootFilterRules[r];
-                if (!rule.rawLua.empty())
-                {
-                    std::vector<std::string> ruleLines;
-                    size_t pos = 0;
-                    while (pos < rule.rawLua.size())
-                    {
-                        size_t next = rule.rawLua.find('\n', pos);
-                        if (next == std::string::npos) next = rule.rawLua.size();
-                        ruleLines.push_back(rule.rawLua.substr(pos, next - pos));
-                        pos = next + 1;
-                    }
-                    for (size_t i = 0; i < ruleLines.size(); i++)
-                    {
-                        std::string line = trimLead(ruleLines[i]);
-                        bool isRuleLevel = (i == 0 || i == ruleLines.size() - 1 || line == "{" || line == "}");
-                        if (isRuleLevel)
-                            out.push_back(ruleIndent + line);
-                        else
-                            out.push_back(fieldIndent + line);
-                    }
-                }
-                else
-                {
-                    std::string ruleIndent = "        ";
-                    std::string fieldIndent = "            ";
-                    std::string commentTrim = rule.comment;
-                    size_t cstart = commentTrim.find_first_not_of(" \t");
-                    if (cstart != std::string::npos) commentTrim = commentTrim.substr(cstart);
-                    if (!commentTrim.empty())
-                        out.push_back(ruleIndent + "{ -- " + commentTrim);
-                    else
-                        out.push_back(ruleIndent + "{");
-                    for (size_t f = 0; f < rule.fields.size(); f++)
-                    {
-                        const std::string& k = rule.fields[f].first;
-                        std::string v = rule.fields[f].second;
-                        out.push_back(fieldIndent + k + " = " + v + ",");
-                    }
-                    out.push_back(ruleIndent + (r + 1 < g_LootFilterRules.size() ? "}," : "}"));
-                }
-            }
-            out.push_back(defaultIndent + "}");
-            return out;
-        };
-
-    // Replace existing rules block in place (only when we found it); never append a second block
-    if (!g_LootFilterRules.empty() && firstRulesLineIndex != (size_t)-1 && rulesEndLineIndex != (size_t)-1 && rulesEndLineIndex >= firstRulesLineIndex)
-    {
-        std::vector<std::string> rulesLines = BuildRulesLines();
-        lines.erase(lines.begin() + firstRulesLineIndex, lines.begin() + rulesEndLineIndex + 1);
-        for (size_t r = 0; r < rulesLines.size(); r++)
-            lines.insert(lines.begin() + firstRulesLineIndex + r, rulesLines[r]);
-    }
-
-    std::ofstream out(path);
-    if (!out.is_open())
-        return;
-    for (size_t i = 0; i < lines.size(); i++)
-    {
-        out << lines[i];
-        if (i + 1 < lines.size()) out << "\n";
-    }
-    out.close();
-}
+#include "../ItemFilter/LootFilterEditorIO.inl"
 
 void LoadLootFilterLogic(const std::string& path)
 {
@@ -5995,12 +5596,28 @@ void LoadD2RHUDConfig(const std::string& path)
         settings.sunderedMonUMods = d2rHUDConfig.SunderedMonUMods;
         settings.SunderValue = d2rHUDConfig.SunderValue;
         d2rHUDConfig.MinionEquality = j.value("MinionEquality", d2rHUDConfig.MinionEquality);
+        d2rHUDConfig.PersistentSummons = j.value("PersistentSummons", false);
+        d2rHUDConfig.ActVI = j.value("ActVI", false);
+        d2rHUDConfig.SurvivorArena = j.value("SurvivorArena", false);
+        CubeMap::SetSurvivorsEnabled(d2rHUDConfig.SurvivorArena);
+        ExtendedActs::SetRequested(d2rHUDConfig.ActVI);
+        SummonPersistence::SetEnabled(d2rHUDConfig.PersistentSummons);
+        d2rHUDConfig.D3StyleWhirlwind = j.value("D3StyleWhirlwind", false);
+        D3Whirlwind::SetEnabled(d2rHUDConfig.D3StyleWhirlwind);
+        d2rHUDConfig.QuantityRightClicks = j.value("QuantityRightClicks", true);
+        d2rHUDConfig.DisableRightClickItemPickup = j.value("DisableRightClickItemPickup", false);
+        D3Whirlwind::SetRightClickPickupDisabled(d2rHUDConfig.DisableRightClickItemPickup);
+        LegacyTransmog::SetQuantityRightClicks(d2rHUDConfig.QuantityRightClicks);
+        d2rHUDConfig.MinimalistQuantityPopup = j.value("MinimalistQuantityPopup", false);
+        LegacyTransmog::SetMinimalistQuantityPopup(d2rHUDConfig.MinimalistQuantityPopup);
         d2rHUDConfig.GambleCostControl = j.value("GambleCostControl", d2rHUDConfig.GambleCostControl);
         d2rHUDConfig.CombatLog = j.value("CombatLog", d2rHUDConfig.CombatLog);
         d2rHUDConfig.TransmogVisuals = j.value("TransmogVisuals", d2rHUDConfig.TransmogVisuals);
         d2rHUDConfig.ExtendedItemcodes = j.value("ExtendedItemcodes", d2rHUDConfig.ExtendedItemcodes);
         d2rHUDConfig.FloatingDamage = j.value("FloatingDamage", d2rHUDConfig.FloatingDamage);
         FloatingDamage::LoadFromJson(j);
+        BuffIcons::LoadFromJson(j);
+        StatRanges::LoadFromJson(j);
         d2rHUDConfig.FloatingDamage = FloatingDamage::GetConfig().enabled;
         settings.FloatingDamage = d2rHUDConfig.FloatingDamage;
         cachedSettings.FloatingDamage = d2rHUDConfig.FloatingDamage;
@@ -6288,6 +5905,13 @@ bool SaveFullGrailConfig(const std::string& userPath, bool isAutoBackup)
         j["SunderedMonUMods"] = d2rHUDConfig.SunderedMonUMods;
         j["SunderValue"] = d2rHUDConfig.SunderValue;
         j["MinionEquality"] = d2rHUDConfig.MinionEquality;
+        j["PersistentSummons"] = d2rHUDConfig.PersistentSummons;
+        j["ActVI"] = d2rHUDConfig.ActVI;
+        j["SurvivorArena"] = d2rHUDConfig.SurvivorArena;
+        j["D3StyleWhirlwind"] = d2rHUDConfig.D3StyleWhirlwind;
+        j["QuantityRightClicks"] = d2rHUDConfig.QuantityRightClicks;
+        j["DisableRightClickItemPickup"] = d2rHUDConfig.DisableRightClickItemPickup;
+        j["MinimalistQuantityPopup"] = d2rHUDConfig.MinimalistQuantityPopup;
         j["GambleCostControl"] = d2rHUDConfig.GambleCostControl;
         j["CombatLog"] = d2rHUDConfig.CombatLog;
         j["TransmogVisuals"] = d2rHUDConfig.TransmogVisuals;
@@ -6297,6 +5921,8 @@ bool SaveFullGrailConfig(const std::string& userPath, bool isAutoBackup)
             j["ChatSoundPath"] = d2rHUDConfig.ChatSoundPath;
         FloatingDamage::GetConfig().enabled = d2rHUDConfig.FloatingDamage;
         FloatingDamage::SaveToJson(j);
+        BuffIcons::SaveToJson(j);
+        StatRanges::SaveToJson(j);
         j["Options"] = ordered_json{
             {"Base Codes", showBaseCodes},
             {"Base Names", showBaseNames},
@@ -6514,7 +6140,7 @@ void RegisterModOverrides()
     RMD.ForcedGambleCostControl = true;
     RMD.GambleCostControl = { true, "Disabling this feature serves no benefit in ReMoDDeD" };
     RMD.ForcedCombatLog = false;
-    RMD.TransmogVisuals = { false, "This feature must be enabled for now for Extended Itemcodes currently" };
+    RMD.TransmogVisuals = { false, "" };
     RMD.ExtendedItemcodes = { true, "We rely on this feature for our expanded item catalog\nDisabling it serves no benefit" };
     RMD.ForcedFloatingDamage = false;
     RMD.HPRolloverMods = { true, "This feature helps us keep monster HP values in check" };
@@ -6716,6 +6342,7 @@ void ShowGrailMenu()
         ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoScrollbar;
     if (ImGui::Begin("Grail Tracker", &showGrailMenu, grailWindowFlags))
     {
+        QuestJournal::Viewed("GrailTracker");
         if (ShouldDrawWindowBackgroundImage(kWindowBg_Grail))
             DrawWindowBackgroundImage(kWindowBg_Grail);
         DrawWindowTitleAndClose("Grail Tracker", &showGrailMenu);
@@ -7570,6 +7197,7 @@ void ShowHotkeyMenu()
             "Cycle TZ Backward",
             "Cycle TZ Forward",
             "Toggle TZ Stats Display",
+            "Show Stat Ranges",
         };
 
         // Ensure every standard hotkey has an entry so it appears in the menu (e.g. after config load or new options)
@@ -8297,12 +7925,58 @@ void ShowCameraMenu()
         ImGui::PopStyleColor();
 }
 
+static const LootFilterConfig::Builder::Catalog& GetLootFilterBuilderCatalog()
+{
+    using namespace LootFilterConfig::Builder;
+    struct State { Catalog catalog; std::future<Catalog> loading; bool started = false; };
+    // The HUD is process-resident. Keep worker ownership until process exit;
+    // no game pointers or ImGui state are accessed on the asset reader thread.
+    static auto* state = new State;
+    if (!state->started) {
+        state->started = true;
+        state->catalog.status = "Loading item, category, area and stat lists...";
+        const auto install = std::filesystem::path(GetExecutableDir());
+        const auto mod = modName;
+        state->loading = std::async(std::launch::async, [install, mod]() {
+            Catalog catalog;
+            GameAssets assets(install, mod);
+            for (const char* table : {"weapons", "armor", "misc", "itemtypes", "itemstatcost", "levels", "uniqueitems", "setitems"}) {
+                auto bytes = assets.Read("global/excel/" + std::string(table) + ".txt");
+                AddTable(catalog, table, std::string(bytes.begin(), bytes.end()));
+            }
+            SortCatalog(catalog);
+            catalog.loaded = true;
+            if (catalog.items.empty()) catalog.status = "Item names are unavailable. Category and quality conditions can still be used.";
+            return catalog;
+        });
+    }
+    if (state->loading.valid() && state->loading.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
+        try { state->catalog = state->loading.get(); }
+        catch (...) { state->catalog.status = "Item lists could not be loaded."; }
+    }
+    return state->catalog;
+}
+
+static const std::string& GetLootFilterPreviewEngine()
+{
+    static unsigned revision=~0u;
+    static std::string source;
+    if(revision!=g_LootConfigRevision){
+        revision=g_LootConfigRevision;
+        if(!LootFilterConfig::Read((std::filesystem::path(GetExecutableDir())/"lootfilter.lua").string(),source))source.clear();
+    }
+    return source;
+}
+
+#include "../ItemFilter/LootFilterRuleBuilderUI.inl"
+#include "../ItemFilter/LootFilterPreviewUI.inl"
+#include "../ItemFilter/LootFilterEditorUI.inl"
+#include "../QuestJournalUI.inl"
+
 void ShowLootMenu()
 {
     if (!showLootMenu)
     {
-        if (lootConfigLoaded)
-            SaveLootFilterConfig("lootfilter_config.lua");
         lootConfigLoaded = false;
         lootLogicLoaded = false;
         return;
@@ -8374,32 +8048,31 @@ void ShowLootMenu()
         if (ShouldDrawWindowBackgroundImage(kWindowBg_Loot))
             DrawWindowBackgroundImage(kWindowBg_Loot);
         DrawWindowTitleAndClose("D2RLoot Settings", &showLootMenu);
+        QuestJournal::Viewed("LootFilter");
         PopFontSafe(3);
         ImGui::Separator();
         ImGui::Dummy(ImVec2(0.0f, 3.0f));
         DrawCreateFilterPopup();
 
-        // --- Centered Wrapped Text Helper ---
-        auto CenteredWrappedText = [&](const std::string& prefix, const std::string& text,
-            const ImVec4& prefixColor = ImVec4(1, 0.7f, 0.3f, 1.0f),
-            const ImVec4& valueColor = ImVec4(1, 1, 1, 1))
-            {
-                ImVec2 avail = ImGui::GetContentRegionAvail();
-                float leftOffset = 10.0f;
-                float wrapWidth = avail.x - leftOffset;
-
-                ImVec2 prefixSize = ImGui::CalcTextSize(prefix.c_str(), nullptr, false, wrapWidth);
-                ImVec2 valueSize = ImGui::CalcTextSize(text.c_str(), nullptr, false, wrapWidth);
-                float totalWidth = prefixSize.x + valueSize.x;
-                float cursorX = leftOffset + (wrapWidth - totalWidth) * 0.5f;
-                if (cursorX < leftOffset) cursorX = leftOffset;
-
-                ImGui::SetCursorPosX(cursorX);
-                ImGui::TextColored(prefixColor, "%s", prefix.c_str());
-                ImGui::SameLine(0, 0);
-                ImGui::TextColored(valueColor, "%s", text.c_str());
-            };
-
+        const auto currentDisplayName = s_activeFilterInternalName.empty()
+            ? (g_LootFilterHeader.Title.empty() ? std::string("Custom") : g_LootFilterHeader.Title)
+            : GetFilterDisplayName(s_activeFilterInternalName);
+        ImGui::AlignTextToFramePadding();ImGui::TextUnformatted("Filter");ImGui::SameLine();
+        ImGui::SetNextItemWidth((std::min)(360.f,ImGui::GetContentRegionAvail().x*.4f));
+        const auto comboLabel=s_pendingFilter.empty()?currentDisplayName:GetFilterDisplayName(s_pendingFilter);
+        if(ImGui::BeginCombo("##selected_filter",comboLabel.c_str())){
+            for(const auto& name:GetOrderedFilterList())if(ImGui::Selectable(GetFilterDisplayName(name).c_str(),name==s_activeFilterInternalName))s_pendingFilter=name;
+            ImGui::EndCombo();
+        }
+        if(!s_pendingFilter.empty()){
+            ImGui::SameLine();if(ThemeButton("Use selected filter")){
+                if(CopyModFilterToActive(s_pendingFilter)){
+                    s_activeFilterInternalName=s_pendingFilter;
+                    LoadLootFilterConfig(GetLootFilterConfigPath());LoadLootFilterLogic(lootFile);
+                }
+                s_pendingFilter.clear();
+            }
+        }
         if (!s_lootFilterUpdateStatus.empty())
         {
             if (s_lootFilterUpdateStatus.size() >= 9 && s_lootFilterUpdateStatus.compare(0, 9, "Updated to") == 0 && !s_lootFilterUpdateApplied)
@@ -8419,582 +8092,112 @@ void ShowLootMenu()
                 s_lootFilterUpdateApplied = false;
             }
         }
-        if (!g_LootFilterHeader.Version.empty())
-            CenteredWrappedText("My D2RLoot Version: ", g_LootFilterHeader.Version);
-        ImGui::SameLine(0.0f, 12.0f);
-        if (ThemeButton(s_lootFilterUpdating ? "Updating..." : "Update"))
-        {
-            if (!s_lootFilterUpdating)
+        ImGui::SameLine();if(ThemeButton("Files, sounds & updates..."))ImGui::OpenPopup("LootFilterTools");
+        ImGui::SetNextWindowSizeConstraints({650,0},{850,650});
+        if(ImGui::BeginPopup("LootFilterTools")){
+            if (!g_LootFilterHeader.Version.empty())
+                ImGui::Text("D2RLoot version: %s", g_LootFilterHeader.Version.c_str());
+            ImGui::SameLine(0.0f, 12.0f);
+            if (ThemeButton(s_lootFilterUpdating ? "Updating..." : "Update"))
             {
-                s_lootFilterUpdating = true;
-                s_lootFilterUpdateStatus.clear();
-                s_lootFilterUpdateApplied = false;
-                std::thread(LootFilterUpdateThread).detach();
-            }
-        }
-        if (!s_lootFilterUpdateStatus.empty())
-        {
-            ImGui::SameLine(0.0f, 8.0f);
-            ImGui::TextColored(ImVec4(0.7f, 0.9f, 0.7f, 1.0f), "%s", s_lootFilterUpdateStatus.c_str());
-        }
-
-        // --- My Selected Filter: centered styled display + dropdown to change ---
-        std::vector<std::string> orderedFilters = GetOrderedFilterList();
-        std::string currentDisplayName = s_activeFilterInternalName.empty()
-            ? (g_LootFilterHeader.Title.empty() ? "Custom" : g_LootFilterHeader.Title)
-            : GetFilterDisplayName(s_activeFilterInternalName);
-        CenteredWrappedText("My Selected Filter: ", currentDisplayName);
-
-        float comboWidth = 220.0f;
-        ImVec2 avail = ImGui::GetContentRegionAvail();
-        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (avail.x - comboWidth) * 0.5f);
-        std::string comboLabel = s_pendingFilter.empty() ? currentDisplayName : GetFilterDisplayName(s_pendingFilter);
-        ImGui::SetNextItemWidth(comboWidth);
-        BeginFrameBgImageRegion();
-        if (ImGui::BeginCombo("##selected_filter", comboLabel.c_str()))
-        {
-            for (const auto& internalName : orderedFilters)
-            {
-                std::string displayName = GetFilterDisplayName(internalName);
-                bool isActive = (internalName == s_activeFilterInternalName);
-                std::string label = displayName + (isActive ? " \xe2\x9c\x93" : "");
-                if (ImGui::Selectable(label.c_str(), isActive))
+                if (!s_lootFilterUpdating)
                 {
-                    s_pendingFilter = internalName;
+                    s_lootFilterUpdating = true;
+                    s_lootFilterUpdateStatus.clear();
+                    s_lootFilterUpdateApplied = false;
+                    std::thread(LootFilterUpdateThread).detach();
                 }
             }
-            ImGui::EndCombo();
-        }
-        EndFrameBgImageRegion();
-        if (!s_pendingFilter.empty())
-        {
-            ImGui::Dummy(ImVec2(0.0f, 4.0f));
-            std::string applyLabel = "Apply \"" + GetFilterDisplayName(s_pendingFilter) + "\":";
-            float applyW = ImGui::CalcTextSize(applyLabel.c_str()).x;
-            ImVec2 availApply = ImGui::GetContentRegionAvail();
-            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (availApply.x - applyW) * 0.5f);
-            ImGui::Text("%s", applyLabel.c_str());
-            float btnW1 = ImGui::CalcTextSize("Use this filter").x + ImGui::GetStyle().FramePadding.x * 2;
-            ImVec2 availApply2 = ImGui::GetContentRegionAvail();
-            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (availApply2.x - btnW1) * 0.5f);
-            if (ThemeButton("Use this filter"))
+            if (!s_lootFilterUpdateStatus.empty())
             {
-                if (CopyModFilterToActive(s_pendingFilter))
-                {
-                    s_activeFilterInternalName = s_pendingFilter;
-                    LoadLootFilterConfig(GetLootFilterConfigPath());
-                    LoadLootFilterLogic(lootFile);
-                }
-                s_pendingFilter.clear();
+                ImGui::SameLine(0.0f, 8.0f);
+                ImGui::TextColored(ImVec4(0.7f, 0.9f, 0.7f, 1.0f), "%s", s_lootFilterUpdateStatus.c_str());
             }
-        }
 
-        ImGui::Dummy(ImVec2(0.0f, 5.0f));
-
-        // --- Global options (collapsible) ---
-        if (ImGui::CollapsingHeader("Global options", ImGuiTreeNodeFlags_DefaultOpen))
-        {
-            ImGui::Indent(8.0f);
-            ImGui::Dummy(ImVec2(0.0f, 2.0f));
-
-            // --- Boolean Checkboxes ---
-            auto RenderCheckboxLine = [&](const std::vector<std::pair<std::string, std::string>>& items, std::function<void()> onChanged = nullptr)
-                {
-                    ImVec2 avail = ImGui::GetContentRegionAvail();
-                    float spacing = 10.0f;
-                    float totalWidth = 0.0f;
-
-                    for (auto& item : items)
-                    {
-                        totalWidth += ImGui::CalcTextSize(item.first.c_str()).x + ImGui::GetStyle().FramePadding.x * 2 + ImGui::GetFrameHeight();
-                    }
-                    totalWidth += spacing * (items.size() - 1);
-
-                    float startX = (avail.x - totalWidth) * 0.5f;
-                    if (startX < 0.0f) startX = 0.0f;
-                    ImGui::SetCursorPosX(startX);
-
-                    for (size_t i = 0; i < items.size(); ++i)
-                    {
-                        if (i > 0) ImGui::SameLine(0.0f, spacing);
-
-                        std::string key = items[i].second;
-                        std::string val = "";
-                        auto it = g_LuaVariables.find(key);
-                        if (it != g_LuaVariables.end()) val = it->second;
-
-                        bool boolValue = (val == "true");
-
-                        if (ThemeCheckbox(items[i].first.c_str(), &boolValue))
-                        {
-                            auto it2 = g_LuaVariables.find(key);
-                            if (it2 != g_LuaVariables.end()) it2->second = boolValue ? "true" : "false";
-                            else g_LuaVariables.insert({ key, boolValue ? "true" : "false" });
-                            if (onChanged) onChanged();
-                        }
-
-                        ImVec2 itemMin = ImGui::GetItemRectMin();
-                        ImVec2 itemMax = ImGui::GetItemRectMax();
-                        float textWidth = ImGui::CalcTextSize(items[i].first.c_str()).x;
-                        itemMax.x += textWidth;
-                        if (ImGui::IsMouseHoveringRect(itemMin, itemMax)) hoveredKey = key;
-                    }
-
-                    ImGui::Dummy(ImVec2(0.0f, 3.0f));
-                    ImGui::Separator();
-                    ImGui::Dummy(ImVec2(0.0f, 3.0f));
-                };
-
-            std::vector<std::pair<std::string, std::string>> bools = {
-                { "Allow Overrides", "allowOverrides" },
-                { "Mod Tips", "modTips" },
-                { "Debug Mode", "Debug" },
-                { "Audio Playback", "audioPlayback" }
-            };
-            RenderCheckboxLine(bools, []() { SaveLootFilterConfig("lootfilter_config.lua"); });
-
-            // --- Input Text Helper ---
-            // Map to track which key is in edit mode
-            static std::unordered_map<std::string, bool> g_EditMode;
-
-            auto RenderInputText = [&](const std::string& key, const std::string& label, const std::string& defaultVal = "Not Defined")
-                {
-                    // --- Get value ---
-                    std::string value = defaultVal;
-                    auto it = g_LuaVariables.find(key);
-                    if (it != g_LuaVariables.end()) value = it->second;
-
-                    // Strip quotes for display
-                    if (!value.empty() && value.front() == '"' && value.back() == '"')
-                        value = value.substr(1, value.size() - 2);
-
-                    std::string fullLabel = label + " = ";
-                    float labelWidth = ImGui::CalcTextSize(fullLabel.c_str()).x;
-
-                    ImVec2 cursorPos = ImGui::GetCursorPos();
-                    ImGui::SetCursorPosY(cursorPos.y - 2.0f);
-
-                    ImGui::Text("%s", fullLabel.c_str());
-                    ImGui::SameLine(labelWidth + 10.0f, -3.0f);
-
-                    bool isEditing = g_EditMode[key];
-
-                    if (isEditing)
-                    {
-                        // --- Edit mode: normal input ---
-                        char buffer[512];
-                        strncpy(buffer, value.c_str(), sizeof(buffer));
-                        buffer[sizeof(buffer) - 1] = '\0';
-
-                        std::string inputID = "##val_" + key;
-                        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 60.0f);
-                        BeginFrameBgImageRegion();
-                        bool changed = ImGui::InputText(inputID.c_str(), buffer, sizeof(buffer));
-                        EndFrameBgImageRegion();
-                        ImGui::SameLine();
-                        if (ThemeButton(("Done##" + key).c_str())) g_EditMode[key] = false;
-
-                        if (ImGui::IsItemActivated()) ImGui::SetKeyboardFocusHere(-1);
-
-                        if (changed) {
-                            g_LuaVariables[key] = buffer;
-                            SaveLootFilterConfig("lootfilter_config.lua");
-                        }
-                    }
-                    else
-                    {
-                        // --- Display mode: colored text ---
-                        RenderColoredText(value); // uses your function
-
-                        ImGui::SameLine();
-                        if (ThemeButton(("Edit##" + key).c_str())) g_EditMode[key] = true;
-                    }
-
-                    // --- Hover detection ---
-                    ImVec2 itemMin = ImGui::GetItemRectMin();
-                    ImVec2 itemMax = ImGui::GetItemRectMax();
-                    itemMin.x -= labelWidth;
-                    if (ImGui::IsMouseHoveringRect(itemMin, itemMax)) hoveredKey = key;
-                };
-
-
-
-
-            RenderInputText("reload", "Reload Message");
-            RenderInputText("audioVoice", "Audio Voice");
-            RenderInputText("filter_level", "Filter Level");
-            RenderInputText("language", "Language");
-
-            // --- Filter Titles ---
-            auto RenderFilterTitles = [&]()
-                {
-                    std::string key = "filter_titles";
-                    std::string value = "";
-                    auto it = g_LuaVariables.find(key);
-                    if (it != g_LuaVariables.end()) value = it->second;
-
-                    std::vector<std::string> titles;
-                    if (!value.empty())
-                    {
-                        std::regex titleRegex(R"delim("([^"]*)")delim");
-                        for (auto i = std::sregex_iterator(value.begin(), value.end(), titleRegex);
-                            i != std::sregex_iterator(); ++i)
-                            titles.push_back((*i)[1].str());
-                    }
-                    if (titles.empty()) titles.push_back("Not Defined");
-
-                    std::string ftLabel = "Filter Titles = ";
-                    float labelWidth = ImGui::CalcTextSize(ftLabel.c_str()).x;
-                    ImGui::Text("%s", ftLabel.c_str());
-                    ImGui::SameLine(labelWidth + 10.0f);
-
-                    bool isEditing = g_EditMode[key];
-                    bool anyTitleChanged = false;
-
-                    for (size_t idx = 0; idx < titles.size(); ++idx)
-                    {
-                        if (isEditing)
-                        {
-                            // --- Edit mode: normal input ---
-                            char buffer[256];
-                            strncpy(buffer, titles[idx].c_str(), sizeof(buffer));
-                            buffer[sizeof(buffer) - 1] = '\0';
-
-                            std::string inputID = "##filter_title_" + std::to_string(idx);
-                            ImGui::PushItemWidth(ImGui::CalcTextSize(buffer).x + 12.0f);
-                            BeginFrameBgImageRegion();
-                            bool changed = ImGui::InputText(inputID.c_str(), buffer, sizeof(buffer));
-                            EndFrameBgImageRegion();
-                            ImGui::PopItemWidth();
-
-                            if (changed) { titles[idx] = buffer; anyTitleChanged = true; }
-                        }
-                        else
-                        {
-                            // --- Display mode: colored text ---
-                            RenderColoredText(titles[idx]);
-                        }
-
-                        if (idx + 1 < titles.size())
-                        {
-                            ImGui::SameLine(0, 2);
-                            ImGui::Text(", ");
-                            ImGui::SameLine(0, 0);
-                        }
-                    }
-
-                    ImGui::SameLine();
-                    if (isEditing)
-                    {
-                        if (ThemeButton(("Done##" + key).c_str()))
-                            g_EditMode[key] = false;
-                    }
-                    else
-                    {
-                        if (ThemeButton(("Edit##" + key).c_str()))
-                            g_EditMode[key] = true;
-                    }
-
-                    // --- Update stored value ---
-                    std::string newValue = "{ ";
-                    for (size_t i = 0; i < titles.size(); ++i)
-                    {
-                        newValue += "\"" + titles[i] + "\"";
-                        if (i + 1 < titles.size()) newValue += ", ";
-                    }
-                    newValue += " }";
-                    g_LuaVariables[key] = newValue;
-                    if (anyTitleChanged) SaveLootFilterConfig("lootfilter_config.lua");
-                };
-            RenderFilterTitles();
-
-            ImGui::Unindent(8.0f);
-            ImGui::Dummy(ImVec2(0.0f, 5.0f));
-        }
-
-        // --- Rules section ---
-        static bool s_showAddRulePopup = false;
-        static bool s_addRulePopupJustOpened = false;
-        static char s_addRuleNameBuf[256] = {};
-        ImGui::Dummy(ImVec2(0.0f, 2.0f));
-        if (ImGui::CollapsingHeader("Rules", ImGuiTreeNodeFlags_DefaultOpen))
-        {
-            ImGui::Indent(8.0f);
-            ImGui::Dummy(ImVec2(0.0f, 2.0f));
-            if (ImGui::BeginChild("RulesArea", ImVec2(0, 280), true, ImGuiWindowFlags_None))
+            // --- Sounds section ---
+            if (ImGui::CollapsingHeader("Sounds", ImGuiTreeNodeFlags_None))
             {
-                if (g_LootFilterRules.empty())
+                ImGui::Indent(8.0f);
+                ImGui::Dummy(ImVec2(0.0f, 2.0f));
+                std::vector<std::pair<std::string, std::string>> soundFiles = GetSoundFilesFromBothLocations();
+                if (soundFiles.empty())
                 {
-                    ImGui::TextWrapped("No rules in config, or rules table is empty. Add a new rule using the button below (or edit lootfilter_config.lua directly)");
+                    ImGui::TextWrapped("No sounds in My Filters/sounds, Pandemonium/Sounds, or D2RLAN/Sounds yet. Use \"Import sounds\" to add .mp3, .flac or .wav files.");
                 }
                 else
                 {
-                    static char s_rawEditBuf[8192];
-                    static int s_rawEditRuleIndex = -1;
-                    for (size_t r = 0; r < g_LootFilterRules.size(); r++)
+                    if (ImGui::BeginChild("SoundsList", ImVec2(0, 120), true, ImGuiWindowFlags_None))
                     {
-                        LootFilterRule& rule = g_LootFilterRules[r];
-                        std::string ruleLabel = "Rule " + std::to_string(r + 1);
-                        if (!rule.rawLua.empty())
+                        for (size_t i = 0; i < soundFiles.size(); i++)
                         {
-                            size_t firstLineEnd = rule.rawLua.find('\n');
-                            std::string firstLine = firstLineEnd == std::string::npos ? rule.rawLua : rule.rawLua.substr(0, firstLineEnd);
-                            size_t trim = firstLine.find_first_not_of(" \t");
-                            if (trim != std::string::npos) firstLine = firstLine.substr(trim);
-                            if (!firstLine.empty() && firstLine[0] == '{')
+                            const std::string& path = soundFiles[i].first;
+                            const std::string& name = soundFiles[i].second;
+                            ImGui::Text("%s", name.c_str());
+                            float btnX = ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - 55.0f;
+                            if (btnX > ImGui::GetCursorPosX()) ImGui::SameLine(btnX);
+                            std::string playId = "Play##" + name + std::to_string(i);
+                            if (ThemeButton(playId.c_str(), ImVec2(50.0f, 0.0f)))
                             {
-                                size_t p = firstLine.find("--");
-                                if (p != std::string::npos)
-                                {
-                                    p += 2;
-                                    while (p < firstLine.size() && (firstLine[p] == '-' || firstLine[p] == ' ' || firstLine[p] == '\t'))
-                                        p++;
-                                    firstLine = firstLine.substr(p);
-                                }
-                                else
-                                    firstLine = firstLine.substr(1);
-                                trim = firstLine.find_first_not_of(" \t");
-                                if (trim != std::string::npos) firstLine = firstLine.substr(trim);
+                                if (std::filesystem::exists(path))
+                                    PlaySoundFile(path);
                             }
-                            if (!firstLine.empty()) ruleLabel = firstLine;
                         }
-                        else if (!rule.comment.empty())
-                            ruleLabel = rule.comment;
-                        if (!ruleLabel.empty() && ruleLabel.size() >= 2 && ruleLabel[0] == '-' && ruleLabel[1] == '-')
-                        {
-                            size_t d = 2;
-                            while (d < ruleLabel.size() && (ruleLabel[d] == '-' || ruleLabel[d] == ' ' || ruleLabel[d] == '\t'))
-                                d++;
-                            if (d < ruleLabel.size())
-                                ruleLabel = ruleLabel.substr(d);
-                        }
-                        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x);
-                        if (ImGui::TreeNode(("##rule" + std::to_string(r)).c_str(), "%s", ruleLabel.c_str()))
-                        {
-                            if (s_rawEditRuleIndex != (int)r)
-                            {
-                                s_rawEditRuleIndex = (int)r;
-                                std::vector<std::string> lines;
-                                size_t pos = 0;
-                                while (pos < rule.rawLua.size())
-                                {
-                                    size_t next = rule.rawLua.find('\n', pos);
-                                    if (next == std::string::npos) next = rule.rawLua.size();
-                                    lines.push_back(rule.rawLua.substr(pos, next - pos));
-                                    pos = next + 1;
-                                }
-                                while (!lines.empty())
-                                {
-                                    size_t start = lines.back().find_first_not_of(" \t");
-                                    if (start != std::string::npos) break;
-                                    lines.pop_back();
-                                }
-                                std::string displayLua;
-                                for (size_t i = 0; i < lines.size(); i++)
-                                {
-                                    std::string line = lines[i];
-                                    size_t start = line.find_first_not_of(" \t");
-                                    if (start != std::string::npos) line = line.substr(start);
-                                    if (i > 0 && i < lines.size() - 1 && !line.empty())
-                                        line = "\t" + line;
-                                    if (!displayLua.empty()) displayLua += "\n";
-                                    displayLua += line;
-                                }
-                                while (!displayLua.empty() && (displayLua.back() == '\n' || displayLua.back() == '\r'))
-                                    displayLua.pop_back();
-                                strncpy(s_rawEditBuf, displayLua.c_str(), sizeof(s_rawEditBuf) - 1);
-                                s_rawEditBuf[sizeof(s_rawEditBuf) - 1] = '\0';
-                            }
-                            float lineCount = 1.0f;
-                            for (const char* p = s_rawEditBuf; *p; p++) if (*p == '\n') lineCount += 1.0f;
-                            float lineH = ImGui::GetTextLineHeightWithSpacing();
-                            float editHeight = lineCount * lineH + ImGui::GetStyle().FramePadding.y * 2.0f - 1.0f * lineH;
-                            editHeight = std::clamp(editHeight, 60.0f, 500.0f);
-                            ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
-                            BeginFrameBgImageRegion();
-                            if (ImGui::InputTextMultiline(("##raw_rule" + std::to_string(r)).c_str(), s_rawEditBuf, sizeof(s_rawEditBuf), ImVec2(-1, editHeight)))
-                            {
-                                std::string saved = s_rawEditBuf;
-                                while (!saved.empty() && (saved.back() == '\n' || saved.back() == '\r'))
-                                    saved.pop_back();
-                                rule.rawLua = saved;
-                                SaveLootFilterConfig("lootfilter_config.lua");
-                            }
-                            EndFrameBgImageRegion();
-                            static int s_copiedRuleIndex = -1;
-                            static std::chrono::steady_clock::time_point s_copiedAt;
-                            bool showCopied = (s_copiedRuleIndex == (int)r) && (std::chrono::steady_clock::now() - s_copiedAt) < std::chrono::milliseconds(1500);
-                            if (ThemeButton(showCopied ? "Copied!" : "Copy code"))
-                            {
-                                ImGui::SetClipboardText(s_rawEditBuf);
-                                s_copiedRuleIndex = (int)r;
-                                s_copiedAt = std::chrono::steady_clock::now();
-                            }
-                            ImGui::SameLine();
-                            if (ThemeButton("Remove rule"))
-                            {
-                                g_LootFilterRules.erase(g_LootFilterRules.begin() + r);
-                                SaveLootFilterConfig("lootfilter_config.lua");
-                                if (s_copiedRuleIndex == (int)r) s_copiedRuleIndex = -1;
-                                else if (s_copiedRuleIndex > (int)r) s_copiedRuleIndex--;
-                                if (s_rawEditRuleIndex == (int)r) s_rawEditRuleIndex = -1;
-                                else if (s_rawEditRuleIndex > (int)r) s_rawEditRuleIndex--;
-                                ImGui::TreePop();
-                                ImGui::PopTextWrapPos();
-                                break;
-                            }
-                            if (s_copiedRuleIndex == (int)r && (std::chrono::steady_clock::now() - s_copiedAt) >= std::chrono::milliseconds(1500))
-                                s_copiedRuleIndex = -1;
-                            ImGui::TreePop();
-                        }
-                        ImGui::PopTextWrapPos();
                     }
+                    ImGui::EndChild();  // always call after BeginChild, regardless of return value
                 }
                 ImGui::Dummy(ImVec2(0.0f, 4.0f));
-                float addRuleW = ImGui::CalcTextSize("Add new rule").x + ImGui::GetStyle().FramePadding.x * 2;
-                ImVec2 rulesAvail = ImGui::GetContentRegionAvail();
-                ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (rulesAvail.x - addRuleW) * 0.5f);
-                if (ThemeButton("Add new rule"))
-                {
-                    s_showAddRulePopup = true;
-                    s_addRulePopupJustOpened = true;
-                    s_addRuleNameBuf[0] = '\0';
-                }
-                if (s_showAddRulePopup)
-                {
-                    if (s_addRulePopupJustOpened)
-                    {
-                        ImGui::OpenPopup("Add rule");
-                        s_addRulePopupJustOpened = false;
-                    }
-                    ImGui::SetNextWindowSize(ImVec2(320.0f, 0.0f), ImGuiCond_FirstUseEver);
-                    if (ImGui::BeginPopupModal("Add rule", &s_showAddRulePopup, ImGuiWindowFlags_AlwaysAutoResize))
-                    {
-                        ImGui::Text("Rule name (optional, shown as comment):");
-                        ImGui::SetNextItemWidth(-1.0f);
-                        BeginFrameBgImageRegion();
-                        ImGui::InputText("##addrule_name", s_addRuleNameBuf, sizeof(s_addRuleNameBuf));
-                        EndFrameBgImageRegion();
-                        ImGui::Spacing();
-                        if (ThemeButton("Add", ImVec2(80.0f, 0.0f)))
-                        {
-                            if (!g_LootFilterRules.empty())
-                            {
-                                std::string& lastRaw = g_LootFilterRules.back().rawLua;
-                                while (!lastRaw.empty() && (lastRaw.back() == '\n' || lastRaw.back() == '\r' || lastRaw.back() == ' ' || lastRaw.back() == '\t'))
-                                    lastRaw.pop_back();
-                                if (!lastRaw.empty() && lastRaw.back() == '}')
-                                    lastRaw += ",";
-                                lastRaw += "\n";
-                            }
-                            LootFilterRule newRule;
-                            std::string name(s_addRuleNameBuf);
-                            while (!name.empty() && (name.back() == ' ' || name.back() == '\t')) name.pop_back();
-                            while (!name.empty() && (name.front() == ' ' || name.front() == '\t')) name.erase(0, 1);
-                            if (!name.empty())
-                                newRule.rawLua = "-- " + name + "\n";
-                            newRule.rawLua += "{\n    code = \"isc\",\n    hide = true\n}\n";
-                            g_LootFilterRules.push_back(newRule);
-                            SaveLootFilterConfig("lootfilter_config.lua");
-                            s_showAddRulePopup = false;
-                            ImGui::CloseCurrentPopup();
-                        }
-                        ImGui::SameLine();
-                        if (ThemeButton("Cancel", ImVec2(80.0f, 0.0f)))
-                        {
-                            s_showAddRulePopup = false;
-                            ImGui::CloseCurrentPopup();
-                        }
-                        ImGui::EndPopup();
-                    }
-                }
+                float importSoundsW = ImGui::CalcTextSize("Import sounds").x + ImGui::GetStyle().FramePadding.x * 2;
+                ImVec2 soundsAvail = ImGui::GetContentRegionAvail();
+                ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (soundsAvail.x - importSoundsW) * 0.5f);
+                if (ThemeButton("Import sounds"))
+                    OpenImportSoundsPathInput();
+                DrawImportSoundsPathRow();
+                ImGui::Unindent(8.0f);
             }
-            ImGui::EndChild();
-            ImGui::Unindent(8.0f);
-        }
 
-        ImGui::Dummy(ImVec2(0.0f, 3.0f));
-
-        // --- Sounds section ---
-        if (ImGui::CollapsingHeader("Sounds", ImGuiTreeNodeFlags_DefaultOpen))
-        {
-            ImGui::Indent(8.0f);
-            ImGui::Dummy(ImVec2(0.0f, 2.0f));
-            std::vector<std::pair<std::string, std::string>> soundFiles = GetSoundFilesFromBothLocations();
-            if (soundFiles.empty())
-            {
-                ImGui::TextWrapped("No sounds in My Filters/sounds, Pandemonium/Sounds, or D2RLAN/Sounds yet. Use \"Import sounds\" to add .mp3, .flac or .wav files.");
-            }
-            else
-            {
-                if (ImGui::BeginChild("SoundsList", ImVec2(0, 120), true, ImGuiWindowFlags_None))
-                {
-                    for (size_t i = 0; i < soundFiles.size(); i++)
-                    {
-                        const std::string& path = soundFiles[i].first;
-                        const std::string& name = soundFiles[i].second;
-                        ImGui::Text("%s", name.c_str());
-                        float btnX = ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - 55.0f;
-                        if (btnX > ImGui::GetCursorPosX()) ImGui::SameLine(btnX);
-                        std::string playId = "Play##" + name + std::to_string(i);
-                        if (ThemeButton(playId.c_str(), ImVec2(50.0f, 0.0f)))
-                        {
-                            if (std::filesystem::exists(path))
-                                PlaySoundFile(path);
-                        }
-                    }
-                }
-                ImGui::EndChild();  // always call after BeginChild, regardless of return value
-            }
+            ImGui::Dummy(ImVec2(0.0f, 3.0f));
+            ImGui::Separator();
             ImGui::Dummy(ImVec2(0.0f, 4.0f));
-            float importSoundsW = ImGui::CalcTextSize("Import sounds").x + ImGui::GetStyle().FramePadding.x * 2;
-            ImVec2 soundsAvail = ImGui::GetContentRegionAvail();
-            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (soundsAvail.x - importSoundsW) * 0.5f);
-            if (ThemeButton("Import sounds"))
-                OpenImportSoundsPathInput();
-            DrawImportSoundsPathRow();
-            ImGui::Unindent(8.0f);
+
+            // --- Import / Open / Guide / Create buttons ---
+            float btnImportW = ImGui::CalcTextSize("Import Filter").x + ImGui::GetStyle().FramePadding.x * 2;
+            float btnOpenW = ImGui::CalcTextSize("Open Filter").x + ImGui::GetStyle().FramePadding.x * 2;
+            float btnCreateW = ImGui::CalcTextSize("Create my own filter").x + ImGui::GetStyle().FramePadding.x * 2;
+            float btnGuideW = ImGui::CalcTextSize("Filter Guide").x + ImGui::GetStyle().FramePadding.x * 2;
+            float spacing = ImGui::GetStyle().ItemSpacing.x;
+            float totalBtnW = btnImportW + btnOpenW + btnCreateW + btnGuideW + spacing * 3;
+            ImVec2 availBtns = ImGui::GetContentRegionAvail();
+            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (availBtns.x - totalBtnW) * 0.5f);
+            if (ThemeButton("Import Filter"))
+                OpenImportPathInput();
+            ImGui::SameLine();
+            if (ThemeButton("Open Filter"))
+            {
+                std::string path = GetLootFilterConfigPathAbsolute();
+                if (std::filesystem::exists(path))
+                    OpenInShell(path);
+            }
+            ImGui::SameLine();
+            if (ThemeButton("Create my own filter"))
+                OpenCreateFilterPopup();
+            ImGui::SameLine();
+            if (ThemeButton("Filter Guide"))
+            {
+                OpenInShell("https://locbones.github.io/D2RLAN-LootFilterGuide");
+            }
+            DrawImportFilterPathRow();
+            ImGui::Dummy(ImVec2(0.0f, 3.0f));
+
+            ImGui::EndPopup();
         }
-
-        ImGui::Dummy(ImVec2(0.0f, 3.0f));
-        ImGui::Separator();
-        ImGui::Dummy(ImVec2(0.0f, 4.0f));
-
-        // --- Import / Open / Guide / Create buttons ---
-        float btnImportW = ImGui::CalcTextSize("Import Filter").x + ImGui::GetStyle().FramePadding.x * 2;
-        float btnOpenW = ImGui::CalcTextSize("Open Filter").x + ImGui::GetStyle().FramePadding.x * 2;
-        float btnCreateW = ImGui::CalcTextSize("Create my own filter").x + ImGui::GetStyle().FramePadding.x * 2;
-        float btnGuideW = ImGui::CalcTextSize("Filter Guide").x + ImGui::GetStyle().FramePadding.x * 2;
-        float spacing = ImGui::GetStyle().ItemSpacing.x;
-        float totalBtnW = btnImportW + btnOpenW + btnCreateW + btnGuideW + spacing * 3;
-        ImVec2 availBtns = ImGui::GetContentRegionAvail();
-        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (availBtns.x - totalBtnW) * 0.5f);
-        if (ThemeButton("Import Filter"))
-            OpenImportPathInput();
-        ImGui::SameLine();
-        if (ThemeButton("Open Filter"))
+        ImGui::Spacing();
         {
-            std::string path = GetLootFilterConfigPathAbsolute();
-            if (std::filesystem::exists(path))
-                OpenInShell(path);
+            const auto art=LegacyTransmog::Skin::PanelArtwork();
+            LootFilterConfig::Builder::UI::panelArt={ImTextureID(art.texture),float(art.width),float(art.height),float(art.frameWidth)};
+            PushFontSafe(2);
+            RenderLootFilterEditor();
+            PopFontSafe(2);
         }
-        ImGui::SameLine();
-        if (ThemeButton("Create my own filter"))
-            OpenCreateFilterPopup();
-        ImGui::SameLine();
-        if (ThemeButton("Filter Guide"))
-        {
-            OpenInShell("https://locbones.github.io/D2RLAN-LootFilterGuide");
-        }
-        DrawImportFilterPathRow();
-        ImGui::Dummy(ImVec2(0.0f, 3.0f));
-
-        // --- Bottom Description ---
-        std::string desc = "Hover over an option to see its description.";
-        if (!hoveredKey.empty() && g_LuaDescriptions.count(hoveredKey))
-            desc = g_LuaDescriptions.at(hoveredKey);
-
-        DrawBottomDescription(desc);
 
         ImGui::PopStyleColor();
         ImGui::End();
@@ -10113,12 +9316,102 @@ void ShowD2RHUDMenu()
             };
 
         drawCheckbox("Monster Stats Display", &d2rHUDConfig.MonsterStatsDisplay, "Monster Stats Display", "- Displays HP and Resistances of Monsters in real-time\n- Uses data retrieved directly from the game for accuracy\n- Values for -Enemy Resistance% (when applied by items) are not shown, they don't actually affect monsters\n\n", "This setting is best displayed using either of the Advanced Display Modes in D2RLAN", GetLockInfo(modName, &ModOverrideSettings::MonsterStatsDisplay));
-        drawCheckbox("Sundered Monster UMods", &d2rHUDConfig.SunderedMonUMods, "Sundered Monster UMods", "- Allows Sundering mechanic to reduce MonUMod bonuses\n(Bonuses such as Cold Enchanted, Stone Skin, etc)\n- This edit applies when the monster is spawned\n\n", "If the monster is under 100 resistance (sunder threshold), then this edit will not apply", GetLockInfo(modName, &ModOverrideSettings::SunderedMonUMods));
+        drawCheckbox("Sundered Monster UMods", &d2rHUDConfig.SunderedMonUMods, "Sundered Monster UMods", "- Applies immunity reduction to MonUMod bonuses\n(Bonuses such as Cold Enchanted, Stone Skin, etc)\n- Refreshes on damage, monster hover, and UMod changes\n\n", "If the monster is under 100 resistance (sunder threshold), then this edit will not apply", GetLockInfo(modName, &ModOverrideSettings::SunderedMonUMods));
         drawCheckbox("Minion Equality", &d2rHUDConfig.MinionEquality, "Minion Equality", "- Champ/Uniques minions assume their master's drops\n(Determined by your TreasureClassEx.txt entries)\n\n", "Requires TreasureClassEx.txt, Levels.txt, Monstats.txt and SuperUniques.txt to correctly map the drops between types", GetLockInfo(modName, &ModOverrideSettings::MinionEquality));
         drawCheckbox("Gamble Cost Control", &d2rHUDConfig.GambleCostControl, "Gamble Cost Control", "- Allows the gamble cost column to be used by AMW.txt\n- If a value of -1 is specified, it will use retail cost logic\n- If Disabled, only ring and amulet costs may be changed\n\n", "The maximum gamble cost will be determined by your in-game gold limits (defined in Memory Edits)", GetLockInfo(modName, &ModOverrideSettings::GambleCostControl));
         drawCheckbox("Combat Log", &d2rHUDConfig.CombatLog, "Combat Log", "- Displays real-time combat logs in system chat\n    - RNG rolls for Hit, Block and Dodge results\n    - Elemental Type, +DMG%, Length and Final Damage\n    - Remaining Monster Health\n- Uses data retrieved directly from the game for accuracy\n\n", "This feature is also utilized by the 'attackinfo 1' cheat\nExpect formatting and usage to adapt over time", GetLockInfo(modName, &ModOverrideSettings::CombatLog));
-        drawCheckbox("Transmog Visuals", &d2rHUDConfig.TransmogVisuals, "Transmog Visuals", "- Allows you to transform visuals of applicable items\n(Make your Hand Axe look like a Short Sword, etc)\n- Requires mod to provide items/sets/uniques.json\n- Mod Author decides all transmog possibilities\n- Applies both in-game and at the main menu\n\n", "Currently only basic status text is added to the item\nExpect it to include the target item name in the future", GetLockInfo(modName, &ModOverrideSettings::TransmogVisuals));
-        drawCheckbox("Extended Itemcodes", &d2rHUDConfig.ExtendedItemcodes, "Extended Itemcodes", "- Allows you to use 4-length item codes\n(Such as ic69, twrk, 1337, etc)\n- Without this, 4-length item codes will have no visuals\n- Visuals are applied to both inventory and world views\n\n", "Currently requires the Transmog Visuals option to be enabled", GetLockInfo(modName, &ModOverrideSettings::ExtendedItemcodes));
+        drawCheckbox("Transmog Visuals", &d2rHUDConfig.TransmogVisuals, "Transmog Visuals", "- Allows you to transform visuals of applicable items\n(Make your Hand Axe look like a Short Sword, etc)\n- Uses the mod's transmog stat and transmog_table.txt\n- Mod Author decides all transmog possibilities\n- Applies both in-game and at the main menu\n\n", "Four-character item codes work independently when native HD support is active", GetLockInfo(modName, &ModOverrideSettings::TransmogVisuals));
+        const float pickupLabelWidth = ImGui::CalcTextSize("Disable Right-Click Item Pickup").x + ImGui::GetFrameHeight() + ImGui::GetStyle().ItemInnerSpacing.x;
+        const char* pickupLabel = pickupLabelWidth <= ImGui::GetContentRegionAvail().x
+            ? "Disable Right-Click Item Pickup###DisableRightClickItemPickup"
+            : "Disable Right-Click\nItem Pickup###DisableRightClickItemPickup";
+        if (ThemeCheckbox(pickupLabel, &d2rHUDConfig.DisableRightClickItemPickup))
+        {
+            D3Whirlwind::SetRightClickPickupDisabled(d2rHUDConfig.DisableRightClickItemPickup);
+            SaveFullGrailConfig(configFilePath, false);
+        }
+        if (ImGui::IsItemHovered())
+        {
+            descriptionTitle = "Disable Right-Click Item Pickup";
+            descriptionText = "- Prevents right-clicks from picking up ground items\n"
+                "- Use left-click to pick up items instead\n"
+                "- Also applies while using D3 Style Whirlwind\n"
+                "- Inventory right-click actions and automatic gold pickup are unchanged\n\n";
+            descriptionNote = "Applies immediately. Defaults off.";
+        }
+        if (ThemeCheckbox("Quantity Right-Clicks", &d2rHUDConfig.QuantityRightClicks))
+        {
+            LegacyTransmog::SetQuantityRightClicks(d2rHUDConfig.QuantityRightClicks);
+            SaveFullGrailConfig(configFilePath, false);
+        }
+        if (ImGui::IsItemHovered())
+        {
+            descriptionTitle = "Quantity Right-Clicks";
+            descriptionText = "- Right-click a non-transmog stack to separate one item\n- Keep shows the original stack; New stack receives the chosen amount\n- Choose the final quantity and click Split\n- Example: choose 20 from 88 to keep stacks of 68 and 20\n- Uses free inventory, cube or personal stash slots\n- Close or click elsewhere to keep the initial one-item split\n- Full storage leaves the original stack unchanged\n\n";
+            descriptionNote = LegacyTransmog::StackSplitStatus();
+        }
+        ImGui::Indent();
+        if (ThemeCheckbox("Minimalist Quantity Popup", &d2rHUDConfig.MinimalistQuantityPopup))
+        {
+            LegacyTransmog::SetMinimalistQuantityPopup(d2rHUDConfig.MinimalistQuantityPopup);
+            SaveFullGrailConfig(configFilePath, false);
+        }
+        if (ImGui::IsItemHovered())
+        {
+            descriptionTitle = "Minimalist Quantity Popup";
+            descriptionText = "- Uses the compact quantity-entry layout\n- Hides item images and the two-stack preview\n- Applies immediately and remembers your preference\n\n";
+            descriptionNote = "Quantity Right-Clicks must be enabled.";
+        }
+        ImGui::Unindent();
+        if (ThemeCheckbox("Persistent Summons", &d2rHUDConfig.PersistentSummons))
+        {
+            SummonPersistence::SetEnabled(d2rHUDConfig.PersistentSummons);
+            SaveFullGrailConfig(configFilePath, false);
+        }
+        if (ImGui::IsItemHovered())
+        {
+            descriptionTitle = "Persistent Summons";
+            descriptionText = "- Restores surviving permanent minions in your next game\n"
+                "- Supports all classes and custom permanent summons\n"
+                "- Timed summons are excluded\n"
+                "- Iron Golem retains its native save behavior\n\n";
+            descriptionNote = "Requires offline play or the local TCP/IP host's D2RHUD; the host controls persistence.";
+            const ImVec2 mousePos = ImGui::GetIO().MousePos;
+            ImGui::SetNextWindowPos(ImVec2(mousePos.x + 70.0f, mousePos.y), ImGuiCond_Always);
+            ImGui::BeginTooltip();
+            ImGui::PushTextWrapPos(ImGui::GetCursorPos().x + 440.0f * menuScale);
+            ImGui::TextUnformatted("Restore surviving permanent minions next game. Timed summons are excluded. Iron Golem keeps its native save behavior. Requires offline play or a local TCP/IP host running D2RHUD.");
+            ImGui::Separator();
+            ImGui::TextWrapped("%s", SummonPersistence::Status());
+            const auto summonStorageStatus = SummonPersistence::StorageStatus();
+            ImGui::TextWrapped("%s", summonStorageStatus.c_str());
+            ImGui::PopTextWrapPos();
+            ImGui::EndTooltip();
+        }
+        if (ThemeCheckbox("D3 Style Whirlwind", &d2rHUDConfig.D3StyleWhirlwind))
+        {
+            D3Whirlwind::SetEnabled(d2rHUDConfig.D3StyleWhirlwind);
+            SaveFullGrailConfig(configFilePath, false);
+        }
+        if (ImGui::IsItemHovered())
+        {
+            descriptionTitle = "D3 Style Whirlwind";
+            descriptionText = "- Hold the assigned mouse button to keep Whirlwind active\n"
+                "- Steer continuously by moving the cursor\n"
+                "- Click nearby items with the other mouse button to pick them up\n"
+                "- Pays the native cast cost once per second\n\n";
+            descriptionNote = "Available for your local/offline or TCP/IP host character. Charged item skills retain native behavior.";
+            const ImVec2 mousePos = ImGui::GetIO().MousePos;
+            ImGui::SetNextWindowPos(ImVec2(mousePos.x + 70.0f, mousePos.y), ImGuiCond_Always);
+            ImGui::BeginTooltip();
+            ImGui::PushTextWrapPos(ImGui::GetCursorPos().x + 440.0f * menuScale);
+            ImGui::TextUnformatted("Hold Whirlwind's assigned mouse button and move the cursor to steer. Click nearby ground items with the other mouse button to pick them up. Uses one native cast cost per second. Available for your local/offline or TCP/IP host character.");
+            ImGui::PopTextWrapPos();
+            ImGui::EndTooltip();
+        }
+        if (!ItemCodes::Installed()) {
+            drawCheckbox("Extended Itemcodes (legacy)", &d2rHUDConfig.ExtendedItemcodes, "Extended Itemcodes", "- Legacy visual fallback for four-character item codes\n- Uses transmog_table.txt when native HD support is unavailable\n\n", "Used when native four-character HD support is unavailable", GetLockInfo(modName, &ModOverrideSettings::ExtendedItemcodes));
+        }
         drawCheckbox("Chat Sounds", &d2rHUDConfig.ChatSounds, "Chat Sounds", "- Plays a notification sound when other players send chat\n- Does not play for your own messages\n- Controlled by D2RHUD options (not chat panel widget)\n\n", "Toggle this to enable or disable chat notification sounds", nullptr);
         if (ImGui::IsItemDeactivatedAfterEdit())
             SaveFullGrailConfig(configFilePath, false);
@@ -10205,8 +9498,64 @@ void ShowD2RHUDMenu()
                 EndFrameBgImageRegion();
                 ImGui::PopItemWidth();
             },
-            "Sunder Value", "- Controls the Sundered monster value\n(When specified value is reached, reduction stops)\n- Only applies when monster is above 100 resistance\n- Applies edit at the time of monster spawn\n- States like Conviction will apply at full effect\n(Instead of by 1/5 if the monster is immune)\n- For TCPIP, the highest sunder value for each element\nFound among all players will be applied\n\n", "Requires compatible sunder-edited mod files to use\nMore info available at D2RModding Discord", true, 42.0f, GetLockInfo(modName, &ModOverrideSettings::SunderValue)
+            "Sunder Value", "- Sets the floor for immunity reduction (default: 99)\n- Subtracts immunity pierce linearly from resistance >= 100\n- Refreshes after equipment or resistance changes\n- States like Conviction will apply at full effect\n(Instead of by 1/5 if the monster is immune)\n- For TCPIP, the highest sunder value for each element\nFound among all players will be applied\n\n", "Requires compatible sunder-edited mod files to use\nMore info available at D2RModding Discord", true, 42.0f, GetLockInfo(modName, &ModOverrideSettings::SunderValue)
         );
+
+        ImGui::Separator();
+        const bool workshopOpen = ImGui::CollapsingHeader("Workshop");
+        if (ImGui::IsItemHovered() || ImGui::IsItemToggledOpen()) {
+            descriptionTitle = "Workshop";
+            descriptionText = "Unfinished features for exploring the engine's limits and planning future modding work.\n\n"
+                "These prototypes are experiments and may change as development continues.\n\n"
+                "- Survivor Arena: an automatic-combat survival experiment\n"
+                "- Act VI: a sixth-act campaign and engine expansion prototype\n\n";
+            descriptionNote = "Both features default to off. Enable the ones you want to explore; use a separate test character.";
+        }
+        if (workshopOpen) {
+            ImGui::Indent();
+            if (ThemeCheckbox("Survivor Arena", &d2rHUDConfig.SurvivorArena)) {
+                CubeMap::SetSurvivorsEnabled(d2rHUDConfig.SurvivorArena);
+                SaveFullGrailConfig(configFilePath, false);
+            }
+            if (ImGui::IsItemHovered()) {
+                descriptionTitle = "Survivor Arena";
+                descriptionText = "Unfinished prototype for exploring engine limits and planning future mods.\n\n"
+                    "- Approach Charsi in Act I to enter Sanctuary Survivors\n"
+                    "- Survive ten minutes with automatic class attacks\n"
+                    "- Each class has separate saved arena progress\n"
+                    "- Your normal hero returns with their original equipment and skills\n\n";
+                descriptionNote = "Defaults off. The host must enable it for entry. Disabling blocks new entries; an active run can still finish or return to town.";
+                const auto mouse = ImGui::GetIO().MousePos;
+                ImGui::SetNextWindowPos(ImVec2(mouse.x + 70.0f, mouse.y), ImGuiCond_Always);
+                ImGui::BeginTooltip();
+                ImGui::PushTextWrapPos(ImGui::GetCursorPos().x + 440.0f * menuScale);
+                ImGui::TextUnformatted("Unfinished Workshop prototype. Enable to approach Charsi in Act I and explore the Survivor Arena. The host must also enable it. Existing runs can finish after disabling.");
+                ImGui::Separator();
+                ImGui::TextWrapped("%s", CubeMap::Status());
+                ImGui::PopTextWrapPos();
+                ImGui::EndTooltip();
+            }
+            if (!_stricmp(modName.c_str(),"RMD-MP")) {
+                if (ThemeCheckbox("Act VI", &d2rHUDConfig.ActVI)) {
+                    ExtendedActs::SetRequested(d2rHUDConfig.ActVI);
+                    SaveFullGrailConfig(configFilePath, false);
+                }
+                if (ImGui::IsItemHovered()) {
+                    descriptionTitle="Act VI";
+                    descriptionText="Unfinished prototype for exploring engine limits and planning future mods.\n\n- Baal unlocks Act VI in the same difficulty\n- Return to Act VI town after the credits\n- Act VI's final quest unlocks the next difficulty\n\n";
+                    descriptionNote="Requires a full D2R restart. Prototype content; use a separate test character.";
+                    const auto mouse=ImGui::GetIO().MousePos;
+                    ImGui::SetNextWindowPos(ImVec2(mouse.x+70.0f,mouse.y),ImGuiCond_Always);
+                    ImGui::BeginTooltip();
+                    ImGui::PushTextWrapPos(ImGui::GetCursorPos().x+440.0f*menuScale);
+                    ImGui::TextUnformatted("Unfinished Workshop prototype. Baal unlocks Act VI; its final quest unlocks the next difficulty. Requires the Act VI data pack and -txt. Full D2R restart required. Prototype content; use a separate test character.");
+                    if(ExtendedActs::Requested()!=ExtendedActs::Active())ImGui::TextUnformatted("Restart D2R to apply the selected option.");
+                    ImGui::Separator();ImGui::TextWrapped("%s",ExtendedActs::Status());
+                    ImGui::PopTextWrapPos();ImGui::EndTooltip();
+                }
+            }
+            ImGui::Unindent();
+        }
 
         // --- END LEFT COLUMN ---
         ImGui::NextColumn();
@@ -10390,353 +9739,33 @@ void ShowD2RHUDMenu()
 
 void ShowHUDSettingsMenu()
 {
-    if (!showHUDSettingsMenu)
-        return;
+    if(showHUDSettingsMenu){showLootMenu=true;showHUDSettingsMenu=false;}
+}
 
-
-    EnableAllInput();
-    CenterWindow(ImVec2(800, 400));
-    static std::string hoveredKey;
-    hoveredKey.clear();
-    ImGui::PushStyleColor(ImGuiCol_WindowBg, ShouldDrawWindowBackgroundImage(kWindowBg_ThemeControl) ? ImVec4(0, 0, 0, 0) : s_WindowBgColors[kWindowBg_ThemeControl]);
-    PushFontSafe(3);
-    if (ImGui::Begin("HUD Settings", &showHUDSettingsMenu, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoTitleBar))
+static void DrawThemeWheelIcon(ImDrawList* drawList, const ImVec2& buttonMin, float buttonSize)
+{
+    constexpr int segments = 48;
+    constexpr float tau = 6.28318530718f;
+    const ImVec2 center(buttonMin.x + buttonSize * 0.5f, buttonMin.y + buttonSize * 0.5f);
+    const float radius = buttonSize * 0.38f;
+    const ImVec2 uv = ImGui::GetFontTexUvWhitePixel();
+    drawList->AddCircleFilled(center, radius + buttonSize * 0.04f, IM_COL32(20, 20, 20, 230), segments);
+    drawList->PrimReserve(segments * 3, segments + 1);
+    const unsigned int first = drawList->_VtxCurrentIdx;
+    drawList->PrimWriteVtx(center, uv, IM_COL32(245, 245, 245, 255));
+    for (int i = 0; i < segments; ++i)
     {
-        if (ShouldDrawWindowBackgroundImage(kWindowBg_ThemeControl))
-            DrawWindowBackgroundImage(kWindowBg_ThemeControl);
-        DrawWindowTitleAndClose("HUD Settings", &showHUDSettingsMenu);
-        PopFontSafe(3);
-        ImGui::Separator();
-        ImGui::Dummy(ImVec2(0.0f, 5.0f));
-        DrawCreateFilterPopup();
-
-        // --- Centered Wrapped Text Helper ---
-        auto CenteredWrappedText = [&](const std::string& prefix, const std::string& text,
-            const ImVec4& prefixColor = ImVec4(1, 0.7f, 0.3f, 1.0f),
-            const ImVec4& valueColor = ImVec4(1, 1, 1, 1))
-            {
-                ImVec2 avail = ImGui::GetContentRegionAvail();
-                float leftOffset = 10.0f;
-                float wrapWidth = avail.x - leftOffset;
-
-                ImVec2 prefixSize = ImGui::CalcTextSize(prefix.c_str(), nullptr, false, wrapWidth);
-                ImVec2 valueSize = ImGui::CalcTextSize(text.c_str(), nullptr, false, wrapWidth);
-                float totalWidth = prefixSize.x + valueSize.x;
-                float cursorX = leftOffset + (wrapWidth - totalWidth) * 0.5f;
-                if (cursorX < leftOffset) cursorX = leftOffset;
-
-                ImGui::SetCursorPosX(cursorX);
-                ImGui::TextColored(prefixColor, "%s", prefix.c_str());
-                ImGui::SameLine(0, 0);
-                ImGui::TextColored(valueColor, "%s", text.c_str());
-            };
-
-        static bool hudTriedFilterLoad = false;
-        if (!hudTriedFilterLoad && g_LootFilterHeader.Version.empty())
-        {
-            LoadLootFilterConfig("lootfilter_config.lua");
-            LoadLootFilterLogic("lootfilter.lua");
-            hudTriedFilterLoad = true;
-        }
-        if (!s_lootFilterUpdateStatus.empty())
-        {
-            if (s_lootFilterUpdateStatus.size() >= 9 && s_lootFilterUpdateStatus.compare(0, 9, "Updated to") == 0 && !s_lootFilterUpdateApplied)
-            {
-                if (!s_lootFilterNewVersion.empty())
-                    g_LootFilterHeader.Version = s_lootFilterNewVersion;
-                else
-                    LoadLootFilterLogic(lootFile);
-                s_lootFilterUpdateApplied = true;
-            }
-            auto now = std::chrono::steady_clock::now();
-            if (std::chrono::duration_cast<std::chrono::seconds>(now - s_lootFilterUpdateStatusTime).count() >= 4)
-            {
-                s_lootFilterUpdateStatus.clear();
-                s_lootFilterUpdateStatusTime = {};
-                s_lootFilterNewVersion.clear();
-                s_lootFilterUpdateApplied = false;
-            }
-        }
-        if (!g_LootFilterHeader.Version.empty())
-            CenteredWrappedText("My D2RLoot Version: ", g_LootFilterHeader.Version);
-        ImGui::SameLine(0.0f, 12.0f);
-        if (ThemeButton(s_lootFilterUpdating ? "Updating...##hud" : "Update##hud"))
-        {
-            if (!s_lootFilterUpdating)
-            {
-                s_lootFilterUpdating = true;
-                s_lootFilterUpdateStatus.clear();
-                s_lootFilterUpdateApplied = false;
-                std::thread(LootFilterUpdateThread).detach();
-            }
-        }
-        if (!s_lootFilterUpdateStatus.empty())
-        {
-            ImGui::SameLine(0.0f, 8.0f);
-            ImGui::TextColored(ImVec4(0.7f, 0.9f, 0.7f, 1.0f), "%s", s_lootFilterUpdateStatus.c_str());
-        }
-
-        // --- My Selected Filter: centered styled display + dropdown to change ---
-        std::vector<std::string> orderedFiltersHUD = GetOrderedFilterList();
-        std::string currentDisplayNameHUD = s_activeFilterInternalName.empty()
-            ? (g_LootFilterHeader.Title.empty() ? "Custom" : g_LootFilterHeader.Title)
-            : GetFilterDisplayName(s_activeFilterInternalName);
-        CenteredWrappedText("My Selected Filter: ", currentDisplayNameHUD);
-
-        float comboWidthHUD = 220.0f;
-        ImVec2 availHUD = ImGui::GetContentRegionAvail();
-        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (availHUD.x - comboWidthHUD) * 0.5f);
-        std::string comboLabelHUD = s_pendingFilter.empty() ? currentDisplayNameHUD : GetFilterDisplayName(s_pendingFilter);
-        ImGui::SetNextItemWidth(comboWidthHUD);
-        BeginFrameBgImageRegion();
-        if (ImGui::BeginCombo("##selected_filter_hud", comboLabelHUD.c_str()))
-        {
-            for (const auto& internalName : orderedFiltersHUD)
-            {
-                std::string displayName = GetFilterDisplayName(internalName);
-                bool isActive = (internalName == s_activeFilterInternalName);
-                std::string label = displayName + (isActive ? " \xe2\x9c\x93" : "");
-                if (ImGui::Selectable(label.c_str(), isActive))
-                {
-                    s_pendingFilter = internalName;
-                }
-            }
-            ImGui::EndCombo();
-        }
-        EndFrameBgImageRegion();
-        if (!s_pendingFilter.empty())
-        {
-            ImGui::Dummy(ImVec2(0.0f, 4.0f));
-            std::string applyLabelHUD = "Apply \"" + GetFilterDisplayName(s_pendingFilter) + "\":";
-            float applyWHUD = ImGui::CalcTextSize(applyLabelHUD.c_str()).x;
-            ImVec2 availApplyHUD = ImGui::GetContentRegionAvail();
-            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (availApplyHUD.x - applyWHUD) * 0.5f);
-            ImGui::Text("%s", applyLabelHUD.c_str());
-            float btnW1HUD = ImGui::CalcTextSize("Use this filter").x + ImGui::GetStyle().FramePadding.x * 2;
-            ImVec2 availApply2HUD = ImGui::GetContentRegionAvail();
-            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (availApply2HUD.x - btnW1HUD) * 0.5f);
-            if (ThemeButton("Use this filter##hud"))
-            {
-                if (CopyModFilterToActive(s_pendingFilter))
-                {
-                    s_activeFilterInternalName = s_pendingFilter;
-                    LoadLootFilterConfig(GetLootFilterConfigPath());
-                    LoadLootFilterLogic(lootFile);
-                }
-                s_pendingFilter.clear();
-            }
-        }
-
-        ImGui::Dummy(ImVec2(0.0f, 3.0f));
-        ImGui::Separator();
-        ImGui::Dummy(ImVec2(0.0f, 5.0f));
-
-        // --- Boolean Checkboxes ---
-        auto RenderCheckboxLine = [&](const std::vector<std::pair<std::string, std::string>>& items)
-            {
-                ImVec2 avail = ImGui::GetContentRegionAvail();
-                float spacing = 10.0f;
-                float totalWidth = 0.0f;
-
-                for (auto& item : items)
-                {
-                    totalWidth += ImGui::CalcTextSize(item.first.c_str()).x + ImGui::GetStyle().FramePadding.x * 2 + ImGui::GetFrameHeight();
-                }
-                totalWidth += spacing * (items.size() - 1);
-
-                float startX = (avail.x - totalWidth) * 0.5f;
-                if (startX < 0.0f) startX = 0.0f;
-                ImGui::SetCursorPosX(startX);
-
-                for (size_t i = 0; i < items.size(); ++i)
-                {
-                    if (i > 0) ImGui::SameLine(0.0f, spacing);
-
-                    std::string key = items[i].second;
-                    std::string val = "";
-                    auto it = g_LuaVariables.find(key);
-                    if (it != g_LuaVariables.end()) val = it->second;
-
-                    bool boolValue = (val == "true");
-
-                    if (ThemeCheckbox(items[i].first.c_str(), &boolValue))
-                    {
-                        auto it2 = g_LuaVariables.find(key);
-                        if (it2 != g_LuaVariables.end()) it2->second = boolValue ? "true" : "false";
-                        else g_LuaVariables.insert({ key, boolValue ? "true" : "false" });
-                    }
-
-                    ImVec2 itemMin = ImGui::GetItemRectMin();
-                    ImVec2 itemMax = ImGui::GetItemRectMax();
-                    float textWidth = ImGui::CalcTextSize(items[i].first.c_str()).x;
-                    itemMax.x += textWidth;
-                    if (ImGui::IsMouseHoveringRect(itemMin, itemMax)) hoveredKey = key;
-                }
-
-                ImGui::Dummy(ImVec2(0.0f, 3.0f));
-                ImGui::Separator();
-                ImGui::Dummy(ImVec2(0.0f, 3.0f));
-            };
-
-        std::vector<std::pair<std::string, std::string>> bools = {
-            { "Allow Overrides", "allowOverrides" },
-            { "Mod Tips", "modTips" },
-            { "Debug Mode", "Debug" },
-            { "Audio Playback", "audioPlayback" }
-        };
-        RenderCheckboxLine(bools);
-
-        // --- Input Text Helper ---
-        auto RenderInputText = [&](const std::string& key, const std::string& label, const std::string& defaultVal = "Not Defined")
-            {
-                std::string value = defaultVal;
-                auto it = g_LuaVariables.find(key);
-                if (it != g_LuaVariables.end()) value = it->second;
-                if (!value.empty() && value.front() == '"' && value.back() == '"') value = value.substr(1, value.size() - 2);
-
-                std::string fullLabel = label + " = ";
-                float labelWidth = ImGui::CalcTextSize(fullLabel.c_str()).x;
-                float valueWidth = ImGui::CalcTextSize(value.c_str()).x + 8.0f;
-
-                ImVec2 cursorPos = ImGui::GetCursorPos();
-                ImGui::SetCursorPosY(cursorPos.y - 2.0f);
-
-                ImGui::Text("%s", fullLabel.c_str());
-                ImGui::SameLine(labelWidth + 10.0f, -3.0f);
-
-                char buffer[256];
-                strncpy(buffer, value.c_str(), sizeof(buffer));
-                buffer[sizeof(buffer) - 1] = '\0';
-
-                std::string inputID = "##val_" + key;
-                ImGui::PushItemWidth(valueWidth);
-                BeginFrameBgImageRegion();
-                bool changed = ImGui::InputText(inputID.c_str(), buffer, sizeof(buffer));
-                EndFrameBgImageRegion();
-                if (ImGui::IsItemActivated()) ImGui::SetKeyboardFocusHere(-1);
-                if (changed)
-                {
-                    auto it2 = g_LuaVariables.find(key);
-                    if (it2 != g_LuaVariables.end()) it2->second = buffer;
-                    else g_LuaVariables.insert({ key, buffer });
-                }
-                ImGui::PopItemWidth();
-
-                ImVec2 itemMin = ImGui::GetItemRectMin();
-                ImVec2 itemMax = ImGui::GetItemRectMax();
-                itemMin.x -= labelWidth;
-                if (ImGui::IsMouseHoveringRect(itemMin, itemMax)) hoveredKey = key;
-            };
-
-        RenderInputText("reload", "Reload Message");
-        RenderInputText("audioVoice", "Audio Voice");
-        RenderInputText("filter_level", "Filter Level");
-        RenderInputText("language", "Language");
-
-        // --- Filter Titles ---
-        auto RenderFilterTitles = [&]()
-            {
-                std::string key = "filter_titles";
-                std::string value = "";
-                auto it = g_LuaVariables.find(key);
-                if (it != g_LuaVariables.end()) value = it->second;
-
-                std::vector<std::string> titles;
-                if (!value.empty())
-                {
-                    std::regex titleRegex(R"delim("([^"]*)")delim");
-                    for (auto i = std::sregex_iterator(value.begin(), value.end(), titleRegex);
-                        i != std::sregex_iterator(); ++i)
-                        titles.push_back((*i)[1].str());
-                }
-                if (titles.empty()) titles.push_back("Not Defined");
-
-                std::string ftLabel = "Filter Titles = ";
-                float labelWidth = ImGui::CalcTextSize(ftLabel.c_str()).x;
-                ImGui::Text("%s", ftLabel.c_str());
-                ImGui::SameLine(labelWidth + 10.0f);
-
-                for (size_t idx = 0; idx < titles.size(); ++idx)
-                {
-                    char buffer[256];
-                    strncpy(buffer, titles[idx].c_str(), sizeof(buffer));
-                    buffer[sizeof(buffer) - 1] = '\0';
-
-                    float textWidth = ImGui::CalcTextSize(buffer).x;
-                    ImGui::PushItemWidth(textWidth + 8.0f);
-
-                    std::string inputID = "##filter_title_" + std::to_string(idx);
-                    BeginFrameBgImageRegion();
-                    bool changed = ImGui::InputText(inputID.c_str(), buffer, sizeof(buffer));
-                    EndFrameBgImageRegion();
-                    ImGui::PopItemWidth();
-
-                    if (changed) titles[idx] = buffer;
-                    if (idx + 1 < titles.size()) { ImGui::SameLine(0, 2); ImGui::Text(", "); ImGui::SameLine(0, 0); }
-
-                    ImVec2 itemMin = ImGui::GetItemRectMin();
-                    ImVec2 itemMax = ImGui::GetItemRectMax();
-                    itemMin.x -= labelWidth;
-                    if (ImGui::IsMouseHoveringRect(itemMin, itemMax)) hoveredKey = key;
-                }
-
-                std::string newValue = "{ ";
-                for (size_t i = 0; i < titles.size(); ++i)
-                {
-                    newValue += "\"" + titles[i] + "\"";
-                    if (i + 1 < titles.size()) newValue += ", ";
-                }
-                newValue += " }";
-
-                auto it2 = g_LuaVariables.find(key);
-                if (it2 != g_LuaVariables.end()) it2->second = newValue;
-                else g_LuaVariables.insert({ key, newValue });
-            };
-        RenderFilterTitles();
-
-        ImGui::Dummy(ImVec2(0.0f, 3.0f));
-        ImGui::Separator();
-        ImGui::Dummy(ImVec2(0.0f, 4.0f));
-        float btnImportWHUD = ImGui::CalcTextSize("Import Filter").x + ImGui::GetStyle().FramePadding.x * 2;
-        float btnOpenWHUD = ImGui::CalcTextSize("Open Filter").x + ImGui::GetStyle().FramePadding.x * 2;
-        float btnCreateWHUD = ImGui::CalcTextSize("Create my own filter").x + ImGui::GetStyle().FramePadding.x * 2;
-        float btnGuideWHUD = ImGui::CalcTextSize("Filter Guide").x + ImGui::GetStyle().FramePadding.x * 2;
-        float spacingBtnsHUD = ImGui::GetStyle().ItemSpacing.x;
-        float totalBtnWHUD2 = btnImportWHUD + btnOpenWHUD + btnCreateWHUD + btnGuideWHUD + spacingBtnsHUD * 3;
-        ImVec2 availBtnsHUD = ImGui::GetContentRegionAvail();
-        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (availBtnsHUD.x - totalBtnWHUD2) * 0.5f);
-        if (ThemeButton("Import Filter##hud"))
-            OpenImportPathInput();
-        ImGui::SameLine();
-        if (ThemeButton("Open Filter##hud"))
-        {
-            std::string path = GetLootFilterConfigPathAbsolute();
-            if (std::filesystem::exists(path))
-                OpenInShell(path);
-        }
-        ImGui::SameLine();
-        if (ThemeButton("Create my own filter##hud"))
-            OpenCreateFilterPopup();
-        ImGui::SameLine();
-        if (ThemeButton("Filter Guide##hud"))
-        {
-            OpenInShell("https://locbones.github.io/D2RLAN-LootFilterGuide");
-        }
-        DrawImportFilterPathRow();
-        ImGui::Dummy(ImVec2(0.0f, 3.0f));
-
-        // --- Bottom Description ---
-        std::string desc = "Hover over an option to see its description.";
-        if (!hoveredKey.empty() && g_LuaDescriptions.count(hoveredKey))
-            desc = g_LuaDescriptions.at(hoveredKey);
-
-        DrawBottomDescription(desc);
-
-        ImGui::PopStyleColor();
-        ImGui::End();
+        const float hue = float(i) / segments;
+        const float angle = hue * tau - tau * 0.25f;
+        float r, g, b;
+        ImGui::ColorConvertHSVtoRGB(hue, 1.0f, 1.0f, r, g, b);
+        drawList->PrimWriteVtx(ImVec2(center.x + cosf(angle) * radius, center.y + sinf(angle) * radius),
+            uv, ImGui::ColorConvertFloat4ToU32(ImVec4(r, g, b, 1.0f)));
+        drawList->PrimWriteIdx(ImDrawIdx(first));
+        drawList->PrimWriteIdx(ImDrawIdx(first + 1 + i));
+        drawList->PrimWriteIdx(ImDrawIdx(first + 1 + (i + 1) % segments));
     }
-    else
-        ImGui::PopStyleColor();
+    drawList->AddCircle(center, radius, IM_COL32(255, 255, 255, 150), segments, buttonSize * 0.025f);
 }
 
 void ShowMainMenu()
@@ -10746,7 +9775,7 @@ void ShowMainMenu()
 
     ImGuiIO& io = ImGui::GetIO();
     float menuScale = GetMenuScaleFactor();
-    ImVec2 windowSize = ImVec2(640.0f * menuScale, 450.0f * menuScale);
+    ImVec2 windowSize = ImVec2(640.0f * menuScale, 590.0f * menuScale);
 
     // Center the window only on the first run
     static bool firstRun = true;
@@ -10774,7 +9803,7 @@ void ShowMainMenu()
         ImVec2 contentSize = ImGui::GetContentRegionAvail();
         float titleWidth = ImGui::CalcTextSize(windowTitle).x;
 
-        // --- Gear icon at top-left: opens Settings panel (uses theme.png if available, else shows "Settings" text) ---
+        // Theme.png may override the built-in wheel; both fit the icon button.
         float gearBtnSize = 28.0f * menuScale;
         float leftPadding = 8.0f * menuScale;
         ImGui::SetCursorPosX(leftPadding);
@@ -10799,12 +9828,8 @@ void ShowMainMenu()
             ImVec2 center(gearMin.x + (gearBtnSize - drawSize.x) * 0.5f, gearMin.y + (gearBtnSize - drawSize.y) * 0.5f);
             ImGui::GetWindowDrawList()->AddImage(gearTexId, center, ImVec2(center.x + drawSize.x, center.y + drawSize.y), ImVec2(0, 0), ImVec2(1, 1), IM_COL32(255, 255, 255, 255));
         }
-        else {
-            const char* label = "Settings";
-            ImVec2 labelSize = ImGui::CalcTextSize(label);
-            ImVec2 textPos(gearMin.x + (gearBtnSize - labelSize.x) * 0.5f, gearMin.y + (gearBtnSize - labelSize.y) * 0.5f);
-            ImGui::GetWindowDrawList()->AddText(textPos, IM_COL32(230, 230, 230, 255), label);
-        }
+        else
+            DrawThemeWheelIcon(ImGui::GetWindowDrawList(), gearMin, gearBtnSize);
 
         // --- Centered title ---
         ImGui::SameLine((contentSize.x - titleWidth) * 0.5f);
@@ -10852,7 +9877,7 @@ void ShowMainMenu()
 
         // --- MENU BUTTONS AND DESCRIPTION AREA ---
         float buttonWidth = 200.0f * menuScale;
-        float buttonHeight = 50.0f * menuScale;
+        float buttonHeight = 43.0f * menuScale;
         float separatorX = buttonWidth + 20.0f * menuScale;
         float descriptionWidth = windowSize.x - separatorX - 15.0f * menuScale;
         const char* descriptionTitle = "";
@@ -10875,6 +9900,11 @@ void ShowMainMenu()
         ShowLootMenu();
         if (ImGui::IsItemHovered()) { descriptionTitle = "D2RLoot Settings"; descriptionText = "Explore and control your currently active loot filter\n\n- Filters operate in real-time with user-defined rules\n- Accessible in D2RLAN > Options > Loot Filter\n- Rules are defined in D2RLAN/D2R/lootfilter_config.lua"; }
 
+        if (QuestJournal::Bindings()) {
+            if (ThemeButton("Quest Journal", ImVec2(buttonWidth, buttonHeight))) showQuestJournalMenu = true;
+            if (ImGui::IsItemHovered()) { descriptionTitle = "Quest Journal"; descriptionText = "Follow RMD-MP's tutorial quests\n\n- Character progress and rewards\n- Objectives, guidance and charm upgrade choices\n- Optional one-time legacy import"; }
+        }
+
         if (ThemeButton("Grail Tracker", ImVec2(buttonWidth, buttonHeight)))
             showGrailMenu = true;
         ShowGrailMenu();
@@ -10894,6 +9924,14 @@ void ShowMainMenu()
             showFloatingDamageMenu = true;
         ShowFloatingDamageMenu();
         if (ImGui::IsItemHovered()) { descriptionTitle = "Floating Damage"; descriptionText = "Customize floating damage display and DPS meter\n\n- Pop/fade animations, hit combining, and spread columns\n- Enable or disable in D2RHUD Options"; }
+
+        if (ThemeButton("Buff Icons", ImVec2(buttonWidth, buttonHeight)))
+            showBuffIconsMenu = true;
+        if (ImGui::IsItemHovered()) { descriptionTitle = "Buff Icons"; descriptionText = "Show selected active skills using their original icons\n\n- Choose from your character's available buff skills\n- Move and scale the icon area\n- Read remaining duration directly from active states"; }
+
+        if (ThemeButton("Show Stat Ranges", ImVec2(buttonWidth, buttonHeight)))
+            showStatRangesMenu = true;
+        if (ImGui::IsItemHovered()) { descriptionTitle = "Show Stat Ranges"; descriptionText = "Display possible stat rolls beside item tooltip lines\n\n- Combine unique/set properties and actual affixes\n- Customize range color, size, and spacing\n- Always show, toggle with a hotkey, or hold a hotkey"; }
 
         if (fontSize) ImGui::PopFont();
 
@@ -10940,56 +9978,36 @@ void ShowMainMenu()
 
 #pragma region Game Hooks
 
-void __fastcall Hooked_D2GAME_UMOD8Array_1402fc530(D2UnitStrc* pUnit, int32_t nUMod, int32_t bUnique)
+void __fastcall Hooked_D2GAME_UMOD8Array_1402fc530(D2UnitStrc* unit, int32_t umod, int32_t unique)
 {
-    // Call the original function
-    oD2GAME_UMOD8Array_1402fc530(pUnit, nUMod, bUnique);
-
-    if (!pUnit)
-        return;
-
-    if (g_lastSunderGame)
+    oD2GAME_UMOD8Array_1402fc530(unit, umod, unique);
+    D2GameStrc* game = nullptr;
     {
-        ApplySunderClampToMonster(g_lastSunderGame, pUnit, true);
-        return;
+        std::lock_guard<std::mutex> lock(g_sunderMutex);
+        game = g_lastSunderGame;
     }
-
-    // Get stored remainders
-    RemainderEntry remainders = GetRemainder(pUnit);
-
-    // Helper lambda to handle each stat
-    auto ApplyFinalValue = [&](D2C_ItemStats statId, int remainder, const char* name)
-        {
-            if (remainder <= 0 || settings.sunderedMonUMods != true)
-                return;
-
-            int nCurrentValue = STATLIST_GetUnitStatSigned(pUnit, statId, 0);
-
-            if (nCurrentValue >= 100)
-                STATLISTEX_SetStatListExStat(pUnit->pStatListEx, statId, settings.SunderValue, 0);
-        };
-
-    // Apply for all six resistances
-    ApplyFinalValue(STAT_COLDRESIST, remainders.cold, "Cold");
-    ApplyFinalValue(STAT_FIRERESIST, remainders.fire, "Fire");
-    ApplyFinalValue(STAT_LIGHTRESIST, remainders.light, "Light");
-    ApplyFinalValue(STAT_POISONRESIST, remainders.poison, "Poison");
-    ApplyFinalValue(STAT_DAMAGERESIST, remainders.damage, "Damage");
-    ApplyFinalValue(STAT_MAGICRESIST, remainders.magic, "Magic");
+    if (game) ApplyLinearSunderToMonster(game, unit, true);
 }
 
 void __fastcall HookedMONSTER_InitializeStatsAndSkills(D2GameStrc* pGame, D2ActiveRoomStrc* pRoom, D2UnitStrc* pUnit, int64_t* pMonRegData)
 {
-    if (pGame)
-        g_lastSunderGame = pGame;
-
-    if (pUnit && pUnit->dwUnitType == UNIT_MONSTER)
     {
-        g_unitsEditedStats.erase(pUnit->dwUnitId);
-        g_resistRemainders.erase(pUnit->dwUnitId);
+        std::lock_guard<std::mutex> lock(g_sunderMutex);
+        ResetSunderGame(pGame);
+        if (pUnit && pUnit->dwUnitType == UNIT_MONSTER)
+            g_appliedSunder.erase(pUnit->dwUnitId);
     }
+    if (pUnit && pUnit->dwUnitType == UNIT_MONSTER)
+        g_unitsEditedStats.erase(pUnit->dwUnitId);
 
-    oMONSTER_InitializeStatsAndSkills(pGame, pRoom, pUnit, pMonRegData);
+    if (!CubeMap::InitializeNativeMonster(pGame, pRoom, pUnit, pMonRegData))
+        oMONSTER_InitializeStatsAndSkills(pGame, pRoom, pUnit, pMonRegData);
+
+    if (CubeMap::InitializeMonster(pGame, pRoom, pUnit)) {
+        D2MonStatsInitStrc mapInit = {};
+        ApplyGhettoSunder(pGame, pRoom, pUnit, pMonRegData, &mapInit);
+        return;
+    }
 
     if (!pUnit || pUnit->dwUnitType != UNIT_MONSTER || !pUnit->pMonsterData || !pUnit->pMonsterData->pMonstatsTxt)
         return;
@@ -11093,6 +10111,21 @@ int64_t Hooked_HUDWarnings__PopulateHUDWarnings(void* pWidget) {
         return result;
     }
 
+    std::string mapTitle, mapModifiers;
+    if (CubeMap::Display(mapTitle, mapModifiers)) {
+        if (tzInfoTextWidget) {
+            strncpy_s(gTZInfoText, mapTitle.c_str(), _TRUNCATE);
+            *reinterpret_cast<char**>(reinterpret_cast<uint8_t*>(tzInfoTextWidget) + 0x88) = gTZInfoText;
+            *reinterpret_cast<int64_t*>(reinterpret_cast<uint8_t*>(tzInfoTextWidget) + 0x90) = strlen(gTZInfoText) + 1;
+        }
+        if (tzStatAdjustmentsWidget) {
+            strncpy_s(gTZStatAdjText, mapModifiers.c_str(), _TRUNCATE);
+            *reinterpret_cast<char**>(reinterpret_cast<uint8_t*>(tzStatAdjustmentsWidget) + 0x88) = gTZStatAdjText;
+            *reinterpret_cast<int64_t*>(reinterpret_cast<uint8_t*>(tzStatAdjustmentsWidget) + 0x90) = strlen(gTZStatAdjText) + 1;
+        }
+        return result;
+    }
+
     // Only update and show our terror zone schedule when the player has completed the Baal quest
     if (pGame && pUnitPlayer && GetBaalQuest(pUnitPlayer, pGame))
     {
@@ -11148,7 +10181,8 @@ void Hooked__Widget__OnClose(void* pWidget) {
 
 void __fastcall HookedDropTCTest(D2GameStrc* pGame, D2UnitStrc* pMonster, D2UnitStrc* pPlayer, int32_t nTCId, int32_t nQuality, int32_t nItemLevel, int32_t a7, D2UnitStrc** ppItems, int32_t* pnItemsDropped, int32_t nMaxItems)
 {
-    if (isTerrorized == false)
+    if (CubeMap::Drop(pGame,pMonster,pPlayer,nTCId,nQuality,nItemLevel,a7,ppItems,pnItemsDropped,nMaxItems,oDropTCTest)) return;
+    if (isTerrorized == false || CubeMap::IsMapMonster(pGame, pMonster))
     {
         LogDebug("debug logging: {}\n---------------------\n");
         oDropTCTest(pGame, pMonster, pPlayer, nTCId, nQuality, nItemLevel, a7, ppItems, pnItemsDropped, nMaxItems);
@@ -12456,6 +11490,111 @@ void __fastcall Hooked_DamageInfo(void* param1, D2UnitStrc* attacker, D2UnitStrc
         element);
 }
 
+void ShowBuffIconsMenu()
+{
+    static bool wasOpen = false;
+    if (showBuffIconsMenu)
+    {
+        const float scale = GetMenuScaleFactor();
+        const ImGuiStyle& style = ImGui::GetStyle();
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(style.WindowPadding.x * scale, style.WindowPadding.y * scale));
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(style.FramePadding.x * scale, style.FramePadding.y * scale));
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(style.ItemSpacing.x * scale, style.ItemSpacing.y * scale));
+        ImGui::PushStyleVar(ImGuiStyleVar_ScrollbarSize, style.ScrollbarSize * scale);
+        ImGui::PushStyleVar(ImGuiStyleVar_GrabMinSize, style.GrabMinSize * scale);
+        ImGui::SetNextWindowSize(ImVec2(720 * scale, 760 * scale), ImGuiCond_Always);
+        if (ImGui::Begin("Buff Icons", &showBuffIconsMenu, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoTitleBar))
+        {
+            PushFontSafe(3);
+            DrawWindowTitleAndClose("Buff Icons", &showBuffIconsMenu);
+            PopFontSafe(3);
+            ImGui::Separator();
+            PushFontSafe(2);
+            BuffIcons::DrawSettingsPanel(scale);
+            if (ThemeButton("Save Buff Icons")) SaveFullGrailConfig(configFilePath, false);
+            PopFontSafe(2);
+        }
+        ImGui::End();
+        ImGui::PopStyleVar(5);
+    }
+    if (wasOpen && !showBuffIconsMenu) SaveFullGrailConfig(configFilePath, false);
+    wasOpen = showBuffIconsMenu;
+}
+
+void ShowStatRangesMenu()
+{
+    static bool wasOpen = false;
+    if (showStatRangesMenu)
+    {
+        const float scale = GetMenuScaleFactor();
+        const ImGuiStyle& style = ImGui::GetStyle();
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(style.WindowPadding.x * scale, style.WindowPadding.y * scale));
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(style.FramePadding.x * scale, style.FramePadding.y * scale));
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(style.ItemSpacing.x * scale, style.ItemSpacing.y * scale));
+        ImGui::PushStyleVar(ImGuiStyleVar_ScrollbarSize, style.ScrollbarSize * scale);
+        ImGui::PushStyleVar(ImGuiStyleVar_GrabMinSize, style.GrabMinSize * scale);
+        ImGui::SetNextWindowSize(ImVec2(650 * scale, 570 * scale), ImGuiCond_Always);
+        if (ImGui::Begin("Show Stat Ranges", &showStatRangesMenu, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoTitleBar))
+        {
+            PushFontSafe(3);
+            DrawWindowTitleAndClose("Show Stat Ranges", &showStatRangesMenu);
+            PopFontSafe(3);
+            ImGui::Separator();
+            PushFontSafe(2);
+            StatRanges::DrawSettingsPanel(scale);
+            if (ThemeButton("Save Stat Ranges")) SaveFullGrailConfig(configFilePath, false);
+            PopFontSafe(2);
+        }
+        ImGui::End(); ImGui::PopStyleVar(5);
+    }
+    if (wasOpen && !showStatRangesMenu) SaveFullGrailConfig(configFilePath, false);
+    wasOpen = showStatRangesMenu;
+}
+
+// Polling reads releases as well as presses, including release of a modifier in
+// a chord. The activation state handles edges so Windows key repeat cannot flip it.
+static bool IsStatRangesBindingDown()
+{
+    auto binding = g_Hotkeys.find("Show Stat Ranges");
+    if (binding == g_Hotkeys.end() || binding->second.first.empty()) return false;
+    auto down = [](const std::string& text) {
+        size_t start = 0; bool any = false;
+        while (start < text.size()) {
+            size_t end = text.find('+', start);
+            std::string token = text.substr(start, end - start);
+            auto first = token.find_first_not_of(" \t"), last = token.find_last_not_of(" \t");
+            if (first == std::string::npos) return false;
+            token = token.substr(first, last - first + 1);
+            std::transform(token.begin(), token.end(), token.begin(), ::toupper);
+            int vk = 0;
+            if (token == "CTRL" || token == "CONTROL" || token == "VK_CTRL" || token == "VK_CONTROL") vk = VK_CONTROL;
+            else if (token == "ALT" || token == "MENU" || token == "VK_ALT" || token == "VK_MENU") vk = VK_MENU;
+            else if (token == "SHIFT" || token == "VK_SHIFT") vk = VK_SHIFT;
+            else {
+                auto it = keyMap.find(token);
+                if (it != keyMap.end()) vk = it->second;
+                else if (token.size() == 1) vk = VkKeyScanA(token[0]) & 0xff;
+                else if (token.size() >= 2 && token[0] == 'F') {
+                    int f = std::atoi(token.c_str() + 1);
+                    if (f >= 1 && f <= 24) vk = VK_F1 + f - 1;
+                }
+            }
+            if (!vk || !(GetAsyncKeyState(vk) & 0x8000)) return false;
+            any = true;
+            if (end == std::string::npos) break;
+            start = end + 1;
+            if (start == text.size()) return false;
+        }
+        return any;
+    };
+    if (!down(binding->second.first)) return false;
+    const auto modifiers = std::count(binding->second.first.begin(), binding->second.first.end(), '+');
+    // Respect the existing hotkey dispatcher's preference for a longer chord.
+    for (const auto& other : g_Hotkeys)
+        if (other.first != binding->first && std::count(other.second.first.begin(), other.second.first.end(), '+') > modifiers && down(other.second.first)) return false;
+    return true;
+}
+
 void ShowFloatingDamageMenu()
 {
     static bool wasOpen = false;
@@ -12489,11 +11628,18 @@ void ShowFloatingDamageMenu()
 
 #pragma region Draw Loop for Detours and Stats Display
 void D2RHUD::OnDraw() {
+    SelectedAuras::Update();
+    ImmunityLabels::Install([](D2GameStrc* game, D2UnitStrc* monster) { ApplyLinearSunderToMonster(game, monster, true); });
     D2GameStrc* pGame = nullptr;
     D2Client* pGameClient = GetClientPtr();
 
     if (pGameClient != nullptr)
         pGame = (D2GameStrc*)pGameClient->pGame;
+
+    {
+        std::lock_guard<std::mutex> lock(g_sunderMutex);
+        ResetSunderGame(pGame);
+    }
 
     if (!configLoaded)
     {
@@ -12510,6 +11656,7 @@ void D2RHUD::OnDraw() {
 
     if (!menuClickHookInstalled)
     {
+        RestartGame::SetSaveAndExitHandler([] { QueueSaveAndExit(0); });
         mainMenuClickHandlerOrig = reinterpret_cast<GameMenuOnClickHandler>(Pattern::Address(mainMenuClickHandlerOffset));
         DetourTransactionBegin();
         DetourUpdateThread(GetCurrentThread());
@@ -12643,13 +11790,26 @@ void D2RHUD::OnDraw() {
 
     // Scale all menu UI by 200% on 4K resolution
     {
-        bool anyMenuOpen = showMainMenu || showHUDSettingsMenu || showD2RHUDMenu || showSettingsPanel || showLootMenu || showHotkeyMenu || showGrailMenu || showCameraMenu || showFloatingDamageMenu;
+        bool anyMenuOpen = showMainMenu || showHUDSettingsMenu || showD2RHUDMenu || showSettingsPanel || showLootMenu || showHotkeyMenu || showGrailMenu || showCameraMenu || showFloatingDamageMenu || showBuffIconsMenu || showStatRangesMenu || showQuestJournalMenu;
         ImGuiIO& io = ImGui::GetIO();
         io.FontGlobalScale = anyMenuOpen ? GetMenuScaleFactor() : 1.0f;
     }
 
     if (showMainMenu)
         ShowMainMenu();
+    QuestJournal::PollMenus();
+    ShowQuestJournalMenu();
+
+    BuffIcons::Update(pGameClient, modName, showBuffIconsMenu);
+    ShowBuffIconsMenu();
+    BuffIcons::Render(showBuffIconsMenu, GetMenuScaleFactor());
+    CubeMap::Draw(GetMenuScaleFactor(), GetClientStatus() == 1);
+    D3Whirlwind::SetInputBlocked(GetClientStatus() != 1 || showMainMenu || IsAnyMenuOpen() ||
+        ImGui::GetIO().WantCaptureMouse || ImGui::GetIO().WantTextInput);
+    StatRanges::Update(modName, GetClientStatus() == 1, showMainMenu || IsAnyMenuOpen(), IsStatRangesBindingDown(), showStatRangesMenu);
+    ShowStatRangesMenu();
+    StatRanges::Render(GetMenuScaleFactor());
+
 
     /*
     if (!oD2GAME_UModInit)
@@ -12877,7 +12037,7 @@ void D2RHUD::OnDraw() {
         if (pUnitServer && (cachedSettings.monsterStatsDisplay || settings.monsterStatsDisplay))
         {
             if (pGame != nullptr)
-                ApplySunderClampToMonster(pGame, pUnitServer, true);
+                ApplyLinearSunderToMonster(pGame, pUnitServer, true);
 
             float totalWidth = 0.f;
             float spaceWidth = ImGui::CalcTextSize(Seperator).x;
@@ -13037,6 +12197,10 @@ bool D2RHUD::OnKeyPressed(short key)
         };
 
     // ---------------- Built-in actions ----------------
+
+    if (StatRanges::UsesHotkey() && !showMainMenu && !IsAnyMenuOpen() && !ImGui::GetIO().WantTextInput)
+        if (auto kb = g_Hotkeys.find("Show Stat Ranges"); kb != g_Hotkeys.end())
+            CheckAndAddMatch(kb->second.first, 0, []() {});
 
     if (auto kb = FindKeybind("Transmute"))
         CheckAndAddMatch(kb->key, 0, []() { D2CLIENT_Transmute(); });

@@ -1,0 +1,66 @@
+{
+  "trim_seconds": 0.35,
+  "crossfade_seconds": 0.5,
+  "numpy_version": "2.3.5",
+  "soundfile_version": "0.14.0",
+  "assets": [
+    {
+      "file": "data/global/sfx/skill/barbarian/whirlwind1.flac",
+      "source_sha256": "808e51b02ffd8e0e6e0f452a50fbc40cafe4f3558b1b8534368d003e7732ac34",
+      "output_sha256": "1c023e42a5ea9694ce84bcd82f8ae9dbeb69ee01beb19b5716ded13b61a30db7",
+      "original": {
+        "frames": 144930,
+        "sample_rate": 44100,
+        "channels": 1,
+        "seconds": 3.286394557823129,
+        "peak_dbfs": -2.1157454743052186,
+        "rms_dbfs": -14.361283783720722,
+        "wrap_step": 0.09014892578125,
+        "wrap_step_vs_typical": 3.8149451512400043,
+        "wrap_rms_vs_body_db": -2.17051231621885,
+        "100ms_level_range_db": 11.651270309739669
+      },
+      "loop": {
+        "frames": 107445,
+        "sample_rate": 44100,
+        "channels": 1,
+        "seconds": 2.4363945578231294,
+        "peak_dbfs": -4.1488149744291976,
+        "rms_dbfs": -15.577742652628068,
+        "wrap_step": 0.000274658203125,
+        "wrap_step_vs_typical": 0.015902026308182406,
+        "wrap_rms_vs_body_db": 0.24758575376610667,
+        "100ms_level_range_db": 2.5062057059305474
+      }
+    },
+    {
+      "file": "data/hd/global/sfx/skill/barbarian/whirlwind1_hd.flac",
+      "source_sha256": "a589a5e6b53d8f4b2acc73e70706cb6c1f4dcf511faf9465e55f7b491d8ee61c",
+      "output_sha256": "eca4d65f2984ed3a32ed631c990da8b16f6a38194ac8b19c10262a273cbd038d",
+      "original": {
+        "frames": 144930,
+        "sample_rate": 44100,
+        "channels": 2,
+        "seconds": 3.286394557823129,
+        "peak_dbfs": -2.1157454743052186,
+        "rms_dbfs": -14.361281923776342,
+        "wrap_step": 0.09014892578125,
+        "wrap_step_vs_typical": 3.814943779026208,
+        "wrap_rms_vs_body_db": -2.170515775322222,
+        "100ms_level_range_db": 11.65126774668407
+      },
+      "loop": {
+        "frames": 107445,
+        "sample_rate": 44100,
+        "channels": 2,
+        "seconds": 2.4363945578231294,
+        "peak_dbfs": -4.1488149744291976,
+        "rms_dbfs": -15.577740312370839,
+        "wrap_step": 0.000274658203125,
+        "wrap_step_vs_typical": 0.01590201598226955,
+        "wrap_rms_vs_body_db": 0.24758591662400256,
+        "100ms_level_range_db": 2.50620761378223
+      }
+    }
+  ]
+}

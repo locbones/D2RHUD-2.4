@@ -1,0 +1,128 @@
+#pragma once
+#include <windows.h>
+#include <tlhelp32.h>
+#include <cstdint>
+#include <cstring>
+#include <array>
+
+// Shared with Pandemonium's native HUD loader. This gate is armed only in a
+// newly created, suspended process. It does not attach to an existing game.
+namespace StatesStartup {
+// Module loading on another thread can invalidate a Toolhelp snapshot.
+// ERROR_BAD_LENGTH is transient; do not report a missing HUD or stop the game.
+using SnapshotFunction=HANDLE(WINAPI*)(DWORD,DWORD);
+inline HANDLE ModuleSnapshot(DWORD pid,DWORD timeout=5000,SnapshotFunction snapshot=CreateToolhelp32Snapshot) {
+    const auto started=GetTickCount64();
+    for(;;) {
+        const auto result=snapshot(TH32CS_SNAPMODULE,pid);
+        if(result!=INVALID_HANDLE_VALUE)return result;
+        const DWORD error=GetLastError();
+        if(error!=ERROR_BAD_LENGTH || GetTickCount64()-started>=timeout){SetLastError(error);return INVALID_HANDLE_VALUE;}
+        Sleep(10);
+    }
+}
+inline constexpr DWORD CheckRva=0x1dc277, LoaderRva=0x1db3b0, LoaderSize=0x13c3;
+inline constexpr uint64_t LoaderHash=0x002bbd10e9d3a737ULL;
+inline constexpr std::array<uint8_t,7> Original{{0x48,0x81,0xfb,0,1,0,0}};
+
+template<class T> bool Read(HANDLE process,uintptr_t address,T& value) {
+    SIZE_T n=0;
+    return ReadProcessMemory(process,reinterpret_cast<void*>(address),&value,sizeof(value),&n) && n==sizeof(value);
+}
+inline uintptr_t ImageBase(HANDLE process) {
+    using Query=LONG(NTAPI*)(HANDLE,ULONG,void*,ULONG,ULONG*);
+    auto query=reinterpret_cast<Query>(GetProcAddress(GetModuleHandleW(L"ntdll.dll"),"NtQueryInformationProcess"));
+    std::array<uintptr_t,6> information{};uintptr_t base=0;
+    if(!query || query(process,0,information.data(),ULONG(sizeof(information)),nullptr)<0 ||
+       !Read(process,information[1]+0x10,base))return 0;
+    return base;
+}
+inline bool Write(HANDLE process,uintptr_t address,const void* bytes,SIZE_T size) {
+    DWORD previous=0;
+    if(!VirtualProtectEx(process,reinterpret_cast<void*>(address),size,PAGE_EXECUTE_READWRITE,&previous))return false;
+    SIZE_T n=0;
+    const bool ok=WriteProcessMemory(process,reinterpret_cast<void*>(address),bytes,size,&n) && n==size &&
+        FlushInstructionCache(process,reinterpret_cast<void*>(address),size);
+    DWORD unused=0;const bool protectedAgain=VirtualProtectEx(process,reinterpret_cast<void*>(address),size,previous,&unused)!=FALSE;
+    return ok && protectedAgain;
+}
+
+// Inspect an image resource without executing its entry point or constructors.
+// A missing export preserves the older loader behavior for older HUD builds.
+inline DWORD ReadyExportRva(const wchar_t* dll) {
+    HMODULE image=LoadLibraryExW(dll,nullptr,LOAD_LIBRARY_AS_IMAGE_RESOURCE|LOAD_LIBRARY_AS_DATAFILE_EXCLUSIVE);
+    if(!image)return 0;
+    auto bytes=reinterpret_cast<const uint8_t*>(reinterpret_cast<uintptr_t>(image)&~uintptr_t(3));
+    DWORD result=0;
+    const auto dos=reinterpret_cast<const IMAGE_DOS_HEADER*>(bytes);
+    if(dos->e_magic==IMAGE_DOS_SIGNATURE && dos->e_lfanew>0 && dos->e_lfanew<0x100000) {
+        const auto nt=reinterpret_cast<const IMAGE_NT_HEADERS64*>(bytes+dos->e_lfanew);
+        if(nt->Signature==IMAGE_NT_SIGNATURE && nt->FileHeader.Machine==IMAGE_FILE_MACHINE_AMD64 && nt->OptionalHeader.Magic==IMAGE_NT_OPTIONAL_HDR64_MAGIC) {
+            const auto size=nt->OptionalHeader.SizeOfImage;
+            const auto range=[&](DWORD rva,uint64_t count){return rva<size && count<=uint64_t(size)-rva;};
+            const auto directory=nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT];
+            if(directory.VirtualAddress && range(directory.VirtualAddress,sizeof(IMAGE_EXPORT_DIRECTORY))) {
+                const auto exports=reinterpret_cast<const IMAGE_EXPORT_DIRECTORY*>(bytes+directory.VirtualAddress);
+                if(range(exports->AddressOfNames,uint64_t(exports->NumberOfNames)*4) &&
+                   range(exports->AddressOfNameOrdinals,uint64_t(exports->NumberOfNames)*2) &&
+                   range(exports->AddressOfFunctions,uint64_t(exports->NumberOfFunctions)*4)) {
+                    const auto names=reinterpret_cast<const DWORD*>(bytes+exports->AddressOfNames);
+                    const auto ordinals=reinterpret_cast<const WORD*>(bytes+exports->AddressOfNameOrdinals);
+                    const auto functions=reinterpret_cast<const DWORD*>(bytes+exports->AddressOfFunctions);
+                    constexpr char symbol[]="D2RHUD_States512Startup";
+                    for(DWORD i=0;i<exports->NumberOfNames;++i)if(range(names[i],sizeof(symbol)) &&
+                        !memcmp(bytes+names[i],symbol,sizeof(symbol)) && ordinals[i]<exports->NumberOfFunctions) {
+                        const DWORD rva=functions[ordinals[i]];
+                        if(range(rva,4) && (rva<directory.VirtualAddress || uint64_t(rva)>=uint64_t(directory.VirtualAddress)+directory.Size))result=rva;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    FreeLibrary(image);return result;
+}
+
+// The initial thread is still suspended here, before any game code can race
+// the two-byte temporary branch. The full loader is verified before arming it.
+inline bool Arm(HANDLE process,uintptr_t base) {
+    std::array<uint8_t,LoaderSize> bytes{};
+    if(!Read(process,base+LoaderRva,bytes))return false;
+    uint64_t hash=14695981039346656037ULL;
+    for(auto byte:bytes)hash=(hash^byte)*1099511628211ULL;
+    if(hash!=LoaderHash || memcmp(bytes.data()+CheckRva-LoaderRva,Original.data(),Original.size()))return false;
+    constexpr uint8_t branch[]{0xeb,0xfe};
+    return Write(process,base+CheckRva,branch,sizeof(branch));
+}
+
+// The engine has resolved its mod globals by this point, unlike DLL injection
+// before entry. Hold only its initial thread, restore the original instruction
+// for HUD's signature checks, then let HUD initialize on its own threads.
+inline bool HoldAtGate(HANDLE process,HANDLE initialThread,uintptr_t base,DWORD timeout=30000) {
+    const ULONGLONG start=GetTickCount64();
+    while(GetTickCount64()-start<timeout && WaitForSingleObject(process,0)==WAIT_TIMEOUT) {
+        if(SuspendThread(initialThread)==DWORD(-1))return false;
+        CONTEXT context{};context.ContextFlags=CONTEXT_CONTROL;
+        if(!GetThreadContext(initialThread,&context)){ResumeThread(initialThread);return false;}
+        if(context.Rip==base+CheckRva) {
+            std::array<uint8_t,2> branch{};
+            return Read(process,base+CheckRva,branch) && branch[0]==0xeb && branch[1]==0xfe &&
+                Write(process,base+CheckRva,Original.data(),2);
+        }
+        if(ResumeThread(initialThread)==DWORD(-1))return false;
+        Sleep(5);
+    }
+    return false;
+}
+
+inline bool WaitReady(HANDLE process,uintptr_t hud,DWORD readyRva,DWORD timeout=30000) {
+    const ULONGLONG start=GetTickCount64();
+    while(GetTickCount64()-start<timeout && WaitForSingleObject(process,0)==WAIT_TIMEOUT) {
+        LONG state=0;
+        if(!Read(process,hud+readyRva,state) || state==2)return false;
+        if(state==1)return true;
+        Sleep(5);
+    }
+    return false;
+}
+}

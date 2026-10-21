@@ -12,3 +12,5 @@
 #define IDR_FD_FONT_9   1009
 #define IDR_FD_FONT_10  1010
 #define IDR_FD_FONT_11  1011
+
+#define IDR_MAP_EVENT_ART 1100

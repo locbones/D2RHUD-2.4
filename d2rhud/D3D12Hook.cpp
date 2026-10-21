@@ -1,5 +1,12 @@
-#include "D3D12Hook.h"
+﻿#include "D3D12Hook.h"
 #include "WineQueue.h"
+#include "plugin/BuffIconsData.h"
+#include "plugin/CubeMap.h"
+#include "plugin/D3Whirlwind.h"
+#include "plugin/LegacyTransmog.h"
+#include "plugin/StackSplitSkin.h"
+#include "plugin/MapEventFonts.h"
+#include <map>
 #include <mutex>
 #include <atomic>
 #include "resource.h"
@@ -113,6 +120,14 @@ namespace D3D12 {
 	static D3D12_GPU_DESCRIPTOR_HANDLE g_CameraButtonTextureGPUHandle = {};
 	static int g_CameraButtonTextureWidth = 0;
 	static int g_CameraButtonTextureHeight = 0;
+    static constexpr UINT kBuffAtlasSlots = 32;
+    struct BuffAtlasTexture {
+        CComPtr<ID3D12Resource> resource;
+        D3D12_GPU_DESCRIPTOR_HANDLE handle{};
+    };
+    static std::map<std::string, BuffAtlasTexture> g_BuffAtlases;
+    static BuffAtlasTexture g_QuantityItemTexture;
+    static std::shared_ptr<const LegacyTransmog::Skin::Sprite> g_QuantityItemSprite;
 
 	static std::string GetD2RHUDImagesDir()
 	{
@@ -161,6 +176,8 @@ namespace D3D12 {
 	static std::vector<std::vector<unsigned char>> g_EmbeddedFloatingDamageFontData;
 	static ImFont* g_BundledFloatingDamageFonts[D3D12::kFloatingDamageFontCount] = {};
 	static bool g_EmbeddedFloatingDamageFontsInitialized = false;
+    static CubeMap::Text::FontBank g_MapEventFonts;
+    static ImFont* GetMapEventFont(float size){return g_MapEventFonts.ForSize(size);}
 
 	static bool LoadEmbeddedFloatingDamageFontResource(int index, const unsigned char** outData, size_t* outSize)
 	{
@@ -239,6 +256,13 @@ namespace D3D12 {
 
 		g_EmbeddedFloatingDamageFontsInitialized = true;
 	}
+
+    static void LoadMapEventFonts(const std::string& path){
+        const unsigned char* fallback=nullptr;size_t bytes=0;
+        if(path.empty())LoadEmbeddedFloatingDamageFontResource(0,&fallback,&bytes);
+        g_MapEventFonts.Load(*ImGui::GetIO().Fonts,path,fallback,bytes);
+        CubeMap::SetFontProvider(GetMapEventFont);
+    }
 
 	static bool LoadGearTextureFromPath(ID3D12Device* pD3DDevice, const std::string& fullPath)
 	{
@@ -352,24 +376,21 @@ namespace D3D12 {
 		return true;
 	}
 
-	static bool LoadThemeTextureFromPath(ID3D12Device* pD3DDevice, const std::string& fullPath,
+	static bool LoadTexturePixels(ID3D12Device* pD3DDevice, const unsigned char* pixels, int texW, int texH, DXGI_FORMAT format,
 		CComPtr<ID3D12Resource>& outTex, D3D12_GPU_DESCRIPTOR_HANDLE& outGpuHandle, UINT descriptorOffset)
 	{
-		if (!pD3DDevice || fullPath.empty() || !std::filesystem::exists(fullPath)) return false;
-		int texW = 0, texH = 0, texCh = 0;
-		unsigned char* pixels = stbi_load(fullPath.c_str(), &texW, &texH, &texCh, 4);
-		if (!pixels || texW <= 0 || texH <= 0) return false;
+		if (!pD3DDevice || !pixels || texW <= 0 || texH <= 0) return false;
 		outTex = NULL;
 		D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint = {};
 		UINT64 totalBytes = 0;
 		D3D12_RESOURCE_DESC texDesc = {};
 		texDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
 		texDesc.Alignment = 0;
-		texDesc.Width = (UINT)texW;
-		texDesc.Height = (UINT)texH;
+		texDesc.Width = format == DXGI_FORMAT_BC3_UNORM ? (texW + 3) & ~3 : texW;
+		texDesc.Height = format == DXGI_FORMAT_BC3_UNORM ? (texH + 3) & ~3 : texH;
 		texDesc.DepthOrArraySize = 1;
 		texDesc.MipLevels = 1;
-		texDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+		texDesc.Format = format;
 		texDesc.SampleDesc.Count = 1;
 		texDesc.SampleDesc.Quality = 0;
 		texDesc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
@@ -395,21 +416,21 @@ namespace D3D12 {
 		CComPtr<ID3D12Resource> uploadBuffer;
 		heapProps.Type = D3D12_HEAP_TYPE_UPLOAD;
 		if (FAILED(pD3DDevice->CreateCommittedResource(&heapProps, D3D12_HEAP_FLAG_NONE, &bufDesc, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&uploadBuffer)))) {
-			stbi_image_free(pixels);
 			return false;
 		}
 		heapProps.Type = D3D12_HEAP_TYPE_DEFAULT;
 		if (FAILED(pD3DDevice->CreateCommittedResource(&heapProps, D3D12_HEAP_FLAG_NONE, &texDesc, D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&outTex)))) {
-			stbi_image_free(pixels);
 			return false;
 		}
 		void* mapped = nullptr;
 		if (SUCCEEDED(uploadBuffer->Map(0, nullptr, &mapped))) {
-			for (int y = 0; y < texH; ++y)
-				memcpy((char*)mapped + y * (size_t)rowPitch, pixels + y * texW * 4, (size_t)texW * 4);
+			const bool bc3 = format == DXGI_FORMAT_BC3_UNORM;
+            const size_t rows = bc3 ? (texH + 3) / 4 : texH;
+            const size_t bytesPerRow = bc3 ? ((texW + 3) / 4) * 16 : texW * 4;
+            for (size_t y = 0; y < rows; ++y)
+                memcpy((char*)mapped + y * (size_t)rowPitch, pixels + y * bytesPerRow, bytesPerRow);
 			uploadBuffer->Unmap(0, nullptr);
-		}
-		stbi_image_free(pixels);
+		} else return false;
 		CComPtr<ID3D12CommandQueue> uploadQueue;
 		D3D12_COMMAND_QUEUE_DESC qDesc = {};
 		qDesc.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
@@ -436,25 +457,26 @@ namespace D3D12 {
 		barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
 		uploadList->ResourceBarrier(1, &barrier);
 		uploadList->Close();
-		ID3D12CommandList* lists[] = { uploadList };
-		uploadQueue->ExecuteCommandLists(1, lists);
-		CComPtr<ID3D12Fence> fence;
-		UINT64 fenceVal = 1;
-		if (SUCCEEDED(pD3DDevice->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&fence)))) {
-			HANDLE evt = CreateEventEx(nullptr, nullptr, 0, EVENT_MODIFY_STATE | SYNCHRONIZE);
-			if (evt && SUCCEEDED(fence->SetEventOnCompletion(fenceVal, evt))) {
-				uploadQueue->Signal(fence, fenceVal);
-				WaitForSingleObject(evt, 5000);
-			}
-			if (evt) CloseHandle(evt);
-		}
+        CComPtr<ID3D12Fence> fence;
+        if (FAILED(pD3DDevice->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&fence)))) return false;
+        HANDLE completed = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+        if (!completed) return false;
+        if (FAILED(fence->SetEventOnCompletion(1, completed))) { CloseHandle(completed); return false; }
+        ID3D12CommandList* lists[] = { uploadList };
+        uploadQueue->ExecuteCommandLists(1, lists);
+        const HRESULT signaled = uploadQueue->Signal(fence, 1);
+        // Keep the staging buffer and command objects alive until the GPU finishes.
+        if (SUCCEEDED(signaled)) WaitForSingleObject(completed, INFINITE);
+        CloseHandle(completed);
+        if (FAILED(signaled) || fence->GetCompletedValue() == UINT64_MAX) return false;
+
 		const UINT srvDescSize = pD3DDevice->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
 		D3D12_CPU_DESCRIPTOR_HANDLE srvCpu = g_pD3DSrvDescHeap->GetCPUDescriptorHandleForHeapStart();
 		D3D12_GPU_DESCRIPTOR_HANDLE srvGpu = g_pD3DSrvDescHeap->GetGPUDescriptorHandleForHeapStart();
 		srvCpu.ptr += (SIZE_T)srvDescSize * (SIZE_T)descriptorOffset;
 		srvGpu.ptr += (SIZE_T)srvDescSize * (SIZE_T)descriptorOffset;
 		D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
-		srvDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+		srvDesc.Format = format;
 		srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
 		srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
 		srvDesc.Texture2D.MipLevels = 1;
@@ -462,6 +484,58 @@ namespace D3D12 {
 		outGpuHandle = srvGpu;
 		return true;
 	}
+
+    static bool LoadThemeTextureFromPath(ID3D12Device* device, const std::string& path,
+        CComPtr<ID3D12Resource>& texture, D3D12_GPU_DESCRIPTOR_HANDLE& handle, UINT offset)
+    {
+        int width = 0, height = 0, channels = 0;
+        unsigned char* pixels = stbi_load(path.c_str(), &width, &height, &channels, 4);
+        if (!pixels) return false;
+        const bool ok = LoadTexturePixels(device, pixels, width, height, DXGI_FORMAT_R8G8B8A8_UNORM, texture, handle, offset);
+        stbi_image_free(pixels);
+        return ok;
+    }
+
+    uint64_t GetBuffIconAtlas(const std::string& key, const BuffIcons::SpriteAtlas& atlas)
+    {
+        auto found = g_BuffAtlases.find(key);
+        if (found != g_BuffAtlases.end()) return found->second.handle.ptr;
+        if (!g_pD3DSrvDescHeap || !g_pD3DCommandQueue || g_BuffAtlases.size() >= kBuffAtlasSlots || atlas.pixels.empty()) return 0;
+        CComPtr<ID3D12Device> device;
+        if (FAILED(g_pD3DCommandQueue->GetDevice(IID_PPV_ARGS(&device)))) return 0;
+        BuffAtlasTexture texture;
+        const UINT slot = g_FrameBufferCount + 20 + static_cast<UINT>(g_BuffAtlases.size());
+        if (!LoadTexturePixels(device, atlas.pixels.data(), atlas.width, atlas.height,
+            atlas.bc3 ? DXGI_FORMAT_BC3_UNORM : DXGI_FORMAT_R8G8B8A8_UNORM, texture.resource, texture.handle, slot)) return 0;
+        const uint64_t id = texture.handle.ptr;
+        g_BuffAtlases.emplace(key, std::move(texture));
+        return id;
+    }
+
+    static LegacyTransmog::Skin::Image GetQuantityItemArtwork(const std::string& code){
+        const auto sprite=LegacyTransmog::Skin::ItemSprite(code);
+        if(!sprite || !g_pD3DSrvDescHeap || !g_pD3DCommandQueue)return {};
+        if(sprite!=g_QuantityItemSprite){
+            CComPtr<ID3D12Device> device;
+            if(FAILED(g_pD3DCommandQueue->GetDevice(IID_PPV_ARGS(&device))))return {};
+            // One reusable descriptor, independent of the buff atlas cache. Finish
+            // earlier HUD draws before replacing its descriptor or old resource.
+            if(g_QuantityItemTexture.resource){
+                CComPtr<ID3D12Fence> fence;
+                if(FAILED(device->CreateFence(0,D3D12_FENCE_FLAG_NONE,IID_PPV_ARGS(&fence))))return {};
+                HANDLE event=CreateEventW(nullptr,FALSE,FALSE,nullptr);if(!event)return {};
+                const bool queued=SUCCEEDED(fence->SetEventOnCompletion(1,event)) && SUCCEEDED(g_pD3DCommandQueue->Signal(fence,1));
+                const bool complete=queued && WaitForSingleObject(event,5000)==WAIT_OBJECT_0 && fence->GetCompletedValue()!=UINT64_MAX;
+                CloseHandle(event);if(!complete)return {};
+            }
+            const auto& atlas=sprite->atlas;BuffAtlasTexture texture;
+            if(!LoadTexturePixels(device,atlas.pixels.data(),atlas.width,atlas.height,atlas.bc3?DXGI_FORMAT_BC3_UNORM:DXGI_FORMAT_R8G8B8A8_UNORM,
+                texture.resource,texture.handle,g_FrameBufferCount+20+kBuffAtlasSlots))return {};
+            g_QuantityItemTexture=std::move(texture);g_QuantityItemSprite=sprite;
+        }
+        const auto& a=sprite->atlas;
+        return {g_QuantityItemTexture.handle.ptr,a.width,a.height,a.frameWidth,a.frames,sprite->pitch};
+    }
 
 	static bool LoadCameraButtonTextureFromPath(ID3D12Device* pD3DDevice, const std::string& fullPath)
 	{
@@ -619,7 +693,7 @@ namespace D3D12 {
 			{
 				D3D12_DESCRIPTOR_HEAP_DESC desc = {};
 				desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
-				desc.NumDescriptors = (UINT)(g_FrameBufferCount + 17);  // gear, window bg x9, camera, frame0-2, button0-2
+				desc.NumDescriptors = g_FrameBufferCount + 20 + kBuffAtlasSlots + 1; // font, themes, buff atlases, quantity item
 				desc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
 
 				if (pD3DDevice->CreateDescriptorHeap(&desc, IID_PPV_ARGS(&g_pD3DSrvDescHeap)) != S_OK) {
@@ -686,7 +760,8 @@ namespace D3D12 {
 				g_pD3DSrvDescHeap->GetCPUDescriptorHandleForHeapStart(),
 				g_pD3DSrvDescHeap->GetGPUDescriptorHandleForHeapStart());
 
-			// UI fonts first, then embedded floating-damage fonts, then one atlas upload.
+			// Retain UI/damage font indices; append map fonts before one atlas upload.
+            std::string eventFontPath;
 			{
 				namespace fs = std::filesystem;
 				const std::string fontPath = "Mods/" + modName + "/" + modName + ".mpq/data/hd/ui/fonts/exocetblizzardot-medium.otf";
@@ -699,6 +774,7 @@ namespace D3D12 {
 					io.Fonts->AddFontFromFileTTF(fontPath.c_str(), 36.0f);
 					io.Fonts->AddFontFromFileTTF(fontPath.c_str(), 48.0f);
 					FontLoaded = true;
+                    eventFontPath=fontPath;
 				}
 				else {
 					std::cerr << "Font file does not exist: " << fontPath << std::endl;
@@ -706,6 +782,7 @@ namespace D3D12 {
 			}
 
 			LoadAllEmbeddedFloatingDamageFonts();
+            LoadMapEventFonts(eventFontPath);
 			ImGui_ImplDX12_CreateDeviceObjects();
 
 			// Load settings icon from D2RHUD_Images/ (default gear.png)
@@ -804,6 +881,7 @@ namespace D3D12 {
 		ImGui::NewFrame();
 
 		g_PluginManager->Present();
+		LegacyTransmog::DrawStackSplit();
 
 		FrameContext& currentFrameContext = g_FrameContext[pSwapChain->GetCurrentBackBufferIndex()];
 		currentFrameContext.command_allocator->Reset();
@@ -886,6 +964,8 @@ namespace D3D12 {
 		g_pD3DCommandList = nullptr;
 		g_pD3DRtvDescHeap = nullptr;
 		g_pD3DSrvDescHeap = nullptr;
+        g_BuffAtlases.clear();
+        g_QuantityItemTexture={};g_QuantityItemSprite.reset();
 		g_GearTexture = nullptr;
 		g_GearTextureGPUHandle = {};
 		g_GearTextureWidth = 0;
@@ -1133,9 +1213,21 @@ namespace D3D12 {
 	}
 
 	LRESULT APIENTRY WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+		bool splitOutsideClick=false;
+		if(LegacyTransmog::SplitWindowMessage(hWnd,msg,wParam,lParam,&splitOutsideClick))return 0;
 		if (g_Initialized && g_PluginManager)
 		{
 			ImGuiIO& io = ImGui::GetIO();
+			if(splitOutsideClick){
+				ImGui_ImplWin32_WndProcHandler(hWnd,msg,wParam,lParam);
+				g_PluginManager->WndProc(hWnd,msg,wParam,lParam);
+				return CallWindowProc(OriginalWndProc,hWnd,msg,wParam,lParam);
+			}
+			if(LegacyTransmog::SplitCapturesInput(msg,lParam)){
+				ImGui_ImplWin32_WndProcHandler(hWnd,msg,wParam,lParam);
+				if(msg==WM_INPUT)return DefWindowProcW(hWnd,msg,wParam,lParam);
+				return 0;
+			}
 			g_PluginManager->WndProc(hWnd, msg, wParam, lParam);
 			switch (msg) {
 			case WM_LBUTTONDBLCLK:
@@ -1150,6 +1242,10 @@ namespace D3D12 {
 			case WM_MOUSEWHEEL:
 			case WM_MOUSEMOVE:
 				ImGui_ImplWin32_WndProcHandler(hWnd, msg, wParam, lParam);
+				if (!io.WantCaptureMouse) {
+					if (msg == WM_LBUTTONDOWN || msg == WM_LBUTTONDBLCLK) D3Whirlwind::MouseButtonDown(1);
+					if (msg == WM_RBUTTONDOWN || msg == WM_RBUTTONDBLCLK) D3Whirlwind::MouseButtonDown(2);
+				}
 				return io.WantCaptureMouse ? 0 : CallWindowProc(OriginalWndProc, hWnd, msg, wParam, lParam);
 			case WM_KEYDOWN:
 				if (wParam == VK_ESCAPE && g_PluginManager->TryCloseMenuOnEscape())
@@ -1206,6 +1302,7 @@ namespace D3D12 {
 		}
 
 		g_PluginManager = nullptr;
+        CubeMap::SetFontProvider(nullptr);g_MapEventFonts.fonts.fill(nullptr);
 		ResetState();
 		ImGui::DestroyContext();
 
@@ -1217,8 +1314,28 @@ namespace D3D12 {
 		return Status::Success;
 	}
 
+    static uint64_t GetMapEventArtwork(){
+        static BuffIcons::SpriteAtlas atlas;
+        if(atlas.pixels.empty() && g_DllModule){
+            const auto resource=FindResourceW(g_DllModule,MAKEINTRESOURCEW(IDR_MAP_EVENT_ART),RT_RCDATA);
+            const auto data=resource ? LoadResource(g_DllModule,resource) : nullptr;
+            const auto bytes=data ? static_cast<const unsigned char*>(LockResource(data)) : nullptr;
+            const auto size=resource ? SizeofResource(g_DllModule,resource) : 0;
+            int channels=0;
+            if(bytes && size)if(auto pixels=stbi_load_from_memory(bytes,int(size),&atlas.width,&atlas.height,&channels,4)){
+                atlas.frames=1;atlas.frameWidth=atlas.width;atlas.pixels.assign(pixels,pixels+size_t(atlas.width)*atlas.height*4);stbi_image_free(pixels);
+            }
+        }
+        return GetBuffIconAtlas("__cube_map_event_art",atlas);
+    }
 	void SetDllModule(HMODULE hModule) {
 		g_DllModule = hModule;
+        CubeMap::SetArtworkProvider(GetMapEventArtwork);
+        LegacyTransmog::Skin::SetProviders([](LegacyTransmog::Skin::Part part){
+            LegacyTransmog::Skin::Image image;auto assets=LegacyTransmog::Skin::Assets();if(!assets)return image;
+            const auto& sprite=(*assets)[part];const auto& atlas=sprite.atlas;
+            image={GetBuffIconAtlas("__quantity_ui_"+std::to_string(int(part)),atlas),atlas.width,atlas.height,atlas.frameWidth,atlas.frames,sprite.pitch};return image;
+        },GetMapEventFont,GetQuantityItemArtwork);
 	}
 
 	uint64_t GetGearTextureId() {

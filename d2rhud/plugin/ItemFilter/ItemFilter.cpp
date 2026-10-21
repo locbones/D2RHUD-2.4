@@ -1,6 +1,11 @@
 #define SOL_ALL_SAFETIES_ON 1
 
 #include "ItemFilter.h"
+#include "LuaConfigIO.h"
+#include "../StatRanges.h"
+#include "../TooltipText.h"
+#include "../ItemCodes.h"
+#include "../CubeVisual.h"
 #include <detours/detours.h>
 #include <sol/sol.hpp>
 #include <filesystem>
@@ -162,10 +167,12 @@ void PrintGameMessage(std::string message) {
 	oCHAT_PushMessage(gpChatManager, &tMessage, 4, 0, gpGameMessageType, &unk, &unk, &unk, &unk);
 }
 
+static void ReportFilterRuntimeError(const char* message);
+
 bool HandleError(const sol::protected_function_result& result) {
 	if (!result.valid()) {
 		sol::error err = result;
-		PrintGameMessage(err.what());
+		ReportFilterRuntimeError(err.what());
 		return true;
 	}
 	return false;
@@ -401,7 +408,15 @@ void __fastcall Hooked_UI_BuildGroundItemTooltip(D2UnitStrc* pUnit, char* szTool
 
 void Hooked_ITEMS_GetStatsDescription(D2UnitStrc* pUnit, char* pBuffer, uint64_t nBufferSize, int a4, int a5, int a6, unsigned int a7, int a8)
 {
-	oITEMS_GetStatsDescription(pUnit, pBuffer, nBufferSize, a4, a5, a6, a7, a8);
+	if (!pBuffer || !pUnit) return;
+	// R8 is unused by the native implementation; it is not a reliable capacity.
+	// Native callers still allocate 1024 bytes. Always redirect generation to owned
+	// storage before raising any of the native output limits.
+	std::vector<char> storage(TooltipText::StorageCapacity, '\0');
+	memcpy(storage.data(), pBuffer, strnlen_s(pBuffer, TooltipText::LegacyCapacity - 1));
+	oITEMS_GetStatsDescription(pUnit, storage.data(), storage.size(), a4, a5, a6, a7, a8);
+	storage.back() = '\0';
+	char* description = storage.data();
 
 	auto pUnitToUse = pUnit;
 	if (gpClientList) {
@@ -412,23 +427,21 @@ void Hooked_ITEMS_GetStatsDescription(D2UnitStrc* pUnit, char* pBuffer, uint64_t
 
 	if (pUnitToUse != nullptr) {
 		auto pUnitCustom = (D2UnitStrcCustom*)pUnit;
-		char cBuffer[0x400];
-		snprintf(cBuffer, 0x400, pUnitCustom->pFilterResult->szDescription.c_str(), pBuffer);
-		strncpy(pBuffer, cBuffer, 0x400);
+		if (pUnitCustom->pFilterResult) {
+		std::vector<char> formatted(TooltipText::NativeCapacity, '\0');
+		snprintf(formatted.data(), formatted.size(), pUnitCustom->pFilterResult->szDescription.c_str(), description);
+		strncpy_s(description, storage.size(), formatted.data(), _TRUNCATE);
 
 		if (pUnitCustom->pFilterResult->cbDescFunction.valid()) {
-			std::string szName = std::string(pBuffer);
+			std::string szName = std::string(description);
 			auto result = pUnitCustom->pFilterResult->cbDescFunction(reinterpret_cast<D2ItemUnitStrc*>(pUnit), szName, GetTickCount());
 
-			if (HandleError(result))
-				return;
-
-			sol::object data = result;
-
-			if (data.valid() && data.is<std::string>())
-				szName = data.as<std::string>();
-
-			strncpy(pBuffer, szName.c_str(), 0x400);
+			if (!HandleError(result)) {
+				sol::object data = result;
+				if (data.valid() && data.is<std::string>()) szName = data.as<std::string>();
+				strncpy_s(description, TooltipText::NativeCapacity, szName.c_str(), _TRUNCATE);
+			}
+		}
 		}
 	}
 
@@ -439,19 +452,24 @@ void Hooked_ITEMS_GetStatsDescription(D2UnitStrc* pUnit, char* pBuffer, uint64_t
 		if (v > 0)
 		{
 			const char* dbg = "ÿc8-Transmogged-ÿc0\n";
-			size_t len = strlen(pBuffer);
+			size_t len = strlen(description);
 
 			// ensure no overflow
-			if (len < nBufferSize - strlen(dbg) - 1)
-				strncat(pBuffer, dbg, nBufferSize - len - 1);
+			if (len + strlen(dbg) < TooltipText::NativeCapacity)
+				strcat_s(description, TooltipText::NativeCapacity, dbg);
 		}
-	}	
+	}
+	TooltipText::Remember(pUnit->dwUnitId, description);
+	strncpy_s(pBuffer, TooltipText::LegacyCapacity, description, _TRUNCATE);
 }
 
 int64_t* __fastcall Hooked_TooltipsPanel_DrawTooltip(int64_t* a1) {
 	auto pUnit = reinterpret_cast<D2UnitStrcCustom*>(oUNITS_GetHoveredUnit(*gpClientPlayerListIndex));
+	StatRanges::BeginTooltip(pUnit, a1);
 	HandleItemBackground(pUnit, reinterpret_cast<D2UnitRectStrc*>((uint32_t*)a1 + 0x18), (float*)a1 + 0x5A);
-	return oTooltipsPanel_DrawTooltip(a1);
+	auto result = oTooltipsPanel_DrawTooltip(a1);
+	StatRanges::EndTooltip();
+	return result;
 }
 
 int64_t* __fastcall Hooked_UI_DrawGroundItemBackground(D2UnitRectStrc* pRect, const char* szText, float* rgba) {
@@ -646,28 +664,7 @@ void RegisterBasicTypes(sol::state& s) {
 
 #pragma region Filter Load/Apply
 
-void LoadScript() {
-	applyFilter = sol::nil;
-	getWelcomeMessage = sol::nil;
-
-	auto env = sol::environment(lua, sol::create, lua.globals());
-	std::string fullPath = std::filesystem::absolute("lootfilter.lua").string();
-	sol::load_result load_result = lua.load_file(fullPath);
-	if (!load_result.valid()) {
-		sol::error err = load_result;
-		PrintGameMessage(err.what());
-		return;
-	}
-
-	sol::protected_function func = load_result;
-	sol::set_environment(env, func);
-	if (HandleError(load_result())) return;
-
-	applyFilter = env["ApplyFilter"];
-	getWelcomeMessage = env["GetWelcomeMessage"];
-
-	sol::set_environment(env, applyFilter);
-}
+#include "LootFilterRuntime.inl"
 
 void InitializeLUA() {
 	lua.open_libraries(sol::lib::base, sol::lib::package,
@@ -1157,6 +1154,9 @@ void ExportItemAssetsToTxt(const std::string& outputFile)
 
 void GetItemVisuals()
 {
+	// Native item-code loading preserves all four bytes. Keep explicit transmog
+	// data intact instead of regenerating it from the HD JSON files.
+	if (ItemCodes::Installed()) return;
 	// Load Bases
 	LoadItemAssets(std::format("{}/Mods/{}/{}.mpq/data/hd/items/items.json", GetExeDir(), ModName, ModName));
 
@@ -1189,7 +1189,7 @@ blz__string16* __fastcall Hooked_UNITS_GetInvGfxFromJson(blz__string16* a1, D2Un
 	if (!pUnit || pUnit->dwUnitType != 4 || !ret || !ret->pData)
 		return ret;
 
-	if (!cachedSettings.ExtendedItemcodes)
+	if (ItemCodes::Installed() || !cachedSettings.ExtendedItemcodes)
 		return ret;
 
 	char* buffer = ret->pData;
@@ -1264,9 +1264,11 @@ const char* __fastcall Hooked_UNITS_GetItemGfxFromJson(void* a1, D2UnitStrc* pUn
 	auto original = UNITS_GetItemGfxFromJson(a1, pUnit, a3, a4);
 	if (!pUnit || pUnit->dwUnitType != 4 || !original)
 		return original;
+	if (const char* visual = CubeVisual::WorldPath(a1, pUnit); visual && *visual)
+		return visual;
 
 	// Check for forced override from items.json (4-letter code)
-	if (cachedSettings.ExtendedItemcodes)
+	if (cachedSettings.ExtendedItemcodes && !ItemCodes::Installed())
 	{
 		const char* forced = GetForcedItemcodeOverride(pUnit);
 		if (forced)
@@ -1302,7 +1304,7 @@ static auto ITEMS_GetColor = reinterpret_cast<uint8_t * (__fastcall*)(D2UnitStrc
 
 uint8_t* Hooked_ITEMS_GetColor(D2UnitStrc* pPlayer, D2UnitStrc* pItem, int32_t* pColorIndex, int nTransType)
 {
-	if (cachedSettings.TransmogVisuals || cachedSettings.ExtendedItemcodes)
+	if (cachedSettings.TransmogVisuals || (cachedSettings.ExtendedItemcodes && !ItemCodes::Installed()))
 		GetTransmog(pItem);
 
 	auto result = ITEMS_GetColor(pPlayer, pItem, pColorIndex, nTransType);
@@ -1393,8 +1395,8 @@ bool ItemFilter::Install(MonsterStatsDisplaySettings settings) {
 		{
 			GetItemVisuals();
 			DetourAttach(&(PVOID&)UNITS_GetInvGfxFromJson, Hooked_UNITS_GetInvGfxFromJson);
-			DetourAttach(&(PVOID&)UNITS_GetItemGfxFromJson, Hooked_UNITS_GetItemGfxFromJson);
 		}
+		DetourAttach(&(PVOID&)UNITS_GetItemGfxFromJson, Hooked_UNITS_GetItemGfxFromJson);
 
 		DetourUpdateThread(GetCurrentThread());
 
@@ -1408,7 +1410,9 @@ bool ItemFilter::Install(MonsterStatsDisplaySettings settings) {
 		sgptDataTables->tUnitMemoryPool.nStructSize = sizeof(D2UnitStrcCustom);
 
 
-		DetourTransactionCommit();
+		if (DetourTransactionCommit() != NO_ERROR) return false;
+		TooltipText::InstallLimits();
+		StatRanges::Install();
 		InitializeLUA();
 
 		bInstalled = true;
@@ -1418,7 +1422,7 @@ bool ItemFilter::Install(MonsterStatsDisplaySettings settings) {
 
 void ItemFilter::ReloadGameFilter()
 {
-	LoadScript();
+	if (!LoadScript()) return;
 
 	std::string message = "Loot Filter Reloaded";
 
@@ -1464,7 +1468,7 @@ void ItemFilter::ReloadGameFilter()
 
 void ReloadGameFilterForGrail()
 {
-	LoadScript();
+	if (!LoadScript()) return;
 
 	auto ppClientItem = &ppClientUnitList[UNIT_ITEM * 0x80];
 	for (int i = 0; i < 128; i++) {
@@ -1478,123 +1482,35 @@ void ReloadGameFilterForGrail()
 
 void ItemFilter::CycleFilter()
 {
-	std::string filename = "lootfilter_config.lua";
-
-	std::ifstream inFile(filename);
-	if (!inFile.is_open()) {
-		MessageBoxA(nullptr, "Failed to open item filter file.", "Error", MB_OK | MB_ICONERROR);
-		return;
-	}
-
-	std::ostringstream buffer;
-	std::string line;
-	int currentLevel = 1;
-	bool foundLevel = false;
-	bool foundTitles = false;
-	std::vector<std::string> filterTitles;
-
-	// Read the file to detect current filter_level and titles
-	while (std::getline(inFile, line)) {
-		// Detect filter_level
-		if (line.find("filter_level =") != std::string::npos) {
-			foundLevel = true;
-			size_t eqPos = line.find('=');
-			if (eqPos != std::string::npos) {
-				std::string value = line.substr(eqPos + 1);
-				value.erase(0, value.find_first_not_of(" \t"));
-				value.erase(value.find_last_not_of(" \t,") + 1);
-				try { currentLevel = std::stoi(value); }
-				catch (...) { currentLevel = 1; }
-			}
-		}
-
-		// Detect filter_titles
-		// --- Updated filter_titles parsing ---
-		if (line.find("filter_titles =") != std::string::npos) {
-			foundTitles = true;
-			size_t braceStart = line.find('{');
-			size_t braceEnd = line.rfind('}');
-			if (braceStart != std::string::npos && braceEnd != std::string::npos && braceEnd > braceStart) {
-				std::string titlesStr = line.substr(braceStart + 1, braceEnd - braceStart - 1);
-				filterTitles.clear();
-
-				bool inQuotes = false;
-				std::string currentTitle;
-
-				for (char c : titlesStr) {
-					if (c == '"') {
-						inQuotes = !inQuotes;
-					}
-					else if (c == ',' && !inQuotes) {
-						currentTitle.erase(0, currentTitle.find_first_not_of(" \t"));
-						currentTitle.erase(currentTitle.find_last_not_of(" \t") + 1);
-						if (!currentTitle.empty())
-							filterTitles.push_back(ReplaceColorCodes(currentTitle));
-						currentTitle.clear();
-					}
-					else {
-						currentTitle += c;
-					}
-				}
-
-				// Add last title
-				currentTitle.erase(0, currentTitle.find_first_not_of(" \t"));
-				currentTitle.erase(currentTitle.find_last_not_of(" \t") + 1);
-				if (!currentTitle.empty())
-					filterTitles.push_back(ReplaceColorCodes(currentTitle));
-			}
-		}
-
-		buffer << line << "\n";
-	}
-
-	inFile.close();
-
-	// If no filter_level or filter_titles were found, do nothing
-	if (!foundLevel || !foundTitles || filterTitles.empty()) {
-		return;
-	}
-
-	// Adjust currentLevel based on number of titles
-	int maxLevels = static_cast<int>(filterTitles.size());
-	currentLevel = (currentLevel % maxLevels) + 1;
-
-	// Rewrite file with updated level
-	std::string fileContent = buffer.str();
-	size_t pos = fileContent.find("filter_level =");
-	if (pos != std::string::npos) {
-		size_t endLine = fileContent.find('\n', pos);
-		std::string newLine = "filter_level = " + std::to_string(currentLevel) + ",";
-		fileContent.replace(pos, endLine - pos, newLine);
-	}
-
-	std::ofstream outFile(filename, std::ios::trunc);
-	if (!outFile.is_open()) {
-		MessageBoxA(nullptr, "Failed to write item filter file.", "Error", MB_OK | MB_ICONERROR);
-		return;
-	}
-	outFile << fileContent;
-	outFile.close();
-
-	// Build message using filter level description
-	std::string description = "Unknown";
-	if (currentLevel >= 1 && currentLevel <= maxLevels)
-		description = filterTitles[currentLevel - 1];
-
-	std::string message = "ÿcNFilter Level Applied: ÿc4" + description;
-	PrintGameMessage(message.c_str());
-
-	// Reload the updated script and apply the filter immediately
-	LoadScript();
-
-	auto ppClientItem = &ppClientUnitList[UNIT_ITEM * 0x80];
-	for (int i = 0; i < 128; i++) {
-		auto pItem = ppClientItem[i];
-		while (pItem) {
-			DoFilter(pItem);
-			pItem = pItem->pListNext;
-		}
-	}
+    const std::string filename = "lootfilter_config.lua";
+    std::string source, error;
+    LootFilterConfig::Document document;
+    if (!LootFilterConfig::Read(filename, source) || !document.Parse(source)) {
+        PrintGameMessage(("Cannot cycle filter: " + document.error).c_str()); return;
+    }
+    const auto* level = document.Find("filter_level");
+    const auto* titles = document.Find("filter_titles");
+    if (!level || !titles) return;
+    LootFilterConfig::Document titleDocument;
+    if (!titleDocument.Parse("return {rules=" + document.Value(*titles) + "}")) {
+        PrintGameMessage("Filter titles are computed; select a level in the filter editor."); return;
+    }
+    const auto count = titleDocument.rules.size();
+    if (!count) return;
+    int current = 1;
+    try { current = std::stoi(LootFilterConfig::DecodeString(document.Value(*level))); } catch (...) {}
+    const int next = (current > 0 ? current % int(count) : 0) + 1;
+    const std::string updated = document.Update({{"filter_level", std::to_string(next)}}, {}, false);
+    if (!LootFilterConfig::Save(filename, source, updated, error)) {
+        PrintGameMessage(("Cannot cycle filter: " + error).c_str()); return;
+    }
+    if (!LoadScript()) return;
+    const auto& title = titleDocument.rules[next - 1];
+    const std::string description = LootFilterConfig::DecodeString(titleDocument.Value(title));
+    PrintGameMessage(("ÿcNFilter Level Applied: ÿc4" + ReplaceColorCodes(description)).c_str());
+    auto ppClientItem = &ppClientUnitList[UNIT_ITEM * 0x80];
+    for (int i = 0; i < 128; ++i)
+        for (auto item = ppClientItem[i]; item; item = item->pListNext) DoFilter(item);
 }
 
 bool ItemFilter::GetShowFilteredItems()

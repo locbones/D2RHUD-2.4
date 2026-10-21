@@ -1,0 +1,89 @@
+{
+  "name": "Dawn's Refuge",
+  "width": 48,
+  "height": 40,
+  "level_type": 26,
+  "dt1_mask": 127,
+  "ds1": "global/tiles/act6/refuge/dawnsrefuge.ds1",
+  "scene": "hd/env/preset/act6/refuge/dawnsrefuge.json",
+  "entry": [
+    24,
+    24
+  ],
+  "services": [
+    [
+      "Waypoint",
+      2,
+      0,
+      24,
+      20
+    ],
+    [
+      "Stash",
+      2,
+      2,
+      28,
+      23
+    ],
+    [
+      "Halbu",
+      1,
+      11,
+      12,
+      11
+    ],
+    [
+      "Jamella",
+      1,
+      10,
+      36,
+      11
+    ],
+    [
+      "Cain",
+      1,
+      25,
+      20,
+      30
+    ],
+    [
+      "Tyrael",
+      1,
+      7,
+      24,
+      9
+    ]
+  ],
+  "solid_rectangles": [
+    [
+      2,
+      2,
+      17,
+      7
+    ],
+    [
+      32,
+      2,
+      47,
+      7
+    ],
+    [
+      2,
+      32,
+      17,
+      39
+    ],
+    [
+      32,
+      32,
+      47,
+      39
+    ]
+  ],
+  "assets": {
+    "global/tiles/act6/refuge/dawnsrefuge.ds1": "b1e891c18c371ce53285a486fecbf3e69bfa5888989bd3cfb8bb18dd382ca549",
+    "hd/env/preset/act6/refuge/dawnsrefuge.json": "36c23cdd1e919f9311c71ce0cbb0aaae790d15ca298ea2c667a34a3b717a89c1"
+  },
+  "stock_art": true,
+  "hd_entities": 311
+}

@@ -6,6 +6,7 @@
 #include <vector>
 
 struct ImFont;
+namespace BuffIcons { struct SpriteAtlas; }
 
 namespace D3D12 {
 
@@ -21,6 +22,9 @@ namespace D3D12 {
 	};
 
 	Status Init();
+
+    // Lazy atlas upload on the render thread. Retained until swapchain teardown.
+    uint64_t GetBuffIconAtlas(const std::string& key, const BuffIcons::SpriteAtlas& atlas);
 
 	Status InstallHooks();
 	Status RemoveHooks();

@@ -12,3 +12,5 @@ IDR_FD_FONT_8   RCDATA "fonts\\8.otf"
 IDR_FD_FONT_9   RCDATA "fonts\\9.otf"
 IDR_FD_FONT_10  RCDATA "fonts\\10.otf"
 IDR_FD_FONT_11  RCDATA "fonts\\11.otf"
+
+IDR_MAP_EVENT_ART RCDATA "art\\map-events.png"
