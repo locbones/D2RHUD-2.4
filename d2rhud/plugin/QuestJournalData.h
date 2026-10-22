@@ -78,7 +78,7 @@ inline std::shared_ptr<Rules> ParseRules(const std::string& text,const std::stri
         const auto j=nlohmann::json::parse(config);
         rules->events=j.at("version")==2;
         if((j.at("version")!=1&&!rules->events)||!j.at("quests").is_array())throw std::runtime_error("Unsupported quest description file.");
-        std::set<int> used;
+        std::set<int> used;uint64_t previousMenuDigest=digest,previousPotionDigest=digest;
         for(const auto& entry:j.at("quests")){
             const int id=entry.at("id").get<int>();if(id<1||id>int(rules->quests.size())||!used.insert(id).second)throw std::runtime_error("Invalid or duplicate quest ID.");
             auto& q=rules->quests[id-1];
@@ -91,7 +91,7 @@ inline std::shared_ptr<Rules> ParseRules(const std::string& text,const std::stri
             }
             if(rules->events){
                 q.trigger=entry.at("trigger").get<std::string>();q.tips=entry.value("tips",std::string{});q.reward=entry.value("reward",std::string{});
-                const std::set<std::string> kinds{"item","craft","recipe","depositSkull","countessThul","dropWeapon","statueCube","kills","acknowledge"};
+                const std::set<std::string> kinds{"item","craft","recipe","questRecipe","depositSkull","countessThul","dropWeapon","statueCube","kills","acknowledge"};
                 if(!kinds.contains(q.trigger)||id>64)throw std::runtime_error("Unsupported event objective.");
                 q.target=entry.value("target",1);q.boss=entry.value("boss",-1);q.milestone=entry.value("milestone",false);q.bonus=entry.value("bonus",false);
                 if(q.target<1||q.target>10000000||q.boss< -1||q.boss>65535)throw std::runtime_error("Invalid event target.");
@@ -105,13 +105,34 @@ inline std::shared_ptr<Rules> ParseRules(const std::string& text,const std::stri
                 if(q.items.size()>64)throw std::runtime_error("Too many item alternatives.");
                 q.recipes=entry.at("recipes").get<std::vector<size_t>>();for(auto row:q.recipes)if(row>=rules->rows)throw std::runtime_error("Invalid activity recipe binding.");
                 if(((q.trigger=="item"||q.trigger=="craft"||q.trigger=="statueCube")&&q.items.empty())||((q.trigger=="recipe"||q.trigger=="depositSkull"||q.trigger=="countessThul")&&q.recipes.empty())||(q.trigger=="countessThul"&&q.boss<0))throw std::runtime_error("Incomplete activity definition.");
-                for(auto row:q.recipes)digest=Hash(sourceRows[row],digest);
+                if(q.trigger=="questRecipe"){
+                    if(!ConfirmationQuest(id)||q.milestone||!q.recipes.empty()||!q.items.empty())throw std::runtime_error("Unsupported journal recipe objective.");
+                    const std::map<int,std::pair<std::string,std::string>> ingredients{{10,{"wms","yps"}},{17,{"isc","wms"}},{24,{"tsc","yps"}},{28,{"tsc","wms"}},{31,{"tsc,qty=2",""}},{33,{"isc,qty=2",""}},{34,{"isc","tsc"}}};
+                    const auto& expected=ingredients.at(id);
+                    bool found=false;
+                    for(const auto& gate:rules->gates)if(gate.quest==id&&!gate.turnIn){
+                        const auto values=Fields(sourceRows[gate.row]);auto cell=[&](const char* key){const auto c=columns.find(key);return c!=columns.end()&&c->second<values.size()?values[c->second]:std::string{};};
+                        const auto a=cell("input 1"),b=cell("input 2");
+                        const bool matches=(a==expected.first&&b==expected.second)||(!expected.second.empty()&&a==expected.second&&b==expected.first);
+                        if(gate.inputs!=2||gate.op||!matches||cell("output")!="Bt"+std::to_string(id)||!cell("output b").empty()||!cell("output c").empty())throw std::runtime_error("Quest "+std::to_string(id)+" confirmation recipe differs from its expected ingredients.");
+                        for(int n=3;n<=7;++n)if(!cell(("input "+std::to_string(n)).c_str()).empty())throw std::runtime_error("Unexpected confirmation recipe input.");
+                        found=true;
+                    }if(!found)throw std::runtime_error("Quest "+std::to_string(id)+" confirmation recipe is missing.");rules->recipeQuestMask|=uint64_t(1)<<(id-1);
+                }
+                for(auto row:q.recipes){digest=Hash(sourceRows[row],digest);previousMenuDigest=Hash(sourceRows[row],previousMenuDigest);previousPotionDigest=Hash(sourceRows[row],previousPotionDigest);}
                 if(q.recipes.size()>512)throw std::runtime_error("Too many recipe bindings.");
                 auto identity=entry;for(const char* field:{"title","objective","turnIn","tips","reward","objectiveRecipes","rewardRecipes"})identity.erase(field);
                 digest=Hash(identity.dump(),digest);
+                auto menuIdentity=identity;
+                if(ConfirmationQuest(id)&&q.trigger=="questRecipe")menuIdentity["trigger"]="acknowledge";
+                previousMenuDigest=Hash(menuIdentity.dump(),previousMenuDigest);
+                if(id!=10)identity=menuIdentity;
+                previousPotionDigest=Hash(identity.dump(),previousPotionDigest);
             }
         }
         if(rules->events&&used.size()!=rules->quests.size())throw std::runtime_error("Every quest requires an event definition.");
+        if(rules->recipeQuestMask&&previousMenuDigest!=digest)rules->previousMenuDigest=previousMenuDigest;
+        if(rules->recipeQuestMask&&previousPotionDigest!=digest)rules->previousPotionDigest=previousPotionDigest;
     }catch(const std::exception& e){rules->error=std::string("Quest description configuration is invalid: ")+e.what();}
     // Hash the original configuration above so correcting legacy row drift
     // neither resets progress nor permits previously claimed rewards again.
@@ -172,7 +193,13 @@ inline std::optional<History> Decode(std::string_view text,int count){try{
         if(!UnsignedInteger(p,"checksum",UINT32_MAX,point.checksum)||!UnsignedInteger(p,"size",32*1024*1024,point.saveSize)||point.saveSize<0x14f||!UnsignedInteger(p,"completed",count,completed)||!p.at("ready").is_boolean()||!p.at("legacyClosed").is_boolean()||!p.at("uncertain").is_boolean())return {};
         auto unsignedField=[&](const char* key,uint64_t maximum,uint64_t& result){if(!p.contains(key)){result=0;return true;}const auto& value=p.at(key);if(!value.is_number_integer()||(value.is_number_integer()&&!value.is_number_unsigned()&&value.get<int64_t>()<0))return false;result=value.get<uint64_t>();return result<=maximum;};
         uint64_t kills=0,evidence=0,menus=0;if(!unsignedField("kills",UINT32_MAX,kills)||!unsignedField("evidence",UINT64_MAX,evidence)||!unsignedField("menus",127,menus))return {};
-        point.state={int(completed),p.at("ready").get<bool>(),p.at("legacyClosed").get<bool>(),p.at("uncertain").get<bool>()};point.state.kills=uint32_t(kills);point.state.evidence=evidence;point.state.countess=p.value("countess",false);point.state.thul=p.value("thul",false);point.state.menus=uint16_t(menus);if(!Valid(point.state,count))return {};h.checkpoints.push_back(point);
+        point.state={int(completed),p.at("ready").get<bool>(),p.at("legacyClosed").get<bool>(),p.at("uncertain").get<bool>()};point.state.kills=uint32_t(kills);point.state.evidence=evidence;point.state.countess=p.value("countess",false);point.state.thul=p.value("thul",false);point.state.menus=uint16_t(menus);if(!Valid(point.state,count))return {};
+        // Completed/ready progress already rules out the fresh-journal setup
+        // choice. Hand-edited test checkpoints must not remain permanently
+        // paused behind an inconsistent "not started" flag. Observations on
+        // a genuinely fresh journal still wait for the explicit setup choice.
+        if(point.state.completed||point.state.objectiveReady)point.state.legacyClosed=true;
+        h.checkpoints.push_back(point);
     }return h;
 }catch(...){return {};}}
 inline bool AtomicWrite(const std::filesystem::path& path,const History& h,std::string& error){

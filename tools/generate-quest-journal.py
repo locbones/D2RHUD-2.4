@@ -82,7 +82,8 @@ def export(excel, output, filter_path):
         raise ValueError("Expected all 45 original filter lessons")
     titles = {1:"Store a skull",2:"Withdraw a skull",3:"Your equipped weapon",4:"The Mythos Statue",5:"One thousand monsters",6:"The Gnasher",7:"Countess and Thul",8:"Withdraw an Amn",9:"Daylight Tier 2",10:"Recipes and the Rift Shop",11:"A beginner's scribblings",12:"The Gidbinn",13:"Socket an amulet",14:"Quill of Quality",15:"Beacon of Hope",16:"Hexfire",17:"Mercenary information",18:"Enhance a belt",19:"Craft a Safety ring",20:"Daylight Tier 5",21:"Blood Contract",22:"Dye an item",23:"Skin of the Vipermagi",24:"The Mod Info menu",25:"Arm of King Leoric",26:"Gem Vein",27:"Soul Crystal",28:"Mod credits",29:"Unrelenting Will",30:"Socket Remover",31:"The Grail Tracker",32:"Upconvert magic jewels",33:"The Loot Filter",34:"The Guide Compendium",35:"Griswold's set",36:"Rainbow Facet",37:"Essence of Hatred",38:"Gold Bar",39:"Ramaladni's Gift",40:"Milk Bottle",41:"A Fallen's gold pile",42:"Body parts",43:"Complete a Codex",44:"Limit Break I",45:"A Limit Break item"}
     craft = {9,13,18,19,20,21,22,32,43,44}
-    acknowledge = {10,17,24,28,31,33,34}
+    acknowledge = set()
+    confirmations = {10:"a Thawing Potion with an Antidote Potion",17:"a Thawing Potion with an Identify Scroll",24:"an Antidote Potion with a Town Portal Scroll",28:"a Thawing Potion with a Town Portal Scroll",31:"two Town Portal Scrolls",33:"two Identify Scrolls",34:"an Identify Scroll with a Town Portal Scroll"}
     all_rows = rows(excel / "cubemain.txt")
     sets = {r["index"] for r in rows(excel / "setitems.txt")}
     uniques = {r["index"] for r in rows(excel / "uniqueitems.txt")}
@@ -133,6 +134,8 @@ def export(excel, output, filter_path):
                     q["recipes"].append(i)
             if not q["recipes"]: raise ValueError(f"No real crafting operation for quest {n}")
         elif n==3: q.update(trigger="dropWeapon",items=[])
+        elif n in confirmations:
+            q.update(trigger="questRecipe",items=[],recipes=[],objective=("Cube "+confirmations[n]+".") if n==10 else lessons[n][0].rstrip(". ")+". Confirm by cubing "+confirmations[n]+".")
         elif n==4: q.update(trigger="statueCube")
         elif n==5: q.update(trigger="kills",target=1000)
         elif n in {19,32}:

@@ -17,13 +17,18 @@ charm cannot prove which character earned its old progress.
 Choose **Start at Quest 1** or the explicit import once when setting up the
 journal. Successful crafting evidence is retained while that choice is pending,
 then applied when starting the journal.
+Loaded checkpoints with completed quests or an objective already ready are
+treated as started even if a manually edited `legacyClosed` flag says false.
+Evidence alone on a fresh journal still waits for the explicit setup choice.
 
 Progress belongs to the character, independently of bags, statues and proof
 parchments. Moving those items does not reset completed objectives. Evidence of
 an observed acquisition or crafting activity can satisfy a later lesson once
 earlier lessons are complete. Old proof-producing and ordinary turn-in recipes
 are disabled by the server's isolated cube matcher, without rewriting the mod's
-compiled recipe table or player item progress stats.
+compiled recipe table or player item progress stats. The seven reading/menu
+lessons explicitly keep their original confirmation recipes and native
+parchment outputs; the journal records a successful transmute directly.
 
 ## Activities
 
@@ -47,15 +52,26 @@ compiled recipe table or player item progress stats.
   weapon on the cursor, and completes when it reaches the ground. Putting it
   into storage or transferring it ends that action. No extra Transmute is
   necessary for those lessons.
-- Recipe/Rift Shop, mercenary information, Mod Info, Grail and Loot Filter
-  lessons record menu visits. Both recipe and shop visits are required for
-  Quest 10. Credits and the external Discord guide can be explicitly
-  acknowledged in the journal after reading them.
+- The reading/menu lessons complete through their original confirmation
+  recipes: Quest 10, thawing + antidote; 17, thawing + identify scroll;
+  24, antidote + town portal scroll; 28, thawing + town portal scroll;
+  31, two town portal scrolls; 33, two identify scrolls; 34, identify scroll +
+  town portal scroll. Quests without rewards advance immediately on successful
+  transmutation. Quest 10's +25% poison resistance bonus is claimed in the
+  journal while carrying the Evil Barrier charm; no parchment turn-in is
+  required. Menu visits and acknowledgment buttons do not complete these
+  lessons. The journal's instructions show the corresponding recipe.
 
 Quests without a reward advance automatically. The six fixed stat bonuses are
 claimed in the journal while carrying exactly one appropriate Evil Barrier
 charm in inventory. Native saved modifiers preserve the original bonuses and
 update the charm/player stats. Claims are recorded once per character.
+Eligibility follows the reward recipe's compiled first ingredient: Quests
+5/10 use the original unique `B01`, 20/25 use unique `B02` after Quest 15,
+and 35/40 use unique `B03` after Quest 30. Milestone `,mod` upgrades can retain
+the original unique ID while changing item code; later claims match the
+required base code and unique quality rather than requiring a new unique ID.
+The charm's existing modifiers, identity and upgrade choice are retained.
 
 The three actual charm upgrades (15, 30, 45) still use the cube: charm + Quill of
 Quality + a weapon, armor, ring, amulet or charm for the chosen reward. The
@@ -113,6 +129,14 @@ offers Start at Quest 1/import again. Any prior setup choice, completed quest,
 reward readiness, evidence, kill count, menu visit, Countess/Thul observation
 or uncertain transaction prevents this recovery. Used journals still require
 matching data/backups, and their progress is never silently discarded.
+
+The confirmation recipe update accepts both exact preceding definitions:
+all-menu lessons, and the intermediate Quest-10-only potion update. It backs
+up the original journal as `.recipe-lessons-<definition>-<hash>.bak` and preserves
+completed quests and claimed bonuses. Only unclaimed changed menu evidence
+and readiness is cleared. A Quest 10 potion reward already ready in the
+intermediate build remains ready. This migration requires a matching save
+checkpoint for a used journal; unrelated definition changes still fail closed.
 
 `tools/generate-quest-journal.py` exports the original tasks, tips and reward
 choices from `override_rules.lua`, plus explicit event definitions derived from

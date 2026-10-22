@@ -114,10 +114,10 @@ bool TryQuestMatch(RuneMatch* result,Game* game,Unit* player,Input* inputs){
            gate.quest<=0 || gate.op<0 || gate.op>28)
             return refuse("Quest recipes unavailable: a loaded quest recipe differs from its source definition.");
         const bool eligible=progress.available && gate.quest==progress.completed+1 && gate.turnIn==progress.objectiveReady &&
-            (!rules->events||(gate.turnIn&&rules->quests[gate.quest-1].milestone));
+            (!rules->events||(gate.turnIn&&rules->quests[gate.quest-1].milestone)||QuestJournal::RecipeObjective(*rules,gate));
         if(eligible){
             if(gate.op && gate.param==398)header[4]=0;
-            if(rules->events){
+            if(rules->events&&!QuestJournal::RecipeObjective(*rules,gate)){
                 if(gate.inputs!=4)return refuse("Quest upgrade recipe has unexpected ingredients.");
                 // Keep the charm, Quill and chosen reward ingredient. Remove
                 // only the obsolete proof slot in this invocation's copy.

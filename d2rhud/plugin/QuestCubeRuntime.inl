@@ -53,8 +53,10 @@ bool CreateQuest(Game* game,Unit* player,Recipe* recipe,Input* inputs){
     Recipe native=*recipe;
     const auto rules=QuestJournal::Bindings();
     if(rules&&rules->events){
-        if(!gate->turnIn||!rules->quests[gate->quest-1].milestone||gate->inputs!=4){QuestJournal::Finish(game,player,*gate,QuestJournal::Outcome::Rejected);return true;}
-        memmove(native.header.data()+0x1c,native.header.data()+0x24,5*8);memset(native.header.data()+0x44,0,8);native.header[0x10]=3;
+        if(!QuestJournal::RecipeObjective(*rules,*gate)){
+            if(!gate->turnIn||!rules->quests[gate->quest-1].milestone||gate->inputs!=4){QuestJournal::Finish(game,player,*gate,QuestJournal::Outcome::Rejected);return true;}
+            memmove(native.header.data()+0x1c,native.header.data()+0x24,5*8);memset(native.header.data()+0x44,0,8);native.header[0x10]=3;
+        }
     }
     for(const auto& out:native.outputs)if(out.type&&((out.type!=252&&out.type!=254)||out.quantity>1||out.Visual())){
         QuestJournal::Finish(game,player,*gate,QuestJournal::Outcome::Rejected);QuestJournal::Refused(game,player,"Quest recipe has unsupported output semantics; no inputs were consumed.");return true;
@@ -98,11 +100,22 @@ bool ClaimQuestBonus(Game* game,Unit* player,int quest){
     if(!recipes||rows!=rules->rows)return false;
     for(const auto& gate:rules->gates)if(gate.quest==quest&&gate.turnIn){if(reward||gate.row>=rows)return false;reward=recipes+gate.row;}
     if(!reward||reward->outputs[0].type!=254||reward->outputs[1].type||reward->outputs[2].type)return false;
-    const auto target=Resolve("Barrier"+std::to_string(quest<=15?1:quest<=30?2:3),0,0);if(!target.Valid()||target.kind!=1)return false;
+    // The milestone's ,mod output changes the base code while retaining the
+    // original unique ID. Match the actual compiled reward ingredient instead
+    // of guessing a new Barrier<N> unique ID from the quest number. This also
+    // works with BIN-only tables and preserves exact-unique early requirements.
+    const auto flags=RuneField<uint16_t>(reward->header.data(),0x14);
+    const auto base=RuneField<uint16_t>(reward->header.data(),0x16);
+    const auto unique=RuneField<uint16_t>(reward->header.data(),0x18);
+    const auto quality=reward->header[0x1a],quantity=reward->header[0x1b];
+    const auto itemCount=RuneField<uint64_t>(Native<void*>(0x1ca0398));
+    if(!(flags&1)||(flags&~uint16_t(0x41))||quality!=7||quantity>1||!itemCount||itemCount>100000||base>=itemCount)return false;
+    if(flags&0x40){const auto count=RuneField<uint64_t>(Native<void*>(0x1c9fc78));if(!unique||!count||count>65536||unique>count)return false;}
+    else if(unique)return false;
     Unit* charm=nullptr;std::set<Unit*> seen;
     for(auto item=player->pInventory->pFirstItem;item&&seen.size()<4096;){
         if(!seen.insert(item).second||!item->pItemData)return false;const auto data=item->pItemData;
-        if(item->dwUnitType==4&&data->pExtraData.pParentInv==player->pInventory&&data->nPage==0&&item->dwAnimMode==0&&data->dwQualityNo==7&&data->dwFileIndex==uint32_t(target.index)){
+        if(item->dwUnitType==4&&item->dwClassId==base&&data->pExtraData.pParentInv==player->pInventory&&data->nPage==0&&item->dwAnimMode==0&&data->dwQualityNo==quality&&(!(flags&0x40)||data->dwFileIndex==uint32_t(unique-1))){
             if(charm)return false;charm=item;
         }item=data->pExtraData.pNextItem;
     }

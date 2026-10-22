@@ -43,12 +43,14 @@ void Native(uint8_t* image) {
     // modifier mutation and propagation, with only name parsing/notifications
     // replaced at their engine boundary.
     Recipe reward{};reward.outputs[0].type=254;
+    auto ingredient=[&](uint16_t flags,uint16_t base,uint16_t unique){memcpy(reward.header.data()+0x14,&flags,2);memcpy(reward.header.data()+0x16,&base,2);memcpy(reward.header.data()+0x18,&unique,2);reward.header[0x1a]=7;reward.header[0x1b]=0;};
+    ingredient(0x41,0,43);
     reward.outputs[0].mods[0].property=0;reward.outputs[0].mods[0].min=reward.outputs[0].mods[0].max=25;
     auto rules=std::make_shared<QuestJournal::Rules>();rules->events=true;rules->rows=1;rules->quests.resize(5);rules->quests[4].bonus=true;
     rules->gates={{0,5,true,1,1,0,0,0}};::testQuestRules=rules;
     data(0x1ca0b18,reinterpret_cast<uintptr_t>(&reward));data(0x1ca0b20,1);data(0x1c9ebd8,1);
+    data(0x1ca0398,4);data(0x1c9fc78,100);
     stub(0x6d0470,+[](void*,const char* name)->int{return !strcmp(name,"rng-generator")?99:-1;});
-    stub(0x2616b0,+[](Output* result,char* name,int,int)->int{assert(!strcmp(name,"Barrier1"));*result={};result->type=252;result->flags=8;result->quality=7;result->special=43;return 1;});
     int published=0;static int* publications=nullptr;publications=&published;
     originalNotify=+[](Game*,Unit* owner,Unit* target,uint32_t flags,uint32_t,uint32_t,uint32_t,uint32_t,uint32_t){assert(owner==&player&&target==&item&&flags==1);++*publications;};
     Game game{};D2InventoryStrc inventory{};inventory.pOwner=&player;inventory.pFirstItem=&item;player.pInventory=&inventory;
@@ -64,6 +66,29 @@ void Native(uint8_t* image) {
     SetSavedStat(savedList.data(),9,0);Unit duplicate=item;D2ItemDataStrc duplicateData=itemData;duplicate.pItemData=&duplicateData;duplicateData.pExtraData.pNextItem=nullptr;itemData.pExtraData.pNextItem=&duplicate;
     assert(!ClaimQuestBonus(&game,&player,5)&&!SavedStat(savedList.data(),9)&&published==before);itemData.pExtraData.pNextItem=nullptr;
     itemData.nPage=1;assert(!ClaimQuestBonus(&game,&player,5)&&published==before);itemData.nPage=0;
+    // All six fixed bonuses obey the compiled first ingredient. Tier-two
+    // and tier-three upgrades may keep the original unique ID (,mod), while
+    // ordinary generated versions may carry their tier's own unique ID.
+    rules->quests.resize(40);for(const int q:{5,10,20,25,35,40})rules->quests[q-1].bonus=true;
+    for(const auto [quest,base,stat,shift,amount]:std::array<std::array<int,5>,6>{{{5,0,41,0,25},{10,0,45,0,25},{20,1,43,0,25},{25,1,96,0,20},{35,2,7,8,100},{40,2,9,8,100}}}){
+        rules->gates[0].quest=quest;ingredient(base?1:0x41,uint16_t(base),base?0:43);
+        propertyRow[0x20]=uint8_t(stat);stats[stat][0x14]=uint8_t(shift);stats[stat][8]=32;stats[stat][0x15]=16;
+        reward.outputs[0].mods[0].min=reward.outputs[0].mods[0].max=int16_t(amount);
+        item.dwClassId=uint32_t(base);itemData.dwFileIndex=42;
+        for(const int uniqueId:base?std::vector<int>{42,42+base}:std::vector<int>{42}){
+            itemData.dwFileIndex=uniqueId;SetSavedStat(savedList.data(),stat,0);const int old=published;
+            const int retained=SavedStat(savedList.data(),39);
+            assert(ClaimQuestBonus(&game,&player,quest)&&published==old+1&&SavedStat(savedList.data(),stat)==(amount<<shift));
+            assert(item.dwClassId==uint32_t(base)&&itemData.dwFileIndex==uniqueId&&SavedStat(savedList.data(),39)==retained);
+        }
+        const int old=published;SetSavedStat(savedList.data(),stat,0);
+        item.dwClassId=uint32_t((base+1)%3);assert(!ClaimQuestBonus(&game,&player,quest)&&published==old&&!SavedStat(savedList.data(),stat));item.dwClassId=uint32_t(base);
+        itemData.dwQualityNo=2;assert(!ClaimQuestBonus(&game,&player,quest)&&published==old);itemData.dwQualityNo=7;
+        itemData.nPage=3;assert(!ClaimQuestBonus(&game,&player,quest)&&published==old);itemData.nPage=0;
+        if(!base){itemData.dwFileIndex=43;assert(!ClaimQuestBonus(&game,&player,quest)&&published==old);itemData.dwFileIndex=42;}
+        duplicate=item;duplicateData=itemData;duplicate.pItemData=&duplicateData;duplicateData.pExtraData.pNextItem=nullptr;itemData.pExtraData.pNextItem=&duplicate;
+        assert(!ClaimQuestBonus(&game,&player,quest)&&published==old);itemData.pExtraData.pNextItem=nullptr;
+    }
     ::testQuestRules=previousRules;originalNotify=previousNotify;
     for(const auto& [rva,bytes]:oldCode)memcpy(image+rva,bytes.data(),bytes.size());for(const auto& [rva,value]:oldData)memcpy(image+rva,&value,8);
     FlushInstructionCache(GetCurrentProcess(),image,0x2000000);

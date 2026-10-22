@@ -26,6 +26,32 @@ int main(int argc,char** argv){
     const auto binRules=QuestJournal::Data::ParseRules(bins.ReadTableSource("cubemain",true),questConfig);
     assert(textRules->error.empty()&&binRules->error.empty()&&binRules->quests.size()==45&&binRules->digest==textRules->digest);
     for(size_t n=0;n<45;++n)assert(binRules->quests[n].recipes==textRules->quests[n].recipes);
+    // All confirmation lessons use their actual compiled ingredient records,
+    // including the quantity-two scroll recipes. No source ordinal guessing.
+    const auto cube=Text(excel/"cubemain.bin");std::string itemRecords;
+    for(const char* table:{"weapons","armor","misc"}){const auto bytes=Text(source/(std::string(table)+".bin"));assert(bytes.size()>4&&(bytes.size()-4)%0x1b4==0);itemRecords+=bytes.substr(4);}
+    const std::map<int,std::vector<std::pair<std::string,int>>> expected{{10,{{"wms",1},{"yps",1}}},{17,{{"isc",1},{"wms",1}}},{24,{{"tsc",1},{"yps",1}}},{28,{{"tsc",1},{"wms",1}}},{31,{{"tsc",2}}},{33,{{"isc",2}}},{34,{{"isc",1},{"tsc",1}}}};
+    for(const auto& [id,ingredients]:expected){
+        assert(binRules->quests[id-1].trigger=="questRecipe");size_t matches=0;
+        for(const auto& gate:binRules->gates)if(gate.quest==id&&!gate.turnIn){
+            ++matches;const auto recipe=cube.data()+4+gate.row*0x148;assert(uint8_t(recipe[0x10])==2&&recipe[4]==0&&uint8_t(recipe[0x54])==252);
+            for(size_t n=0;n<ingredients.size();++n){uint16_t item=0;memcpy(&item,recipe+0x16+n*8,2);assert(size_t(item)*0x1b4+0x84<=itemRecords.size());
+                auto code=itemRecords.substr(size_t(item)*0x1b4+0x80,4);while(!code.empty()&&(code.back()==' '||code.back()=='\0'))code.pop_back();
+                assert(code==ingredients[n].first&&(std::max)(1,int(uint8_t(recipe[0x1b+n*8])))==ingredients[n].second);
+            }
+        }assert(matches==1);
+    }
+    // Bonus claims use the compiled base/quality requirement after milestone
+    // upgrades, whose ,mod output may retain the original unique ID.
+    for(const int id:{5,10,20,25,35,40}){
+        size_t matches=0;for(const auto& gate:binRules->gates)if(gate.quest==id&&gate.turnIn){
+            ++matches;const auto recipe=cube.data()+4+gate.row*0x148;uint16_t flags=0,base=0,unique=0;
+            memcpy(&flags,recipe+0x14,2);memcpy(&base,recipe+0x16,2);memcpy(&unique,recipe+0x18,2);
+            assert(uint8_t(recipe[0x1a])==7&&uint8_t(recipe[0x1b])<=1&&size_t(base)*0x1b4+0x84<=itemRecords.size());
+            assert(itemRecords.substr(size_t(base)*0x1b4+0x80,4)==(id<=10?"B01 ":id<=25?"B02 ":"B03 "));
+            assert(flags==(id<=10?0x41:1)&&(id<=10?unique>0:unique==0));
+        }assert(matches==1);
+    }
     // Leftover source must not override the recipes actually compiled for a
     // normal (non -txt) launch, or rebind a journal to an unrelated revision.
     Write(excel/"cubemain.txt","description\tenabled\nwrong_recipe\t1\n");

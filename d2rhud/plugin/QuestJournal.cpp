@@ -37,14 +37,14 @@ void Message(Session& s,std::string value){s.message=std::move(value);++s.sequen
 bool Safe(Game* game,Unit* player){return Owner(game,player)&&!(player->dwFlags&0x10000)&&player->dwAnimMode!=0&&player->dwAnimMode!=17;}
 int ItemStat(Unit* item,int stat){return Native<int(__fastcall*)(Unit*,uint32_t,uint16_t)>(0x1e5620)(item,stat,0);}
 uint32_t Code(Unit* item){auto table=Field<const uint8_t*>(Native<void*>(0x1ca0390));auto count=Field<uint64_t>(Native<void*>(0x1ca0398));return table&&count<1000000&&item&&item->dwClassId<count?Field<uint32_t>(table+item->dwClassId*0x1b4,0x80):0;}
-void BackupUnusedJournal(const std::filesystem::path& path,const std::string& original,uint64_t digest){
-    auto backup=path;backup+=".unused-"+Data::Hex(digest)+"-"+Data::Hex(Data::Hash(original))+".bak";
+void BackupJournal(const std::filesystem::path& path,const std::string& original,uint64_t digest,const char* kind="unused"){
+    auto backup=path;backup+="."+std::string(kind)+"-"+Data::Hex(digest)+"-"+Data::Hex(Data::Hash(original))+".bak";
     std::error_code error;
     if(!std::filesystem::exists(backup))std::filesystem::copy_file(path,backup,std::filesystem::copy_options::none,error);
-    if(error)throw std::runtime_error("Could not back up the unused quest journal: "+error.message());
+    if(error)throw std::runtime_error("Could not back up the quest journal: "+error.message());
     std::ifstream input(backup,std::ios::binary|std::ios::ate);
-    if(!input||input.tellg()!=std::streamoff(original.size()))throw std::runtime_error("Unused quest journal backup could not be verified.");
-    std::string text(original.size(),'\0');input.seekg(0);if(!input.read(text.data(),text.size())||text!=original)throw std::runtime_error("Unused quest journal backup differs from the original.");
+    if(!input||input.tellg()!=std::streamoff(original.size()))throw std::runtime_error("Quest journal backup could not be verified.");
+    std::string text(original.size(),'\0');input.seekg(0);if(!input.read(text.data(),text.size())||text!=original)throw std::runtime_error("Quest journal backup differs from the original.");
 }
 std::optional<Data::History> LegacyTimestampJournal(const Data::Identity& identity,const Rules& rules,const Data::Checkpoint& current){
     if(!std::filesystem::exists(directory))return {};
@@ -138,7 +138,10 @@ bool Begin(Game* game,Unit* player,const RecipeGate& gate){
 void Finish(Game* game,Unit* player,const RecipeGate& gate,Outcome outcome){
     std::lock_guard lock(mutex);auto rules=definitions.load();if(!rules||!player)return;auto it=sessions.find({game,player->dwUnitId});if(it==sessions.end())return;auto& s=it->second;
     if(s.player!=player||!s.busy||s.transaction.row!=gate.row)return;s.busy=false;
-    if(outcome==Outcome::Committed&&Data::Advance(s.state,gate,int(rules->quests.size()))){s.dirty=true;Message(s,gate.turnIn?"Quest "+std::to_string(gate.quest)+" reward claimed.":"Objective complete.");}
+    if(outcome==Outcome::Committed&&RecipeObjective(*rules,gate)){
+        Evidence(s,gate.quest);AdvanceEvents(s,*rules);
+    }
+    else if(outcome==Outcome::Committed&&Data::Advance(s.state,gate,int(rules->quests.size()))){s.dirty=true;Message(s,gate.turnIn?"Quest "+std::to_string(gate.quest)+" reward claimed.":"Objective complete.");}
     else if(outcome==Outcome::Ambiguous){s.state.uncertain=true;s.state.legacyClosed=true;s.dirty=true;s.blocked=true;Message(s,"Quest output incomplete. Progress locked to prevent a duplicate reward; restore a matching backup.");}
     else Message(s,"Quest recipe did not complete. Free storage space and try again.");
     sent.erase(game);
@@ -163,19 +166,32 @@ void AfterLoad(Game* game,Client* client,Unit* player,bool success){
             auto history=Data::Decode(text,int(rules->quests.size()));
             if(!history||!SummonPersistence::Data::SameIdentity(history->identity,value.identity))throw std::runtime_error("Quest file character identity does not match.");
             auto state=Data::Find(*history,value.point.checksum,value.point.saveSize);
+            const uint64_t changedRecipes=rules->previousMenuDigest&&history->digest==rules->previousMenuDigest?rules->recipeQuestMask:
+                rules->previousPotionDigest&&history->digest==rules->previousPotionDigest?rules->recipeQuestMask&~(uint64_t(1)<<9):0;
             const bool recovering=history->digest!=rules->digest||!state;
             if(recovering){
                 // A never-started journal has no observations, choices or
                 // claims to lose/replay. Compilation can change definitions
                 // while intervening native saves leave its old checkpoint
-                // behind. Recover only when EVERY historical state is empty.
-                if(!Data::Pristine(*history))throw std::runtime_error(history->digest!=rules->digest?"Quest definitions changed for a journal with existing progress. Restore matching quest data and journal backups.":"Quest file does not match this character save. Restore matching backups.");
-                BackupUnusedJournal(s.path,text,history->digest);
-                history->digest=rules->digest;Data::Append(*history,value.point);state=value.point.state;
-                std::string error;if(!Data::AtomicWrite(s.path,*history,error))throw std::runtime_error("Could not update the unused quest journal: "+error);
+                // behind. Used journals can migrate only the exact known
+                // menu-to-recipe revisions with a matching save checkpoint.
+                if(!Data::Pristine(*history)&&!(changedRecipes&&state))throw std::runtime_error(history->digest!=rules->digest?"Quest definitions changed for a journal with existing progress. Restore matching quest data and journal backups.":"Quest file does not match this character save. Restore matching backups.");
+                BackupJournal(s.path,text,history->digest,changedRecipes?"recipe-lessons":"unused");
+                if(changedRecipes)for(auto& checkpoint:history->checkpoints){
+                    const auto completed=checkpoint.state.completed;
+                    // A completed lesson/reward is never reopened. Clear only
+                    // old evidence/readiness for unclaimed changed lessons.
+                    const auto claimed=completed>=64?UINT64_MAX:completed?(uint64_t(1)<<completed)-1:0;
+                    checkpoint.state.evidence&=~(changedRecipes&~claimed);
+                    if(completed<64&&(changedRecipes&(uint64_t(1)<<completed)))checkpoint.state.objectiveReady=false;
+                }
+                history->digest=rules->digest;
+                if(!state)Data::Append(*history,value.point);
+                state=Data::Find(*history,value.point.checksum,value.point.saveSize);
+                std::string error;if(!Data::AtomicWrite(s.path,*history,error))throw std::runtime_error("Could not update the quest journal: "+error);
             }
             s.history=std::move(*history);s.state=*state;s.blocked=s.state.uncertain;
-            s.message=s.blocked?"An incomplete quest transaction requires a matching backup.":recovering?"Unused journal updated; original backed up. Choose Start at Quest 1 or import legacy progress.":"Quest journal loaded for this character.";
+            s.message=s.blocked?"An incomplete quest transaction requires a matching backup.":changedRecipes?"Confirmation recipes updated. Completed quests and rewards retained; original journal backed up.":recovering?"Unused journal updated; original backed up. Choose Start at Quest 1 or import legacy progress.":"Quest journal loaded for this character.";
         }else{
             s.history.checkpoints.push_back(value.point);std::string error;if(!Data::AtomicWrite(s.path,s.history,error))throw std::runtime_error(error);
             s.message="New journal. Existing characters may explicitly import legacy progress once.";

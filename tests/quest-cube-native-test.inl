@@ -104,6 +104,12 @@ void Native(uint8_t* image){
     const auto milestoneSource=recipes;assert(managed()&&match.row==1);
     assert(!memcmp(milestoneSource.data(),recipes.data(),recipes.size()*sizeof(Recipe)));
     rules->quests[0].milestone=false;assert(managed()&&match.row==2);
+    // A declared recipe lesson enables only its objective row while current.
+    recipes[0].header[0x10]=3;recipes[0].header[4]=0;rules->gates[0].inputs=3;rules->gates[0].op=0;
+    QuestCubeNativeTest::Put(recipes[0].header.data(),0x24,uint16_t(1));QuestCubeNativeTest::Put(recipes[0].header.data(),0x26,uint16_t(2));
+    rules->quests[0].trigger="questRecipe";::testQuestProgress={true,0,false};assert(managed()&&match.row==0);
+    ::testQuestProgress.objectiveReady=true;assert(managed()&&match.row==2);
+    ::testQuestProgress={true,1,false};assert(managed()&&match.row==2);
     metadata[1].pExtraData.pNextItem=nullptr;
     ::testQuestRules=previousRules;::testQuestProgress=previousProgress;
     for(const auto& [rva,bytes]:oldCode)memcpy(image+rva,bytes.data(),bytes.size());for(const auto& [rva,value]:oldData)Put(image,rva,value);
@@ -164,6 +170,12 @@ void Native(uint8_t* image){
     reset(3);assert(execute()==QuestJournal::Outcome::Committed);assert(placements==3&&destroyed==1);
     reset(3);failPlacement=102;assert(execute()==QuestJournal::Outcome::Ambiguous);
     reset(2);preflight=false;assert(execute()==QuestJournal::Outcome::Rejected);assert(!destroyed&&!placements&&exists[1]);
+    reset(2);rules->events=true;rules->quests.resize(1);rules->quests[0].trigger="questRecipe";
+    assert(execute()==QuestJournal::Outcome::Committed&&destroyed==1&&exists[2]&&placements==2);
+    reset(2);preflight=false;assert(execute()==QuestJournal::Outcome::Rejected&&!destroyed&&!placements);
+    reset(1);recipes[0].outputs[0]={};recipes[0].outputs[0].type=252;recipes[0].outputs[0].base=1;recipes[0].outputs[0].quality=2;recipes[0].outputs[0].level=1;
+    assert(execute()==QuestJournal::Outcome::Committed&&destroyed==2&&!exists[0]&&!exists[1]&&exists[2]&&placements==1);
+    rules->quests[0].trigger.clear();rules->events=false;
     reset(3);failGeneration=2;assert(execute()==QuestJournal::Outcome::Ambiguous);
     reset(2);::testQuestBegin=false;assert(CreateQuest(&game,&owner,recipes.data(),inputs));assert(::testQuestOutcomes.empty()&&!destroyed&&!placements);
     // Direct scope checks also cover failure before any output callback, using

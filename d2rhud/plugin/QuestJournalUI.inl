@@ -64,7 +64,8 @@ static void ShowQuestJournalMenu(){
     namespace Skin=QuestJournalSkin;
     EnableAllInput();const float scale=GetMenuScaleFactor();auto& io=ImGui::GetIO();Skin::Load();
     const ImVec2 size((std::min)(1180.f*scale,io.DisplaySize.x-20),(std::min)(800.f*scale,io.DisplaySize.y-20));
-    ImGui::SetNextWindowSize(size,ImGuiCond_Always);ImGui::SetNextWindowPos({(io.DisplaySize.x-size.x)*.5f,(io.DisplaySize.y-size.y)*.5f},ImGuiCond_Always);
+    // Center initially, then let ImGui retain the player's dragged position.
+    ImGui::SetNextWindowSize(size,ImGuiCond_Always);ImGui::SetNextWindowPos({(io.DisplaySize.x-size.x)*.5f,(io.DisplaySize.y-size.y)*.5f},ImGuiCond_Once);
     PushFontSafe(2);ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,{22*scale,18*scale});ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize,0);ImGui::PushStyleVar(ImGuiStyleVar_ChildBorderSize,0);ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,{8*scale,9*scale});ImGui::PushStyleVar(ImGuiStyleVar_ScrollbarSize,12*scale);ImGui::PushStyleVar(ImGuiStyleVar_ScrollbarRounding,0);
     ImGui::PushStyleColor(ImGuiCol_Text,Skin::Paper);ImGui::PushStyleColor(ImGuiCol_TextDisabled,Skin::Muted);ImGui::PushStyleColor(ImGuiCol_ChildBg,{0,0,0,0});ImGui::PushStyleColor(ImGuiCol_ScrollbarBg,{.05f,.04f,.03f,1});ImGui::PushStyleColor(ImGuiCol_ScrollbarGrab,{.29f,.21f,.12f,1});ImGui::PushStyleColor(ImGuiCol_ScrollbarGrabHovered,{.45f,.33f,.18f,1});ImGui::PushStyleColor(ImGuiCol_ScrollbarGrabActive,{.6f,.45f,.24f,1});
     if(ImGui::Begin("Mod Quest Journal",&showQuestJournalMenu,ImGuiWindowFlags_NoTitleBar|ImGuiWindowFlags_NoResize|ImGuiWindowFlags_NoBackground|ImGuiWindowFlags_NoScrollbar)){

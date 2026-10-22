@@ -24,9 +24,11 @@ struct Definition {
     bool milestone=false,bonus=false;
 };
 struct Rules {
-    size_t rows=0;uint64_t digest=0;bool events=false;std::vector<RecipeGate> gates;std::vector<Definition> quests;
+    size_t rows=0;uint64_t digest=0,previousMenuDigest=0,previousPotionDigest=0,recipeQuestMask=0;bool events=false;std::vector<RecipeGate> gates;std::vector<Definition> quests;
     std::string error;
 };
+inline bool RecipeObjective(const Rules& rules,const RecipeGate& gate){return rules.events&&!gate.turnIn&&gate.quest>0&&size_t(gate.quest)<=rules.quests.size()&&rules.quests[gate.quest-1].trigger=="questRecipe";}
+inline bool ConfirmationQuest(int id){return id==10||id==17||id==24||id==28||id==31||id==33||id==34;}
 struct Progress {bool available=false;int completed=0;bool objectiveReady=false;};
 struct View {
     bool connected=false,blocked=false,objectiveReady=false,legacyAvailable=false,dirty=false;
