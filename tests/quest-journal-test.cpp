@@ -20,6 +20,7 @@ Data::Packet Snapshot(uint32_t recipient=1){packets.clear();QuestJournal::sent.e
 void CommandAction(uint8_t action,int proposal=-1){auto p=Snapshot();Data::CommandPacket command;command.recipient=p.recipient;command.session=p.session;command.sequence=p.sequence;command.action=action;command.proposal=uint8_t(proposal<0?(action>=4?p.completed+1:p.legacyCompleted):proposal);Check(Command(&game,&hero,reinterpret_cast<uint8_t*>(&command),sizeof(command)),"command not recognized");}
 #include "quest-journal-events-test.inl"
 #include "quest-first-save-test.inl"
+#include "quest-unused-journal-test.inl"
 int main(int argc,char** argv){try{
     const auto root=std::filesystem::temp_directory_path()/("d2rhud-quest-tests-"+std::to_string(GetCurrentProcessId())+"-"+std::to_string(GetTickCount64()));std::filesystem::create_directories(root);SetEnvironmentVariableW(L"LOCALAPPDATA",root.c_str());
     auto rules=Data::ParseRules(Source(),"{\"version\":1,\"quests\":[{\"id\":1,\"title\":\"Gem lesson\"}]}");
@@ -68,9 +69,11 @@ int main(int argc,char** argv){try{
     auto requestProof=[&](){auto packet=Snapshot(2);Data::CommandPacket c;c.recipient=2;c.session=packet.session;c.sequence=packet.sequence;c.action=3;Command(&game,&secondHero,reinterpret_cast<uint8_t*>(&c),sizeof(c));};
     requestProof();Check(recovered==1&&Inspect(&game,&secondHero).objectiveReady&&Inspect(&game,&secondHero).completed==0,"proof recovery changed progress");requestProof();Check(recovered==1,"proof recovery duplicated an existing token");
     Destroyed(&game);Check(!Inspect(&game,&secondHero).available,"destroyed game retained session");
+    UnusedJournalTests(root);
     if(argc>1){auto real=Data::ParseRules(ReadText(argv[1]),argc>2?ReadText(argv[2]):"");Check(real->error.empty()&&real->quests.size()==45&&real->gates.size()==134,"actual mod quest coverage failed");for(int n=1;n<=45;++n){Data::State progress;progress.completed=n-1;auto a=std::find_if(real->gates.begin(),real->gates.end(),[&](const auto& g){return g.quest==n&&!g.turnIn;});auto b=std::find_if(real->gates.begin(),real->gates.end(),[&](const auto& g){return g.quest==n&&g.turnIn;});Check(Data::Advance(progress,*a,45)&&Data::Advance(progress,*b,45)&&progress.completed==n,"actual quest chain cannot advance");Check(!Data::Advance(progress,*b,45),"actual quest reward can repeat");}}
     if(argc>2)EventTests(root,argv[1],argv[2]);
-    if(argc>4)FirstSaveProfileTest(root,argv[1],argv[2],argv[3],argv[4]);
+    if(argc>4&&*argv[3])FirstSaveProfileTest(root,argv[1],argv[2],argv[3],argv[4]);
+    if(argc>6)UnusedDefinitionProfileTest(root,argv[1],argv[2],argv[5],argv[6]);
     // Deletion stays inside this test's unique, verified temporary directory.
     Check(root.is_absolute()&&std::filesystem::equivalent(root.parent_path(),std::filesystem::temp_directory_path())&&root.filename().wstring().starts_with(L"d2rhud-quest-tests-"),"unsafe test cleanup path");std::filesystem::remove_all(root);
     std::cout<<"PASS: "<<checks<<" journal checks; character separation, lifecycle saves/rollback, explicit migration, duplicate rewards, partial failures, packets and all 45 actual quests\n";return 0;

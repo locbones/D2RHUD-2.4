@@ -37,7 +37,6 @@ void Message(Session& s,std::string value){s.message=std::move(value);++s.sequen
 bool Safe(Game* game,Unit* player){return Owner(game,player)&&!(player->dwFlags&0x10000)&&player->dwAnimMode!=0&&player->dwAnimMode!=17;}
 int ItemStat(Unit* item,int stat){return Native<int(__fastcall*)(Unit*,uint32_t,uint16_t)>(0x1e5620)(item,stat,0);}
 uint32_t Code(Unit* item){auto table=Field<const uint8_t*>(Native<void*>(0x1ca0390));auto count=Field<uint64_t>(Native<void*>(0x1ca0398));return table&&count<1000000&&item&&item->dwClassId<count?Field<uint32_t>(table+item->dwClassId*0x1b4,0x80):0;}
-bool SameFile(const Data::History& h,const Data::Identity& identity,uint64_t digest){return SummonPersistence::Data::SameIdentity(h.identity,identity)&&h.digest==digest;}
 void BackupUnusedJournal(const std::filesystem::path& path,const std::string& original,uint64_t digest){
     auto backup=path;backup+=".unused-"+Data::Hex(digest)+"-"+Data::Hex(Data::Hash(original))+".bak";
     std::error_code error;
@@ -160,7 +159,7 @@ void AfterLoad(Game* game,Client* client,Unit* player,bool success){
         }
         if(std::filesystem::exists(s.path)){
             std::ifstream input(s.path,std::ios::binary|std::ios::ate);const auto length=input.tellg();if(!input||length<=0||length>std::streamoff(Data::MaxBytes))throw std::runtime_error("Quest file is unreadable or oversized.");
-            std::string text(size_t(length),'\0');input.seekg(0);if(!input.read(text.data(),text.size()))throw std::runtime_error("Quest file could not be read.");
+            std::string text(size_t(length),'\0');input.seekg(0);if(!input.read(text.data(),text.size()))throw std::runtime_error("Quest file could not be read.");input.close();
             auto history=Data::Decode(text,int(rules->quests.size()));
             if(!history||!SummonPersistence::Data::SameIdentity(history->identity,value.identity))throw std::runtime_error("Quest file character identity does not match.");
             auto state=Data::Find(*history,value.point.checksum,value.point.saveSize);

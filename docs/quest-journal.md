@@ -104,6 +104,16 @@ the journal alongside the `.d2s`. An unmatched, corrupt or incompatible journal
 blocks further quest transactions rather than silently resetting rewards.
 An incomplete milestone output transaction also blocks further claims.
 
+A journal which has never been started and has **no activity in any saved
+checkpoint** can recover automatically after definition or save-checkpoint
+drift. The original file is first copied and verified byte for byte as
+`<character>.json.unused-<old definition>-<content hash>.bak`. The recovered
+journal retains its character identity, adds the current save checkpoint and
+offers Start at Quest 1/import again. Any prior setup choice, completed quest,
+reward readiness, evidence, kill count, menu visit, Countess/Thul observation
+or uncertain transaction prevents this recovery. Used journals still require
+matching data/backups, and their progress is never silently discarded.
+
 `tools/generate-quest-journal.py` exports the original tasks, tips and reward
 choices from `override_rules.lua`, plus explicit event definitions derived from
 the mod tables. Display-only text edits retain journal compatibility; activity
