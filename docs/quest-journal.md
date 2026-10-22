@@ -72,6 +72,8 @@ and 35/40 use unique `B03` after Quest 30. Milestone `,mod` upgrades can retain
 the original unique ID while changing item code; later claims match the
 required base code and unique quality rather than requiring a new unique ID.
 The charm's existing modifiers, identity and upgrade choice are retained.
+Quest 25's movement-speed bonus supports the compiled `move` property's
+function 8, adding +20% Faster Run/Walk to the charm's existing saved bonus.
 
 The three actual charm upgrades (15, 30, 45) still use the cube: charm + Quill of
 Quality + a weapon, armor, ring, amulet or charm for the chosen reward. The

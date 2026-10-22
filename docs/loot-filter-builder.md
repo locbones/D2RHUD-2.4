@@ -36,6 +36,14 @@ Common **Settings** use checkboxes, dropdowns and numeric controls. Speech and
 sound actions also require **Enable speech and sounds**, and the existing audio
 service. The builder does not install that service.
 
+For a sound-file action, enter its filename, for example `HR_Drop.mp3`.
+The audio helper searches the selected mod's `data/Pandemonium/Filters/Sounds`
+and the game's `My Filters/Sounds` folder. `.mp3`, `.flac` and `.wav` are file
+requests (case insensitive), including quoted filenames; other text uses TTS.
+A missing sound file does not fall back to speaking its filename. This routing
+requires loot-filter engine 1.5.2 or newer (`lootfilter.lua` beside `D2R.exe`);
+replacing the HUD DLL alone does not update the Lua engine.
+
 The **Preview** view updates with your draft before saving. It compares
 sample items across qualities and item types, including the selected custom
 base items. Cards show the original name, resulting label, and whether the item

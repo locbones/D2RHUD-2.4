@@ -43,6 +43,8 @@ int main(int argc,char** argv){
     }
     // Bonus claims use the compiled base/quality requirement after milestone
     // upgrades, whose ,mod output may retain the original unique ID.
+    const auto propertyRecords=Text(excel/"properties.bin");
+    const std::map<int,std::pair<int,int>> bonusStats{{5,{41,25}},{10,{45,25}},{20,{43,25}},{25,{96,20}},{35,{7,100}},{40,{9,100}}};
     for(const int id:{5,10,20,25,35,40}){
         size_t matches=0;for(const auto& gate:binRules->gates)if(gate.quest==id&&gate.turnIn){
             ++matches;const auto recipe=cube.data()+4+gate.row*0x148;uint16_t flags=0,base=0,unique=0;
@@ -50,6 +52,14 @@ int main(int argc,char** argv){
             assert(uint8_t(recipe[0x1a])==7&&uint8_t(recipe[0x1b])<=1&&size_t(base)*0x1b4+0x84<=itemRecords.size());
             assert(itemRecords.substr(size_t(base)*0x1b4+0x80,4)==(id<=10?"B01 ":id<=25?"B02 ":"B03 "));
             assert(flags==(id<=10?0x41:1)&&(id<=10?unique>0:unique==0));
+            size_t bonuses=0;for(size_t n=0;n<5;++n){
+                const auto mod=recipe+0x4c+0x18+n*12;int32_t property=-1;memcpy(&property,mod,4);
+                if(property<0)continue;assert(size_t(property)<props.size());if(props[property]=="rng-generator")continue;
+                ++bonuses;const size_t offset=4+size_t(property)*0x2e;assert(offset+0x2e<=propertyRecords.size());const auto record=propertyRecords.data()+offset;
+                assert(uint8_t(record[0x18])==(id==25?8:1));for(size_t f=1;f<7;++f)assert(record[0x18+f]==0);
+                uint16_t stat=0,param=0,chance=0;int16_t low=0,high=0;memcpy(&stat,record+0x20,2);memcpy(&param,mod+4,2);memcpy(&low,mod+6,2);memcpy(&high,mod+8,2);memcpy(&chance,mod+10,2);
+                assert(stat==bonusStats.at(id).first&&low==bonusStats.at(id).second&&high==low&&!param&&!chance);
+            }assert(bonuses==1);
         }assert(matches==1);
     }
     // Leftover source must not override the recipes actually compiled for a

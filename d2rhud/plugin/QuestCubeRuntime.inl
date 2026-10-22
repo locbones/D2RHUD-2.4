@@ -128,7 +128,9 @@ bool ClaimQuestBonus(Game* game,Unit* player,int quest){
     for(const auto& mod:reward->outputs[0].mods)if(mod.property>=0&&mod.property!=progress){
         if(stat>=0||uint64_t(mod.property)>=propertyCount||mod.param||mod.chance||mod.min<=0||mod.min!=mod.max)return false;
         const auto property=properties+size_t(mod.property)*0x2e;
-        if(property[0x18]!=1)return false;for(size_t n=1;n<7;++n)if(property[0x18+n])return false;
+        // Fixed, unparameterized func1 and func8 values use the same additive
+        // saved-stat setter. The 'move' reward uses func8 in Properties.bin.
+        if(property[0x18]!=1&&property[0x18]!=8)return false;for(size_t n=1;n<7;++n)if(property[0x18+n])return false;
         stat=RuneField<uint16_t>(property,0x20);if(uint64_t(stat)>=statCount)return false;const auto cost=costs+size_t(stat)*0x144;
         const int shift=cost[0x14],bits=cost[0x15];if(shift>8||!bits||bits>32||!cost[8]||cost[8]>32)return false;
         amount=int(mod.min)<<shift;capacity=(std::min)(int64_t(INT_MAX),((int64_t(1)<<bits)-1-RuneField<uint32_t>(cost,0x18))*(int64_t(1)<<shift));
