@@ -116,10 +116,10 @@ void BindDefinitions(){
     Put(image,0x1ca0390,itemRows.data());Put(image,0x1ca0398,uint32_t(2));Put(image,0x1c9fb78,statRows.data());Put(image,0x1c9fb80,uint32_t(512));
     Put(image,0x1c9fc10,typeRows.data());Put(image,0x1c9fbf8,count);Put(image,0x1c9fc08,stride);
 }
-uint8_t* expectedSource=nullptr;size_t expectedSize=0;unsigned leafCalls=0;
+uint8_t* expectedSource=nullptr;size_t expectedSize=0;unsigned leafCalls=0;int leafResult=0;
 int __fastcall MockLeaf(D2GameStrc*,D2ClientStrc*,uint8_t* bytes,int32_t size,D2UnitStrc** output){
     assert(bytes!=expectedSource && size>int(expectedSize));auto r=Convert({bytes,size_t(size)},Definitions());assert(r.status==Status::Unchanged);
-    assert(Detail::Word({bytes,size_t(size)},12)==Checksum({bytes,size_t(size)}));++leafCalls;*output=reinterpret_cast<D2UnitStrc*>(1);return 0;
+    assert(Detail::Word({bytes,size_t(size)},12)==Checksum({bytes,size_t(size)}));++leafCalls;*output=reinterpret_cast<D2UnitStrc*>(1);return leafResult;
 }
 void NativeTests(const std::filesystem::path& exe,const std::filesystem::path& root){
     using namespace CandyCornSave;
@@ -161,12 +161,34 @@ void NativeTests(const std::filesystem::path& exe,const std::filesystem::path& r
     assert(!active);
     auto newSave=Simple(false,72);Put(descriptor.data(),0,newSave.data());Put(descriptor.data(),8,uint64_t(newSave.size()));client.pSaveHeaders=reinterpret_cast<D2SaveHeadersStrc*>(descriptor.data());client.nSaveHeaderSize=1;
     {LoadScope scope(&client,&unit);assert(!active);}
+    // Distinguish native rejection, post-reader failure and strict context
+    // mismatch without replacing the original descriptor or save bytes.
+    expectedSource=original.data();Put(descriptor.data(),0,original.data());Put(descriptor.data(),8,uint64_t(original.size()));
+    leafResult=6;
+    {LoadScope scope(&client,&unit);assert(active);const auto backup=active->backup;
+        assert(LoadHook(nullptr,&client,original.data(),int32_t(original.size()),&unit)==6);
+        scope.Complete(false,6);
+        assert(CandyCornSave::Status().find("native reader rejected the converted copy; reader result=6; load result=6")!=std::string::npos);
+        assert(Read(backup)==original&&Field<uint8_t*>(descriptor.data())==original.data());}
+    leafResult=0;
+    {LoadScope scope(&client,&unit);assert(active);
+        assert(LoadHook(nullptr,&client,original.data(),int32_t(original.size()),&unit)==0);
+        scope.Complete(false,14);
+        assert(CandyCornSave::Status().find("native reader accepted the converted copy")!=std::string::npos&&CandyCornSave::Status().find("load result=14")!=std::string::npos);}
+    originalLoad=+[](D2GameStrc*,D2ClientStrc*,uint8_t* bytes,int32_t size,D2UnitStrc**)->int{assert(bytes==expectedSource&&size==int32_t(expectedSize));return 6;};
+    {LoadScope scope(&client,&unit);assert(active);D2UnitStrc* other=nullptr;
+        assert(LoadHook(nullptr,&client,original.data(),int32_t(original.size()),&other)==6);
+        scope.Complete(false,6);
+        assert(CandyCornSave::Status().find("not supplied to the native reader; reader calls=1; mismatched output slot; load result=6")!=std::string::npos);}
+    originalLoad=MockLeaf;
+    {LoadScope scope(&client,&unit);assert(active);scope.Complete(true,0);
+        assert(CandyCornSave::Status().find("not supplied to the native reader; reader calls=0")!=std::string::npos);}
     // A denied backup prevents substitution entirely.
     auto denied=root/L"blocked-native-backup";Write(denied,original);directory=denied;Put(descriptor.data(),0,original.data());Put(descriptor.data(),8,uint64_t(original.size()));
     {LoadScope scope(&client,&unit);assert(!active && Field<uint8_t*>(descriptor.data())==original.data());}
     Uninstall();assert(!installed.load());
     testImage=0;VirtualFree(image,0,MEM_RELEASE);image=nullptr;
-    std::cout<<"Native signatures/mutation rejection, all 256 Huffman symbols, original native checksum validator, scoped pointer/length substitution, buffer ownership and backup refusal passed.\n";
+    std::cout<<"Native signatures/mutation rejection, all 256 Huffman symbols, original native checksum validator, scoped pointer/length substitution, buffer ownership, backup refusal and reader/context/post-load failure diagnostics passed.\n";
 }
 }
 int wmain(int argc,wchar_t** argv){assert(argc==3||argc==5);const auto root=std::filesystem::path(argv[1])/(L"run-"+std::to_wstring(GetCurrentProcessId())+L"-"+std::to_wstring(GetTickCount64()));std::filesystem::create_directories(root);Test::ParseTests();Test::StorageTests(root);Test::NativeTests(argv[2],root);if(argc==5)Test::ReadOnlySaves(argv[3],argv[4]);std::cout<<"Candy Corn save conversion tests passed.\n";}

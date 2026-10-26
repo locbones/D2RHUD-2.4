@@ -23,6 +23,9 @@ tests\run-candy-corn-save.cmd "%TEMP%\d2rhud-candy-tests" "C:\path\to\D2R.exe"
 The Candy Corn suite optionally accepts a compiled Excel data folder and a
 character-save folder as its last two arguments. It reads those saves without
 writing them; conversions are tested in memory.
+Failure cases distinguish a skipped reader hook, native reader rejection and
+a failure after the reader accepted the converted copy, retaining native result
+codes in `last-conversion.txt` and preserving the original save/backup.
 
 Loot filter tests can use this repository's engine:
 

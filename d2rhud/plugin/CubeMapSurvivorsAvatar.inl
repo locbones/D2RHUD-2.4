@@ -70,7 +70,7 @@ int __fastcall SurvivorLoadHook(Game* game,Client* client,Unit** output){
         // retain their allocation and ownership through success/failure.
         CandyCornSave::LoadScope conversion(client,output);
         result=originalSurvivorLoad(game,client,output);
-        conversion.Complete(result==0);
+        conversion.Complete(result==0,result);
     }
     SummonPersistence::AfterLoad(game,client,output?*output:nullptr,result==0);
     QuestJournal::AfterLoad(game,client,output?*output:nullptr,result==0);

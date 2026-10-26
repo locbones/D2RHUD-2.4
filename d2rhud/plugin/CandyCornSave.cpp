@@ -68,6 +68,7 @@ struct Context {
     uint8_t* source=nullptr;int32_t size=0;
     std::vector<uint8_t> converted;
     size_t count=0;bool used=false,completed=false;
+    unsigned readerCalls=0,mismatch=0;bool readerReturned=false;int readerResult=0;
     std::string character;
     std::filesystem::path backup;
 };
@@ -75,12 +76,20 @@ thread_local Context* active=nullptr;
 std::string DisplayPath(const std::filesystem::path& path){const auto text=path.u8string();return {reinterpret_cast<const char*>(text.data()),text.size()};}
 int __fastcall LoadHook(D2GameStrc* game,D2ClientStrc* client,uint8_t* bytes,int32_t size,D2UnitStrc** output){
     auto context=active;
+    if(context){
+        ++context->readerCalls;
+        if(context->client!=client)context->mismatch|=1;
+        if(context->output!=output)context->mismatch|=2;
+        if(context->source!=bytes)context->mismatch|=4;
+        if(context->size!=size)context->mismatch|=8;
+    }
     if(!context || !installed.load() || context->used || context->client!=client || context->output!=output ||
         context->source!=bytes || context->size!=size)return originalLoad(game,client,bytes,size,output);
     context->used=true;
     // Do not replace native descriptor pointers: the OUTER loader frees them
     // before it returns. Only this leaf borrows our mutable, validated copy.
-    return originalLoad(game,client,context->converted.data(),int32_t(context->converted.size()),output);
+    const int result=originalLoad(game,client,context->converted.data(),int32_t(context->converted.size()),output);
+    context->readerResult=result;context->readerReturned=true;return result;
 }
 }
 struct LoadScope::State {Context context;Context* previous=nullptr;};
@@ -130,15 +139,33 @@ LoadScope::LoadScope(D2ClientStrc* client,D2UnitStrc** output){
         next->previous=active;state=std::move(next);active=&state->context;
     }catch(const std::exception& e){Report(std::string("Candy Corn conversion left the original save unchanged: ")+e.what());}
 }
-void LoadScope::Complete(bool success){
+void LoadScope::Complete(bool success,int nativeResult){
     if(!state || state->context.completed)return;
     auto& c=state->context;c.completed=true;
-    if(success && c.used){
+    if(success && c.used && c.readerReturned && c.readerResult==0){
         Report(c.character+": converted "+std::to_string(c.count)+" Candy Corn to quantity 1. Original save backup: "+DisplayPath(c.backup));
         Notice("Candy Corn updated",c.character+": converted "+std::to_string(c.count)+" Candy Corn to stacks of 1. Your original save was backed up.");
     }else{
-        Report(c.character+": converted copy was not loaded; original save remains unchanged. Backup: "+DisplayPath(c.backup));
-        Notice("Candy Corn conversion could not finish","The game could not load the converted character. Your original save and its backup are intact.",true);
+        std::string reason;
+        if(!c.used){
+            reason="converted copy was not supplied to the native reader; reader calls="+std::to_string(c.readerCalls);
+            if(c.mismatch){
+                reason+="; mismatched";
+                for(const auto& [bit,name]:std::array<std::pair<unsigned,const char*>,4>{{{1," client"},{2," output slot"},{4," save buffer"},{8," save size"}}})if(c.mismatch&bit)reason+=name;
+            }
+        }else if(!c.readerReturned)reason="native reader did not return after receiving the converted copy";
+        else if(c.readerResult)reason="native reader rejected the converted copy; reader result="+std::to_string(c.readerResult);
+        else reason="native reader accepted the converted copy, but character loading did not complete; reader result=0";
+        const auto result=nativeResult>=0?std::to_string(nativeResult):std::string("not recorded");
+        Report(c.character+": "+reason+"; load result="+result+
+            "; Candy Corn="+std::to_string(c.count)+"; original bytes="+std::to_string(c.size)+
+            "; converted bytes="+std::to_string(c.converted.size())+
+            ". Original save remains unchanged. Backup: "+DisplayPath(c.backup));
+        const auto message=!c.used?"The converted save did not reach the game's reader.":
+            c.readerReturned&&c.readerResult?"The game rejected the converted save (code "+std::to_string(c.readerResult)+").":
+            "The game could not finish loading the converted character (code "+result+").";
+        Notice("Candy Corn conversion could not finish",c.character+": "+message+
+            " The original save and its backup are intact. Details: last-conversion.txt.",true);
     }
 }
 LoadScope::~LoadScope(){if(state){active=state->previous;if(!state->context.completed)try{Complete(false);}catch(...) {}}}

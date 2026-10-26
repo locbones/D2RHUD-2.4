@@ -54,6 +54,11 @@ void Parsing(){
     for(uint8_t die=1;die<=6;++die){int secret=0;for(unsigned roll=0;roll<100;++roll){const auto event=SelectEvent(die,roll,false);secret+=event==Event::Trial;assert(roll<5 || event==RegularEvents[die-1]);assert(SelectEvent(die,roll,true)==Event::Trial);}assert(secret==5);}
     assert(EventRemaining(100,100,Event::GoblinGrotto)==60);assert(EventRemaining(1599,100,Event::GoblinGrotto)==1);assert(!EventRemaining(1600,100,Event::GoblinGrotto));
     assert(EventRemaining(0xfffffff0u+25,0xfffffff0u,Event::Trial)==299);
+    for(auto event:{Event::GoldenArmada,Event::ForsakenFestival,Event::FountainOfYouth,Event::SpeedDemon,Event::MidasMeddling,Event::GoblinGrotto,Event::Survivors,Event::ChampionClash,Event::SoulSurprise}){
+        assert(EventMonsterLevel(event,1)==6 && EventMonsterLevel(event,80)==85 && EventMonsterLevel(event,109)==114);
+        for(int playerLevel:{110,115,125,200,255,INT_MAX})assert(EventMonsterLevel(event,playerLevel)==115);
+    }
+    for(int playerLevel:{1,80,109,115,255,INT_MAX})assert(EventMonsterLevel(Event::Trial,playerLevel)==115);
     std::cout<<"Map parsing, source recovery, missing/dead/revived census and bounded ordered packets passed.\n";
 }
 struct Fixture {
@@ -265,7 +270,7 @@ void __fastcall InitModifiers(Game*,int* values,void*,Unit*){values[0]=values[1]
 BOOL __fastcall CaptureCalculation(int,int,int,int level,short,D2MonStatsInitStrc* stats){calculatedLevel=level;*stats={};return TRUE;}
 void NativeInitializers(uint8_t* image){
     auto stub=[&](uint32_t rva,auto fn){const uint8_t jump[]{0xff,0x25,0,0,0,0};memcpy(image+rva,jump,6);auto target=reinterpret_cast<uintptr_t>(fn);memcpy(image+rva+6,&target,8);};
-    auto first=BuildInitializer(83),second=BuildInitializer(86);assert(first && second && first->code!=second->code);
+    auto first=BuildInitializer(83),second=BuildInitializer(86),capped=BuildInitializer(EventMonsterLevel(Event::GoblinGrotto,200));assert(first && second && capped && first->code!=second->code);
     // Simulate the HUD's later detour. Run copies must use the pristine startup
     // snapshot, not copy the detour and recurse into monster initialization.
     image[0x33f380]=0xcc;auto third=BuildInitializer(89);assert(third && third->code[0]==0x4d);
@@ -282,12 +287,12 @@ void NativeInitializers(uint8_t* image){
     stub(0x14383a0,&memmove);stub(0x1438100,&memset);stub(0x1434c50,Nothing);
     // Exit after the real initialization prefix and captured native stat
     // calculator call; unrelated equipment/AI initialization is outside this fixture.
-    for(auto code:{first->code,second->code,third->code}){
+    for(auto code:{first->code,second->code,third->code,capped->code}){
         DWORD previous=0;assert(VirtualProtect(code,MonsterNativeData::Allocation,PAGE_EXECUTE_READWRITE,&previous));
         code[0xaea]=0xe9;const int32_t jump=0x12c5-0xaef;memcpy(code+0xaeb,&jump,4);
     }
     Bytes<0x5900> game{};Put(game.data(),0x108,int(1));
-    for(int difficulty:{0,1,2})for(auto pair:{std::pair{first->code,83},std::pair{second->code,86},std::pair{third->code,89}}) {
+    for(int difficulty:{0,1,2})for(auto pair:{std::pair{first->code,83},std::pair{second->code,86},std::pair{third->code,89},std::pair{capped->code,115}}) {
         struct Entry{uint32_t key;int value;};std::array<Entry,32> base{},full{},mods{};Bytes<0xb58> root{};
         Put(root.data(),0x1c,uint32_t(0x80000000));
         auto vector=[](void* p,size_t o,auto& v){Put(p,o,v.data());Put(p,o+8,uint64_t(0));Put(p,o+16,uint64_t(0x8000000000000020));};

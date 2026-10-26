@@ -18,7 +18,7 @@ bool BeginEvent(Game* game,Run& run){
     run.level=EventLevel(run.event);run.phase=Phase::Preparing;run.rolls.clear();run.players.clear();run.monsters.clear();run.bosses.clear();
     if(!ValidLevel(run.level)){run.failure=EventFailure::Reset;return false;}
     run.roster.clear();run.census={};run.clearedAt.reset();run.completedAt.reset();run.returning.clear();run.immunities.clear();run.objectives.clear();run.levelsFinalized.clear();run.eventPlayerStats.clear();
-    run.portals={};run.monsterLevel=run.event==Event::Trial ? 125 : (std::min)(255,run.characterLevel+5);
+    run.portals={};run.monsterLevel=EventMonsterLevel(run.event,run.characterLevel);
     run.failure=EventFailure::Initializer;
     run.initializer=BuildInitializer(run.monsterLevel);
     if(!run.initializer)return false;

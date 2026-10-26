@@ -127,6 +127,11 @@ enum class Event : uint8_t { None, GoldenArmada, ForsakenFestival, FountainOfYou
 inline bool RegularEvent(Event event){return event>=Event::GoldenArmada && event<=Event::MidasMeddling;}
 inline bool TimedEvent(Event event){return event==Event::TreasureTrove || event==Event::GoldenGoose || event==Event::PlentifulPirating;}
 inline int EventLevel(Event event){return TimedEvent(event)?0:event==Event::ChampionClash?108:event==Event::SoulSurprise?239:39;}
+inline constexpr int MaxEventMonsterLevel=115;
+inline int EventMonsterLevel(Event event,int characterLevel){
+    if(event==Event::Trial)return MaxEventMonsterLevel;
+    return (std::min)(MaxEventMonsterLevel,(std::clamp)(characterLevel,1,MaxEventMonsterLevel)+5);
+}
 enum class EventPhase : uint8_t { None, WaitingTown, Ceremony, Briefing, Entering, Active, Returning, Finished, Cancelled };
 enum class EventFailure : uint8_t { None, Initializer, Roster, PlayerStats, Occupied, Reset, Placement, Arrival, Participant, Portal, TreasureClass, ChampionTreasureClass };
 inline const char* FailureMessage(EventFailure failure){
@@ -157,7 +162,7 @@ inline constexpr std::array EventInfos{
     EventInfo{"Goblin Grotto", "An entire Cow Level of treasure goblins. You have one minute!",60,
         "It appears goblins are congregating in a secret location. Now's our time to attack adventurer!\nI doubt we will have much time, the gods do not pamper us it seems.",
         "Moo Moo Farm","One Minute"},
-    EventInfo{"Trials of Tribulation", "Defeat five level 125 bosses in five minutes. Each has at least three immunities. Victory awards +2 stat points.",300,
+    EventInfo{"Trials of Tribulation", "Defeat five level 115 bosses in five minutes. Each has at least three immunities. Victory awards +2 stat points.",300,
         "Death. None of the rogues managed to return from their scout...\nAll that awaits is death...We are Forsaken Adventurer!",
         "Moo Moo Farm","Five Minutes"},
     EventInfo{"Sanctuary Survivors", "Fight as your chosen Survivors class. Native class skills attack automatically. Earn saved class levels and upgrades, then slay the final boss before ten minutes expire.",600},

@@ -20,6 +20,6 @@ public:
     ~LoadScope();
     LoadScope(const LoadScope&)=delete;
     LoadScope& operator=(const LoadScope&)=delete;
-    void Complete(bool success);
+    void Complete(bool success,int nativeResult=-1);
 };
 }
