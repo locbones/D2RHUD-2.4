@@ -47,7 +47,16 @@ std::string GameAssets::MetadataField(const std::string& name,const TableFiles& 
     auto [it,created]=metadataCache_->layers.try_emplace(files.layer);
     if(created){std::ifstream input(files.layer/"D2RHUD/table-metadata.json",std::ios::binary);if(input)it->second=nlohmann::json::parse(input,nullptr,false);}
     try {
-        const auto* entry=TableMetadata::Entry(it->second,name,files.binary);
+        const nlohmann::json* entry=nullptr;
+        if(name=="cubemain" && !strcmp(field,"source")){
+            // Recipe descriptions and HUD annotations are not a fingerprint
+            // of the whole cube table. Ordinary recipes change independently
+            // of quests. Consumers validate the relevant native recipe fields.
+            const auto& document=it->second;
+            if(!document.is_object() || document.value("version",0)!=1 || !document.contains("tables") ||
+               !document["tables"].is_object() || !document["tables"].contains(name))return {};
+            entry=&document["tables"][name];if(!entry->is_object())return {};
+        }else entry=TableMetadata::Entry(it->second,name,files.binary);
         if(!entry || !entry->contains(field))return {};
         if(!strcmp(field,"names") || !strcmp(field,"labels"))return (*entry)[field].is_array()?(*entry)[field].dump():std::string{};
         if(!strcmp(field,"id_base"))return (*entry)[field].is_number_unsigned()||(*entry)[field].is_number_integer()?(*entry)[field].dump():std::string{};

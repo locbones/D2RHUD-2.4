@@ -84,6 +84,13 @@ void Native(uint8_t* image){
     ::testQuestProgress.completed=1;assert(managed()&&match.row==2);
     ::testQuestProgress={false,0,false};assert(managed()&&match.row==2);
     assert(!memcmp(untouched.data(),recipes.data(),recipes.size()*sizeof(Recipe)));
+    // An unrelated appended recipe changes the BIN size/count, but the quest
+    // rows are still valid. No whole-table identity may disable their matcher.
+    recipes.push_back(Recipe{});Put(image,0x1ca0b18,recipes.data());Put(image,0x1ca0b20,uint64_t(recipes.size()));
+    ::testQuestProgress={true,0,false};assert(managed()&&match.row==0);
+    recipes.pop_back();Put(image,0x1ca0b18,recipes.data());Put(image,0x1ca0b20,uint64_t(recipes.size()));
+    // Actual quest gate changes remain a targeted validation failure.
+    recipes[0].header[0x10]=3;assert(!managed());recipes[0].header[0x10]=2;
     ::testQuestProgress={true,0,false};
     recipes[0].header[4]=6;rules->gates[0].op=6;assert(managed()&&match.row==0); // Higher player-stat progress gate is journal-owned too.
     recipes[0].header[4]=3;rules->gates[0].op=3;Put(recipes[0].header.data(),8,int32_t(210));rules->gates[0].param=210;

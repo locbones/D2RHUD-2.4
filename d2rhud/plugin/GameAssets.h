@@ -20,7 +20,9 @@ public:
     // BIN drops source symbols/comments and custom non-native columns. The
     // exporter preserves those in a checksum-bound, same-layer JSON companion.
     // Compiled consumers must not take symbols from unrelated/stale TXT when
-    // a BIN exists. In that mode only matching companion metadata is accepted.
+    // a BIN exists. Symbols require matching companion metadata. Cube source
+    // annotations are independent of the BIN checksum; recipe consumers check
+    // the native fields they actually use instead of the whole table.
     std::vector<std::string> ReadTableNames(const std::string& name, bool preferBinary = false);
     std::vector<std::string> ReadTableLabels(const std::string& name);
     std::string ReadTableSource(const std::string& name, bool preferBinary = false);

@@ -23,6 +23,8 @@ void CommandAction(uint8_t action,int proposal=-1){auto p=Snapshot();Data::Comma
 #include "quest-unused-journal-test.inl"
 int main(int argc,char** argv){try{
     const auto root=std::filesystem::temp_directory_path()/("d2rhud-quest-tests-"+std::to_string(GetCurrentProcessId())+"-"+std::to_string(GetTickCount64()));std::filesystem::create_directories(root);SetEnvironmentVariableW(L"LOCALAPPDATA",root.c_str());
+    Configure(root,"RMD-MP","","{\"version\":2,\"quests\":[]}");SetAvailable(true);
+    Check(!available.load()&&Status().find("Install version 2")==std::string::npos&&Status().find("Quest hooks")==std::string::npos,"missing recipe source misdiagnosed as old quests.json or failed hooks");
     auto rules=Data::ParseRules(Source(),"{\"version\":1,\"quests\":[{\"id\":1,\"title\":\"Gem lesson\"}]}");
     Check(rules->error.empty()&&rules->quests.size()==2&&rules->rows==4&&rules->gates.size()==4,"quest source binding failed");Check(rules->quests[0].title=="Gem lesson","text override failed");
     auto bad=Data::ParseRules(Source(),"{\"version\":1,\"quests\":[{\"id\":1},{\"id\":1}]}");Check(!bad->error.empty(),"duplicate descriptions accepted");

@@ -23,7 +23,7 @@ inline std::pair<int,bool> QuestName(const std::string& name){
 // These v2 lessons predate stable activity bindings. Their exported row
 // numbers move when unrelated recipes are inserted, but their activities do
 // not. Resolve them against the selected cubemain source (also retained by
-// the hash-bound BIN companion), without changing the saved lesson identity.
+// the BIN package's source annotations), without changing saved lesson identity.
 inline bool ActivityRecipe(const Definition& quest,const std::map<std::string,std::string>& row){
     auto get=[&](const char* key){auto it=row.find(key);return it==row.end()?std::string{}:it->second;};
     if(Number(get("enabled"))!=1)return false;
@@ -45,7 +45,7 @@ inline bool ActivityRecipe(const Definition& quest,const std::map<std::string,st
 inline bool NamedActivity(const Definition& q){return (q.id==1&&q.trigger=="depositSkull")||(q.id==2&&q.trigger=="recipe")||(q.id==7&&q.trigger=="countessThul")||(q.id==8&&q.trigger=="recipe")||((q.id==19||q.id==32)&&q.trigger=="craft");}
 inline std::shared_ptr<Rules> ParseRules(const std::string& text,const std::string& config){
     auto rules=std::make_shared<Rules>();std::istringstream input(text);std::string line;
-    if(!std::getline(input,line)){rules->error="Quest recipe definitions are unavailable (cubemain source or matching BIN metadata).";return rules;}
+    if(!std::getline(input,line)){rules->error="Quest recipe descriptions are unavailable. Provide cubemain.txt or the cubemain source in data/D2RHUD/table-metadata.json.";return rules;}
     auto header=Fields(line);if(!header.empty()&&header[0].starts_with("\xef\xbb\xbf"))header[0].erase(0,3);std::map<std::string,size_t> columns;
     for(size_t i=0;i<header.size();++i)columns[header[i]]=i;
     for(const char* name:{"description","enabled","numinputs","op","param","value","input 1","output"})if(!columns.contains(name)){rules->error="cubemain.txt is missing required quest columns.";return rules;}

@@ -87,7 +87,7 @@ bool RecoverQuestProof(Game* game,Unit* player,int quest){
 
 void ObserveCraft(Game* game,Unit* player,Recipe* recipe,Input* inputs,size_t row){
     const auto rules=QuestJournal::Bindings();
-    if(!rules||!rules->events||!game||!player||!player->pInventory||row>=rules->rows){originalCreate(game,player,recipe,inputs);return;}
+    if(!rules||!rules->events||!game||!player||!player->pInventory){originalCreate(game,player,recipe,inputs);return;}
     QuestJournal::RecipeGate gate;gate.row=row;QuestOutputScope transaction(game,player,gate,*recipe);
     struct Scope {QuestOutputScope* previous;Scope(QuestOutputScope* q):previous(questOutput){questOutput=q;}~Scope(){questOutput=previous;}} scope(&transaction);
     originalCreate(game,player,recipe,inputs);
@@ -97,7 +97,7 @@ void ObserveCraft(Game* game,Unit* player,Recipe* recipe,Input* inputs,size_t ro
 bool ClaimQuestBonus(Game* game,Unit* player,int quest){
     const auto rules=QuestJournal::Bindings();if(!installed.load()||!rules||!rules->events||!game||!player||!player->pInventory||quest<1||quest>int(rules->quests.size())||!rules->quests[quest-1].bonus)return false;
     const Recipe* reward=nullptr;const auto recipes=RuneField<Recipe*>(Native<void*>(0x1ca0b18));const auto rows=RuneField<uint64_t>(Native<void*>(0x1ca0b20));
-    if(!recipes||rows!=rules->rows)return false;
+    if(!recipes||!rows||rows>100000)return false;
     for(const auto& gate:rules->gates)if(gate.quest==quest&&gate.turnIn){if(reward||gate.row>=rows)return false;reward=recipes+gate.row;}
     if(!reward||reward->outputs[0].type!=254||reward->outputs[1].type||reward->outputs[2].type)return false;
     // The milestone's ,mod output changes the base code while retaining the

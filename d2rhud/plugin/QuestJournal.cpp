@@ -122,10 +122,16 @@ void Configure(const std::filesystem::path& install,const std::string& mod,const
     definitions.store(std::move(rules));
 }
 std::shared_ptr<const Rules> Bindings(){return definitions.load();}
-void SetAvailable(bool enabled){available=enabled&&bool(definitions.load());}
+void SetAvailable(bool enabled){const auto rules=definitions.load();available=enabled&&rules&&rules->error.empty();}
 void SetProofRecovery(ProofRecovery value){recover=value;}
 void SetRewardClaim(RewardClaim value){claimReward=value;}
-std::string Status(){std::lock_guard lock(mutex);const auto path=directory.u8string();return configurationStatus+((definitions.load()&&!definitions.load()->events)?" Install version 2 D2RHUD/quests.json.":"")+(available.load()?"":" Quest hooks or definitions are unavailable.")+(directory.empty()?" Quest storage path is unavailable.":" Companion folder: "+std::string(path.begin(),path.end()));}
+std::string Status(){
+    std::lock_guard lock(mutex);const auto path=directory.u8string();const auto rules=definitions.load();
+    const bool valid=rules&&rules->error.empty();
+    return configurationStatus+(valid&&!rules->events?" Install version 2 D2RHUD/quests.json.":"")+
+        (valid&&!available.load()?" Quest hooks are unavailable.":"")+
+        (directory.empty()?" Quest storage path is unavailable.":" Companion folder: "+std::string(path.begin(),path.end()));
+}
 Progress Inspect(Game* game,Unit* player){std::lock_guard lock(mutex);auto rules=definitions.load();if(!available||!rules||!rules->error.empty()||!player)return {};auto it=sessions.find({game,player->dwUnitId});if(it==sessions.end()||it->second.player!=player)return {};const auto& s=it->second;return {!s.blocked&&!s.busy&&!s.state.uncertain,s.state.completed,s.state.objectiveReady};}
 void Refused(Game* game,Unit* player,const std::string& message){std::lock_guard lock(mutex);if(!player)return;if(auto it=sessions.find({game,player->dwUnitId});it!=sessions.end()){Message(it->second,message);sent.erase(game);}}
 bool Begin(Game* game,Unit* player,const RecipeGate& gate){

@@ -43,6 +43,14 @@ Whirlwind, extended tables/classes/acts, and native compatibility guards.
 Native fixtures use private executable mappings and bounded engine stubs;
 they do not replace live gameplay and multiplayer checks.
 
+`run-quest-recipe-source.cmd <output> <mod-data>` exercises the installed BIN-only
+recipe annotations. Unrelated recipe edits, appended rows and stale BIN
+checksums/sizes must not disable quests or change quest definition identity.
+It uses the project's CascLib/zlib paths; set `CL`/`LINK` if these dependencies
+are outside the restored package directory. Native cube tests check appended
+ordinary recipes and actual quest gate mismatches. Journal tests cover progress
+reload, rollback, duplicate rewards and missing-source diagnostics.
+
 Act VI startup tests call the production `Install` and `Configure` entry points
 with real files, including `"enabled": True`, `False`, truncated manifests,
 missing manifests and malformed preferences. Cases cover both preferences,

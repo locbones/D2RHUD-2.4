@@ -72,6 +72,11 @@ Six-act packages and requested TXT preparation still require valid Act VI data.
 Act VI validation accepts both
 GitHub LF and Windows CRLF line endings while checking file contents.
 
+Quest recipe annotations in `data/D2RHUD/table-metadata.json` do not depend on
+the checksum or total size of `cubemain.bin`. Ordinary recipe updates leave
+quests available; the matcher checks the quest gates it uses against the
+loaded native recipes. Existing quest progress does not need to be reset.
+
 ## Source and publishing
 
 - `d2rhud/`: HUD source, embedded fonts/art, and dependency manifest.

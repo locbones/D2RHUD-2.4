@@ -100,8 +100,8 @@ bool TryQuestMatch(RuneMatch* result,Game* game,Unit* player,Input* inputs){
     if(!QuestNative::ready.load())return refuse("Quest recipes unavailable: native matcher signature mismatch.");
     if(!game || !QuestNative::SafeInventory(player))return refuse("Quest recipes unavailable: unsafe cube inventory.");
     Recipe* source=nullptr;uint64_t count=0;
-    if(!Read(Pattern::Address(0x1ca0b18),source) || !source || !Read(Pattern::Address(0x1ca0b20),count) || !count || count>100000 || count!=rules->rows)
-        return refuse("Quest recipes unavailable: loaded cube table differs from quest definitions.");
+    if(!Read(Pattern::Address(0x1ca0b18),source) || !source || !Read(Pattern::Address(0x1ca0b20),count) || !count || count>100000)
+        return refuse("Quest recipes unavailable: loaded cube table cannot be read.");
     std::vector<Recipe> copies(size_t(count),Recipe{});SIZE_T got=0;
     if(!ReadProcessMemory(GetCurrentProcess(),source,copies.data(),copies.size()*sizeof(Recipe),&got) || got!=copies.size()*sizeof(Recipe))
         return refuse("Quest recipes unavailable: cube table cannot be read.");
