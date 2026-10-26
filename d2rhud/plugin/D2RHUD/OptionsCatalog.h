@@ -1,4 +1,5 @@
 #pragma once
+#include "../HudLocalization.h"
 #include <algorithm>
 #include <cctype>
 #include <string>
@@ -15,7 +16,7 @@ inline constexpr const char* CategoryHelp[]{
     "Compatibility settings and combat diagnostics.",
     "Unfinished features for testing and experimentation."
 };
-inline std::string Lower(std::string_view text){std::string result(text);for(auto& c:result)c=char(std::tolower(static_cast<unsigned char>(c)));return result;}
+inline std::string Lower(std::string_view text){return HudLocale::Fold(text);}
 struct Filter {
     Category category=Category::Display;
     char query[128]{};
@@ -24,7 +25,8 @@ struct Filter {
         const auto search=Lower(query);
         if(search.empty()){if(category!=section)return false;}
         else {
-            const auto text=Lower(std::string(label)+" "+std::string(keywords)+" "+Categories[int(section)]);
+            const auto text=Lower(std::string(label)+" "+std::string(keywords)+" "+Categories[int(section)]+" "+
+                HudLocale::Translate(label)+" "+HudLocale::Tr(Categories[int(section)]));
             if(text.find(search)==std::string::npos)return false;
         }
         ++matches;return true;

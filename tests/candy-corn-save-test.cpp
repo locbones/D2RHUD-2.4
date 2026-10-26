@@ -148,47 +148,62 @@ void NativeTests(const std::filesystem::path& exe,const std::filesystem::path& r
     auto original=Simple(true);expectedSize=original.size();auto allocated=std::make_unique<uint8_t[]>(original.size());memcpy(allocated.get(),original.data(),original.size());expectedSource=allocated.get();
     std::array<uint8_t,0x18> descriptor{};Put(descriptor.data(),0,allocated.get());Put(descriptor.data(),8,uint64_t(original.size()));Put(descriptor.data(),16,uint64_t(original.size()));
     D2ClientStrc client{};client.pSaveHeaders=reinterpret_cast<D2SaveHeadersStrc*>(descriptor.data());client.nSaveHeaderSize=1;D2UnitStrc* unit=nullptr;
+    const auto hookedReader=Native<Load>(0x31d540);
+    // Real installed detour, no map/Survivor wrapper or save-descriptor vector.
+    client.pSaveHeaders=nullptr;client.nSaveHeaderSize=0;
+    assert(!active && hookedReader(nullptr,&client,expectedSource,int32_t(original.size()),&unit)==0 && leafCalls==1);
+    assert(CandyCornSave::Status().find("converted 1 Candy Corn to quantity 1")!=std::string::npos);
+    assert(!memcmp(allocated.get(),original.data(),original.size()));
+    client.pSaveHeaders=reinterpret_cast<D2SaveHeadersStrc*>(descriptor.data());client.nSaveHeaderSize=1;
     {
-        LoadScope scope(&client,&unit);assert(active && active->converted.size()>original.size());
+        LoadScope scope(&client,&unit);assert(active && active->converted.empty());
+        // The actual native-reader buffer and output slot are authoritative,
+        // even if they differ from the outer wrapper's initial arguments.
+        D2UnitStrc* readerUnit=nullptr;
+        assert(hookedReader(nullptr,&client,expectedSource,int32_t(original.size()),&readerUnit)==0 && leafCalls==2);
+        assert(active->count==1 && active->readerReturned && active->output==&readerUnit);
         const auto backup=active->backup;assert(Read(backup)==original);
         assert(client.pSaveHeaders==reinterpret_cast<D2SaveHeadersStrc*>(descriptor.data()) && Field<uint8_t*>(descriptor.data())==expectedSource);
-        assert(LoadHook(nullptr,&client,expectedSource,int32_t(original.size()),&unit)==0 && leafCalls==1);
-        // The native outer loader frees its ORIGINAL entry before returning.
-        // Simulate that now; Scope completion/destruction must not touch it.
+        // Native outer cleanup frees its original buffer, never our copy.
         assert(!memcmp(allocated.get(),original.data(),original.size()));allocated.reset();client.pSaveHeaders=nullptr;client.nSaveHeaderSize=0;
-        scope.Complete(true);assert(Read(backup)==original);
+        scope.Complete(true,0);assert(Read(backup)==original);
     }
     assert(!active);
-    auto newSave=Simple(false,72);Put(descriptor.data(),0,newSave.data());Put(descriptor.data(),8,uint64_t(newSave.size()));client.pSaveHeaders=reinterpret_cast<D2SaveHeadersStrc*>(descriptor.data());client.nSaveHeaderSize=1;
-    {LoadScope scope(&client,&unit);assert(!active);}
-    // Distinguish native rejection, post-reader failure and strict context
-    // mismatch without replacing the original descriptor or save bytes.
-    expectedSource=original.data();Put(descriptor.data(),0,original.data());Put(descriptor.data(),8,uint64_t(original.size()));
+    auto newSave=Simple(false,72);
+    expectedSource=newSave.data();expectedSize=newSave.size();
+    originalLoad=+[](D2GameStrc*,D2ClientStrc*,uint8_t* bytes,int32_t size,D2UnitStrc**)->int{assert(bytes==expectedSource&&size==int32_t(expectedSize));return 0;};
+    {LoadScope scope(&client,&unit);assert(hookedReader(nullptr,&client,newSave.data(),int32_t(newSave.size()),&unit)==0 && active->count==0);scope.Complete(true,0);}
+    assert(hookedReader(nullptr,&client,newSave.data(),int32_t(newSave.size()),&unit)==0);
+    originalLoad=MockLeaf;expectedSource=original.data();expectedSize=original.size();
+    // A stale/absent descriptor cannot suppress conversion of the real input.
+    client.pSaveHeaders=reinterpret_cast<D2SaveHeadersStrc*>(1);client.nSaveHeaderSize=1;
+    // Native rejection and post-reader failure still report the right result.
     leafResult=6;
-    {LoadScope scope(&client,&unit);assert(active);const auto backup=active->backup;
-        assert(LoadHook(nullptr,&client,original.data(),int32_t(original.size()),&unit)==6);
-        scope.Complete(false,6);
+    {LoadScope scope(&client,&unit);
+        assert(hookedReader(nullptr,&client,original.data(),int32_t(original.size()),&unit)==6);
+        const auto backup=active->backup;scope.Complete(false,6);
         assert(CandyCornSave::Status().find("native reader rejected the converted copy; reader result=6; load result=6")!=std::string::npos);
-        assert(Read(backup)==original&&Field<uint8_t*>(descriptor.data())==original.data());}
+        assert(Read(backup)==original);}
     leafResult=0;
-    {LoadScope scope(&client,&unit);assert(active);
-        assert(LoadHook(nullptr,&client,original.data(),int32_t(original.size()),&unit)==0);
+    {LoadScope scope(&client,&unit);
+        assert(hookedReader(nullptr,&client,original.data(),int32_t(original.size()),&unit)==0);
         scope.Complete(false,14);
         assert(CandyCornSave::Status().find("native reader accepted the converted copy")!=std::string::npos&&CandyCornSave::Status().find("load result=14")!=std::string::npos);}
-    originalLoad=+[](D2GameStrc*,D2ClientStrc*,uint8_t* bytes,int32_t size,D2UnitStrc**)->int{assert(bytes==expectedSource&&size==int32_t(expectedSize));return 6;};
-    {LoadScope scope(&client,&unit);assert(active);D2UnitStrc* other=nullptr;
-        assert(LoadHook(nullptr,&client,original.data(),int32_t(original.size()),&other)==6);
-        scope.Complete(false,6);
-        assert(CandyCornSave::Status().find("not supplied to the native reader; reader calls=1; mismatched output slot; load result=6")!=std::string::npos);}
-    originalLoad=MockLeaf;
-    {LoadScope scope(&client,&unit);assert(active);scope.Complete(true,0);
-        assert(CandyCornSave::Status().find("not supplied to the native reader; reader calls=0")!=std::string::npos);}
-    // A denied backup prevents substitution entirely.
-    auto denied=root/L"blocked-native-backup";Write(denied,original);directory=denied;Put(descriptor.data(),0,original.data());Put(descriptor.data(),8,uint64_t(original.size()));
-    {LoadScope scope(&client,&unit);assert(!active && Field<uint8_t*>(descriptor.data())==original.data());}
+    // Another client's reader must work independently of an outer scope.
+    D2ClientStrc another{};
+    {LoadScope scope(&client,&unit);assert(hookedReader(nullptr,&another,original.data(),int32_t(original.size()),&unit)==0 && !active->count);}
+    // A denied backup returns the native bad-save result without calling the
+    // reader on incompatible bytes. Test both with and without the wrapper.
+    const auto calls=leafCalls;
+    auto denied=root/L"blocked-native-backup";Write(denied,original);directory=denied;
+    unit=reinterpret_cast<D2UnitStrc*>(1);
+    assert(hookedReader(nullptr,&client,original.data(),int32_t(original.size()),&unit)==6 && leafCalls==calls && !unit);
+    {LoadScope scope(&client,&unit);unit=reinterpret_cast<D2UnitStrc*>(1);assert(hookedReader(nullptr,&client,original.data(),int32_t(original.size()),&unit)==6 && active->blocked && leafCalls==calls && !unit);scope.Complete(false,6);}
+    assert(CandyCornSave::Status().find("original save could not be backed up")!=std::string::npos);
+    assert(original==Simple(true));
     Uninstall();assert(!installed.load());
     testImage=0;VirtualFree(image,0,MEM_RELEASE);image=nullptr;
-    std::cout<<"Native signatures/mutation rejection, all 256 Huffman symbols, original native checksum validator, scoped pointer/length substitution, buffer ownership, backup refusal and reader/context/post-load failure diagnostics passed.\n";
+    std::cout<<"Native signatures/mutation rejection, all 256 Huffman symbols, original native checksum validator, direct native detour with/without outer scope, actual reader buffer/output, buffer ownership, backup refusal without native parsing and reader/post-load failure diagnostics passed.\n";
 }
 }
 int wmain(int argc,wchar_t** argv){assert(argc==3||argc==5);const auto root=std::filesystem::path(argv[1])/(L"run-"+std::to_wstring(GetCurrentProcessId())+L"-"+std::to_wstring(GetTickCount64()));std::filesystem::create_directories(root);Test::ParseTests();Test::StorageTests(root);Test::NativeTests(argv[2],root);if(argc==5)Test::ReadOnlySaves(argv[3],argv[4]);std::cout<<"Candy Corn save conversion tests passed.\n";}

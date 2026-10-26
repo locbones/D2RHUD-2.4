@@ -1,3 +1,4 @@
+#include "HudText.h"
 #include "BuffIcons.h"
 #include "SettingsUI.h"
 #include "BuffIconsData.h"
@@ -322,7 +323,7 @@ TimerMetrics MeasureTimer(float seconds, float scale) {
     if (!config.timers || seconds < 0) return {};
     TimerMetrics timer;
     timer.text = TimerText(seconds, config.timerFormat);
-    timer.size = ImGui::GetFont()->CalcTextSizeA(config.timerSize * scale, FLT_MAX, 0, timer.text.c_str());
+    timer.size = HudText::CalcTextSizeA(ImGui::GetFont(),config.timerSize * scale, FLT_MAX, 0, timer.text.c_str());
     return timer;
 }
 void DrawTimer(ImDrawList* draw, ImVec2 pos, float size, float seconds) {
@@ -339,8 +340,8 @@ void DrawTimer(ImDrawList* draw, ImVec2 pos, float size, float seconds) {
     const ImVec4 clip(pos.x + inset, pos.y + inset, pos.x + size - inset, pos.y + size - inset);
     const auto& color = config.highlightExpiring && seconds <= config.expiringSeconds ? config.expiringColor : config.timerColor;
     ImFont* font = ImGui::GetFont();
-    draw->AddText(font, config.timerSize * scale, ImVec2(at.x + scale, at.y + scale), IM_COL32(0, 0, 0, 255), timer.text.c_str(), nullptr, 0, inside ? &clip : nullptr);
-    draw->AddText(font, config.timerSize * scale, at, ImGui::ColorConvertFloat4ToU32(color), timer.text.c_str(), nullptr, 0, inside ? &clip : nullptr);
+    HudText::AddText(draw,font, config.timerSize * scale, ImVec2(at.x + scale, at.y + scale), IM_COL32(0, 0, 0, 255), timer.text.c_str(), nullptr, 0, inside ? &clip : nullptr);
+    HudText::AddText(draw,font, config.timerSize * scale, at, ImGui::ColorConvertFloat4ToU32(color), timer.text.c_str(), nullptr, 0, inside ? &clip : nullptr);
 }
 
 void DrawIcon(ImDrawList* draw, const Skill& skill, ImVec2 pos, float size, float seconds, bool active, bool showTimer = true) {
@@ -358,7 +359,7 @@ void DrawIcon(ImDrawList* draw, const Skill& skill, ImVec2 pos, float size, floa
     } else {
         draw->AddRectFilled(pos, end, IM_COL32(30, 26, 20, 220), 3);
         const auto label = std::to_string(skill.id);
-        draw->AddText(ImGui::GetFont(), 17 * (size / 48.0f), ImVec2(pos.x + size / 12, pos.y + size / 12), IM_COL32_WHITE, label.c_str());
+        HudText::AddText(draw,ImGui::GetFont(), 17 * (size / 48.0f), ImVec2(pos.x + size / 12, pos.y + size / 12), IM_COL32_WHITE, label.c_str());
     }
     draw->AddRect(pos, end, active ? IM_COL32(199, 179, 119, 230) : IM_COL32(150, 150, 150, 160), 2);
     if (showTimer) DrawTimer(draw, pos, size, seconds);
@@ -369,7 +370,7 @@ void DrawLabel(ImDrawList* draw, const Skill& skill, ImVec2 pos, float size, flo
     const float scale = size / 48.0f, inset = 2 * scale;
     const float fontSize = config.labelSize * scale, width = size - 2 * inset;
     ImFont* font = ImGui::GetFont();
-    const auto textSize = font->CalcTextSizeA(fontSize, FLT_MAX, width, skill.name.c_str());
+    const auto textSize = HudText::CalcTextSizeA(font,fontSize, FLT_MAX, width, skill.name.c_str());
     float top = pos.y + inset, bottom = pos.y + size - inset;
     const auto timer = MeasureTimer(seconds, scale);
     if (!timer.text.empty()) {
@@ -381,7 +382,7 @@ void DrawLabel(ImDrawList* draw, const Skill& skill, ImVec2 pos, float size, flo
     const ImVec2 at(pos.x + inset + (width - textSize.x) / 2, config.labelBottom ? bottom - height : top);
     const ImVec4 clip(pos.x + inset, top, pos.x + size - inset, bottom);
     draw->AddRectFilled(ImVec2(pos.x + inset, at.y), ImVec2(pos.x + size - inset, at.y + height), IM_COL32(0, 0, 0, 150));
-    draw->AddText(font, fontSize, at, ImGui::ColorConvertFloat4ToU32(config.labelColor), skill.name.c_str(), nullptr, width, &clip);
+    HudText::AddText(draw,font, fontSize, at, ImGui::ColorConvertFloat4ToU32(config.labelColor), skill.name.c_str(), nullptr, width, &clip);
 }
 
 struct IconAreaLayout {
@@ -579,7 +580,7 @@ void Render(bool preview, float resolutionScale) {
         const auto flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
             ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse |
             ImGuiWindowFlags_NoFocusOnAppearing;
-        if (ImGui::Begin("##BuffIconsPlacement", nullptr, flags)) {
+        if (HudText::Begin("##BuffIconsPlacement", nullptr, flags)) {
             ImGui::SetCursorScreenPos(origin);
             ImGui::InvisibleButton("Drag buff icons", extent);
             if (ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
@@ -594,7 +595,7 @@ void Render(bool preview, float resolutionScale) {
             drawIcons(draw);
             draw->AddRect(origin, end, ImGui::GetColorU32(ImGuiCol_Border), 0, 0, resolutionScale);
             draw->PopClipRect();
-            if (hovered) ImGui::SetTooltip("Drag to move the buff icon area");
+            if (hovered) HudText::SetTooltip("Drag to move the buff icon area");
         }
         ImGui::End(); ImGui::PopStyleVar(3);
     } else {

@@ -65,9 +65,9 @@ int __fastcall SurvivorLoadHook(Game* game,Client* client,Unit** output){
     QuestJournal::BeforeLoad(game,client);
     int result=0;
     {
-        // Companion checkpoints above identify the ORIGINAL save. Only the
-        // synchronous leaf reader borrows a converted copy; native descriptors
-        // retain their allocation and ownership through success/failure.
+        // Companion checkpoints above identify the ORIGINAL save. This scope
+        // only tracks the outer result; the Candy Corn reader hook performs
+        // conversion independently and retains native buffer ownership.
         CandyCornSave::LoadScope conversion(client,output);
         result=originalSurvivorLoad(game,client,output);
         conversion.Complete(result==0,result);

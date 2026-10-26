@@ -23,9 +23,11 @@ tests\run-candy-corn-save.cmd "%TEMP%\d2rhud-candy-tests" "C:\path\to\D2R.exe"
 The Candy Corn suite optionally accepts a compiled Excel data folder and a
 character-save folder as its last two arguments. It reads those saves without
 writing them; conversions are tested in memory.
-Failure cases distinguish a skipped reader hook, native reader rejection and
-a failure after the reader accepted the converted copy, retaining native result
-codes in `last-conversion.txt` and preserving the original save/backup.
+The installed native reader detour is exercised both with and without the
+optional outer load scope, including different reader buffers/output slots and
+another client's read. Failed backups return the native bad-save result without
+parsing incompatible bytes. Native reader rejection and later load failures retain
+their result codes in `last-conversion.txt`; original saves/backups stay intact.
 
 Loot filter tests can use this repository's engine:
 
@@ -39,6 +41,16 @@ an explicit dependency directory; others use the existing repository-local
 vcpkg installation layout.
 
 ## Coverage
+
+`run-hud-localization.cmd <output>` tests every bundled language pack, unsafe
+format rejection, English fallback, stable control IDs across languages,
+localized search, actual resource loading and private preference/override files.
+It also rasterizes the bundled multilingual font and checks full Japanese,
+Korean and Chinese production font atlases against DX12 texture-size limits.
+`node tests/translation-editor-test.cjs` checks the offline editor's import/export
+logic; append `--browser <output>` with Playwright/Edge available for actual UI
+and download checks. HUD-menu and quest-journal UI fixtures accept an optional
+language JSON after their existing arguments.
 
 Suites cover configuration, UI layout/input, loot filters, item serialization,
 stack splitting/socketing, saved companions, cube maps/events, quests,

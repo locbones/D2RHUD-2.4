@@ -7,7 +7,7 @@ static std::vector<CandyCornSave::Notification> conversionNotices;
 bool CandyCornSave::TakeNotification(Notification& notice){if(conversionNotices.empty())return false;notice=std::move(conversionNotices.back());conversionNotices.pop_back();return true;}
 
 int main(int argc,char** argv){try{
-    Check(argc==4,"Usage: hud-menu-test output native-art-data font");
+    Check(argc==4||argc==5,"Usage: hud-menu-test output native-art-data font [language-json]");
     Check(HudMenu::ResolveTheme("RMD-MP","",0)=="Sanctuary","new RMD default");
     Check(HudMenu::ResolveTheme("rmd-mp","Default",0)=="Sanctuary","legacy RMD default migration");
     Check(HudMenu::ResolveTheme("RMD-MP","Default",1)=="Default","explicit Default preserved");
@@ -33,13 +33,18 @@ int main(int argc,char** argv){try{
         LegacyTransmog::Skin::Sprite sprite;Check(LegacyTransmog::Skin::Decode(bytes,sprite),"Native artwork decode failed");
         const auto& a=sprite.atlas;journalImages[asset.part]={asset.texture,a.width,a.height,a.frameWidth,a.frames,sprite.pitch};
     }
+    ImVector<ImWchar> languageGlyphs;
+    if(argc==5){
+        std::ifstream input(argv[4],std::ios::binary);auto pack=std::make_shared<HudLocale::Catalog>();pack->Merge({std::istreambuf_iterator<char>(input),{}});HudLocale::Publish(pack);
+        ImFontGlyphRangesBuilder ranges;for(const auto& [key,value]:pack->strings){ranges.AddText(key.c_str());ranges.AddText(value.c_str());}ranges.BuildRanges(&languageGlyphs);
+    }
     for(const auto display:{ImVec2{1280,720},ImVec2{1920,1080},ImVec2{3840,2160}}){
         ImGui::CreateContext();auto& io=ImGui::GetIO();io.IniFilename=nullptr;io.DisplaySize=display;io.DeltaTime=1.f/60;
         io.BackendFlags|=ImGuiBackendFlags_HasMouseCursors;
-        for(float size:{12.f,15.f,18.f,24.f})Check(io.Fonts->AddFontFromFileTTF(argv[3],size)!=nullptr,"font unavailable");
-        const auto bodyPath=std::filesystem::path(__FILE__).parent_path()/"../d2rhud/fonts/10.otf";
-        HudSettings::bodyFont=io.Fonts->AddFontFromFileTTF(bodyPath.string().c_str(),36);Check(HudSettings::bodyFont!=nullptr,"body font unavailable");HudSettings::bodyFont->Scale=.5f;
-        HudSettings::noteFont=io.Fonts->AddFontFromFileTTF(bodyPath.string().c_str(),32);Check(HudSettings::noteFont!=nullptr,"note font unavailable");HudSettings::noteFont->Scale=.5f;
+        for(float size:{12.f,15.f,18.f,24.f})Check(io.Fonts->AddFontFromFileTTF(argv[3],size,nullptr,languageGlyphs.Data)!=nullptr,"font unavailable");
+        const auto bodyPath=argc==5?std::filesystem::path(argv[3]):std::filesystem::path(__FILE__).parent_path()/"../d2rhud/fonts/10.otf";
+        HudSettings::bodyFont=io.Fonts->AddFontFromFileTTF(bodyPath.string().c_str(),36,nullptr,languageGlyphs.Data);Check(HudSettings::bodyFont!=nullptr,"body font unavailable");HudSettings::bodyFont->Scale=.5f;
+        HudSettings::noteFont=io.Fonts->AddFontFromFileTTF(bodyPath.string().c_str(),32,nullptr,languageGlyphs.Data);Check(HudSettings::noteFont!=nullptr,"note font unavailable");HudSettings::noteFont->Scale=.5f;
         HudSettings::headingFont=io.Fonts->Fonts[3];
         unsigned char* pixels=nullptr;int tw=0,th=0;io.Fonts->GetTexDataAsRGBA32(&pixels,&tw,&th);io.Fonts->SetTexID(1);
         const float scale=display.x>=3840?2.f:1.f;io.FontGlobalScale=scale;

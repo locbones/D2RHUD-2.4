@@ -1,4 +1,5 @@
 #include "HUDControls.h"
+#include "HudLocalization.h"
 #include "HUDControlsStore.h"
 #include "KeyMappings.h"
 #include "../Pattern.h"
@@ -114,7 +115,7 @@ std::optional<uint16_t> Legacy(std::string text){
     }
     return key?std::optional<uint16_t>(uint16_t(key|modifiers)):std::nullopt;
 }
-const char* __fastcall NameHook(int action){return action==Action?"Open HUD Menu":originalName(action);}
+const char* __fastcall NameHook(int action){return action==Action?HudLocale::Tr("Open HUD Menu"):originalName(action);}
 const char* __fastcall KeyNameHook(int action,int primary,bool shorthand){
     if(action!=Action)return originalKeyName(action,primary,shorthand);
     std::lock_guard lock(mutex);

@@ -9,6 +9,9 @@ on the host and clients.
 
 - One HUD menu with grouped options, search, a Sanctuary theme, and remembered
   window sizes and pane layouts.
+- Editable HUD and quest translations for all 13 game language codes, an offline
+  translation editor, and bundled Unicode font support. See
+  [translation instructions](translations/README.md).
 - Floating damage and DPS, buff icons, item stat ranges, loot filtering, and a
   grail tracker.
 - **Open HUD Menu** in the game's Controls settings, with F12 as the default.

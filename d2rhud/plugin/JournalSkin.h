@@ -1,4 +1,5 @@
 #pragma once
+#include "HudText.h"
 #include "StackSplitSkin.h"
 #include <imgui.h>
 #include <algorithm>
@@ -30,24 +31,24 @@ inline void Panel(ImVec2 a,ImVec2 b,float scale){
 inline void Plate(const char* label,float scale,float height=38){
     const auto p=ImGui::GetCursorScreenPos();const float width=ImGui::GetContentRegionAvail().x,h=height*scale;
     if(background.texture)Slice(background,{89,788,1034,925},p,{p.x+width,p.y+h},155,20,(std::min)(70*scale,width*.18f),5*scale);
-    const auto extent=ImGui::CalcTextSize(label);auto draw=ImGui::GetWindowDrawList();
-    draw->PushClipRect(p,{p.x+width,p.y+h},true);draw->AddText({p.x+(width-extent.x)*.5f+1,p.y+(h-extent.y)*.5f+1},IM_COL32_BLACK,label);
-    draw->AddText({p.x+(width-extent.x)*.5f,p.y+(h-extent.y)*.5f},ImGui::ColorConvertFloat4ToU32(Gold),label);draw->PopClipRect();ImGui::Dummy({width,h});
+    const auto extent=HudText::CalcTextSize(label);auto draw=ImGui::GetWindowDrawList();
+    draw->PushClipRect(p,{p.x+width,p.y+h},true);HudText::AddText(draw,{p.x+(width-extent.x)*.5f+1,p.y+(h-extent.y)*.5f+1},IM_COL32_BLACK,label);
+    HudText::AddText(draw,{p.x+(width-extent.x)*.5f,p.y+(h-extent.y)*.5f},ImGui::ColorConvertFloat4ToU32(Gold),label);draw->PopClipRect();ImGui::Dummy({width,h});
 }
 inline bool Button(const char* label,ImVec2 size={},float scale=1){
-    if(size.x==0)size.x=(std::min)(ImGui::GetContentRegionAvail().x,ImGui::CalcTextSize(label).x+48*scale);
+    if(size.x==0)size.x=(std::min)(ImGui::GetContentRegionAvail().x,HudText::CalcTextSize(label).x+48*scale);
     if(size.x<0)size.x=ImGui::GetContentRegionAvail().x;
     if(size.y==0)size.y=ImGui::GetTextLineHeight()+18*scale;
     auto draw=ImGui::GetWindowDrawList();draw->ChannelsSplit(2);draw->ChannelsSetCurrent(1);
     ImGui::PushStyleColor(ImGuiCol_Button,{0,0,0,0});ImGui::PushStyleColor(ImGuiCol_ButtonHovered,{0,0,0,0});ImGui::PushStyleColor(ImGuiCol_ButtonActive,{0,0,0,0});ImGui::PushStyleColor(ImGuiCol_Text,Gold);
-    const bool pressed=ImGui::Button(label,size);const auto a=ImGui::GetItemRectMin(),b=ImGui::GetItemRectMax();const int frame=ImGui::GetStyle().Alpha<.8f?2:ImGui::IsItemActive()?1:ImGui::IsItemHovered()?3:0;
+    const bool pressed=HudText::Button(label,size);const auto a=ImGui::GetItemRectMin(),b=ImGui::GetItemRectMax();const int frame=ImGui::GetStyle().Alpha<.8f?2:ImGui::IsItemActive()?1:ImGui::IsItemHovered()?3:0;
     draw->ChannelsSetCurrent(0);
     if(button.texture)Slice(button,{0,0,float(button.frameWidth),float(button.height)},a,b,40,16,18*scale,6*scale,frame);
     else Panel(a,b,scale);
     draw->ChannelsMerge();ImGui::PopStyleColor(4);return pressed;
 }
 inline void Meter(float fraction,const char* label,float scale){
-    if(label&&*label)ImGui::TextColored(Gold,"%s",label);
+    if(label&&*label)HudText::TextColored(Gold,"%s",label);
     const auto p=ImGui::GetCursorScreenPos();const float width=ImGui::GetContentRegionAvail().x,h=8*scale;auto draw=ImGui::GetWindowDrawList();
     draw->AddRectFilled(p,{p.x+width,p.y+h},IM_COL32(8,6,5,255));
     draw->AddRectFilled({p.x+2*scale,p.y+2*scale},{p.x+2*scale+(width-4*scale)*std::clamp(fraction,0.f,1.f),p.y+h-2*scale},IM_COL32(141,100,42,255));
@@ -59,7 +60,7 @@ inline void CloseButton(bool* open,float scale){
     if(ImGui::InvisibleButton("Close journal",{25*scale,25*scale}))*open=false;
     const int frame=ImGui::IsItemActive()?1:ImGui::IsItemHovered()?3:0;
     if(close.texture){const float offset=float(frame*close.pitch);ImGui::GetWindowDrawList()->AddImage(ImTextureID(close.texture),p,{p.x+25*scale,p.y+25*scale},{offset/close.width,0},{(offset+close.frameWidth)/close.width,1});}
-    else ImGui::GetWindowDrawList()->AddText(p,IM_COL32(200,170,110,255),"X");
+    else HudText::AddText(ImGui::GetWindowDrawList(),p,IM_COL32(200,170,110,255),"X");
     ImGui::SetCursorScreenPos(saved);
 }
 }

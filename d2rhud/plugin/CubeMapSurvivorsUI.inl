@@ -21,7 +21,7 @@ void DrawSurvivors(float scale,bool clientReady){
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered,{0.37f,0.23f,0.09f,1});ImGui::PushStyleColor(ImGuiCol_ButtonActive,{0.49f,0.31f,0.12f,1});ImGui::PushStyleColor(ImGuiCol_Text,{0.88f,0.79f,0.62f,1});
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,{8*scale,8*scale});ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,{6*scale,4*scale});ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,{8*scale,5*scale});
         ImGui::SetNextWindowPos(position,ImGuiCond_Always);ImGui::SetNextWindowSize(width,ImGuiCond_Always);
-        ImGui::PushFont(font);ImGui::Begin(title,nullptr,ImGuiWindowFlags_NoSavedSettings|ImGuiWindowFlags_NoResize|ImGuiWindowFlags_AlwaysAutoResize|ImGuiWindowFlags_NoCollapse);
+        ImGui::PushFont(font);HudText::Begin(title,nullptr,ImGuiWindowFlags_NoSavedSettings|ImGuiWindowFlags_NoResize|ImGuiWindowFlags_AlwaysAutoResize|ImGuiWindowFlags_NoCollapse);
         ImGui::SetWindowFontScale(size/font->FontSize/io.FontGlobalScale);
     };
     auto end=[](){ImGui::End();ImGui::PopFont();ImGui::PopStyleVar(3);ImGui::PopStyleColor(8);};
@@ -32,28 +32,28 @@ void DrawSurvivors(float scale,bool clientReady){
     if(!own && SurvivorsEnabled() && survivorsAvailable && Level(player)==1 && nearCharsi){
         const float width=(std::min)(380*scale,io.DisplaySize.x-32);
         begin("Charsi - Survivor Arena",{io.DisplaySize.x-width-16,io.DisplaySize.y*0.18f},{width,0});
-        ImGui::TextWrapped("Survive ten minutes. Your weapons attack automatically while you move.");
-        ImGui::TextWrapped("Choose a Survivors class. Each class has separate saved progress, shared across your normal characters.");
+        HudText::TextWrapped("Survive ten minutes. Your weapons attack automatically while you move.");
+        HudText::TextWrapped("Choose a Survivors class. Each class has separate saved progress, shared across your normal characters.");
         std::lock_guard lock(survivorRosterMutex);auto& roster=SurvivorRoster();static int selected=0;
         for(int i=0;i<int(Survivors::Classes.size());++i){
             char label[80];snprintf(label,sizeof(label),"%s - Level %u",Survivors::Classes[i].name,unsigned(roster.Get(uint8_t(i)).level));
-            if(ImGui::Selectable(label,selected==i))selected=i;
+            if(HudText::Selectable(label,selected==i))selected=i;
         }
-        ImGui::TextWrapped("Starting skill: %s",SurvivorUpgradeName(uint8_t(selected),0));
-        ImGui::TextWrapped("Your normal hero returns with their original equipment, stats and skills.");
+        HudText::TextWrapped("Starting skill: %s",SurvivorUpgradeName(uint8_t(selected),0));
+        HudText::TextWrapped("Your normal hero returns with their original equipment, stats and skills.");
         static uint64_t requestedAt=0;
-        if(roster.good && !survivorRosterError){if(ImGui::Button("Enter Sanctuary Survivors",{-1,36*scale}) && (!requestedAt || now-requestedAt>2000)){requestedAt=now;SurvivorRequest(Survivors::Action::Start,{},0,0,uint8_t(selected));}}
-        else ImGui::TextWrapped("%s",Survivors::Message(Survivors::Failure::Profile));
-        if(survivalTime && now-survivalTime<15000 && data.recipient==player->dwUnitId && data.failure!=Survivors::Failure::None)ImGui::TextWrapped("%s",Survivors::Message(data.failure));
+        if(roster.good && !survivorRosterError){if(HudText::Button("Enter Sanctuary Survivors",{-1,36*scale}) && (!requestedAt || now-requestedAt>2000)){requestedAt=now;SurvivorRequest(Survivors::Action::Start,{},0,0,uint8_t(selected));}}
+        else HudText::TextWrapped("%s",Survivors::Message(Survivors::Failure::Profile));
+        if(survivalTime && now-survivalTime<15000 && data.recipient==player->dwUnitId && data.failure!=Survivors::Failure::None)HudText::TextWrapped("%s",Survivors::Message(data.failure));
         end();return;
     }
     if(!active || !survivalTime || now-survivalTime>4000 || data.run!=packet.run || data.session!=packet.session || data.recipient!=packet.recipient)return;
     char heading[160];snprintf(heading,sizeof(heading),"%s - Level %u  |  Wave %u  |  Kills %u",Survivors::Classes[data.classId].name,unsigned(data.level),unsigned(data.wave),data.kills);
     const float textSize=22*scale;auto hudFont=EventFont(textSize);auto draw=ImGui::GetForegroundDrawList();
-    const auto extent=hudFont->CalcTextSizeA(textSize,FLT_MAX,0,heading);
+    const auto extent=HudText::CalcTextSizeA(hudFont,textSize,FLT_MAX,0,heading);
     const ImVec2 p{std::round((io.DisplaySize.x-extent.x)*0.5f),std::round(24*scale)};
     draw->AddRectFilled({p.x-10*scale,p.y-6*scale},{p.x+extent.x+10*scale,p.y+extent.y+16*scale},IM_COL32(0,0,0,190),5*scale);
-    draw->AddText(hudFont,textSize,p,IM_COL32(240,215,165,255),heading);
+    HudText::AddText(draw,hudFont,textSize,p,IM_COL32(240,215,165,255),heading);
     const float barWidth=320*scale,x=(io.DisplaySize.x-barWidth)*0.5f,y=p.y+extent.y+4*scale;
     draw->AddRectFilled({x,y},{x+barWidth,y+5*scale},IM_COL32(40,35,30,255));
     const float progress=data.requiredXP ? std::clamp(float(data.xp)/data.requiredXP,0.0f,1.0f):0;
@@ -64,50 +64,50 @@ void DrawSurvivors(float scale,bool clientReady){
         const auto available=unsigned(data.level-1)*5-spent;
         const float statsWidth=(std::min)(360*scale,io.DisplaySize.x*0.45f);
         begin("Survivor character stats",{16,io.DisplaySize.y*0.18f},{statsWidth,0});
-        ImGui::Text("%s - Level %u",Survivors::Classes[data.classId].name,unsigned(data.level));
-        ImGui::Text("Stat points available: %u",available);ImGui::Spacing();
+        HudText::Text("%s - Level %u",Survivors::Classes[data.classId].name,unsigned(data.level));
+        HudText::Text("Stat points available: %u",available);ImGui::Spacing();
         constexpr const char* names[]{"Strength","Energy","Dexterity","Vitality"};
         for(uint8_t stat:{uint8_t(0),uint8_t(2),uint8_t(3),uint8_t(1)}){
             ImGui::PushID(stat);
-            ImGui::Text("%s: %d (+%u)",names[stat],data.totalAttributes[stat],unsigned(data.attributes[stat]));
+            HudText::Text("%s: %d (+%u)",names[stat],data.totalAttributes[stat],unsigned(data.attributes[stat]));
             ImGui::SameLine(statsWidth-52*scale);ImGui::BeginDisabled(!data.allocating || !available);
-            if(ImGui::Button("+",{32*scale,28*scale})){
+            if(HudText::Button("+",{32*scale,28*scale})){
                 const auto points=io.KeyShift?available:(std::min)(available,io.KeyCtrl?5u:1u);
                 SurvivorRequest(Survivors::Action::Allocate,packet,data.offer,stat,0,uint16_t(points),uint16_t(spent));
             }
             ImGui::EndDisabled();ImGui::PopID();ImGui::Spacing();
         }
-        ImGui::TextWrapped(choosing ? "Choose your skill upgrade to receive five stat points. The wave stays paused." : "Click + to spend one point. Ctrl: five. Shift: all remaining points.");
-        ImGui::Separator();ImGui::TextWrapped("Strength/Dexterity: combat. Vitality: life. Energy: mana and +1 skill level per 10 allocated points.");
+        HudText::TextWrapped(choosing ? "Choose your skill upgrade to receive five stat points. The wave stays paused." : "Click + to spend one point. Ctrl: five. Shift: all remaining points.");
+        ImGui::Separator();HudText::TextWrapped("Strength/Dexterity: combat. Vitality: life. Energy: mana and +1 skill level per 10 allocated points.");
         end();
         const float width=(std::min)(410*scale,io.DisplaySize.x-32);
         const float left=(std::min)(io.DisplaySize.x-width-16,(std::max)((io.DisplaySize.x-width)*0.5f,io.DisplaySize.x*0.52f));
         begin("Paused - level up",{left,io.DisplaySize.y*0.18f},{width,0});
-        ImGui::TextWrapped(choosing ? "Choose 1, 2 or 3 to gain a level and 5 stat points. The wave stays paused while you allocate them." : "Spend your stat points with the + buttons on the left, then resume when ready.");
+        HudText::TextWrapped(choosing ? "Choose 1, 2 or 3 to gain a level and 5 stat points. The wave stays paused while you allocate them." : "Spend your stat points with the + buttons on the left, then resume when ready.");
         for(uint8_t slot=0;slot<3;++slot){
             const auto choice=data.choices[slot];if(choice>=Survivors::Count)continue;
             const auto& upgrade=Survivors::Upgrades[choice];
             ImGui::PushID(slot);char label[120];snprintf(label,sizeof(label),"%u. %s - Rank %u",unsigned(slot+1),SurvivorUpgradeName(data.classId,choice),unsigned(data.ranks[choice]+1));
-            const bool clicked=ImGui::Button(label,{-1,34*scale});
+            const bool clicked=HudText::Button(label,{-1,34*scale});
             const bool key=!io.WantTextInput && ImGui::IsKeyPressed(ImGuiKey(int(ImGuiKey_1)+slot),false);
             if(clicked || key)SurvivorRequest(Survivors::Action::Choose,packet,data.offer,slot);
-            ImGui::TextWrapped("%s",choice<3 ? "Unlock or strengthen this class skill. Its spell effects play automatically while you move." : upgrade.description);ImGui::Spacing();ImGui::PopID();
+            HudText::TextWrapped("%s",choice<3 ? "Unlock or strengthen this class skill. Its spell effects play automatically while you move." : upgrade.description);ImGui::Spacing();ImGui::PopID();
         }
         if(data.allocating){
-            ImGui::Text("Stat points available: %u",available);
-            if(ImGui::Button("Resume wave",{-1,36*scale}))SurvivorRequest(Survivors::Action::Ready,packet,data.offer);
-            ImGui::TextWrapped("Unspent points can be kept for later.");
+            HudText::Text("Stat points available: %u",available);
+            if(HudText::Button("Resume wave",{-1,36*scale}))SurvivorRequest(Survivors::Action::Ready,packet,data.offer);
+            HudText::TextWrapped("Unspent points can be kept for later.");
         }
-        if(ImGui::Button("Return to town",{-1,32*scale}))SurvivorRequest(Survivors::Action::Leave,packet);
+        if(HudText::Button("Return to town",{-1,32*scale}))SurvivorRequest(Survivors::Action::Leave,packet);
         end();return;
     }
     // A small retreat control does not take mouse input outside its own window.
     begin("Survivors controls",{16,io.DisplaySize.y*0.55f},{300*scale,0});
-    if(data.paused && data.choices[0]==Survivors::NoUpgrade)ImGui::TextWrapped("Paused while another survivor chooses an upgrade.");
+    if(data.paused && data.choices[0]==Survivors::NoUpgrade)HudText::TextWrapped("Paused while another survivor chooses an upgrade.");
     unsigned spent=0;for(auto n:data.attributes)spent+=n;
-    ImGui::Text("Stat points available: %u",unsigned(data.level-1)*5-spent);
-    ImGui::TextWrapped("STR/DEX: combat. VIT: life. Each 10 spent Energy: +1 skill level.");
-    if(ImGui::Button("Return to town",{-1,32*scale}))SurvivorRequest(Survivors::Action::Leave,packet);
-    ImGui::TextWrapped("Class progress and stats save separately. Exit restores your normal hero.");
-    if(survivorRosterError)ImGui::TextWrapped("Progress could not be saved. Check the Survivors roster file.");end();
+    HudText::Text("Stat points available: %u",unsigned(data.level-1)*5-spent);
+    HudText::TextWrapped("STR/DEX: combat. VIT: life. Each 10 spent Energy: +1 skill level.");
+    if(HudText::Button("Return to town",{-1,32*scale}))SurvivorRequest(Survivors::Action::Leave,packet);
+    HudText::TextWrapped("Class progress and stats save separately. Exit restores your normal hero.");
+    if(survivorRosterError)HudText::TextWrapped("Progress could not be saved. Check the Survivors roster file.");end();
 }

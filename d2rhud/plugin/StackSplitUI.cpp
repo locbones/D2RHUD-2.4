@@ -1,3 +1,4 @@
+#include "HudText.h"
 #include "LegacyTransmog.h"
 #include "StackSplitSkin.h"
 #include <imgui.h>
@@ -33,7 +34,7 @@ void Sliced(const Skin::Image& image,ImVec2 a,ImVec2 b,float left,float top,floa
 ImFont* Face(float size){if(auto provider=Skin::fontProvider.load())if(auto font=provider(size))return font;return ImGui::GetFont();}
 void Caption(const char* text,ImVec2 position,float size,ImU32 color,float alignment=0){
     auto font=Face(size);const auto extent=font->CalcTextSizeA(size,FLT_MAX,0,text);
-    ImGui::GetWindowDrawList()->AddText(font,size,{position.x-extent.x*alignment,position.y},color,text);
+    HudText::AddText(ImGui::GetWindowDrawList(),font,size,{position.x-extent.x*alignment,position.y},color,text);
 }
 bool ArtButton(const char* id,const Skin::Image& image,ImVec2 p,ImVec2 size,int hover,bool enabled=true,const char* label=nullptr,float scale=1){
     ImGui::SetCursorScreenPos(p);ImGui::BeginDisabled(!enabled);
@@ -63,7 +64,7 @@ void DrawStackSplit(){
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,{0,0});ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize,0);
     constexpr auto flags=ImGuiWindowFlags_NoTitleBar|ImGuiWindowFlags_NoSavedSettings|ImGuiWindowFlags_NoResize|ImGuiWindowFlags_NoMove|
         ImGuiWindowFlags_NoCollapse|ImGuiWindowFlags_NoScrollbar|ImGuiWindowFlags_NoFocusOnAppearing|ImGuiWindowFlags_NoNavFocus|ImGuiWindowFlags_NoBackground;
-    ImGui::Begin("##StackQuantity",nullptr,flags);
+    HudText::Begin("##StackQuantity",nullptr,flags);
     auto point=[&](float px,float py){return ImVec2{x+px*scale,y+py*scale};};
     Sliced(images[Skin::Frame],{x,y},{x+width,y+height},60,96,60,50,10*scale,23*scale,10*scale,9*scale);
     Caption(compact?"Quantity":"Split stack",point(panelWidth*.5f,8),12*scale,IM_COL32(211,186,136,255),.5f);
@@ -96,7 +97,7 @@ void DrawStackSplit(){
         ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,{2*scale,2*scale});ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize,0);
         ImGui::PushStyleColor(ImGuiCol_FrameBg,{0,0,0,0});ImGui::PushStyleColor(ImGuiCol_FrameBgHovered,{0,0,0,0});ImGui::PushStyleColor(ImGuiCol_FrameBgActive,{0,0,0,0});
         ImGui::PushStyleColor(ImGuiCol_Text,{0.86f,0.78f,0.61f,1});
-        ImGui::InputInt("##Amount",&amount,0,0,ImGuiInputTextFlags_AutoSelectAll);
+        HudText::InputInt("##Amount",&amount,0,0,ImGuiInputTextFlags_AutoSelectAll);
         editing=ImGui::IsItemActive();
         const bool enter=(editing || ImGui::IsItemDeactivated()) && ImGui::IsKeyPressed(ImGuiKey_Enter,false);
         ImGui::PopStyleColor(4);ImGui::PopStyleVar(2);ImGui::PopFont();ImGui::SetWindowFontScale(1);

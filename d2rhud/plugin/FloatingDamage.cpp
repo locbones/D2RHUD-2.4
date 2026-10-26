@@ -1,3 +1,4 @@
+#include "HudText.h"
 #include "FloatingDamage.h"
 #include "SettingsUI.h"
 
@@ -609,13 +610,13 @@ void DrawStyledText(
     const ImU32 outlineCol = ToImColor(g_config.outlineColor, fade);
     const ImU32 shadowCol = ToImColor(g_config.shadowColor, fade);
 
-    const ImVec2 textSize = font->CalcTextSizeA(fontSize, FLT_MAX, 0.0f, text);
+    const ImVec2 textSize = HudText::CalcTextSizeA(font,fontSize, FLT_MAX, 0.0f, text);
     pos.x -= textSize.x * 0.5f;
     pos.y -= textSize.y * 0.5f;
 
     if (g_config.shadowLeftRightOffset != 0.0f || g_config.shadowUpDownOffset != 0.0f)
     {
-        drawList->AddText(
+        HudText::AddText(drawList,
             font,
             fontSize,
             ImVec2(pos.x + g_config.shadowLeftRightOffset, pos.y + g_config.shadowUpDownOffset),
@@ -635,12 +636,12 @@ void DrawStyledText(
                 if ((x * x) + (y * y) > outlineThickness * outlineThickness + outlineThickness)
                     continue;
 
-                drawList->AddText(font, fontSize, ImVec2(pos.x + x, pos.y + y), outlineCol, text);
+                HudText::AddText(drawList,font, fontSize, ImVec2(pos.x + x, pos.y + y), outlineCol, text);
             }
         }
     }
 
-    drawList->AddText(font, fontSize, pos, mainColor, text);
+    HudText::AddText(drawList,font, fontSize, pos, mainColor, text);
 }
 
 void RenderTickPopup(
@@ -691,7 +692,7 @@ void RenderDpsNumber(ImDrawList* drawList, ImFont* font, const ImVec2& displaySi
     const float anchorX = displaySize.x * xPercent / 100.0f;
     const float anchorY = displaySize.y * yPercent / 100.0f;
 
-    ImVec2 textSize = font->CalcTextSizeA(fontSize, FLT_MAX, 0.0f, text.c_str());
+    ImVec2 textSize = HudText::CalcTextSizeA(font,fontSize, FLT_MAX, 0.0f, text.c_str());
     ImVec2 pos = ImVec2(anchorX, anchorY);
 
     if (xPercent <= 10.0f)
@@ -1183,24 +1184,24 @@ void DrawSettingsPanel(float menuScale)
             ImGui::PushTextWrapPos(ImGui::GetCursorPos().x + tooltipWidth);
             if (title && title[0])
             {
-                ImGui::TextColored(ImVec4(0.85f, 0.75f, 0.53f, 1.0f), "%s", title);
+                HudText::TextColored(ImVec4(0.85f, 0.75f, 0.53f, 1.0f), "%s", title);
                 ImGui::Spacing();
             }
-            ImGui::TextUnformatted(text);
+            HudText::TextUnformatted(text);
             ImGui::PopTextWrapPos();
             ImGui::EndTooltip();
         };
 
     auto settingCheckbox = [&](const char* label, bool* value, const char* tooltip, const char* tooltipTitle = nullptr)
         {
-            ImGui::Checkbox(label, value);
+            HudText::Checkbox(label, value);
             showTooltipOnHover(tooltipTitle ? tooltipTitle : label, tooltip);
         };
 
     auto settingSliderFloat = [&](const char* label, float* value, float minValue, float maxValue, const char* format, const char* tooltip, const char* tooltipTitle = nullptr)
         {
             HudSettings::BeginField(label,menuScale);
-            ImGui::SliderFloat("##value", value, minValue, maxValue, format);
+            HudText::SliderFloat("##value", value, minValue, maxValue, format);
             showTooltipOnHover(tooltipTitle ? tooltipTitle : label, tooltip);
             HudSettings::EndField(menuScale);
         };
@@ -1208,7 +1209,7 @@ void DrawSettingsPanel(float menuScale)
     auto settingSliderInt = [&](const char* label, int* value, int minValue, int maxValue, const char* format, ImGuiSliderFlags flags, const char* tooltip, const char* tooltipTitle = nullptr)
         {
             HudSettings::BeginField(label,menuScale);
-            ImGui::SliderInt("##value", value, minValue, maxValue, format, flags);
+            HudText::SliderInt("##value", value, minValue, maxValue, format, flags);
             showTooltipOnHover(tooltipTitle ? tooltipTitle : label, tooltip);
             HudSettings::EndField(menuScale);
         };
@@ -1216,7 +1217,7 @@ void DrawSettingsPanel(float menuScale)
     auto settingSliderIntSimple = [&](const char* label, int* value, int minValue, int maxValue, const char* tooltip, const char* tooltipTitle = nullptr)
         {
             HudSettings::BeginField(label,menuScale);
-            ImGui::SliderInt("##value", value, minValue, maxValue);
+            HudText::SliderInt("##value", value, minValue, maxValue);
             showTooltipOnHover(tooltipTitle ? tooltipTitle : label, tooltip);
             HudSettings::EndField(menuScale);
         };
@@ -1224,7 +1225,7 @@ void DrawSettingsPanel(float menuScale)
     auto settingColor = [&](const char* label, float color[4], const char* tooltip, const char* tooltipTitle = nullptr)
         {
             HudSettings::BeginField(label,menuScale);
-            ImGui::ColorEdit4("##value", color, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_AlphaBar);
+            HudText::ColorEdit4("##value", color, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_AlphaBar);
             showTooltipOnHover(tooltipTitle ? tooltipTitle : label, tooltip);
             HudSettings::EndField(menuScale);
         };
@@ -1232,7 +1233,7 @@ void DrawSettingsPanel(float menuScale)
     static int section=0;
     constexpr const char* labels[]{"Appearance","Motion","Hit combining","Layout","DPS meter","Preview"};
     if(ImGui::BeginTabBar("DamageSettingsSections",ImGuiTabBarFlags_FittingPolicyScroll)){
-        for(int i=0;i<int(std::size(labels));++i)if(ImGui::BeginTabItem(labels[i])){section=i;ImGui::EndTabItem();}
+        for(int i=0;i<int(std::size(labels));++i)if(HudText::BeginTabItem(labels[i])){section=i;ImGui::EndTabItem();}
         ImGui::EndTabBar();
     }
     ImGui::Dummy({0,10*menuScale});
@@ -1250,7 +1251,7 @@ void DrawSettingsPanel(float menuScale)
     {
         int fontIndex = std::clamp(cfg.fontIndex, 0, kFontPresetCount - 1);
         HudSettings::BeginField("Font",menuScale);
-        ImGui::Combo("##value", &fontIndex, kFontPresetLabels, kFontPresetCount);
+        HudText::Combo("##value", &fontIndex, kFontPresetLabels, kFontPresetCount);
         cfg.fontIndex = fontIndex;
         showTooltipOnHover(
             "Font",
@@ -1485,7 +1486,7 @@ void DrawSettingsPanel(float menuScale)
             "Preview Spread", &cfg.previewSpread, 0.0f, 160.0f, "%.0f",
             "Random spread radius for preview spawns.",
             "Preview Spread");
-        if (ImGui::Button("Preview at Screen Center", ImVec2(fieldWidth * 1.5f, 0.0f)))
+        if (HudText::Button("Preview at Screen Center", ImVec2(fieldWidth * 1.5f, 0.0f)))
         {
             const ImGuiIO& io = ImGui::GetIO();
             SpawnPreviewBurstAtScreenCenter(io.DisplaySize);
@@ -1496,7 +1497,7 @@ void DrawSettingsPanel(float menuScale)
         HudSettings::EndSection(menuScale);
         if(HudSettings::Disclosure("Restore defaults")){
             HudSettings::Note("Restore appearance and animation settings. The main Floating Damage toggle is kept.");
-            if(ImGui::Button("Reset damage settings"))ResetToDefaults();
+            if(HudText::Button("Reset damage settings"))ResetToDefaults();
         }
     }
 }

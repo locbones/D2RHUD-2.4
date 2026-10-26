@@ -10,8 +10,8 @@ void Uninstall();
 std::string Status();
 struct Notification {std::string title,message;bool error=false;};
 bool TakeNotification(Notification& notice);
-// Owns a converted copy for the synchronous leaf parser. The native outer
-// loader retains ownership of its original save buffer, including its cleanup.
+// Optional outer-load result tracking. Conversion is always performed by the
+// leaf reader hook, independently of map/summon hooks or save descriptors.
 class LoadScope {
     struct State;
     std::unique_ptr<State> state;

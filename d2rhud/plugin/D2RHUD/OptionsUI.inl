@@ -28,10 +28,10 @@ void ShowD2RHUDMenu()
         static HudOptions::Filter optionFilter;
         bool filterChanged=false;
         ImGui::SetNextItemWidth((std::max)(180.f,ImGui::GetContentRegionAvail().x-95*menuScale));
-        filterChanged=ImGui::InputTextWithHint("##OptionSearch","Search all options...",optionFilter.query,sizeof(optionFilter.query));
+        filterChanged=HudText::InputTextWithHint("##OptionSearch","Search all options...",optionFilter.query,sizeof(optionFilter.query));
         ImGui::SameLine();if(ThemeButton("Clear")){optionFilter.query[0]=0;filterChanged=true;}
         if(ImGui::BeginTabBar("OptionCategories",ImGuiTabBarFlags_FittingPolicyScroll)){
-            for(int i=0;i<int(std::size(HudOptions::Categories));++i)if(ImGui::BeginTabItem(HudOptions::Categories[i])){
+            for(int i=0;i<int(std::size(HudOptions::Categories));++i)if(HudText::BeginTabItem(HudOptions::Categories[i])){
                 if(optionFilter.category!=HudOptions::Category(i)){optionFilter.category=HudOptions::Category(i);filterChanged=true;}
                 ImGui::EndTabItem();
             }
@@ -108,12 +108,12 @@ void ShowD2RHUDMenu()
                     ImGui::BeginTooltip();
                     float tooltipWidth = 600.0f;
                     ImGui::PushTextWrapPos(ImGui::GetCursorPos().x + tooltipWidth);
-                    ImGui::TextColored(ImVec4(1.0f, 0.2f, 0.2f, 1.0f), "Locked by Mod Author(s)"); // red
-                    ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "This setting cannot be changed while this mod is active"); // gray
-                    ImGui::TextWrapped("");
-                    ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f), "Reason:"); // orange
+                    HudText::TextColored(ImVec4(1.0f, 0.2f, 0.2f, 1.0f), "Locked by Mod Author(s)"); // red
+                    HudText::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "This setting cannot be changed while this mod is active"); // gray
+                    HudText::TextWrapped("");
+                    HudText::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f), "Reason:"); // orange
                     ImGui::SameLine();
-                    ImGui::TextWrapped("%s", lockInfo->reason.c_str());
+                    HudText::TextWrapped("%s", lockInfo->reason.c_str());
                     ImGui::PopTextWrapPos();
                     ImGui::EndTooltip();
                 }
@@ -125,7 +125,7 @@ void ShowD2RHUDMenu()
                 ImGui::BeginGroup();
 
                 if (sameLine) ImGui::AlignTextToFramePadding();
-                ImGui::Text("%s", label);
+                HudText::Text("%s", label);
 
                 if (sameLine)
                     ImGui::SameLine(0.0f, slValue * menuScale);
@@ -159,24 +159,24 @@ void ShowD2RHUDMenu()
                     ImGui::BeginTooltip();
                     ImGui::PushTextWrapPos(ImGui::GetCursorPos().x + 600.0f);
 
-                    ImGui::TextColored(
+                    HudText::TextColored(
                         ImVec4(1.0f, 0.2f, 0.2f, 1.0f),
                         "Locked by Mod Author(s)"
                     );
 
-                    ImGui::TextColored(
+                    HudText::TextColored(
                         ImVec4(0.7f, 0.7f, 0.7f, 1.0f),
                         "This value cannot be changed while this mod is active\n"
                     );
 
-                    ImGui::TextWrapped("");
+                    HudText::TextWrapped("");
 
-                    ImGui::TextColored(
+                    HudText::TextColored(
                         ImVec4(1.0f, 0.5f, 0.0f, 1.0f),
                         "Reason:"
                     );
                     ImGui::SameLine();
-                    ImGui::TextWrapped("%s", lockInfo->reason.c_str());
+                    HudText::TextWrapped("%s", lockInfo->reason.c_str());
 
                     ImGui::PopTextWrapPos();
                     ImGui::EndTooltip();
@@ -227,15 +227,15 @@ void ShowD2RHUDMenu()
             ImGui::SetNextWindowPos(ImVec2(mousePos.x + 70.0f, mousePos.y), ImGuiCond_Always);
             ImGui::BeginTooltip();
             ImGui::PushTextWrapPos(ImGui::GetCursorPos().x + 440.0f * menuScale);
-            ImGui::TextUnformatted("Removes the black HD side bars and faded edges at ultrawide resolutions while in-game. Main menu bars stay enabled. Mouse targeting uses the full width in-game. Applies immediately; defaults off. Monster awareness keeps its normal range; distant enemies may remain inactive.");
+            HudText::TextUnformatted("Removes the black HD side bars and faded edges at ultrawide resolutions while in-game. Main menu bars stay enabled. Mouse targeting uses the full width in-game. Applies immediately; defaults off. Monster awareness keeps its normal range; distant enemies may remain inactive.");
             ImGui::Separator();
-            ImGui::TextWrapped("%s", WidescreenBars::Status());
+            HudText::TextWrapped("%s", WidescreenBars::Status());
             ImGui::PopTextWrapPos();
             ImGui::EndTooltip();
         }
         }
         if (optionFilter.Visible(HudOptions::Category::Items,"Disable Right-Click Item Pickup","mouse ground items")) {
-        const float pickupLabelWidth = ImGui::CalcTextSize("Disable Right-Click Item Pickup").x + ImGui::GetFrameHeight() + ImGui::GetStyle().ItemInnerSpacing.x;
+        const float pickupLabelWidth = HudText::CalcTextSize("Disable Right-Click Item Pickup").x + ImGui::GetFrameHeight() + ImGui::GetStyle().ItemInnerSpacing.x;
         const char* pickupLabel = pickupLabelWidth <= ImGui::GetContentRegionAvail().x
             ? "Disable Right-Click Item Pickup###DisableRightClickItemPickup"
             : "Disable Right-Click\nItem Pickup###DisableRightClickItemPickup";
@@ -298,11 +298,11 @@ void ShowD2RHUDMenu()
             ImGui::SetNextWindowPos(ImVec2(mousePos.x + 70.0f, mousePos.y), ImGuiCond_Always);
             ImGui::BeginTooltip();
             ImGui::PushTextWrapPos(ImGui::GetCursorPos().x + 440.0f * menuScale);
-            ImGui::TextUnformatted("Restore surviving permanent minions next game. Timed summons are excluded. Iron Golem keeps its native save behavior. Requires offline play or a local TCP/IP host running D2RHUD.");
+            HudText::TextUnformatted("Restore surviving permanent minions next game. Timed summons are excluded. Iron Golem keeps its native save behavior. Requires offline play or a local TCP/IP host running D2RHUD.");
             ImGui::Separator();
-            ImGui::TextWrapped("%s", SummonPersistence::Status());
+            HudText::TextWrapped("%s", SummonPersistence::Status());
             const auto summonStorageStatus = SummonPersistence::StorageStatus();
-            ImGui::TextWrapped("%s", summonStorageStatus.c_str());
+            HudText::TextWrapped("%s", summonStorageStatus.c_str());
             ImGui::PopTextWrapPos();
             ImGui::EndTooltip();
         }
@@ -326,7 +326,7 @@ void ShowD2RHUDMenu()
             ImGui::SetNextWindowPos(ImVec2(mousePos.x + 70.0f, mousePos.y), ImGuiCond_Always);
             ImGui::BeginTooltip();
             ImGui::PushTextWrapPos(ImGui::GetCursorPos().x + 440.0f * menuScale);
-            ImGui::TextUnformatted("Hold Whirlwind's assigned mouse button and move the cursor to steer. Click nearby ground items with the other mouse button to pick them up, and drink belt potions while spinning. Uses one native cast cost per second. Available for your local/offline or TCP/IP host character.");
+            HudText::TextUnformatted("Hold Whirlwind's assigned mouse button and move the cursor to steer. Click nearby ground items with the other mouse button to pick them up, and drink belt potions while spinning. Uses one native cast cost per second. Available for your local/offline or TCP/IP host character.");
             ImGui::PopTextWrapPos();
             ImGui::EndTooltip();
         }
@@ -384,7 +384,7 @@ void ShowD2RHUDMenu()
             [&]() {
                 ImGui::PushItemWidth(250.0f * menuScale);
                 BeginFrameBgImageRegion();
-                if (ImGui::Combo("##HPRolloverDifficulty", &difficultyIndex,
+                if (HudText::Combo("##HPRolloverDifficulty", &difficultyIndex,
                     difficultyItems, IM_ARRAYSIZE(difficultyItems)))
                 {
                     d2rHUDConfig.HPRolloverDifficulty = difficultyIndex - 1;
@@ -402,7 +402,7 @@ void ShowD2RHUDMenu()
             [&]() {
                 ImGui::PushItemWidth(100.0f * menuScale);
                 BeginFrameBgImageRegion();
-                if (ImGui::InputInt("##HPRolloverPercent", &d2rHUDConfig.HPRolloverPercent, 1, 10))
+                if (HudText::InputInt("##HPRolloverPercent", &d2rHUDConfig.HPRolloverPercent, 1, 10))
                 {
                     d2rHUDConfig.HPRolloverPercent =
                         std::clamp(d2rHUDConfig.HPRolloverPercent, 0, 100);
@@ -420,7 +420,7 @@ void ShowD2RHUDMenu()
             [&]() {
                 ImGui::PushItemWidth(100.0f * menuScale);
                 BeginFrameBgImageRegion();
-                ImGui::TextUnformatted("99");
+                HudText::TextUnformatted("99");
                 EndFrameBgImageRegion();
                 ImGui::PopItemWidth();
             },
@@ -431,7 +431,7 @@ void ShowD2RHUDMenu()
         if (optionFilter.Visible(HudOptions::Category::Workshop,"Workshop","Survivor Arena Act VI experimental prototypes")) {
         ImGui::Separator();
         const bool workshopOpen = true;
-        ImGui::TextWrapped("Unfinished prototypes. Use a separate test character.");
+        HudText::TextWrapped("Unfinished prototypes. Use a separate test character.");
         if (ImGui::IsItemHovered() || ImGui::IsItemToggledOpen()) {
             descriptionTitle = "Workshop";
             descriptionText = "Unfinished features for exploring the engine's limits and planning future modding work.\n\n"
@@ -458,9 +458,9 @@ void ShowD2RHUDMenu()
                 ImGui::SetNextWindowPos(ImVec2(mouse.x + 70.0f, mouse.y), ImGuiCond_Always);
                 ImGui::BeginTooltip();
                 ImGui::PushTextWrapPos(ImGui::GetCursorPos().x + 440.0f * menuScale);
-                ImGui::TextUnformatted("Unfinished Workshop prototype. Enable to approach Charsi in Act I and explore the Survivor Arena. The host must also enable it. Existing runs can finish after disabling.");
+                HudText::TextUnformatted("Unfinished Workshop prototype. Enable to approach Charsi in Act I and explore the Survivor Arena. The host must also enable it. Existing runs can finish after disabling.");
                 ImGui::Separator();
-                ImGui::TextWrapped("%s", CubeMap::Status());
+                HudText::TextWrapped("%s", CubeMap::Status());
                 ImGui::PopTextWrapPos();
                 ImGui::EndTooltip();
             }
@@ -477,9 +477,9 @@ void ShowD2RHUDMenu()
                     ImGui::SetNextWindowPos(ImVec2(mouse.x+70.0f,mouse.y),ImGuiCond_Always);
                     ImGui::BeginTooltip();
                     ImGui::PushTextWrapPos(ImGui::GetCursorPos().x+440.0f*menuScale);
-                    ImGui::TextUnformatted("Unfinished Workshop prototype. Baal unlocks Act VI; its final quest unlocks the next difficulty. Requires a matching compiled Act VI data pack (or -txt when compiling source tables). Full D2R restart required. Prototype content; use a separate test character.");
-                    if(ExtendedActs::Requested()!=ExtendedActs::Active())ImGui::TextUnformatted("Restart D2R to apply the selected option.");
-                    ImGui::Separator();ImGui::TextWrapped("%s",ExtendedActs::Status());
+                    HudText::TextUnformatted("Unfinished Workshop prototype. Baal unlocks Act VI; its final quest unlocks the next difficulty. Requires a matching compiled Act VI data pack (or -txt when compiling source tables). Full D2R restart required. Prototype content; use a separate test character.");
+                    if(ExtendedActs::Requested()!=ExtendedActs::Active())HudText::TextUnformatted("Restart D2R to apply the selected option.");
+                    ImGui::Separator();HudText::TextWrapped("%s",ExtendedActs::Status());
                     ImGui::PopTextWrapPos();ImGui::EndTooltip();
                 }
             }
@@ -487,7 +487,7 @@ void ShowD2RHUDMenu()
         }
 
         }
-        if(!optionFilter.matches)ImGui::TextWrapped("No matching options. Try another search or clear the search field.");
+        if(!optionFilter.matches)HudText::TextWrapped("No matching options. Try another search or clear the search field.");
         if(before!=values())applyAndSave();
 
         static std::string lastDescriptionTitle,lastDescriptionText,lastDescriptionNote;
@@ -501,26 +501,26 @@ void ShowD2RHUDMenu()
         fontSize=(fontIndex>=0 && fontIndex<io.Fonts->Fonts.Size) ? io.Fonts->Fonts[fontIndex] : nullptr;
         if(fontSize)ImGui::PushFont(fontSize);
         if(!descriptionTitle.empty()) {
-            const float titleWidth=ImGui::CalcTextSize(descriptionTitle.c_str()).x;
+            const float titleWidth=HudText::CalcTextSize(descriptionTitle.c_str()).x;
             ImGui::SetCursorPosX(descriptionStart+(std::max)(0.0f,(descriptionWidth-titleWidth)*0.5f));
             ImGui::PushTextWrapPos(descriptionStart+descriptionWidth);
-            ImGui::TextColored(ImGui::GetStyle().Colors[ImGuiCol_CheckMark],"%s",descriptionTitle.c_str());
+            HudText::TextColored(ImGui::GetStyle().Colors[ImGuiCol_CheckMark],"%s",descriptionTitle.c_str());
             ImGui::PopTextWrapPos();
         }
         if(fontSize)ImGui::PopFont();
         ImGui::SetCursorPosX(descriptionStart);
         ImGui::PushTextWrapPos(descriptionStart+descriptionWidth);
-        if(!descriptionText.empty())ImGui::TextWrapped("%s",descriptionText.c_str());
-        if(!descriptionNote.empty())ImGui::TextColored(ImVec4(1.0f,0.65f,0.0f,1.0f),"%s",descriptionNote.c_str());
+        if(!descriptionText.empty())HudText::TextWrapped("%s",descriptionText.c_str());
+        if(!descriptionNote.empty())HudText::TextColored(ImVec4(1.0f,0.65f,0.0f,1.0f),"%s",descriptionNote.c_str());
         ImGui::PopTextWrapPos();
         HudOptions::EndPanels();
         ImGui::Separator();
         ImGui::Dummy(ImVec2(0.0f, 3.0f));
 
-        ImGui::TextDisabled("Changes apply and save automatically.");
-        if(!saveStatusMessage.empty())ImGui::TextColored(saveStatusColor,"%s",saveStatusMessage.c_str());
+        HudText::TextDisabled("Changes apply and save automatically.");
+        if(!saveStatusMessage.empty())HudText::TextColored(saveStatusColor,"%s",saveStatusMessage.c_str());
         if(saveStatusMessage=="Could not save settings. Try again."&&ThemeButton("Retry save"))applyAndSave();
-        if(ExtendedActs::Requested()!=ExtendedActs::Active())ImGui::TextWrapped("Restart D2R to apply the Act VI selection.");
+        if(ExtendedActs::Requested()!=ExtendedActs::Active())HudText::TextWrapped("Restart D2R to apply the Act VI selection.");
 
         ImGui::PopStyleColor();
         HudMenu::End();

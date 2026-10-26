@@ -24,11 +24,11 @@ static void RenderLootFilterEditor()
         commitDraft();
         if (sourceDirty) {
             g_LootConfigStatus = "Save or discard the complete source draft in the Source tab first.";
-            ImGui::OpenPopup("FilterSaveStatus");
+            HudText::OpenPopup("FilterSaveStatus");
         } else if (SaveLootFilterConfig(GetLootFilterConfigPath())) {
             itemFilter->ReloadGameFilter();
             LoadLootFilterConfig(GetLootFilterConfigPath());
-        } else ImGui::OpenPopup("FilterSaveStatus");
+        } else HudText::OpenPopup("FilterSaveStatus");
     }
     ImGui::SameLine();
     if (ThemeButton("Reload from disk")) {
@@ -37,19 +37,19 @@ static void RenderLootFilterEditor()
     }
     // Keep routine file/status detail available without taking another row.
     ImGui::SameLine();
-    if(ThemeButton("Status"))ImGui::OpenPopup("FilterSaveStatus");
-    if(ImGui::IsItemHovered())ImGui::SetTooltip("%s",g_LootConfigStatus.c_str());
-    if(ImGui::BeginPopup("FilterSaveStatus")){ImGui::PushTextWrapPos(ImGui::GetFontSize()*35);ImGui::TextWrapped("%s",g_LootConfigStatus.c_str());ImGui::PopTextWrapPos();ImGui::EndPopup();}
-    if(!g_LootConfigDocument.error.empty())ImGui::TextWrapped("%s",g_LootConfigDocument.error.c_str());
+    if(ThemeButton("Status"))HudText::OpenPopup("FilterSaveStatus");
+    if(ImGui::IsItemHovered())HudText::SetTooltip("%s",g_LootConfigStatus.c_str());
+    if(HudText::BeginPopup("FilterSaveStatus")){ImGui::PushTextWrapPos(ImGui::GetFontSize()*35);HudText::TextWrapped("%s",g_LootConfigStatus.c_str());ImGui::PopTextWrapPos();ImGui::EndPopup();}
+    if(!g_LootConfigDocument.error.empty())HudText::TextWrapped("%s",g_LootConfigDocument.error.c_str());
     bool rulesDirty = g_LootConfigOriginalRules.size() != g_LootFilterRules.size();
     if (!rulesDirty) for (size_t i = 0; i < g_LootFilterRules.size(); ++i)
         if (g_LootFilterRules[i].rawLua != g_LootConfigOriginalRules[i]) { rulesDirty = true; break; }
     if (draftDirty || sourceDirty || rulesDirty || g_LuaVariables != g_LootConfigOriginalValues)
-        {ImGui::SameLine();ImGui::TextColored({.86f,.72f,.4f,1},"Unsaved changes");}
+        {ImGui::SameLine();HudText::TextColored({.86f,.72f,.4f,1},"Unsaved changes");}
     if (!ImGui::BeginChild("FilterEditorBody",ImVec2(0,0))) { ImGui::EndChild(); return; }
     if (!ImGui::BeginTabBar("LootFilterEditorTabs")) { ImGui::EndChild(); return; }
-    if (ImGui::BeginTabItem("Settings")) {
-        ImGui::TextWrapped("Choose filter options here. Custom expressions remain available in the Source tab.");
+    if (HudText::BeginTabItem("Settings")) {
+        HudText::TextWrapped("Choose filter options here. Custom expressions remain available in the Source tab.");
         ImGui::BeginDisabled(!g_LootConfigDocument.error.empty() || sourceDirty);
         struct Setting { const char* group; const char* key; const char* initial; const char* help; };
         static const Setting settings[] = {
@@ -66,13 +66,13 @@ static void RenderLootFilterEditor()
         };
         std::string group;
         for (const auto& setting : settings) {
-            if (group != setting.group) { group = setting.group; ImGui::SeparatorText(setting.group); }
+            if (group != setting.group) { group = setting.group; HudText::SeparatorText(setting.group); }
             ImGui::PushID(setting.key);
             auto it = g_LuaVariables.find(setting.key);
             bool present = it != g_LuaVariables.end();
             static const std::map<std::string,std::string> labels = {{"reload","Reload message"},{"language","Language"},{"filter_level","Active filter level"},{"filter_titles","Filter level names"},{"allowOverrides","Include the mod's override rules"},{"hide_mismatches","Hide unmatched ground items"},{"audioPlayback","Enable speech and sounds"},{"audioVoice","Windows voice number"},{"debug","Diagnostic messages"},{"strict","Keep the previous filter if a rule is invalid"}};
-            ImGui::TextUnformatted(labels.at(setting.key).c_str());
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", setting.help);
+            HudText::TextUnformatted(labels.at(setting.key).c_str());
+            if (ImGui::IsItemHovered()) HudText::SetTooltip("%s", setting.help);
             if (!present) {
                 ImGui::SameLine();
                 if (ThemeButton("Add option")) g_LuaVariables[setting.key] = setting.initial;
@@ -87,7 +87,7 @@ static void RenderLootFilterEditor()
                     LootFilterConfig::Builder::UI::Choose("##setting",value,languages);
                 } else if (key == "filter_level" || key == "audioVoice") {
                     int number = 0;
-                    if (LootFilterConfig::Builder::Integer(value,number)) { if (ImGui::InputInt("##setting",&number)) value=std::to_string((std::max)(key=="filter_level"?1:0,number)); }
+                    if (LootFilterConfig::Builder::Integer(value,number)) { if (HudText::InputInt("##setting",&number)) value=std::to_string((std::max)(key=="filter_level"?1:0,number)); }
                     else custom=true;
                 } else if (key == "filter_titles") {
                     std::vector<std::string> names;
@@ -99,23 +99,23 @@ static void RenderLootFilterEditor()
                     } else custom=true;
                 } else if (key == "debug") {
                     int mode=value=="false"?0:value=="true"?1:-1;
-                    if(mode<0)custom=true;else if(ImGui::Combo("##setting",&mode,"Off\0Show matching rules\0"))value=mode?"true":"false";
+                    if(mode<0)custom=true;else if(HudText::Combo("##setting",&mode,"Off\0Show matching rules\0"))value=mode?"true":"false";
                 } else if (value == "true" || value == "false") {
-                    bool checked=value=="true";if(ImGui::Checkbox("##setting",&checked))value=checked?"true":"false";
+                    bool checked=value=="true";if(HudText::Checkbox("##setting",&checked))value=checked?"true":"false";
                 } else custom=true;
-                if(custom){ImGui::TextDisabled("Custom value preserved.");ImGui::SameLine();if(ThemeButton("Use standard option"))value=setting.initial;}
+                if(custom){HudText::TextDisabled("Custom value preserved.");ImGui::SameLine();if(ThemeButton("Use standard option"))value=setting.initial;}
             }
             ImGui::PopID();
         }
         ImGui::EndDisabled();
         ImGui::EndTabItem();
     }
-    if (ImGui::BeginTabItem("Rules", nullptr, selectRules ? ImGuiTabItemFlags_SetSelected : 0)) {
+    if (HudText::BeginTabItem("Rules", nullptr, selectRules ? ImGuiTabItemFlags_SetSelected : 0)) {
         selectRules = false;
         ImGui::BeginDisabled(!g_LootConfigDocument.error.empty() || sourceDirty);
         const float paneHeight=(std::max)(100.f,ImGui::GetContentRegionAvail().y-5.f);
         const bool columns=ImGui::BeginTable("RuleBuilderLayout",2,ImGuiTableFlags_BordersInnerV|ImGuiTableFlags_Resizable);
-        if(columns){ImGui::TableSetupColumn("Rule list",ImGuiTableColumnFlags_WidthFixed,(std::min)(280.f*ImGui::GetFontSize()/18.f,ImGui::GetContentRegionAvail().x*.26f));ImGui::TableSetupColumn("Rule builder",ImGuiTableColumnFlags_WidthStretch);ImGui::TableNextColumn();}
+        if(columns){HudText::TableSetupColumn("Rule list",ImGuiTableColumnFlags_WidthFixed,(std::min)(280.f*ImGui::GetFontSize()/18.f,ImGui::GetContentRegionAvail().x*.26f));HudText::TableSetupColumn("Rule builder",ImGuiTableColumnFlags_WidthStretch);ImGui::TableNextColumn();}
         ImGui::BeginChild("RuleLibrary",{0,paneHeight});
         LootFilterConfig::Builder::UI::Banner(LootFilterConfig::Builder::UI::Symbol::Rules,"Your rules");
         if (ThemeButton("+ Add rule",{ImGui::GetContentRegionAvail().x,0})) {
@@ -127,7 +127,7 @@ static void RenderLootFilterEditor()
             selected = int(g_LootFilterRules.size()) - 1; draft = rule.rawLua;
         }
         ImGui::SetNextItemWidth(-1);
-        if (ImGui::BeginCombo("##named_rule", "Named unique / set...")) {
+        if (HudText::BeginCombo("##named_rule", "Named unique / set...")) {
             static std::string namedQuery;
             LootFilterConfig::InputTextWithHint("##search_named", "Search item names...", &namedQuery);
             ImGui::BeginChild("named_items",ImVec2(0,210));
@@ -138,33 +138,33 @@ static void RenderLootFilterEditor()
                 std::transform(needle.begin(),needle.end(),needle.begin(),[](unsigned char c){return char(std::tolower(c));});
                 if(!needle.empty()&&haystack.find(needle)==std::string::npos)continue;
                 ImGui::PushID((item.quality+std::to_string(item.index)).c_str());
-                if(ImGui::Selectable((item.label+" ("+item.quality+")").c_str())){
+                if(HudText::Selectable((item.label+" ("+item.quality+")").c_str())){
                     commitDraft();LootFilterRule rule;rule.comment=item.label;
                     rule.rawLua="\n        {label="+LootFilterConfig::Quote(item.label)+",codes="+LootFilterConfig::Quote(item.code)+",quality="+LootFilterConfig::Quote(item.quality)+",index="+std::to_string(item.index)+",location=\"onground\",suffix=\" Keep\"}";
                     g_LootFilterRules.push_back(rule);selected=int(g_LootFilterRules.size())-1;draft=rule.rawLua;ImGui::CloseCurrentPopup();
                 }
                 ImGui::PopID();
             }
-            if(catalog.namedItems.empty())ImGui::TextWrapped("%s",catalog.loaded?"No named item list is available.":"Loading item names...");
+            if(catalog.namedItems.empty())HudText::TextWrapped("%s",catalog.loaded?"No named item list is available.":"Loading item names...");
             ImGui::EndChild();ImGui::EndCombo();
         }
         ImGui::BeginDisabled(selected<0);
         ImGui::SetNextItemWidth(-1);
-        if(ImGui::BeginCombo("##rule_tools","Rule actions...")){
-            if (ImGui::Selectable("Duplicate")) {
+        if(HudText::BeginCombo("##rule_tools","Rule actions...")){
+            if (HudText::Selectable("Duplicate")) {
                 commitDraft(); auto copy = g_LootFilterRules[selected];
                 g_LootFilterRules.insert(g_LootFilterRules.begin() + selected + 1, copy);
                 ++selected; draft = copy.rawLua;
             }
-            if (ImGui::Selectable("Remove")) {
+            if (HudText::Selectable("Remove")) {
                 g_LootFilterRules.erase(g_LootFilterRules.begin() + selected);
                 selected = -1; draft.clear(); draftDirty = false;
             }
             if (selected >= 0) {
-                if (ImGui::Selectable("Move up",false,selected>0?0:ImGuiSelectableFlags_Disabled) && selected > 0) {
+                if (HudText::Selectable("Move up",false,selected>0?0:ImGuiSelectableFlags_Disabled) && selected > 0) {
                     commitDraft(); std::swap(g_LootFilterRules[selected], g_LootFilterRules[selected - 1]); --selected;
                 }
-                if (ImGui::Selectable("Move down",false,selected+1<int(g_LootFilterRules.size())?0:ImGuiSelectableFlags_Disabled) && selected + 1 < int(g_LootFilterRules.size())) {
+                if (HudText::Selectable("Move down",false,selected+1<int(g_LootFilterRules.size())?0:ImGuiSelectableFlags_Disabled) && selected + 1 < int(g_LootFilterRules.size())) {
                     commitDraft(); std::swap(g_LootFilterRules[selected], g_LootFilterRules[selected + 1]); ++selected;
                 }
             }
@@ -173,7 +173,7 @@ static void RenderLootFilterEditor()
         ImGui::EndDisabled();
         ImGui::SetNextItemWidth(-1);
         LootFilterConfig::InputTextWithHint("##rule_search", "Search rules...", &query);
-        if(ImGui::IsItemHovered())ImGui::SetTooltip("Rules run from top to bottom. Hide actions stop evaluation.");
+        if(ImGui::IsItemHovered())HudText::SetTooltip("Rules run from top to bottom. Hide actions stop evaluation.");
         if(ImGui::BeginChild("RuleList",{0,0},true))for(size_t i=0;i<g_LootFilterRules.size();++i){
             const auto& rule=g_LootFilterRules[i];
             if(!query.empty()&&rule.rawLua.find(query)==std::string::npos&&rule.comment.find(query)==std::string::npos)continue;
@@ -182,10 +182,10 @@ static void RenderLootFilterEditor()
             if(name.empty())for(const auto& field:rule.fields)if(field.first=="codes"||field.first=="code"){name=field.second;break;}
             if(name.empty())name="Untitled rule";
             const std::string label=std::to_string(i+1)+". "+name+"###loot_rule_"+std::to_string(i);
-            if(ImGui::Selectable(label.c_str(),selected==int(i),0,{0,ImGui::GetTextLineHeight()+10})){
+            if(HudText::Selectable(label.c_str(),selected==int(i),0,{0,ImGui::GetTextLineHeight()+10})){
                 commitDraft();selected=int(i);draft=rule.rawLua;
             }
-            if(ImGui::IsItemHovered())ImGui::SetTooltip("%s",name.c_str());
+            if(ImGui::IsItemHovered())HudText::SetTooltip("%s",name.c_str());
         }
         ImGui::EndChild();ImGui::EndChild();
         if(columns)ImGui::TableNextColumn();
@@ -194,7 +194,7 @@ static void RenderLootFilterEditor()
             if(ImGui::BeginTabBar("RuleWorkspaceViews")){
                 for(int view=0;view<4;++view){
                     const char* names[]{"Conditions","Actions","Preview","Rule code"};
-                    if(ImGui::BeginTabItem(names[view])){
+                    if(HudText::BeginTabItem(names[view])){
                         ImGui::BeginChild(view==2?"RulePreviewPane":"RuleDetails",{0,0});
                         if(view<2){if(LootFilterConfig::Builder::UI::Render(draft,g_LootConfigStatus,GetLootFilterBuilderCatalog(),view))draftDirty=true;}
                         else if(view==2)LootFilterConfig::Preview::UI::Render(draft,g_LuaVariables,GetLootFilterBuilderCatalog(),GetLootFilterPreviewEngine());
@@ -202,7 +202,7 @@ static void RenderLootFilterEditor()
                             LootFilterConfig::Builder::UI::Banner(LootFilterConfig::Builder::UI::Symbol::Code,"Advanced rule code","Changes here are reflected in the builder.");
                             if(ThemeButton("Copy code"))ImGui::SetClipboardText(draft.c_str());
                             if(LootFilterConfig::InputTextMultiline("##rule_draft",&draft,{-1,(std::max)(100.f,ImGui::GetContentRegionAvail().y-45)},ImGuiInputTextFlags_AllowTabInput))draftDirty=true;
-                            if(ImGui::CollapsingHeader("Field reference"))for(const auto& field:LootFilterConfig::Fields){ImGui::TextWrapped("%s = %s",field.name,field.example);ImGui::TextWrapped("%s",field.help);}
+                            if(HudText::CollapsingHeader("Field reference"))for(const auto& field:LootFilterConfig::Fields){HudText::TextWrapped("%s = %s",field.name,field.example);HudText::TextWrapped("%s",field.help);}
                         }
                         ImGui::EndChild();ImGui::EndTabItem();
                     }
@@ -211,26 +211,26 @@ static void RenderLootFilterEditor()
             }
         }else{
             LootFilterConfig::Builder::UI::Banner(LootFilterConfig::Builder::UI::Symbol::Conditions,"Build your filter","Select a rule or create one to get started.");
-            ImGui::TextWrapped("1. Choose which items should match.\n\n2. Add colors, labels or other actions.\n\n3. Check sample items in Preview, then Save and apply.");
+            HudText::TextWrapped("1. Choose which items should match.\n\n2. Add colors, labels or other actions.\n\n3. Check sample items in Preview, then Save and apply.");
         }
         ImGui::EndChild();
         if(columns)ImGui::EndTable();
         ImGui::EndDisabled();
         ImGui::EndTabItem();
     }
-    if (ImGui::BeginTabItem("Styles")) {
+    if (HudText::BeginTabItem("Styles")) {
         ImGui::BeginDisabled(!g_LootConfigDocument.error.empty() || sourceDirty);
-        ImGui::TextWrapped("Reusable styles supply actions. Rule values (including false) override a style. Use style = \"valuable\" in a rule.");
+        HudText::TextWrapped("Reusable styles supply actions. Rule values (including false) override a style. Use style = \"valuable\" in a rule.");
         auto it = g_LuaVariables.find("styles");
         if (it == g_LuaVariables.end()) {
             if (ThemeButton("Add styles table")) g_LuaVariables["styles"] = "{\n    valuable = { border = {240,160,40,230,2}, suffix = \" {gold}Keep\" },\n}";
         } else LootFilterConfig::InputTextMultiline("##styles", &it->second, ImVec2(-1, 250), ImGuiInputTextFlags_AllowTabInput);
-        ImGui::TextWrapped("Name presets: Rainbow, Rainbow Group, Cotton Candy, Frost Wave, Toxic Fog, Open Flames, Christmas; static variants also exist for all except Christmas.");
-        ImGui::TextWrapped("Background presets: Rainbow, Ocean Drift, Fading Ember, Midnight Memory, Verdant Bloom, Sapphire Sonnet, Tamarillo Glow.");
+        HudText::TextWrapped("Name presets: Rainbow, Rainbow Group, Cotton Candy, Frost Wave, Toxic Fog, Open Flames, Christmas; static variants also exist for all except Christmas.");
+        HudText::TextWrapped("Background presets: Rainbow, Ocean Drift, Fading Ember, Midnight Memory, Verdant Bloom, Sapphire Sonnet, Tamarillo Glow.");
         ImGui::EndDisabled();
         ImGui::EndTabItem();
     }
-    if (ImGui::BeginTabItem("Diagnostics")) {
+    if (HudText::BeginTabItem("Diagnostics")) {
         if (ThemeButton("Validate Lua syntax")) {
             commitDraft();
             try {
@@ -246,12 +246,12 @@ static void RenderLootFilterEditor()
                 g_LootConfigStatus = LootFilterConfig::ValidateSyntax(candidate, error) ? "Lua syntax is valid. Save and apply to compile conditions and refresh runtime diagnostics." : error;
             } catch (const std::exception& e) { g_LootConfigStatus = e.what(); }
         }
-        ImGui::TextWrapped("%s", ItemFilter::GetDiagnosticsText().c_str());
-        ImGui::TextWrapped("Debug output is capped per reload. Use debug = {mode=\"failures\", code=\"rin\", rule=1, limit=30}. Invalid rules are disabled and reported; strict=true rejects an invalid reload. Missing optional TTS service retries at most every five seconds.");
+        HudText::TextWrapped("%s", ItemFilter::GetDiagnosticsText().c_str());
+        HudText::TextWrapped("Debug output is capped per reload. Use debug = {mode=\"failures\", code=\"rin\", rule=1, limit=30}. Invalid rules are disabled and reported; strict=true rejects an invalid reload. Missing optional TTS service retries at most every five seconds.");
         ImGui::EndTabItem();
     }
-    if (ImGui::BeginTabItem("Source")) {
-        ImGui::TextWrapped("Complete author source, including local variables, loops and generated rules. Saving replaces the file after syntax validation and keeps a .bak. Reload from disk discards drafts.");
+    if (HudText::BeginTabItem("Source")) {
+        HudText::TextWrapped("Complete author source, including local variables, loops and generated rules. Saving replaces the file after syntax validation and keeps a .bak. Reload from disk discards drafts.");
         if (LootFilterConfig::InputTextMultiline("##complete_filter_source", &fullSource, ImVec2(-1, 360), ImGuiInputTextFlags_AllowTabInput)) sourceDirty = true;
         if (ThemeButton("Save source and apply")) {
             std::string error;

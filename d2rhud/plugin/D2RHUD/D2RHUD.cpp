@@ -1,4 +1,5 @@
-﻿#pragma region Includes
+﻿#include "../HudText.h"
+#pragma region Includes
 
 #include "D2RHUD.h"
 #include "../../Version.h"
@@ -3460,15 +3461,15 @@ static void ShowItemLocationTooltip(int id, bool isSet)
 
         if (collected == 0 || located == 0)
         {
-            ImGui::TextColored(ImVec4(0.9f, 0.15f, 0.15f, 1.0f), "Not Collected");
-            ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1), "This item has not been found in your stash.");
+            HudText::TextColored(ImVec4(0.9f, 0.15f, 0.15f, 1.0f), "Not Collected");
+            HudText::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1), "This item has not been found in your stash.");
         }
         else
         {
             if (located == 1)
-                ImGui::TextColored(ImVec4(0.9f, 0.15f, 0.15f, 1.0f), "Found %d Item", located);
+                HudText::TextColored(ImVec4(0.9f, 0.15f, 0.15f, 1.0f), "Found %d Item", located);
             else
-                ImGui::TextColored(ImVec4(0.9f, 0.15f, 0.15f, 1.0f), "Found %d Items", located);
+                HudText::TextColored(ImVec4(0.9f, 0.15f, 0.15f, 1.0f), "Found %d Items", located);
 
             ImGui::Separator();
             for (auto& s : g_SetItems)
@@ -3477,7 +3478,7 @@ static void ShowItemLocationTooltip(int id, bool isSet)
                 {
                     for (auto& loc : s.locations)
                     {
-                        ImGui::TextColored(ImVec4(0.4f, 0.7f, 1.0f, 1.0f), "- Page %d, Tab %d  (X: %d, Y: %d)", loc.page, loc.tab, loc.x, loc.y);
+                        HudText::TextColored(ImVec4(0.4f, 0.7f, 1.0f, 1.0f), "- Page %d, Tab %d  (X: %d, Y: %d)", loc.page, loc.tab, loc.x, loc.y);
                     }
                 }
             }
@@ -3496,21 +3497,21 @@ static void ShowItemLocationTooltip(int id, bool isSet)
 
         if (collected == 0 || located == 0)
         {
-            ImGui::TextColored(ImVec4(0.9f, 0.15f, 0.15f, 1.0f), "Not Collected");
-            ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1), "This item has not been found in your stash.");
+            HudText::TextColored(ImVec4(0.9f, 0.15f, 0.15f, 1.0f), "Not Collected");
+            HudText::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1), "This item has not been found in your stash.");
 
             if (modName == "RMD-MP" && id == 556)
             {
                 ImGui::Separator();
-                ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.2f, 1.0f), "Quest 31: Cube 2x Town Portal scrolls to receive your completion ticket");
+                HudText::TextColored(ImVec4(1.0f, 0.75f, 0.2f, 1.0f), "Quest 31: Cube 2x Town Portal scrolls to receive your completion ticket");
             }
         }
         else
         {
             if (located == 1)
-                ImGui::TextColored(ImVec4(0.9f, 0.15f, 0.15f, 1.0f), "Found %d Item", located);
+                HudText::TextColored(ImVec4(0.9f, 0.15f, 0.15f, 1.0f), "Found %d Item", located);
             else
-                ImGui::TextColored(ImVec4(0.9f, 0.15f, 0.15f, 1.0f), "Found %d Items", located);
+                HudText::TextColored(ImVec4(0.9f, 0.15f, 0.15f, 1.0f), "Found %d Items", located);
 
             ImGui::Separator();
             for (auto& u : g_UniqueItems)
@@ -3519,12 +3520,12 @@ static void ShowItemLocationTooltip(int id, bool isSet)
                 {
                     for (auto& loc : u.locations)
                     {
-                        ImGui::TextColored(ImVec4(0.4f, 0.7f, 1.0f, 1.0f), "- Page %d, Tab %d  (X: %d, Y: %d)", loc.page, loc.tab, loc.x, loc.y);
+                        HudText::TextColored(ImVec4(0.4f, 0.7f, 1.0f, 1.0f), "- Page %d, Tab %d  (X: %d, Y: %d)", loc.page, loc.tab, loc.x, loc.y);
 
                         if (modName == "RMD-MP" && id == 556)
                         {
                             ImGui::Separator();
-                            ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.2f, 1.0f), "Quest 31: Cube 2x Town Portal scrolls to receive your completion ticket");
+                            HudText::TextColored(ImVec4(1.0f, 0.75f, 0.2f, 1.0f), "Quest 31: Cube 2x Town Portal scrolls to receive your completion ticket");
                         }
                     }
                 }
@@ -3796,9 +3797,9 @@ void ImGuiTextCentered(const char* text, ImFont* font = nullptr, ImVec4 color = 
     ImGuiIO& io = ImGui::GetIO();
     float windowWidth = ImGui::GetWindowWidth();
     if (font) ImGui::PushFont(font);
-    ImVec2 textSize = font ? font->CalcTextSizeA(font->FontSize, FLT_MAX, 0.0f, text) : ImGui::CalcTextSize(text);
+    ImVec2 textSize = font ? HudText::CalcTextSizeA(font,font->FontSize, FLT_MAX, 0.0f, text) : HudText::CalcTextSize(text);
     ImGui::SetCursorPosX((windowWidth - textSize.x) * 0.5f);
-    ImGui::TextColored(color, "%s", text);
+    HudText::TextColored(color, "%s", text);
     if (font) ImGui::PopFont();
 }
 
@@ -3885,9 +3886,9 @@ bool DrawWindowTitleAndClose(const char* title, bool* open)
     float padding = 5.0f * scale;
     ImVec2 contentSize = ImGui::GetContentRegionAvail();
 
-    float titleWidth = ImGui::CalcTextSize(title).x;
+    float titleWidth = HudText::CalcTextSize(title).x;
     ImGui::SetCursorPosX((contentSize.x - titleWidth) * 0.5f);
-    ImGui::TextColored(ImVec4(0.95f, 0.85f, 0.5f, 1.0f), "%s", title);
+    HudText::TextColored(ImVec4(0.95f, 0.85f, 0.5f, 1.0f), "%s", title);
 
     ImGui::SameLine(contentSize.x - closeBtnSize - padding);
     ImVec2 btnPos = ImGui::GetCursorScreenPos();
@@ -3895,10 +3896,10 @@ bool DrawWindowTitleAndClose(const char* title, bool* open)
     if (ImGui::IsItemClicked() && open) *open = false;
 
     ImDrawList* drawList = ImGui::GetWindowDrawList();
-    ImVec2 textSize = ImGui::CalcTextSize("X");
+    ImVec2 textSize = HudText::CalcTextSize("X");
     ImVec2 textPos = ImVec2(btnPos.x + (closeBtnSize - textSize.x) * 0.5f,
         btnPos.y + (closeBtnSize - textSize.y) * 0.5f);
-    drawList->AddText(textPos, IM_COL32(255, 80, 80, 255), "X");
+    HudText::AddText(drawList,textPos, IM_COL32(255, 80, 80, 255), "X");
 
     return true;
 }
@@ -3909,10 +3910,10 @@ void DrawBottomDescription(const std::string& desc)
     ImGui::Separator();
     ImGui::Dummy(ImVec2(0.0f, 3.0f));
     ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(255, 165, 0, 255));
-    float textWidth = ImGui::CalcTextSize(desc.c_str()).x;
+    float textWidth = HudText::CalcTextSize(desc.c_str()).x;
     float availWidth = ImGui::GetContentRegionAvail().x;
     ImGui::SetCursorPosX((availWidth - textWidth) * 0.5f);
-    ImGui::TextWrapped("%s", desc.c_str());
+    HudText::TextWrapped("%s", desc.c_str());
     ImGui::PopStyleColor();
 }
 
@@ -4800,7 +4801,7 @@ static void DrawImportSoundsPathRow()
     if (!s_showImportSoundsPathInput) return;
     ImGui::Spacing();
     ImGui::Separator();
-    ImGui::Text("Paste folder path containing .mp3, .flac, .wav files (they will be copied into My Filters/sounds):");
+    HudText::Text("Paste folder path containing .mp3, .flac, .wav files (they will be copied into My Filters/sounds):");
     ImGui::SetNextItemWidth(-80.0f);
     if (s_importSoundsPathInputJustOpened)
     {
@@ -4808,7 +4809,7 @@ static void DrawImportSoundsPathRow()
         s_importSoundsPathBuf[0] = '\0';
     }
     BeginFrameBgImageRegion();
-    bool doImport = ImGui::InputText("##importsounds_path", s_importSoundsPathBuf, sizeof(s_importSoundsPathBuf), ImGuiInputTextFlags_EnterReturnsTrue);
+    bool doImport = HudText::InputText("##importsounds_path", s_importSoundsPathBuf, sizeof(s_importSoundsPathBuf), ImGuiInputTextFlags_EnterReturnsTrue);
     EndFrameBgImageRegion();
     ImGui::SameLine();
     if (ThemeButton("Import##sounds", ImVec2(70.0f, 0.0f))) doImport = true;
@@ -4856,7 +4857,7 @@ static void DrawImportSoundsPathRow()
         }
     }
     if (!s_importSoundsPathError.empty())
-        ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "%s", s_importSoundsPathError.c_str());
+        HudText::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "%s", s_importSoundsPathError.c_str());
     ImGui::Separator();
     ImGui::Spacing();
 }
@@ -4921,10 +4922,10 @@ static bool DrawChatSoundSelector(float menuScale)
     const float comboW = (std::max)(80.0f, ImGui::GetContentRegionAvail().x - playBtnW - ImGui::GetStyle().ItemSpacing.x);
     ImGui::PushItemWidth(comboW);
     BeginFrameBgImageRegion();
-    if (ImGui::BeginCombo("##chat_sound", preview.c_str()))
+    if (HudText::BeginCombo("##chat_sound", preview.c_str()))
     {
         const bool autoSelected = (currentIdx == kAutoIdx);
-        if (ImGui::Selectable(soundFiles.empty() ? "Auto (system beep)" : "Auto (first in folder)", autoSelected))
+        if (HudText::Selectable(soundFiles.empty() ? "Auto (system beep)" : "Auto (first in folder)", autoSelected))
         {
             if (!autoSelected)
             {
@@ -4937,7 +4938,7 @@ static bool DrawChatSoundSelector(float menuScale)
         for (size_t i = 0; i < soundFiles.size(); ++i)
         {
             const int idx = 1 + static_cast<int>(i);
-            if (ImGui::Selectable(soundFiles[i].second.c_str(), currentIdx == idx))
+            if (HudText::Selectable(soundFiles[i].second.c_str(), currentIdx == idx))
             {
                 if (currentIdx != idx)
                 {
@@ -4948,7 +4949,7 @@ static bool DrawChatSoundSelector(float menuScale)
                 }
             }
         }
-        if (ImGui::Selectable("Custom path...", customMode))
+        if (HudText::Selectable("Custom path...", customMode))
         {
             if (!customMode)
             {
@@ -4998,7 +4999,7 @@ static bool DrawChatSoundSelector(float menuScale)
         SetOptionsLeftColumnContentStartX();
         ImGui::PushItemWidth(GetOptionsLeftColumnContentWidth());
         BeginFrameBgImageRegion();
-        ImGui::InputText("##chat_sound_custom", s_chatSoundCustomPathBuf, sizeof(s_chatSoundCustomPathBuf));
+        HudText::InputText("##chat_sound_custom", s_chatSoundCustomPathBuf, sizeof(s_chatSoundCustomPathBuf));
         EndFrameBgImageRegion();
         ImGui::PopItemWidth();
         if (ImGui::IsItemDeactivatedAfterEdit())
@@ -5026,7 +5027,7 @@ static void DrawImportFilterPathRow()
     if (!s_showImportPathInput) return;
     ImGui::Spacing();
     ImGui::Separator();
-    ImGui::Text("Paste full path to a .lua filter file (e.g. from Explorer: Shift+Right-click file, Copy as path):");
+    HudText::Text("Paste full path to a .lua filter file (e.g. from Explorer: Shift+Right-click file, Copy as path):");
     ImGui::SetNextItemWidth(-80.0f);
     if (s_importPathInputJustOpened)
     {
@@ -5035,7 +5036,7 @@ static void DrawImportFilterPathRow()
         s_importPathBuf[sizeof(s_importPathBuf) - 1] = '\0';
     }
     BeginFrameBgImageRegion();
-    bool doImport = ImGui::InputText("##importpath", s_importPathBuf, sizeof(s_importPathBuf), ImGuiInputTextFlags_EnterReturnsTrue);
+    bool doImport = HudText::InputText("##importpath", s_importPathBuf, sizeof(s_importPathBuf), ImGuiInputTextFlags_EnterReturnsTrue);
     EndFrameBgImageRegion();
     s_importPathInput = s_importPathBuf;
     ImGui::SameLine();
@@ -5100,10 +5101,10 @@ static void DrawImportFilterPathRow()
             s_showImportPathInput = false;
         }
         else
-            ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "%s", s_importSuccessMessage.c_str());
+            HudText::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "%s", s_importSuccessMessage.c_str());
     }
     if (!s_importPathError.empty())
-        ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "%s", s_importPathError.c_str());
+        HudText::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "%s", s_importPathError.c_str());
     ImGui::Separator();
     ImGui::Spacing();
 }
@@ -5254,30 +5255,30 @@ static void DrawCreateFilterPopup()
     if (!s_showCreateFilterPopup) return;
     if (s_createFilterPopupJustOpened)
     {
-        ImGui::OpenPopup("Create your own filter");
+        HudText::OpenPopup("Create your own filter");
         s_createFilterPopupJustOpened = false;
     }
     ImGui::SetNextWindowSize(ImVec2(420.0f, 0.0f), ImGuiCond_FirstUseEver);
-    if (ImGui::BeginPopupModal("Create your own filter", &s_showCreateFilterPopup, ImGuiWindowFlags_AlwaysAutoResize))
+    if (HudText::BeginPopupModal("Create your own filter", &s_showCreateFilterPopup, ImGuiWindowFlags_AlwaysAutoResize))
     {
-        ImGui::TextWrapped("Fill in the following. These will appear as comments at the top of your filter.");
+        HudText::TextWrapped("Fill in the following. These will appear as comments at the top of your filter.");
         ImGui::Spacing();
-        ImGui::Text("Title - Name of your filter");
+        HudText::Text("Title - Name of your filter");
         ImGui::SetNextItemWidth(-1.0f);
         BeginFrameBgImageRegion();
-        ImGui::InputText("##create_title", s_createFilterTitleBuf, sizeof(s_createFilterTitleBuf));
+        HudText::InputText("##create_title", s_createFilterTitleBuf, sizeof(s_createFilterTitleBuf));
         EndFrameBgImageRegion();
         ImGui::Spacing();
-        ImGui::Text("Type - Earlygame, Endgame, etc.");
+        HudText::Text("Type - Earlygame, Endgame, etc.");
         ImGui::SetNextItemWidth(-1.0f);
         BeginFrameBgImageRegion();
-        ImGui::InputText("##create_type", s_createFilterTypeBuf, sizeof(s_createFilterTypeBuf));
+        HudText::InputText("##create_type", s_createFilterTypeBuf, sizeof(s_createFilterTypeBuf));
         EndFrameBgImageRegion();
         ImGui::Spacing();
-        ImGui::Text("Description - What your filter focuses on");
+        HudText::Text("Description - What your filter focuses on");
         ImGui::SetNextItemWidth(-1.0f);
         BeginFrameBgImageRegion();
-        ImGui::InputText("##create_desc", s_createFilterDescBuf, sizeof(s_createFilterDescBuf), ImGuiInputTextFlags_None);
+        HudText::InputText("##create_desc", s_createFilterDescBuf, sizeof(s_createFilterDescBuf), ImGuiInputTextFlags_None);
         EndFrameBgImageRegion();
         ImGui::Spacing();
         ImGui::Separator();
@@ -6120,7 +6121,7 @@ void ShowGrailMenu()
             ImGui::BeginTooltip();
             float tooltipWidth = 600.0f * menuScale;
             ImGui::PushTextWrapPos(ImGui::GetCursorPos().x + tooltipWidth);
-            ImGui::TextUnformatted(text);
+            HudText::TextUnformatted(text);
             ImGui::PopTextWrapPos();
             ImGui::EndTooltip();
         };
@@ -6181,10 +6182,10 @@ void ShowGrailMenu()
         ImGui::PushStyleColor(ImGuiCol_Text, darkRed);
         {
             float avail = ImGui::GetContentRegionAvail().x;
-            float textWidth = ImGui::CalcTextSize("Item Search:").x;
+            float textWidth = HudText::CalcTextSize("Item Search:").x;
             ImGui::SetCursorPosX((avail - textWidth) * 0.5f + ImGui::GetCursorPosX());
         }
-        ImGui::Text("Item Search:");
+        HudText::Text("Item Search:");
         ImGui::PopStyleColor();
 
         // Center the input box under the label
@@ -6195,7 +6196,7 @@ void ShowGrailMenu()
             ImGui::SetCursorPosX((avail - inputWidth) * 0.5f + ImGui::GetCursorPosX());
         }
         BeginFrameBgImageRegion();
-        ImGui::InputText("##Search", searchBuffer, IM_ARRAYSIZE(searchBuffer));
+        HudText::InputText("##Search", searchBuffer, IM_ARRAYSIZE(searchBuffer));
         EndFrameBgImageRegion();
         ImGui::PopItemWidth();
         ImGui::Dummy(ImVec2(0, 5.0f * menuScale));
@@ -6203,7 +6204,7 @@ void ShowGrailMenu()
         // --- Filter --- Centered checkbox ---
         {
             const char* label = "Hide Collected";
-            ImVec2 labelSize = ImGui::CalcTextSize(label);
+            ImVec2 labelSize = HudText::CalcTextSize(label);
             float checkboxWidth = ImGui::GetFrameHeight();
             float totalWidth = checkboxWidth + 4 + labelSize.x;
             float avail = ImGui::GetContentRegionAvail().x;
@@ -6214,7 +6215,7 @@ void ShowGrailMenu()
         // --- Show Excluded --- Centered checkbox ---
         {
             const char* label = "Show Excluded";
-            ImVec2 labelSize = ImGui::CalcTextSize(label);
+            ImVec2 labelSize = HudText::CalcTextSize(label);
             float checkboxWidth = ImGui::GetFrameHeight();
             float totalWidth = checkboxWidth + 4 + labelSize.x;
             float avail = ImGui::GetContentRegionAvail().x;
@@ -6230,7 +6231,7 @@ void ShowGrailMenu()
         // --- Show Base Codes --- Centered ---
         {
             const char* label = "Show Base Codes";
-            ImVec2 labelSize = ImGui::CalcTextSize(label);
+            ImVec2 labelSize = HudText::CalcTextSize(label);
             float checkboxWidth = ImGui::GetFrameHeight();
             float totalWidth = checkboxWidth + 4 + labelSize.x;
             float avail = ImGui::GetContentRegionAvail().x;
@@ -6244,7 +6245,7 @@ void ShowGrailMenu()
         // --- Show Base Names --- Centered ---
         {
             const char* label = "Show Base Names";
-            ImVec2 labelSize = ImGui::CalcTextSize(label);
+            ImVec2 labelSize = HudText::CalcTextSize(label);
             float checkboxWidth = ImGui::GetFrameHeight();
             float totalWidth = checkboxWidth + 4 + labelSize.x;
             float avail = ImGui::GetContentRegionAvail().x;
@@ -6258,7 +6259,7 @@ void ShowGrailMenu()
         // --- Show Duplicates --- Centered ---
         {
             const char* label = "Show Duplicates";
-            ImVec2 labelSize = ImGui::CalcTextSize(label);
+            ImVec2 labelSize = HudText::CalcTextSize(label);
             float checkboxWidth = ImGui::GetFrameHeight();
             float totalWidth = checkboxWidth + 4 + labelSize.x;
 
@@ -6277,7 +6278,7 @@ void ShowGrailMenu()
         // --- Debug view ---
         {
             const char* label = "Debug View";
-            ImVec2 labelSize = ImGui::CalcTextSize(label);
+            ImVec2 labelSize = HudText::CalcTextSize(label);
             float checkboxWidth = ImGui::GetFrameHeight();
             float totalWidth = checkboxWidth + 4 + labelSize.x;
             float avail = ImGui::GetContentRegionAvail().x;
@@ -6295,10 +6296,10 @@ void ShowGrailMenu()
         ImGui::PushStyleColor(ImGuiCol_Text, darkRed);
         {
             float avail = ImGui::GetContentRegionAvail().x;
-            float textWidth = ImGui::CalcTextSize("Backup Path:").x;
+            float textWidth = HudText::CalcTextSize("Backup Path:").x;
             ImGui::SetCursorPosX((avail - textWidth) * 0.5f + ImGui::GetCursorPosX());
         }
-        ImGui::Text("Backup Path:");
+        HudText::Text("Backup Path:");
         ImGui::PopStyleColor();
 
         ImGui::PushItemWidth(leftWidth - 55.0f * menuScale);
@@ -6308,7 +6309,7 @@ void ShowGrailMenu()
             ImGui::SetCursorPosX((avail - inputWidth) * 0.5f + ImGui::GetCursorPosX());
         }
         BeginFrameBgImageRegion();
-        ImGui::InputText("##BackupPath", backupPath, IM_ARRAYSIZE(backupPath));
+        HudText::InputText("##BackupPath", backupPath, IM_ARRAYSIZE(backupPath));
         EndFrameBgImageRegion();
         ImGui::PopItemWidth();
         ImGui::Dummy(ImVec2(0, 2));
@@ -6319,7 +6320,7 @@ void ShowGrailMenu()
         const char* labels[] = { "Auto-Backups", "Use Timestamps", "Overwrite Old" };
         float widest = 0.0f;
         for (auto label : labels) {
-            float w = ImGui::CalcTextSize(label).x + ImGui::GetStyle().FramePadding.x * 2 + 20;
+            float w = HudText::CalcTextSize(label).x + ImGui::GetStyle().FramePadding.x * 2 + 20;
             if (w > widest) widest = w;
         }
         float avail = ImGui::GetContentRegionAvail().x;
@@ -6347,10 +6348,10 @@ void ShowGrailMenu()
         // --- Centered Backup Interval ---
         ImGui::PushStyleColor(ImGuiCol_Text, darkRed);
         const char* intervalLabel = "Backup Interval:";
-        ImVec2 labelSize = ImGui::CalcTextSize(intervalLabel);
+        ImVec2 labelSize = HudText::CalcTextSize(intervalLabel);
         avail = ImGui::GetContentRegionAvail().x;
         ImGui::SetCursorPosX((avail - labelSize.x) * 0.5f + ImGui::GetCursorPosX());
-        ImGui::Text("%s", intervalLabel);
+        HudText::Text("%s", intervalLabel);
         ImGui::PopStyleColor();
 
         float inputWidth = 100;
@@ -6358,7 +6359,7 @@ void ShowGrailMenu()
         ImGui::SetCursorPosX((avail - inputWidth) * 0.5f + ImGui::GetCursorPosX());
         ImGui::SetNextItemWidth(inputWidth);
         BeginFrameBgImageRegion();
-        ImGui::InputInt("##BackupInterval", &backupIntervalMinutes);
+        HudText::InputInt("##BackupInterval", &backupIntervalMinutes);
         EndFrameBgImageRegion();
         if (ImGui::IsItemHovered())
             ShowOffsetTooltip("How often to save automatic backups.\nMeasured in minutes.");
@@ -6377,24 +6378,24 @@ void ShowGrailMenu()
         {
             const char* offlineMsg = "Enter a game to scan your stash.";
             ImVec2 panelAvail = ImGui::GetContentRegionAvail();
-            ImVec2 textSize = ImGui::CalcTextSize(offlineMsg);
+            ImVec2 textSize = HudText::CalcTextSize(offlineMsg);
             ImGui::SetCursorPos(ImVec2(
                 (panelAvail.x - textSize.x) * 0.5f,
                 (panelAvail.y - textSize.y) * 0.5f));
             ImGui::PushStyleColor(ImGuiCol_Text, darkRed);
-            ImGui::TextUnformatted(offlineMsg);
+            HudText::TextUnformatted(offlineMsg);
             ImGui::PopStyleColor();
         }
         else if (stashScanPending)
         {
             const char* scanMsg = "Scanning Stash...";
             ImVec2 panelAvail = ImGui::GetContentRegionAvail();
-            ImVec2 textSize = ImGui::CalcTextSize(scanMsg);
+            ImVec2 textSize = HudText::CalcTextSize(scanMsg);
             ImGui::SetCursorPos(ImVec2(
                 (panelAvail.x - textSize.x) * 0.5f,
                 (panelAvail.y - textSize.y) * 0.5f));
             ImGui::PushStyleColor(ImGuiCol_Text, darkRed);
-            ImGui::TextUnformatted(scanMsg);
+            HudText::TextUnformatted(scanMsg);
             ImGui::PopStyleColor();
         }
         else
@@ -6454,19 +6455,19 @@ void ShowGrailMenu()
                         int totalItems = (int)g_SetItems.size();
 
                         ImGui::PushStyleColor(ImGuiCol_Text, labelColor);
-                        ImGui::Text("Items Collected:");
+                        HudText::Text("Items Collected:");
                         ImGui::PopStyleColor();
                         ImGui::SameLine();
                         ImGui::PushStyleColor(ImGuiCol_Text, valueColor);
-                        ImGui::Text("%d/%d", collectedItems, totalItems);
+                        HudText::Text("%d/%d", collectedItems, totalItems);
                         ImGui::PopStyleColor();
 
                         ImGui::PushStyleColor(ImGuiCol_Text, labelColor);
-                        ImGui::Text("Sets Completed:");
+                        HudText::Text("Sets Completed:");
                         ImGui::PopStyleColor();
                         ImGui::SameLine();
                         ImGui::PushStyleColor(ImGuiCol_Text, valueColor);
-                        ImGui::Text("%d/%d", collectedSets, totalSets);
+                        HudText::Text("%d/%d", collectedSets, totalSets);
                         ImGui::PopStyleColor();
                     }
                     else // Uniques
@@ -6476,11 +6477,11 @@ void ShowGrailMenu()
                         int totalItems = (int)g_UniqueItems.size();
 
                         ImGui::PushStyleColor(ImGuiCol_Text, labelColor);
-                        ImGui::Text("Unique Items:");
+                        HudText::Text("Unique Items:");
                         ImGui::PopStyleColor();
                         ImGui::SameLine();
                         ImGui::PushStyleColor(ImGuiCol_Text, valueColor);
-                        ImGui::Text("%d/%d", collectedItems, totalItems);
+                        HudText::Text("%d/%d", collectedItems, totalItems);
                         ImGui::PopStyleColor();
                     }
 
@@ -6492,13 +6493,13 @@ void ShowGrailMenu()
         CategoryButton("Sets", 0);
 
         // Compute button widths
-        float setsWidth = ImGui::CalcTextSize("Sets").x + ImGui::GetStyle().FramePadding.x * 2;
-        float uniquesWidth = ImGui::CalcTextSize("Uniques").x + ImGui::GetStyle().FramePadding.x * 2;
+        float setsWidth = HudText::CalcTextSize("Sets").x + ImGui::GetStyle().FramePadding.x * 2;
+        float uniquesWidth = HudText::CalcTextSize("Uniques").x + ImGui::GetStyle().FramePadding.x * 2;
         float panelWidth = ImGui::GetContentRegionAvail().x;
 
         // Compute label width
         std::string trackerLabel = "<  Choose your collection type  >";
-        float labelWidth = ImGui::CalcTextSize(trackerLabel.c_str()).x;
+        float labelWidth = HudText::CalcTextSize(trackerLabel.c_str()).x;
         float spacing = (panelWidth - setsWidth - uniquesWidth - labelWidth - 25) / 2.0f;
 
         // Move cursor after Sets button + spacing
@@ -6508,7 +6509,7 @@ void ShowGrailMenu()
 
         // Draw the label
         ImGui::PushStyleColor(ImGuiCol_Text, darkRed);
-        ImGui::Text("%s", trackerLabel.c_str());
+        HudText::Text("%s", trackerLabel.c_str());
         ImGui::PopStyleColor();
 
         // Keep Uniques button on same line, at the right
@@ -6524,17 +6525,17 @@ void ShowGrailMenu()
         {
             // SET ITEM LIST (GROUPED BY SET NAME)
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.0f, 0.988f, 0.0f, 1.0f));
-            ImGui::Text("Set Items");
+            HudText::Text("Set Items");
             ImGui::PopStyleColor();
 
             // Right-aligned mode label on the SAME line
             const char* modeText = IsHardcore() ? "[Hardcore]" : "[Softcore]";
             float right = ImGui::GetWindowContentRegionMax().x;
-            float textWidth = ImGui::CalcTextSize(modeText).x;
+            float textWidth = HudText::CalcTextSize(modeText).x;
 
             // Move cursor to right edge minus text width
             ImGui::SameLine(right - textWidth);
-            ImGui::TextUnformatted(modeText);
+            HudText::TextUnformatted(modeText);
 
             ImGui::Separator();
             ImGui::Dummy(ImVec2(0, 4));
@@ -6583,7 +6584,7 @@ void ShowGrailMenu()
                     continue;
 
                 ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.0f, 0.988f, 0.0f, 1.0f));
-                if (ImGui::TreeNode(setName.c_str()))
+                if (HudText::TreeNode(setName.c_str()))
                 {
                     ImGui::PopStyleColor();
 
@@ -6622,33 +6623,33 @@ void ShowGrailMenu()
         {
             // UNIQUE ITEM LIST
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.780f, 0.702f, 0.467f, 1.0f));
-            ImGui::Text("Unique Items");
+            HudText::Text("Unique Items");
 
             // Button for excluded items
             ImGui::SameLine();
-            if (ImGui::SmallButton("Excluded"))
-                ImGui::OpenPopup("ExcludedItemsPopup");
+            if (HudText::SmallButton("Excluded"))
+                HudText::OpenPopup("ExcludedItemsPopup");
 
             ImGui::PopStyleColor();
 
             // Right-aligned mode label on the SAME line
             const char* modeText = IsHardcore() ? "[Hardcore]" : "[Softcore]";
             float right = ImGui::GetWindowContentRegionMax().x;
-            float textWidth = ImGui::CalcTextSize(modeText).x;
+            float textWidth = HudText::CalcTextSize(modeText).x;
 
             // Move cursor to right edge minus text width
             ImGui::SameLine(right - textWidth);
-            ImGui::TextUnformatted(modeText);
+            HudText::TextUnformatted(modeText);
 
             ImGui::Separator();
             ImGui::Dummy(ImVec2(0, 4));
 
-            if (ImGui::BeginPopup("ExcludedItemsPopup"))
+            if (HudText::BeginPopup("ExcludedItemsPopup"))
             {
-                ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.0f, 1.0f), "Excluded Items:");
+                HudText::TextColored(ImVec4(1.0f, 0.7f, 0.0f, 1.0f), "Excluded Items:");
                 ImGui::Separator();
                 for (const auto& item : g_ExcludedGrailItems)
-                    ImGui::BulletText("%s", item.c_str());
+                    HudText::BulletText("%s", item.c_str());
                 ImGui::EndPopup();
             }
 
@@ -6725,7 +6726,7 @@ void ShowGrailMenu()
                 {
                     buttonID = "Include##" + std::to_string(i);
                     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.2f, 0.9f, 0.2f, 1.0f)); // green
-                    if (ImGui::SmallButton(buttonID.c_str()))
+                    if (HudText::SmallButton(buttonID.c_str()))
                     {
                         g_ExcludedGrailItems.erase(trimmedName);
                         SaveFullGrailConfig(configFilePath, false);
@@ -6738,7 +6739,7 @@ void ShowGrailMenu()
                 {
                     buttonID = "Exclude##" + std::to_string(i);
                     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.9f, 0.15f, 0.15f, 1.0f)); // red
-                    if (ImGui::SmallButton(buttonID.c_str()))
+                    if (HudText::SmallButton(buttonID.c_str()))
                     {
                         g_ExcludedGrailItems.insert(trimmedName);
                         u->enabled = false;
@@ -6766,7 +6767,7 @@ void ShowGrailMenu()
             ImGui::Separator();
 
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.6f, 0.1f, 0.1f, 1.0f));
-            ImGui::Text("Debug View (%zu items)", g_StashDebugEntries.size());
+            HudText::Text("Debug View (%zu items)", g_StashDebugEntries.size());
             ImGui::PopStyleColor();
 
             ImGui::SameLine();
@@ -6791,10 +6792,10 @@ void ShowGrailMenu()
             }
 
             ImGui::SetNextItemWidth(140.0f * menuScale);
-            if (ImGui::BeginCombo("##StashPageFilter", pagePreview))
+            if (HudText::BeginCombo("##StashPageFilter", pagePreview))
             {
                 const bool allSelected = (g_StashScanPageFilter == 0);
-                if (ImGui::Selectable("All Pages", allSelected))
+                if (HudText::Selectable("All Pages", allSelected))
                 {
                     if (!allSelected)
                     {
@@ -6809,7 +6810,7 @@ void ShowGrailMenu()
                     char label[24];
                     snprintf(label, sizeof(label), "Page %d", page);
                     const bool selected = (g_StashScanPageFilter == page);
-                    if (ImGui::Selectable(label, selected))
+                    if (HudText::Selectable(label, selected))
                     {
                         if (!selected)
                         {
@@ -6820,7 +6821,7 @@ void ShowGrailMenu()
                 }
 
                 if (g_AvailableStashPages.empty())
-                    ImGui::TextDisabled("No stash pages found");
+                    HudText::TextDisabled("No stash pages found");
 
                 ImGui::EndCombo();
             }
@@ -6841,16 +6842,16 @@ void ShowGrailMenu()
 
             if (ImGui::BeginTable("stash_debug_table", 10, tableFlags))
             {
-                ImGui::TableSetupColumn("Page");
-                ImGui::TableSetupColumn("Tab");
-                ImGui::TableSetupColumn("X");
-                ImGui::TableSetupColumn("Y");
-                ImGui::TableSetupColumn("Code");
-                ImGui::TableSetupColumn("Quality");
-                ImGui::TableSetupColumn("SetID");
-                ImGui::TableSetupColumn("UniqID");
-                ImGui::TableSetupColumn("Match");
-                ImGui::TableSetupColumn("Grail / Note", ImGuiTableColumnFlags_WidthStretch);
+                HudText::TableSetupColumn("Page");
+                HudText::TableSetupColumn("Tab");
+                HudText::TableSetupColumn("X");
+                HudText::TableSetupColumn("Y");
+                HudText::TableSetupColumn("Code");
+                HudText::TableSetupColumn("Quality");
+                HudText::TableSetupColumn("SetID");
+                HudText::TableSetupColumn("UniqID");
+                HudText::TableSetupColumn("Match");
+                HudText::TableSetupColumn("Grail / Note", ImGuiTableColumnFlags_WidthStretch);
                 ImGui::TableHeadersRow();
 
                 for (const auto& e : g_StashDebugEntries)
@@ -6871,34 +6872,34 @@ void ShowGrailMenu()
                     ImGui::PushStyleColor(ImGuiCol_Text, rowColor);
 
                     ImGui::TableSetColumnIndex(0);
-                    ImGui::Text("%d", e.page);
+                    HudText::Text("%d", e.page);
                     ImGui::TableSetColumnIndex(1);
-                    ImGui::Text("%d", e.tab);
+                    HudText::Text("%d", e.tab);
                     ImGui::TableSetColumnIndex(2);
-                    ImGui::Text("%d", e.x);
+                    HudText::Text("%d", e.x);
                     ImGui::TableSetColumnIndex(3);
-                    ImGui::Text("%d", e.y);
+                    HudText::Text("%d", e.y);
                     ImGui::TableSetColumnIndex(4);
-                    ImGui::TextUnformatted(e.code.c_str());
+                    HudText::TextUnformatted(e.code.c_str());
                     ImGui::TableSetColumnIndex(5);
-                    ImGui::Text("%u %s", e.quality, GetQualityName(e.quality));
+                    HudText::Text("%u %s", e.quality, GetQualityName(e.quality));
                     ImGui::TableSetColumnIndex(6);
                     if (e.quality == 5)
-                        ImGui::Text("%u", e.setId);
+                        HudText::Text("%u", e.setId);
                     else
-                        ImGui::TextUnformatted("-");
+                        HudText::TextUnformatted("-");
                     ImGui::TableSetColumnIndex(7);
                     if (e.quality == 7)
-                        ImGui::Text("%u", e.uniqueId);
+                        HudText::Text("%u", e.uniqueId);
                     else
-                        ImGui::TextUnformatted("-");
+                        HudText::TextUnformatted("-");
                     ImGui::TableSetColumnIndex(8);
-                    ImGui::TextUnformatted(e.grailMatched ? "yes" : "no");
+                    HudText::TextUnformatted(e.grailMatched ? "yes" : "no");
                     ImGui::TableSetColumnIndex(9);
                     if (!e.grailName.empty())
-                        ImGui::TextUnformatted(e.grailName.c_str());
+                        HudText::TextUnformatted(e.grailName.c_str());
                     else
-                        ImGui::TextUnformatted(e.note.c_str());
+                        HudText::TextUnformatted(e.note.c_str());
 
                     ImGui::PopStyleColor();
                 }
@@ -6969,8 +6970,8 @@ void ShowHotkeyMenu()
         // --- 2-column layout ---
         if (ImGui::BeginTable("HotkeyPanes", 2, ImGuiTableFlags_Resizable | ImGuiTableFlags_BordersInnerV))
         {
-        ImGui::TableSetupColumn("Standard", ImGuiTableColumnFlags_WidthStretch);
-        ImGui::TableSetupColumn("Commands", ImGuiTableColumnFlags_WidthStretch);
+        HudText::TableSetupColumn("Standard", ImGuiTableColumnFlags_WidthStretch);
+        HudText::TableSetupColumn("Commands", ImGuiTableColumnFlags_WidthStretch);
         ImGui::TableNextColumn();
 
         ImFont* inputFont = GetFont(1);
@@ -6979,9 +6980,9 @@ void ShowHotkeyMenu()
         PushFontSafe(2);
         const char* colTitle = "Standard Hotkeys";
         float colWidth = ImGui::GetContentRegionAvail().x;
-        float textW = ImGui::CalcTextSize(colTitle).x;
+        float textW = HudText::CalcTextSize(colTitle).x;
         ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (colWidth - textW) * 0.5f);
-        ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.3f, 1.0f), "%s", colTitle);
+        HudText::TextColored(ImVec4(0.8f, 0.8f, 0.3f, 1.0f), "%s", colTitle);
         ImGui::Dummy(ImVec2(0.0f, 3.0f));
         ImGui::Separator();
         ImGui::Dummy(ImVec2(0.0f, 3.0f));
@@ -7019,7 +7020,7 @@ void ShowHotkeyMenu()
                 g_Hotkeys[name] = { "", "" };
         }
 
-        ImGui::TextWrapped("%s", HUDControls::Status());
+        HudText::TextWrapped("%s", HUDControls::Status());
         ImGui::Spacing();
         for (const auto& name : hotkeyOrder)
         {
@@ -7031,7 +7032,7 @@ void ShowHotkeyMenu()
             auto& pair = it->second;
 
             ImGui::AlignTextToFramePadding();
-            ImGui::Text("%s:", name.c_str());
+            HudText::Text("%s:", name.c_str());
             ImGui::SameLine();
 
             // --- Capture multi-key input if this hotkey is active ---
@@ -7104,7 +7105,7 @@ void ShowHotkeyMenu()
             ImGui::PushItemWidth(180.0f * menuScale);
             if (inputFont) ImGui::PushFont(inputFont);
             BeginFrameBgImageRegion();
-            ImGui::InputText(("##key_" + name).c_str(), buffer, sizeof(buffer), ImGuiInputTextFlags_ReadOnly);
+            HudText::InputText(("##key_" + name).c_str(), buffer, sizeof(buffer), ImGuiInputTextFlags_ReadOnly);
             EndFrameBgImageRegion();
 
             // Tooltip
@@ -7116,10 +7117,10 @@ void ShowHotkeyMenu()
                 ImGui::SetNextWindowSizeConstraints(ImVec2(0, 0), ImVec2(320.0f * GetMenuScaleFactor(), FLT_MAX));
 
                 ImGui::BeginTooltip();
-                ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.2f, 1.0f), "TZ Cycling Disabled!");
+                HudText::TextColored(ImVec4(1.0f, 0.75f, 0.2f, 1.0f), "TZ Cycling Disabled!");
                 ImGui::Separator();
                 ImGui::PushTextWrapPos(300.0f);
-                ImGui::TextUnformatted("This hotkey is disabled until you complete a certain task in our mod\n\nI hope you enjoy riddles...");
+                HudText::TextUnformatted("This hotkey is disabled until you complete a certain task in our mod\n\nI hope you enjoy riddles...");
                 ImGui::PopTextWrapPos();
                 ImGui::EndTooltip();
             }
@@ -7145,9 +7146,9 @@ void ShowHotkeyMenu()
             float colWidth = ImGui::GetContentRegionAvail().x;
             float colStartX = ImGui::GetCursorPosX();
 
-            float textW = ImGui::CalcTextSize(colTitle).x;
+            float textW = HudText::CalcTextSize(colTitle).x;
             ImGui::SetCursorPosX(colStartX + (colWidth - textW) * 0.5f);
-            ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.3f, 1.0f), "%s", colTitle);
+            HudText::TextColored(ImVec4(0.8f, 0.8f, 0.3f, 1.0f), "%s", colTitle);
             ImGui::Dummy(ImVec2(0.0f, 15.0f));
 
             EnsureCustomCommandSlots();
@@ -7160,7 +7161,7 @@ void ShowHotkeyMenu()
                 std::string label = "Command " + std::to_string(i + 1);
 
                 ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(2, 130, 199, 255));
-                ImGui::Text("%s:", label.c_str());
+                HudText::Text("%s:", label.c_str());
                 ImGui::PopStyleColor();
                 ImGui::SameLine();
 
@@ -7214,7 +7215,7 @@ void ShowHotkeyMenu()
                 ImGui::PushItemWidth(88.0f * menuScale);
                 if (inputFont) ImGui::PushFont(inputFont);
                 BeginFrameBgImageRegion();
-                ImGui::InputText(("##cmd_key_" + std::to_string(i)).c_str(), keyBuf, sizeof(keyBuf), ImGuiInputTextFlags_ReadOnly);
+                HudText::InputText(("##cmd_key_" + std::to_string(i)).c_str(), keyBuf, sizeof(keyBuf), ImGuiInputTextFlags_ReadOnly);
                 EndFrameBgImageRegion();
                 if (inputFont) ImGui::PopFont();
                 ImGui::PopItemWidth();
@@ -7237,7 +7238,7 @@ void ShowHotkeyMenu()
                 ImGui::PushItemWidth(-1);
                 if (inputFont) ImGui::PushFont(inputFont);
                 BeginFrameBgImageRegion();
-                if (ImGui::InputText(("##cmd_txt_" + std::to_string(i)).c_str(), cmdBuf, sizeof(cmdBuf)))
+                if (HudText::InputText(("##cmd_txt_" + std::to_string(i)).c_str(), cmdBuf, sizeof(cmdBuf)))
                     cmd.command = cmdBuf;
                 EndFrameBgImageRegion();
                 if (inputFont) ImGui::PopFont();
@@ -7253,9 +7254,9 @@ void ShowHotkeyMenu()
             // ---- Startup Commands ----
             ImGui::Dummy(ImVec2(0.0f, 10.0f));
             ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(2, 130, 199, 255));
-            ImGui::Text("Startup Commands");
+            HudText::Text("Startup Commands");
             ImGui::PopStyleColor();
-            ImGui::TextWrapped("Comma-separated. Use [Tab] or [Alt] for a key tap. Changes apply when you click away; if already in-game, commands run again after ~3s.");
+            HudText::TextWrapped("Comma-separated. Use [Tab] or [Alt] for a key tap. Changes apply when you click away; if already in-game, commands run again after ~3s.");
 
             static char startupBuf[512] = { 0 };
             static bool startupBufInitialized = false;
@@ -7270,7 +7271,7 @@ void ShowHotkeyMenu()
             ImGui::PushItemWidth(-1);
             if (inputFont) ImGui::PushFont(inputFont);
             BeginFrameBgImageRegion();
-            ImGui::InputTextMultiline("##startup_commands", startupBuf, sizeof(startupBuf), ImVec2(-1, 80));
+            HudText::InputTextMultiline("##startup_commands", startupBuf, sizeof(startupBuf), ImVec2(-1, 80));
             EndFrameBgImageRegion();
             if (inputFont) ImGui::PopFont();
             ImGui::PopItemWidth();
@@ -7540,13 +7541,13 @@ void ShowCameraMenu()
 
         char statusBuf[96];
         snprintf(statusBuf, sizeof(statusBuf), "Angles: %s  Zoom: %s", angleStatus, zoomStatus);
-        float statusWidth = ImGui::CalcTextSize(statusBuf).x;
+        float statusWidth = HudText::CalcTextSize(statusBuf).x;
         float avail = ImGui::GetContentRegionAvail().x;
         const float statusOffset = 8.0f * menuScale;
         ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (avail - statusWidth) * 0.5f + statusOffset);
-        ImGui::TextColored(angleColor, "Angles: %s", angleStatus);
+        HudText::TextColored(angleColor, "Angles: %s", angleStatus);
         ImGui::SameLine();
-        ImGui::TextColored(zoomColor, "Zoom: %s", zoomStatus);
+        HudText::TextColored(zoomColor, "Zoom: %s", zoomStatus);
 
         ImGui::Dummy(ImVec2(0.0f, 6.0f * menuScale));
 
@@ -7557,7 +7558,7 @@ void ShowCameraMenu()
         // Left: Presets | Right: All values + reset buttons
         HudWindowLayout::PrepareLeftPane(menuScale);
         ImGui::BeginChild("CameraPresets", ImVec2(presetColWidth, 0), ImGuiChildFlags_Borders | ImGuiChildFlags_ResizeX);
-        ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.3f, 1.0f), "Presets");
+        HudText::TextColored(ImVec4(0.8f, 0.8f, 0.3f, 1.0f), "Presets");
         ImGui::Separator();
 
         static char presetNameBuf[64] = {};
@@ -7614,19 +7615,19 @@ void ShowCameraMenu()
         }
         const char* presetLabels[4] = { presetLabel0, presetLabel1, presetLabel2, presetLabel3 };
         ImGui::AlignTextToFramePadding();
-        ImGui::Text("Slot");
+        HudText::Text("Slot");
         ImGui::SameLine(cameraLabelWidth);
         ImGui::SetNextItemWidth(-1);
         BeginFrameBgImageRegion();
-        ImGui::Combo("##PresetSlot", &selectedPreset, presetLabels, IM_ARRAYSIZE(presetLabels));
+        HudText::Combo("##PresetSlot", &selectedPreset, presetLabels, IM_ARRAYSIZE(presetLabels));
         EndFrameBgImageRegion();
 
         ImGui::AlignTextToFramePadding();
-        ImGui::Text("Name");
+        HudText::Text("Name");
         ImGui::SameLine(cameraLabelWidth);
         ImGui::SetNextItemWidth(-1);
         BeginFrameBgImageRegion();
-        ImGui::InputText("##PresetName", presetNameBuf, sizeof(presetNameBuf));
+        HudText::InputText("##PresetName", presetNameBuf, sizeof(presetNameBuf));
         EndFrameBgImageRegion();
 
         if (ThemeButton("Save Current to Preset", ImVec2(-1, 0)))
@@ -7684,42 +7685,42 @@ void ShowCameraMenu()
         ImGui::SameLine();
 
         ImGui::BeginChild("CameraValues", ImVec2(0, 0), true);
-        ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.3f, 1.0f), "Camera values");
+        HudText::TextColored(ImVec4(0.8f, 0.8f, 0.3f, 1.0f), "Camera values");
         ImGui::Separator();
 
         ImGui::BeginDisabled(!camera.programEnabled || !camera.valuesFound);
         ImGui::AlignTextToFramePadding();
-        ImGui::Text("Pitch");
+        HudText::Text("Pitch");
         ImGui::SameLine(cameraLabelWidth);
         ImGui::SetNextItemWidth(cameraInputWidth);
-        if (ImGui::DragFloat("##Pitch", &camera.pitch, 0.01f, -10.0f, 10.0f, "%.3f"))
+        if (HudText::DragFloat("##Pitch", &camera.pitch, 0.01f, -10.0f, 10.0f, "%.3f"))
             ApplyAngleValues();
         ImGui::AlignTextToFramePadding();
-        ImGui::Text("Yaw");
+        HudText::Text("Yaw");
         ImGui::SameLine(cameraLabelWidth);
         ImGui::SetNextItemWidth(cameraInputWidth);
-        if (ImGui::DragFloat("##Pan", &camera.pan, 0.01f, -10.0f, 10.0f, "%.3f"))
+        if (HudText::DragFloat("##Pan", &camera.pan, 0.01f, -10.0f, 10.0f, "%.3f"))
             ApplyAngleValues();
         ImGui::AlignTextToFramePadding();
-        ImGui::Text("Roll");
+        HudText::Text("Roll");
         ImGui::SameLine(cameraLabelWidth);
         ImGui::SetNextItemWidth(cameraInputWidth);
-        if (ImGui::DragFloat("##Roll", &camera.roll, 0.01f, -10.0f, 10.0f, "%.3f"))
+        if (HudText::DragFloat("##Roll", &camera.roll, 0.01f, -10.0f, 10.0f, "%.3f"))
             ApplyAngleValues();
         ImGui::AlignTextToFramePadding();
-        ImGui::Text("Height");
+        HudText::Text("Height");
         ImGui::SameLine(cameraLabelWidth);
         ImGui::SetNextItemWidth(cameraInputWidth);
-        if (ImGui::DragFloat("##Height", &camera.height, 0.01f, -10.0f, 10.0f, "%.3f"))
+        if (HudText::DragFloat("##Height", &camera.height, 0.01f, -10.0f, 10.0f, "%.3f"))
             ApplyAngleValues();
         ImGui::EndDisabled();
 
         ImGui::BeginDisabled(!camera.programEnabled || !camera.zoomFound);
         ImGui::AlignTextToFramePadding();
-        ImGui::Text("Zoom");
+        HudText::Text("Zoom");
         ImGui::SameLine(cameraLabelWidth);
         ImGui::SetNextItemWidth(cameraInputWidth);
-        if (ImGui::DragFloat("##Zoom", &camera.zoom, 0.01f, -5.0f, 5.0f, "%.3f"))
+        if (HudText::DragFloat("##Zoom", &camera.zoom, 0.01f, -5.0f, 5.0f, "%.3f"))
             ApplyZoomValue();
         ImGui::EndDisabled();
 
@@ -7826,7 +7827,7 @@ void ShowLootMenu()
                     // Render text before the next color code
                     if (openBrace == std::string::npos) openBrace = text.size();
                     ImGui::PushStyleColor(ImGuiCol_Text, currentColor);
-                    ImGui::TextUnformatted(text.c_str() + pos, text.c_str() + openBrace);
+                    HudText::TextUnformatted(text.c_str() + pos, text.c_str() + openBrace);
                     ImGui::PopStyleColor();
                     ImGui::SameLine(0.0f, 0.0f);
                     pos = openBrace;
@@ -7840,7 +7841,7 @@ void ShowLootMenu()
                 {
                     // Invalid, just render the rest
                     ImGui::PushStyleColor(ImGuiCol_Text, currentColor);
-                    ImGui::TextUnformatted(text.c_str() + pos);
+                    HudText::TextUnformatted(text.c_str() + pos);
                     ImGui::PopStyleColor();
                     break;
                 }
@@ -7879,11 +7880,11 @@ void ShowLootMenu()
         const auto currentDisplayName = s_activeFilterInternalName.empty()
             ? (g_LootFilterHeader.Title.empty() ? std::string("Custom") : g_LootFilterHeader.Title)
             : GetFilterDisplayName(s_activeFilterInternalName);
-        ImGui::AlignTextToFramePadding();ImGui::TextUnformatted("Filter");ImGui::SameLine();
+        ImGui::AlignTextToFramePadding();HudText::TextUnformatted("Filter");ImGui::SameLine();
         ImGui::SetNextItemWidth((std::min)(360.f,ImGui::GetContentRegionAvail().x*.4f));
         const auto comboLabel=s_pendingFilter.empty()?currentDisplayName:GetFilterDisplayName(s_pendingFilter);
-        if(ImGui::BeginCombo("##selected_filter",comboLabel.c_str())){
-            for(const auto& name:GetOrderedFilterList())if(ImGui::Selectable(GetFilterDisplayName(name).c_str(),name==s_activeFilterInternalName))s_pendingFilter=name;
+        if(HudText::BeginCombo("##selected_filter",comboLabel.c_str())){
+            for(const auto& name:GetOrderedFilterList())if(HudText::Selectable(GetFilterDisplayName(name).c_str(),name==s_activeFilterInternalName))s_pendingFilter=name;
             ImGui::EndCombo();
         }
         if(!s_pendingFilter.empty()){
@@ -7914,11 +7915,11 @@ void ShowLootMenu()
                 s_lootFilterUpdateApplied = false;
             }
         }
-        ImGui::SameLine();if(ThemeButton("Files, sounds & updates..."))ImGui::OpenPopup("LootFilterTools");
+        ImGui::SameLine();if(ThemeButton("Files, sounds & updates..."))HudText::OpenPopup("LootFilterTools");
         ImGui::SetNextWindowSizeConstraints({650,0},{850,650});
-        if(ImGui::BeginPopup("LootFilterTools")){
+        if(HudText::BeginPopup("LootFilterTools")){
             if (!g_LootFilterHeader.Version.empty())
-                ImGui::Text("D2RLoot version: %s", g_LootFilterHeader.Version.c_str());
+                HudText::Text("D2RLoot version: %s", g_LootFilterHeader.Version.c_str());
             ImGui::SameLine(0.0f, 12.0f);
             if (ThemeButton(s_lootFilterUpdating ? "Updating..." : "Update"))
             {
@@ -7933,18 +7934,18 @@ void ShowLootMenu()
             if (!s_lootFilterUpdateStatus.empty())
             {
                 ImGui::SameLine(0.0f, 8.0f);
-                ImGui::TextColored(ImVec4(0.7f, 0.9f, 0.7f, 1.0f), "%s", s_lootFilterUpdateStatus.c_str());
+                HudText::TextColored(ImVec4(0.7f, 0.9f, 0.7f, 1.0f), "%s", s_lootFilterUpdateStatus.c_str());
             }
 
             // --- Sounds section ---
-            if (ImGui::CollapsingHeader("Sounds", ImGuiTreeNodeFlags_None))
+            if (HudText::CollapsingHeader("Sounds", ImGuiTreeNodeFlags_None))
             {
                 ImGui::Indent(8.0f);
                 ImGui::Dummy(ImVec2(0.0f, 2.0f));
                 std::vector<std::pair<std::string, std::string>> soundFiles = GetSoundFilesFromBothLocations();
                 if (soundFiles.empty())
                 {
-                    ImGui::TextWrapped("No sounds in My Filters/sounds, Pandemonium/Sounds, or D2RLAN/Sounds yet. Use \"Import sounds\" to add .mp3, .flac or .wav files.");
+                    HudText::TextWrapped("No sounds in My Filters/sounds, Pandemonium/Sounds, or D2RLAN/Sounds yet. Use \"Import sounds\" to add .mp3, .flac or .wav files.");
                 }
                 else
                 {
@@ -7954,7 +7955,7 @@ void ShowLootMenu()
                         {
                             const std::string& path = soundFiles[i].first;
                             const std::string& name = soundFiles[i].second;
-                            ImGui::Text("%s", name.c_str());
+                            HudText::Text("%s", name.c_str());
                             float btnX = ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - 55.0f;
                             if (btnX > ImGui::GetCursorPosX()) ImGui::SameLine(btnX);
                             std::string playId = "Play##" + name + std::to_string(i);
@@ -7968,7 +7969,7 @@ void ShowLootMenu()
                     ImGui::EndChild();  // always call after BeginChild, regardless of return value
                 }
                 ImGui::Dummy(ImVec2(0.0f, 4.0f));
-                float importSoundsW = ImGui::CalcTextSize("Import sounds").x + ImGui::GetStyle().FramePadding.x * 2;
+                float importSoundsW = HudText::CalcTextSize("Import sounds").x + ImGui::GetStyle().FramePadding.x * 2;
                 ImVec2 soundsAvail = ImGui::GetContentRegionAvail();
                 ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (soundsAvail.x - importSoundsW) * 0.5f);
                 if (ThemeButton("Import sounds"))
@@ -7982,10 +7983,10 @@ void ShowLootMenu()
             ImGui::Dummy(ImVec2(0.0f, 4.0f));
 
             // --- Import / Open / Guide / Create buttons ---
-            float btnImportW = ImGui::CalcTextSize("Import Filter").x + ImGui::GetStyle().FramePadding.x * 2;
-            float btnOpenW = ImGui::CalcTextSize("Open Filter").x + ImGui::GetStyle().FramePadding.x * 2;
-            float btnCreateW = ImGui::CalcTextSize("Create my own filter").x + ImGui::GetStyle().FramePadding.x * 2;
-            float btnGuideW = ImGui::CalcTextSize("Filter Guide").x + ImGui::GetStyle().FramePadding.x * 2;
+            float btnImportW = HudText::CalcTextSize("Import Filter").x + ImGui::GetStyle().FramePadding.x * 2;
+            float btnOpenW = HudText::CalcTextSize("Open Filter").x + ImGui::GetStyle().FramePadding.x * 2;
+            float btnCreateW = HudText::CalcTextSize("Create my own filter").x + ImGui::GetStyle().FramePadding.x * 2;
+            float btnGuideW = HudText::CalcTextSize("Filter Guide").x + ImGui::GetStyle().FramePadding.x * 2;
             float spacing = ImGui::GetStyle().ItemSpacing.x;
             float totalBtnW = btnImportW + btnOpenW + btnCreateW + btnGuideW + spacing * 3;
             ImVec2 availBtns = ImGui::GetContentRegionAvail();
@@ -8141,7 +8142,7 @@ static bool ThemeButton(const char* label, const ImVec2& size)
     for (int s = 2; s >= 0 && texIdAny == 0; --s)
         texIdAny = D3D12::GetButtonTextureId(s);
     if (texIdAny == 0)
-        return ImGui::Button(label, size);
+        return HudText::Button(label, size);
     ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32(0, 0, 0, 0));
     // RMD themes: add 5px left/right padding for background image borders; overall button width +10px
     if (s_UITheme == "RMD Blue" || s_UITheme == "RMD Red" || s_UITheme == "RMD Purple" || s_UITheme == "RMD Green" || s_UITheme == "RMD Gold" || s_UITheme == "RMD Dark") {
@@ -8154,7 +8155,7 @@ static bool ThemeButton(const char* label, const ImVec2& size)
         dl->ChannelsSplit(channels);
         dl->ChannelsSetCurrent(1);  // Button draws to channel 1 so image (channel 0) is behind
     }
-    bool ret = ImGui::Button(label, size);
+    bool ret = HudText::Button(label, size);
     if (dl) {
         // Pick slot after Button: 2 = active, 1 = hovered, 0 = default; fallback to lower slot
         int slot = ImGui::IsItemActive() ? 2 : (ImGui::IsItemHovered() ? 1 : 0);
@@ -8176,7 +8177,7 @@ static bool ThemeButton(const char* label, const ImVec2& size)
 
 static bool ThemeCheckbox(const char* label, bool* v)
 {
-    if (HudMenu::nativeTheme) return ImGui::Checkbox(label,v);
+    if (HudMenu::nativeTheme) return HudText::Checkbox(label,v);
     ImGuiStyle& style = ImGui::GetStyle();
     ImVec4 cb = ((int)s_UICustomColors.size() > 7) ? s_UICustomColors[7] : style.Colors[ImGuiCol_FrameBg];
     ImVec4 cbH = ((int)s_UICustomColors.size() > 8) ? s_UICustomColors[8] : style.Colors[ImGuiCol_FrameBgHovered];
@@ -8188,7 +8189,7 @@ static bool ThemeCheckbox(const char* label, bool* v)
         ImGui::PushStyleColor(ImGuiCol_FrameBg, cb);
         ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, cbH);
         ImGui::PushStyleColor(ImGuiCol_FrameBgActive, cbA);
-        bool ret = ImGui::Checkbox(label, v);
+        bool ret = HudText::Checkbox(label, v);
         ImGui::PopStyleColor(3);
         return ret;
     }
@@ -8200,7 +8201,7 @@ static bool ThemeCheckbox(const char* label, bool* v)
         dl->ChannelsSplit(2);
         dl->ChannelsSetCurrent(1);
     }
-    bool ret = ImGui::Checkbox(label, v);
+    bool ret = HudText::Checkbox(label, v);
     if (dl) {
         int slot = ImGui::IsItemActive() ? 2 : (ImGui::IsItemHovered() ? 1 : 0);
         uint64_t texId = D3D12::GetCheckboxTextureId(slot);
@@ -8620,6 +8621,28 @@ void ShowSettingsPanel()
         if (fontBody) ImGui::PushFont(fontBody);
 
         // Build theme list: Default, Golden Sunset, Hell's Embrace, RMD Blue, RMD Red, RMD Purple, RMD Green, RMD Gold, RMD Dark, Custom, then user presets
+        HudSettings::BeginSection("LanguageSettings","Language and translations",nullptr,menuScale);
+        const auto languagePreference=HudLocale::Preference();
+        const char* preview=languagePreference=="auto"?HudLocale::Tr("Follow game language"):languagePreference.c_str();
+        if(HudText::BeginCombo("HUD language",preview)){
+            if(HudText::Selectable("Follow game language",languagePreference=="auto"))HudLocale::SetPreference("auto");
+            for(const auto& entry:HudLocale::Languages){
+                const std::string label=std::string(entry.name)+" ("+entry.code+")";
+                if(HudText::Selectable(label.c_str(),languagePreference==entry.code))HudLocale::SetPreference(entry.code);
+            }
+            ImGui::EndCombo();
+        }
+        HudSettings::Note("Language changes apply after restarting the game.");
+        if(ThemeButton("Reload translations"))HudLocale::Reload();
+        const float folderButtonWidth=HudText::CalcTextSize("Open translation folder").x+48*menuScale;
+        if(ImGui::GetItemRectMax().x+ImGui::GetStyle().ItemSpacing.x+folderButtonWidth<=ImGui::GetCursorScreenPos().x+ImGui::GetContentRegionAvail().x)ImGui::SameLine();
+        if(ThemeButton("Open translation folder")&&HudLocale::PrepareEditor())ShellExecuteW(nullptr,L"open",HudLocale::Directory().c_str(),nullptr,nullptr,SW_SHOWNORMAL);
+        if(ThemeButton("Open translation editor")&&HudLocale::PrepareEditor())ShellExecuteW(nullptr,L"open",(HudLocale::Directory()/L"editor.html").c_str(),nullptr,nullptr,SW_SHOWNORMAL);
+        HudSettings::Note("Edit a language JSON file, then reload translations. Missing text falls back to English.");
+        HudSettings::Note("Machine-translated starter; native-speaker review is welcome.");
+        HudSettings::Note(HudLocale::Status().c_str());
+        HudSettings::EndSection(menuScale);
+
         static std::vector<std::string> s_ThemeComboNames;
         s_ThemeComboNames.clear();
         s_ThemeComboNames.push_back("Sanctuary");
@@ -8644,7 +8667,7 @@ void ShowSettingsPanel()
         // --- Theme preset ---
         HudSettings::InlineField("Theme preset",180.0f,menuScale);
         BeginFrameBgImageRegion();
-        if (ImGui::Combo("##Theme", &themeComboIndex, [](void* data, int idx, const char** out) {
+        if (HudText::Combo("##Theme", &themeComboIndex, [](void* data, int idx, const char** out) {
             const auto* names = (const std::vector<std::string>*)data;
             if (idx >= 0 && idx < (int)names->size()) { *out = (*names)[idx].c_str(); return true; }
             return false;
@@ -8659,12 +8682,12 @@ void ShowSettingsPanel()
 
         HudSettings::Note(s_UITheme=="Sanctuary"?"Stone panels, red accents and high-contrast controls inspired by the quest journal.":"Choose a preset above, or expand the controls below to customize your theme.");
         ImGui::Dummy({0,16*menuScale});
-        if(ImGui::CollapsingHeader("Customize colors and artwork")){
+        if(HudText::CollapsingHeader("Customize colors and artwork")){
         // Save current as new preset
         static char s_NewPresetName[64] = "";
         ImGui::SetNextItemWidth(180.0f);
         BeginFrameBgImageRegion();
-        ImGui::InputTextWithHint("##NewPreset", "New preset name", s_NewPresetName, sizeof(s_NewPresetName));
+        HudText::InputTextWithHint("##NewPreset", "New preset name", s_NewPresetName, sizeof(s_NewPresetName));
         EndFrameBgImageRegion();
         ImGui::SameLine();
         if (ThemeButton("Save preset", ImVec2(100.0f, 0)))
@@ -8682,7 +8705,7 @@ void ShowSettingsPanel()
 
         ImGui::Dummy(ImVec2(0.0f, 4.0f));
         ImGui::Separator();
-        ImGui::Text("Customize colors");
+        HudText::Text("Customize colors");
         ImGui::Dummy(ImVec2(0.0f, 2.0f));
 
         // Ensure Custom colors are populated when editing
@@ -8723,18 +8746,18 @@ void ShowSettingsPanel()
                         ImGui::GetWindowDrawList()->AddImage(cameraTexId, center, ImVec2(center.x + drawSize.x, center.y + drawSize.y), ImVec2(0, 0), ImVec2(1, 1), IM_COL32_WHITE);
                     }
                     ImGui::SameLine(0, ImGui::GetStyle().ItemInnerSpacing.x);
-                    ImGui::TextUnformatted(s_ThemeColorEntries[i].label);
+                    HudText::TextUnformatted(s_ThemeColorEntries[i].label);
                     if (ImGui::IsItemHovered())
                     {
                         ImVec2 mouse = ImGui::GetIO().MousePos;
                         ImGui::SetNextWindowPos(ImVec2(mouse.x + 30.0f, mouse.y - 30.0f), ImGuiCond_Always);
                         const std::string& imgName = (int)s_UIColorImageOverrides.size() > i ? s_UIColorImageOverrides[i] : "";
-                        ImGui::SetTooltip("Image: %s\nUse the image button to choose \"(none)\" to use color again.", imgName.empty() ? "(none)" : imgName.c_str());
+                        HudText::SetTooltip("Image: %s\nUse the image button to choose \"(none)\" to use color again.", imgName.empty() ? "(none)" : imgName.c_str());
                     }
                 }
                 else
                 {
-                    if (ImGui::ColorEdit4(s_ThemeColorEntries[i].label, (float*)col, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_AlphaBar))
+                    if (HudText::ColorEdit4(s_ThemeColorEntries[i].label, (float*)col, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_AlphaBar))
                     {
                         s_UITheme = "Custom";
                         ApplyThemeColorsToStyle(s_UICustomColors);
@@ -8764,14 +8787,14 @@ void ShowSettingsPanel()
                     {
                         ImVec2 mouse = ImGui::GetIO().MousePos;
                         ImGui::SetNextWindowPos(ImVec2(mouse.x + 30.0f, mouse.y - 30.0f), ImGuiCond_Always);
-                        ImGui::SetTooltip("Use image from the 'D2RHUD_Images' folder for this element");
+                        HudText::SetTooltip("Use image from the 'D2RHUD_Images' folder for this element");
                     }
                 }
                 ImGui::PopID();
             }
             ImGui::Dummy(ImVec2(0.0f, 6.0f));
             ImGui::Separator();
-            ImGui::Text("Window backgrounds");
+            HudText::Text("Window backgrounds");
             ImGui::Dummy(ImVec2(0.0f, 2.0f));
             static int s_WindowBgImagePickerSlot = -1;
             static bool s_OpenWindowBgImagePickerThisFrame = false;
@@ -8795,15 +8818,15 @@ void ShowSettingsPanel()
                         ImGui::GetWindowDrawList()->AddImage(cameraTexId, center, ImVec2(center.x + drawSize.x, center.y + drawSize.y), ImVec2(0, 0), ImVec2(1, 1), IM_COL32_WHITE);
                     }
                     ImGui::SameLine(0, ImGui::GetStyle().ItemInnerSpacing.x);
-                    ImGui::TextUnformatted(s_WindowBgNames[w]);
+                    HudText::TextUnformatted(s_WindowBgNames[w]);
                     if (ImGui::IsItemHovered())
                     {
                         ImVec2 mouse = ImGui::GetIO().MousePos;
                         ImGui::SetNextWindowPos(ImVec2(mouse.x + 30.0f, mouse.y - 30.0f), ImGuiCond_Always);
-                        ImGui::SetTooltip("Image: %s\nUse the image button to choose \"(none)\" to use color.", s_WindowBgImageOverrides[w].empty() ? "(none)" : s_WindowBgImageOverrides[w].c_str());
+                        HudText::SetTooltip("Image: %s\nUse the image button to choose \"(none)\" to use color.", s_WindowBgImageOverrides[w].empty() ? "(none)" : s_WindowBgImageOverrides[w].c_str());
                     }
                 }
-                else if (ImGui::ColorEdit4(s_WindowBgNames[w], (float*)&s_WindowBgColors[w], ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_AlphaBar))
+                else if (HudText::ColorEdit4(s_WindowBgNames[w], (float*)&s_WindowBgColors[w], ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_AlphaBar))
                     SaveFullGrailConfig(configFilePath, false);
                 ImGui::SameLine(ImGui::GetWindowContentRegionMax().x - cameraBtnSize - 8.0f);
                 if (ImGui::InvisibleButton("##WinBgImgBtn", ImVec2(cameraBtnSize, cameraBtnSize)))
@@ -8826,17 +8849,17 @@ void ShowSettingsPanel()
                 {
                     ImVec2 mouse = ImGui::GetIO().MousePos;
                     ImGui::SetNextWindowPos(ImVec2(mouse.x + 30.0f, mouse.y - 30.0f), ImGuiCond_Always);
-                    ImGui::SetTooltip("Use image from D2RHUD_Images for this window background");
+                    HudText::SetTooltip("Use image from D2RHUD_Images for this window background");
                 }
                 ImGui::PopID();
             }
             if (s_OpenWindowBgImagePickerThisFrame && s_WindowBgImagePickerSlot >= 0)
             {
                 ImGui::SetNextWindowPos(s_WindowBgImagePickerPos);
-                ImGui::OpenPopup("##WindowBgImagePicker");
+                HudText::OpenPopup("##WindowBgImagePicker");
                 s_OpenWindowBgImagePickerThisFrame = false;
             }
-            if (ImGui::BeginPopup("##WindowBgImagePicker", ImGuiWindowFlags_NoTitleBar))
+            if (HudText::BeginPopup("##WindowBgImagePicker", ImGuiWindowFlags_NoTitleBar))
             {
                 if (s_WindowBgImagePickerSlot >= 0 && s_WindowBgImagePickerSlot < kWindowBgCount)
                 {
@@ -8866,7 +8889,7 @@ void ShowSettingsPanel()
                         for (int k = 0; k < (int)s_WindowBgImageList.size(); ++k)
                         {
                             bool isSelected = (k == 0 && cur.empty()) || (k > 0 && s_WindowBgImageList[k] == cur);
-                            if (ImGui::Selectable(s_WindowBgImageList[k].c_str(), isSelected))
+                            if (HudText::Selectable(s_WindowBgImageList[k].c_str(), isSelected))
                             {
                                 s_WindowBgImageOverrides[w] = (k == 0) ? "" : s_WindowBgImageList[k];
                                 D3D12::RequestWindowBgImageReload(w, s_WindowBgImageOverrides[w]);
@@ -8885,10 +8908,10 @@ void ShowSettingsPanel()
             if (s_OpenImagePickerThisFrame && s_ImagePickerForSlot >= 0)
             {
                 ImGui::SetNextWindowPos(s_ImagePickerPos);
-                ImGui::OpenPopup("##ImagePicker");
+                HudText::OpenPopup("##ImagePicker");
                 s_OpenImagePickerThisFrame = false;
             }
-            if (ImGui::BeginPopup("##ImagePicker", ImGuiWindowFlags_NoTitleBar))
+            if (HudText::BeginPopup("##ImagePicker", ImGuiWindowFlags_NoTitleBar))
             {
                 if (s_ImagePickerForSlot >= 0 && s_ImagePickerForSlot < s_ThemeColorCount)
                 {
@@ -8917,7 +8940,7 @@ void ShowSettingsPanel()
                         for (int k = 0; k < (int)s_ImageList.size(); ++k)
                         {
                             bool isSelected = (k == 0 && cur.empty()) || (k > 0 && s_ImageList[k] == cur);
-                            if (ImGui::Selectable(s_ImageList[k].c_str(), isSelected))
+                            if (HudText::Selectable(s_ImageList[k].c_str(), isSelected))
                             {
                                 s_UIColorImageOverrides[idx] = (k == 0) ? "" : s_ImageList[k];
                                 if (idx >= 3 && idx <= 5)
@@ -8989,7 +9012,7 @@ static void DrawWorkspaceEditors(HudMenu::Page page) {
     ShowD2RHUDMenu();ShowLootMenu();ShowGrailMenu();ShowHotkeyMenu();ShowCameraMenu();
     ShowFloatingDamageMenu();ShowBuffIconsMenu();ShowStatRangesMenu();ShowSettingsPanel();
     if(showMainMenu&&page==HudMenu::Page::Journal&&!QuestJournal::Bindings())
-        ImGui::TextWrapped("The quest journal is available when playing RMD-MP. Your other HUD tools are available in every mod.");
+        HudText::TextWrapped("The quest journal is available when playing RMD-MP. Your other HUD tools are available in every mod.");
     else ShowQuestJournalMenu();
 }
 
@@ -10695,11 +10718,11 @@ void D2RHUD::OnDraw() {
 
             auto drawList = ImGui::GetBackgroundDrawList();
             ImVec2 screenSize = io.DisplaySize;
-            ImVec2 textSize = ImGui::CalcTextSize(g_ItemFilterStatusMessage.c_str());
+            ImVec2 textSize = HudText::CalcTextSize(g_ItemFilterStatusMessage.c_str());
             ImVec2 textPos = ImVec2((screenSize.x - textSize.x) * 0.5f,
                 (screenSize.y - textSize.y) * 0.1f);
 
-            drawList->AddText(textPos, color, g_ItemFilterStatusMessage.c_str());
+            HudText::AddText(drawList,textPos, color, g_ItemFilterStatusMessage.c_str());
 
             if (chosenFont)
                 ImGui::PopFont();
@@ -10997,7 +11020,7 @@ void D2RHUD::OnDraw() {
         if (pUnitServer)
         {
             std::string mystatname = std::format("Defense: {}", STATLIST_GetUnitStatSigned(pUnitServer, 31, 0));
-            drawList->AddText({ 20, 10 }, IM_COL32(170, 50, 50, 255), mystatname.c_str());
+            HudText::AddText(drawList,{ 20, 10 }, IM_COL32(170, 50, 50, 255), mystatname.c_str());
         }
         */
 
@@ -11008,7 +11031,7 @@ void D2RHUD::OnDraw() {
         if (pUnitServer && (cachedSettings.monsterStatsDisplay || settings.monsterStatsDisplay))
         {
             float totalWidth = 0.f;
-            float spaceWidth = ImGui::CalcTextSize(Seperator).x;
+            float spaceWidth = HudText::CalcTextSize(Seperator).x;
             std::string resistances[6];
             float widths[6];
 
@@ -11021,7 +11044,7 @@ void D2RHUD::OnDraw() {
             for (int i = 0; i < 6; i++)
             {
                 if (i > 0) totalWidth += spaceWidth;
-                widths[i] = ImGui::CalcTextSize(resistances[i].c_str()).x;
+                widths[i] = HudText::CalcTextSize(resistances[i].c_str()).x;
                 totalWidth += widths[i];
             }
 
@@ -11029,7 +11052,7 @@ void D2RHUD::OnDraw() {
             for (int i = 0; i < 6; i++)
             {
                 if (i > 0) startX += spaceWidth;
-                drawList->AddText({ startX, ypercent1 }, ResistanceColors[i], resistances[i].c_str());
+                HudText::AddText(drawList,{ startX, ypercent1 }, ResistanceColors[i], resistances[i].c_str());
                 startX += widths[i];
             }
 
@@ -11038,14 +11061,14 @@ void D2RHUD::OnDraw() {
                 if (pGame == nullptr)
                 {
                     auto clienthp = std::format("{}%", ((STATLIST_GetUnitStatSigned(pUnitServer, STAT_HITPOINTS, 0) >> 8) * 100) / (STATLIST_GetUnitStatSigned(pUnitServer, STAT_MAXHP, 0) >> 8));
-                    auto width = ImGui::CalcTextSize(clienthp.c_str()).x;
-                    drawList->AddText({ center - (width / 2.0f) + 1, ypercent2 }, IM_COL32(255, 255, 255, 255), clienthp.c_str());
+                    auto width = HudText::CalcTextSize(clienthp.c_str()).x;
+                    HudText::AddText(drawList,{ center - (width / 2.0f) + 1, ypercent2 }, IM_COL32(255, 255, 255, 255), clienthp.c_str());
                 }
                 else
                 {
                     auto hp = std::format("{} / {}", STATLIST_GetUnitStatSigned(pUnitServer, STAT_HITPOINTS, 0) >> 8, STATLIST_GetUnitStatSigned(pUnitServer, STAT_MAXHP, 0) >> 8);
-                    auto width = ImGui::CalcTextSize(hp.c_str()).x;
-                    drawList->AddText({ center - (width / 2.0f) + 1, ypercent2 }, IM_COL32(255, 255, 255, 255), hp.c_str());
+                    auto width = HudText::CalcTextSize(hp.c_str()).x;
+                    HudText::AddText(drawList,{ center - (width / 2.0f) + 1, ypercent2 }, IM_COL32(255, 255, 255, 255), hp.c_str());
 
 
                 }

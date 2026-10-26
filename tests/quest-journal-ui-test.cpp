@@ -43,7 +43,12 @@ int main(int argc,char** argv){try{
             journalImages[asset.part]={asset.texture,a.width,a.height,a.frameWidth,a.frames,image.pitch};
         }
     }
-    ImGui::CreateContext();auto& io=ImGui::GetIO();io.IniFilename=nullptr;io.DeltaTime=1.f/60;Check(io.Fonts->AddFontFromFileTTF(argv[5],18)!=nullptr,"native font missing");
+    ImVector<ImWchar> languageGlyphs;
+    if(argc>8){auto catalog=std::make_shared<HudLocale::Catalog>();catalog->Merge(read(argv[8]));HudLocale::Publish(catalog);ImFontGlyphRangesBuilder ranges;
+        for(const auto& [key,value]:catalog->strings){ranges.AddText(key.c_str());ranges.AddText(value.c_str());}ranges.BuildRanges(&languageGlyphs);
+        const auto sameRules=QuestJournal::Data::ParseRules(read(argv[2]),read(argv[3]));
+        Check(sameRules->digest==journalRules->digest && sameRules->quests[0].title==journalRules->quests[0].title,"Localization changed canonical quest definitions or progress identity");}
+    ImGui::CreateContext();auto& io=ImGui::GetIO();io.IniFilename=nullptr;io.DeltaTime=1.f/60;Check(io.Fonts->AddFontFromFileTTF(argv[5],18,nullptr,languageGlyphs.Data)!=nullptr,"native font missing");
     unsigned char* pixels=nullptr;int w=0,h=0;io.Fonts->GetTexDataAsRGBA32(&pixels,&w,&h);io.Fonts->SetTexID(1);
     for(const auto size:{ImVec2(960,720),ImVec2(1920,1080),ImVec2(3840,2160)}){
         io.DisplaySize=size;io.FontGlobalScale=GetMenuScaleFactor();

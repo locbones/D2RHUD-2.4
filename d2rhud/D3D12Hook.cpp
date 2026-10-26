@@ -1,5 +1,6 @@
 ﻿#include "plugin/HUDControls.h"
 #include "D3D12Hook.h"
+#include "plugin/HudLocalization.h"
 #include "WineQueue.h"
 #include "plugin/QuestJournalClient.h"
 #include "plugin/WindowLayout.h"
@@ -261,7 +262,20 @@ namespace D3D12 {
 		g_EmbeddedFloatingDamageFontsInitialized = true;
 	}
 
+    static ImVector<ImWchar> localizationRanges;
+    static ImFont* AddLocalizedFont(float size){
+        auto atlas=ImGui::GetIO().Fonts;ImFontConfig config;config.OversampleH=config.OversampleV=1;
+        const auto path=HudLocale::FontPath();
+        if(!path.empty())return atlas->AddFontFromFileTTF(path.c_str(),size,&config,localizationRanges.Data);
+        size_t bytes=0;const auto data=HudLocale::FontBytes(bytes);config.FontDataOwnedByAtlas=false;
+        return data&&bytes<=INT_MAX?atlas->AddFontFromMemoryTTF(const_cast<unsigned char*>(data),int(bytes),size,&config,localizationRanges.Data):nullptr;
+    }
     static void LoadMapEventFonts(const std::string& path){
+        if(HudLocale::UnicodeFont()){
+            size_t bytes=0;const auto data=HudLocale::FontBytes(bytes);
+            g_MapEventFonts.Load(*ImGui::GetIO().Fonts,HudLocale::FontPath(),data,bytes,localizationRanges.Data,true);
+            CubeMap::SetFontProvider(GetMapEventFont);return;
+        }
         const unsigned char* fallback=nullptr;size_t bytes=0;
         if(path.empty())LoadEmbeddedFloatingDamageFontResource(0,&fallback,&bytes);
         g_MapEventFonts.Load(*ImGui::GetIO().Fonts,path,fallback,bytes);
@@ -750,6 +764,13 @@ namespace D3D12 {
 			ImGui::CreateContext();
 			ImGuiIO& io = ImGui::GetIO();
 			HudWindowLayout::Initialize();
+            HudLocale::Initialize();
+            if(HudLocale::UnicodeFont()){
+                const auto language=HudLocale::LanguageCode();
+                if(language=="jaJP"||language=="koKR"||language=="zhCN"||language=="zhTW")io.Fonts->TexDesiredWidth=4096;
+                ImFontGlyphRangesBuilder builder;builder.AddRanges(io.Fonts->GetGlyphRangesDefault());
+                const auto text=HudLocale::GlyphText();builder.AddText(text.c_str());builder.BuildRanges(&localizationRanges);
+            }
 			//io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;     // Enable Keyboard Controls
 			//io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;      // Enable Gamepad Controls
 
@@ -769,7 +790,11 @@ namespace D3D12 {
 			{
 				namespace fs = std::filesystem;
 				const std::string fontPath = "Mods/" + modName + "/" + modName + ".mpq/data/hd/ui/fonts/exocetblizzardot-medium.otf";
-				if (fs::exists(fontPath)) {
+				if (HudLocale::UnicodeFont()) {
+                    for(float size:{12.f,15.f,18.f,24.f,36.f,48.f})AddLocalizedFont(size);
+                    FontLoaded=true;
+                }
+                else if (fs::exists(fontPath)) {
 					std::cout << "Adding fonts from file..." << std::endl;
 					io.Fonts->AddFontFromFileTTF(fontPath.c_str(), 12.0f);
 					io.Fonts->AddFontFromFileTTF(fontPath.c_str(), 15.0f);
@@ -789,7 +814,12 @@ namespace D3D12 {
             {
                 HudSettings::bodyFont=HudSettings::noteFont=HudSettings::headingFont=nullptr;
                 const unsigned char* bytes=nullptr;size_t size=0;
-                if(LoadEmbeddedFloatingDamageFontResource(10,&bytes,&size)) {
+                if(HudLocale::UnicodeFont()){
+                    HudSettings::bodyFont=AddLocalizedFont(36.f);HudSettings::noteFont=AddLocalizedFont(32.f);
+                    if(HudSettings::bodyFont)HudSettings::bodyFont->Scale=.5f;
+                    if(HudSettings::noteFont)HudSettings::noteFont->Scale=.5f;
+                }
+                else if(LoadEmbeddedFloatingDamageFontResource(10,&bytes,&size)) {
                     ImFontConfig cfg{};cfg.FontDataOwnedByAtlas=false;
                     HudSettings::bodyFont=io.Fonts->AddFontFromMemoryTTF(const_cast<unsigned char*>(bytes),int(size),36.f,&cfg);
                     HudSettings::noteFont=io.Fonts->AddFontFromMemoryTTF(const_cast<unsigned char*>(bytes),int(size),32.f,&cfg);
@@ -799,6 +829,7 @@ namespace D3D12 {
                 HudSettings::headingFont=io.Fonts->Fonts.Size>3?io.Fonts->Fonts[3]:nullptr;
             }
             LoadMapEventFonts(eventFontPath);
+            HudText::fallbackFont=HudLocale::UnicodeFont()?HudSettings::bodyFont:nullptr;
 			ImGui_ImplDX12_CreateDeviceObjects();
 
 			// Load settings icon from D2RHUD_Images/ (default gear.png)

@@ -56,6 +56,7 @@
     <ClCompile Include="plugin\ItemFilter\ItemFilter.cpp" />
     <ClCompile Include="plugin\StashSearch\StashSearch.cpp" />
     <ClCompile Include="plugin\FloatingDamage.cpp" />
+    <ClCompile Include="plugin\HudLocalization.cpp" />
     <ClCompile Include="plugin\BuffIcons.cpp" />
     <ClCompile Include="plugin\StatRanges.cpp" />
     <ClCompile Include="plugin\StatRangesData.cpp" />
@@ -200,6 +201,8 @@
     <ClInclude Include="plugin\CubeMapRewards.inl" />
     <ClInclude Include="plugin\CubeMapRewardsData.h" />
     <ClInclude Include="plugin\CubeMapAutomapData.h" />
+    <ClInclude Include="plugin\HudLocalization.h" />
+    <ClInclude Include="plugin\HudText.h" />
     <ClInclude Include="plugin\CubeMapMonsterRevealData.h" />
     <ClInclude Include="plugin\CubeMapMonsterReveal.inl" />
     <ClInclude Include="plugin\CubeMapAutomapServer.inl" />

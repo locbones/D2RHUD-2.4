@@ -1,5 +1,6 @@
 #pragma once
 #include "CubeMapData.h"
+#include "HudLocalization.h"
 #include <cstdio>
 
 namespace CubeMap::RewardsData {
@@ -42,7 +43,7 @@ struct View {
         const auto elapsed=(now-receivedAt)/1000;
         for(size_t i=0;i<Types.size();++i)if(packet.remaining[i]>elapsed){
             const auto seconds=uint32_t(packet.remaining[i]-elapsed);char line[96]{};
-            snprintf(line,sizeof(line),"%s: %u:%02u",Names[i],seconds/60,seconds%60);result.emplace_back(line);
+            snprintf(line,sizeof(line),"%s: %u:%02u",HudLocale::Tr(Names[i]),seconds/60,seconds%60);result.emplace_back(line);
         }
         return result;
     }

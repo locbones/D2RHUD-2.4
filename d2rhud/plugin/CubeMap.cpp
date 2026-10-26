@@ -1,4 +1,5 @@
-﻿#include "CubeMap.h"
+﻿#include "HudText.h"
+#include "CubeMap.h"
 #include "CubeMapData.h"
 #include "CubeMapAutomapData.h"
 #include "CubeMapMonsterRevealData.h"
@@ -1404,14 +1405,14 @@ float DrawScoutingReport(ImDrawList* draw,const EventInfo& info,float center,flo
     const float left=center-wrap*0.5f;
     float bottom=top;
     for(const auto& line:lines){const float size=line.size*ui;
-        bottom+=EventFont(size)->CalcTextSizeA(size,FLT_MAX,wrap,line.text).y+line.gap*ui;}
+        bottom+=HudText::CalcTextSizeA(EventFont(size),size,FLT_MAX,wrap,line.text).y+line.gap*ui;}
     // Long reports sit over the artwork; a dark backing keeps every section legible.
     draw->AddRectFilled({left-18*ui,top-12*ui},{left+wrap+18*ui,bottom+12*ui},IM_COL32(0,0,0,195),8*ui);
     float y=top;
     for(const auto& line:lines){const float size=line.size*ui;const auto font=EventFont(size);
-        draw->AddText(font,size,{left+2*ui,y+2*ui},IM_COL32(0,0,0,230),line.text,nullptr,wrap);
-        draw->AddText(font,size,{left,y},line.color,line.text,nullptr,wrap);
-        y+=font->CalcTextSizeA(size,FLT_MAX,wrap,line.text).y+line.gap*ui;
+        HudText::AddText(draw,font,size,{left+2*ui,y+2*ui},IM_COL32(0,0,0,230),line.text,nullptr,wrap);
+        HudText::AddText(draw,font,size,{left,y},line.color,line.text,nullptr,wrap);
+        y+=HudText::CalcTextSizeA(font,size,FLT_MAX,wrap,line.text).y+line.gap*ui;
     }
     return bottom;
 }
@@ -1440,8 +1441,8 @@ void DrawCelebration(float scale,bool clientReady=true){
     const float ui=(std::min)((std::max)(scale,0.5f),(std::min)(width/1000.0f,height/750.0f));
     const auto elapsed=packet.eventElapsed+uint32_t(now-received);
     auto text=[&](const char* value,float size,float y,ImU32 color=IM_COL32(220,190,133,255)){
-        size*=ui;const auto font=EventFont(size);const auto extent=font->CalcTextSizeA(size,FLT_MAX,0,value);const ImVec2 p{std::round((width-extent.x)*0.5f),std::round(y)};
-        draw->AddText(font,size,{p.x+2*ui,p.y+2*ui},IM_COL32(0,0,0,230),value);draw->AddText(font,size,p,color,value);
+        size*=ui;const auto font=EventFont(size);const auto extent=HudText::CalcTextSizeA(font,size,FLT_MAX,0,value);const ImVec2 p{std::round((width-extent.x)*0.5f),std::round(y)};
+        HudText::AddText(draw,font,size,{p.x+2*ui,p.y+2*ui},IM_COL32(0,0,0,230),value);HudText::AddText(draw,font,size,p,color,value);
     };
     if(phase==EventPhase::Finished || phase==EventPhase::Cancelled){
         if(elapsed>6000)return;
@@ -1492,8 +1493,8 @@ void DrawCelebration(float scale,bool clientReady=true){
         else {
             const float descriptionSize=23*ui,wrap=850*ui;
             const auto description=Info(packet.event).description;
-            const auto font=EventFont(descriptionSize);const auto extent=font->CalcTextSizeA(descriptionSize,FLT_MAX,wrap,description);
-            draw->AddText(font,descriptionSize,{(width-extent.x)*0.5f,height*0.71f},IM_COL32(225,213,190,255),description,nullptr,wrap);
+            const auto font=EventFont(descriptionSize);const auto extent=HudText::CalcTextSizeA(font,descriptionSize,FLT_MAX,wrap,description);
+            HudText::AddText(draw,font,descriptionSize,{(width-extent.x)*0.5f,height*0.71f},IM_COL32(225,213,190,255),description,nullptr,wrap);
             text(packet.event==Event::Trial ? "Five bosses. No second chances." : packet.event==Event::Survivors ? "Keep moving. Choose upgrades. Survive." : TimedEvent(packet.event) ? (packet.event==Event::PlentifulPirating ? "A two-minute bonus. Explore wherever you like." : "A ten-minute bonus. Explore wherever you like.") : packet.event==Event::ChampionClash ? "Clear the Chaos Sanctuary. No time limit." : "Clear the realm before time runs out.",22,height*0.80f);
         }
         const auto seconds=(std::max)(0,10-int(elapsed/1000));
@@ -1508,8 +1509,8 @@ void Draw(float scale,bool clientReady){
     if(clientReady){
         const auto rewards=TimedRewardLines();auto& io=ImGui::GetIO();const float size=16*(std::max)(0.5f,scale);const auto font=EventFont(size);
         float y=io.DisplaySize.y*0.68f;auto draw=ImGui::GetForegroundDrawList();
-        for(const auto& line:rewards){const auto extent=font->CalcTextSizeA(size,FLT_MAX,0,line.c_str());
-            const float x=(std::max)(8*scale,io.DisplaySize.x-extent.x-24*scale);draw->AddText(font,size,{std::round(x),std::round(y)},IM_COL32(245,215,145,255),line.c_str());y+=size+4*scale;}
+        for(const auto& line:rewards){const auto extent=HudText::CalcTextSizeA(font,size,FLT_MAX,0,line.c_str());
+            const float x=(std::max)(8*scale,io.DisplaySize.x-extent.x-24*scale);HudText::AddText(draw,font,size,{std::round(x),std::round(y)},IM_COL32(245,215,145,255),line.c_str());y+=size+4*scale;}
     }
     std::string title,modifiers;
     if(Display(title,modifiers)){
@@ -1521,18 +1522,18 @@ void Draw(float scale,bool clientReady){
             const int ms=(std::max)(0,total-int(packet.eventElapsed)-(paused?0:int(GetTickCount64()-received)));const int seconds=(ms+999)/1000;
             char time[32]{};snprintf(time,sizeof(time),"%d:%02d",seconds/60,seconds%60);
             auto& io=ImGui::GetIO();const float size=32*(std::max)(0.5f,scale);const auto font=EventFont(size);
-            const auto extent=font->CalcTextSizeA(size,FLT_MAX,0,time);const ImVec2 p{std::round((io.DisplaySize.x-extent.x)/2),std::round(io.DisplaySize.y*0.745f)};
+            const auto extent=HudText::CalcTextSizeA(font,size,FLT_MAX,0,time);const ImVec2 p{std::round((io.DisplaySize.x-extent.x)/2),std::round(io.DisplaySize.y*0.745f)};
             const bool urgent=seconds<=10;auto draw=ImGui::GetForegroundDrawList();
             if(urgent)for(int n=4;n>0;--n)draw->AddRectFilled({p.x-(8+n*2)*scale,p.y-(4+n)*scale},{p.x+extent.x+(8+n*2)*scale,p.y+extent.y+(4+n)*scale},IM_COL32(160,0,0,int((12+10*sinf(float(GetTickCount64()%100000)/110))*n)),7*scale);
-            draw->AddText(font,size,p,urgent ? IM_COL32(255,65,45,255) : IM_COL32(245,215,145,255),time);
+            HudText::AddText(draw,font,size,p,urgent ? IM_COL32(255,65,45,255) : IM_COL32(245,215,145,255),time);
         }
         const auto text="Monsters remaining: "+std::to_string(remaining);
         auto& io=ImGui::GetIO();const float size=16*(std::max)(0.5f,scale);
-        const auto font=EventFont(size);auto extent=font->CalcTextSizeA(size,FLT_MAX,0,text.c_str());
+        const auto font=EventFont(size);auto extent=HudText::CalcTextSizeA(font,size,FLT_MAX,0,text.c_str());
         const ImVec2 position{std::round((io.DisplaySize.x-extent.x)/2),std::round(io.DisplaySize.y*0.81f)};
         auto draw=ImGui::GetBackgroundDrawList();const float pad=6*scale;
         draw->AddRectFilled({position.x-pad,position.y-pad},{position.x+extent.x+pad,position.y+extent.y+pad},IM_COL32(0,0,0,190));
-        draw->AddText(font,size,position,IM_COL32(240,215,165,255),text.c_str());
+        HudText::AddText(draw,font,size,position,IM_COL32(240,215,165,255),text.c_str());
     }
     DrawCelebration(scale,clientReady);
 #endif

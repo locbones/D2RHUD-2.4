@@ -29,8 +29,8 @@ inline void Banner(Symbol symbol,const char* title,const char* subtitle=nullptr)
     }else d->AddRect(p,{p.x+w,p.y+h},IM_COL32(111,88,47,255),3);
     Icon(symbol,{p.x+12,p.y+(h-32)*.5f},32,IM_COL32(211,183,121,255));
     d->PushClipRect({p.x+54,p.y+8},{p.x+w-10,p.y+h-6},true);
-    d->AddText({p.x+54,p.y+11},IM_COL32(232,212,169,255),title);
-    if(subtitle)d->AddText({p.x+54,p.y+12+ImGui::GetTextLineHeight()},IM_COL32(160,153,136,255),subtitle);
+    HudText::AddText(d,{p.x+54,p.y+11},IM_COL32(232,212,169,255),title);
+    if(subtitle)HudText::AddText(d,{p.x+54,p.y+12+ImGui::GetTextLineHeight()},IM_COL32(160,153,136,255),subtitle);
     d->PopClipRect();ImGui::Dummy({w,h});ImGui::Spacing();
 }
 inline std::string Label(const std::vector<Option>& options,const std::string& value) {
@@ -40,7 +40,7 @@ inline std::string Label(const std::vector<Option>& options,const std::string& v
 inline bool Choose(const char* id,std::string& value,const std::vector<Option>& options) {
     bool changed=false;static std::map<ImGuiID,std::string> searches;
     ImGui::SetNextItemWidth(-1);
-    if(ImGui::BeginCombo(id,Label(options,value).c_str())){
+    if(HudText::BeginCombo(id,Label(options,value).c_str())){
         auto& query=searches[ImGui::GetID("search")];InputTextWithHint("##search","Search...",&query);
         ImGui::BeginChild("options",ImVec2(0,180));
         for(const auto& option:options){std::string haystack=option.label+" "+option.value,needle=query;
@@ -48,8 +48,8 @@ inline bool Choose(const char* id,std::string& value,const std::vector<Option>& 
             std::transform(needle.begin(),needle.end(),needle.begin(),[](unsigned char c){return char(std::tolower(c));});
             if(!needle.empty()&&haystack.find(needle)==std::string::npos)continue;
             ImGui::PushID(option.value.c_str());
-            if(ImGui::Selectable(option.label.c_str(),option.value==value)){value=option.value;changed=true;ImGui::CloseCurrentPopup();}
-            if(ImGui::IsItemHovered())ImGui::SetTooltip("%s",option.value.c_str());
+            if(HudText::Selectable(option.label.c_str(),option.value==value)){value=option.value;changed=true;ImGui::CloseCurrentPopup();}
+            if(ImGui::IsItemHovered())HudText::SetTooltip("%s",option.value.c_str());
             ImGui::PopID();
         }
         ImGui::EndChild();ImGui::EndCombo();
@@ -66,17 +66,17 @@ inline bool MultiChoose(const Spec& spec,Value& value,const Catalog& catalog) {
     bool changed=false;
     ImGui::SetNextItemWidth((std::min)(180.f,ImGui::GetContentRegionAvail().x*.36f));
     int match=value.exclude?1:0;
-    if(ImGui::Combo("##match",&match,"Is any of\0Is none of\0")){value.exclude=match==1;changed=true;}
+    if(HudText::Combo("##match",&match,"Is any of\0Is none of\0")){value.exclude=match==1;changed=true;}
     ImGui::SameLine();ImGui::SetNextItemWidth(-1);
     std::string preview;
     for(const auto& selected:value.choices){if(!preview.empty())preview+=", ";preview+=Label(options,selected);if(preview.size()>85){preview+="...";break;}}
     if(preview.empty())preview="Select...";
     static std::map<std::string,std::string> searches;
-    if(ImGui::BeginCombo("##choices",preview.c_str())){
+    if(HudText::BeginCombo("##choices",preview.c_str())){
         auto& query=searches[key];InputTextWithHint("##search","Search by name...",&query);
-        ImGui::TextDisabled("Choose one or more; click outside to finish.");
+        HudText::TextDisabled("Choose one or more; click outside to finish.");
         ImGui::BeginChild("options",ImVec2(0,210));
-        if(ImGui::Selectable("Clear selection",false,ImGuiSelectableFlags_DontClosePopups)){value.choices.clear();changed=true;}
+        if(HudText::Selectable("Clear selection",false,ImGuiSelectableFlags_DontClosePopups)){value.choices.clear();changed=true;}
         // Unknown/custom selected values stay visible and removable even when
         // their catalog is unavailable or the player changed mods.
         for(const auto& selected:value.choices)if(std::none_of(options.begin(),options.end(),[&](const Option& option){return option.value==selected;}))options.insert(options.begin(),{selected,selected});
@@ -86,10 +86,10 @@ inline bool MultiChoose(const Spec& spec,Value& value,const Catalog& catalog) {
             if(!needle.empty()&&haystack.find(needle)==std::string::npos)continue;
             auto found=std::find(value.choices.begin(),value.choices.end(),option.value);bool selected=found!=value.choices.end();
             ImGui::PushID(option.value.c_str());
-            if(ImGui::Selectable(option.label.c_str(),selected,ImGuiSelectableFlags_DontClosePopups)){
+            if(HudText::Selectable(option.label.c_str(),selected,ImGuiSelectableFlags_DontClosePopups)){
                 if(selected)value.choices.erase(found);else{if(key=="codes"){if(option.value=="allitems")value.choices.clear();else value.choices.erase(std::remove(value.choices.begin(),value.choices.end(),"allitems"),value.choices.end());}value.choices.push_back(option.value);}changed=true;
             }
-            if(ImGui::IsItemHovered())ImGui::SetTooltip("%s",option.value.c_str());ImGui::PopID();
+            if(ImGui::IsItemHovered())HudText::SetTooltip("%s",option.value.c_str());ImGui::PopID();
         }
         ImGui::EndChild();ImGui::EndCombo();
     }
@@ -98,17 +98,17 @@ inline bool MultiChoose(const Spec& spec,Value& value,const Catalog& catalog) {
 inline bool ValueControl(const Spec& spec,Value& value,const Catalog& catalog) {
     bool changed=false;
     if(spec.kind==Kind::Choices)return MultiChoose(spec,value,catalog);
-    if(spec.kind==Kind::Boolean){int selected=value.flag?0:1;ImGui::SetNextItemWidth(-1);if(ImGui::Combo("##value",&selected,"Yes\0No\0")){value.flag=selected==0;return true;}}
+    if(spec.kind==Kind::Boolean){int selected=value.flag?0:1;ImGui::SetNextItemWidth(-1);if(HudText::Combo("##value",&selected,"Yes\0No\0")){value.flag=selected==0;return true;}}
     if(spec.kind==Kind::Number||spec.kind==Kind::Stat){
         if(spec.kind==Kind::Stat){
             std::string stat=std::to_string(value.stat);if(Choose("##stat",stat,catalog.stats)){Integer(stat,value.stat);changed=true;}
         }
         ImGui::SetNextItemWidth((std::min)(180.f,ImGui::GetContentRegionAvail().x*.36f));
-        changed|=ImGui::Combo("##operation",&value.operation,Operators,spec.kind==Kind::Stat?7:6);
-        ImGui::SameLine();ImGui::SetNextItemWidth(-1);changed|=ImGui::InputInt("##amount",&value.number,0);
+        changed|=HudText::Combo("##operation",&value.operation,Operators,spec.kind==Kind::Stat?7:6);
+        ImGui::SameLine();ImGui::SetNextItemWidth(-1);changed|=HudText::InputInt("##amount",&value.number,0);
         if(spec.kind==Kind::Stat){
-            if(value.operation==6){ImGui::TextUnformatted("Through");ImGui::SameLine();ImGui::SetNextItemWidth(-1);changed|=ImGui::InputInt("##upper",&value.upper,0);}
-            if(ImGui::TreeNode("Optional stat parameter")){ImGui::SetNextItemWidth(-1);changed|=ImGui::InputInt("##parameter",&value.parameter,0);ImGui::TreePop();}
+            if(value.operation==6){HudText::TextUnformatted("Through");ImGui::SameLine();ImGui::SetNextItemWidth(-1);changed|=HudText::InputInt("##upper",&value.upper,0);}
+            if(HudText::TreeNode("Optional stat parameter")){ImGui::SetNextItemWidth(-1);changed|=HudText::InputInt("##parameter",&value.parameter,0);ImGui::TreePop();}
         }
     }
     if(spec.kind==Kind::Text){
@@ -116,24 +116,24 @@ inline bool ValueControl(const Spec& spec,Value& value,const Catalog& catalog) {
         if(std::string(spec.key)!="style"){
             const float half=(ImGui::GetContentRegionAvail().x-ImGui::GetStyle().ItemSpacing.x)*.5f;
             ImGui::SetNextItemWidth(half);
-            if(ImGui::BeginCombo("##insert_detail","Insert item detail...")){
+            if(HudText::BeginCombo("##insert_detail","Insert item detail...")){
                 for(const auto& token:std::vector<Option>{{"Item name","{name}"},{"Socket count","{sockets}"},{"Maximum sockets","{maxsock}"},{"Item level","{ilvl}"},{"Item link (chat)","{link}"}})
-                    if(ImGui::Selectable(token.label.c_str())){value.text+=token.value;changed=true;}
+                    if(HudText::Selectable(token.label.c_str())){value.text+=token.value;changed=true;}
                 ImGui::EndCombo();
             }
             ImGui::SameLine();ImGui::SetNextItemWidth(-1);
-            if(ImGui::BeginCombo("##insert_color","Insert text color...")){
+            if(HudText::BeginCombo("##insert_color","Insert text color...")){
                 for(const char* color:{"white","red","green","blue","gold","gray","orange","yellow","purple","turquoise","pink"})
-                    if(ImGui::Selectable(color)){value.text+="{"+std::string(color)+"}";changed=true;}
+                    if(HudText::Selectable(color)){value.text+="{"+std::string(color)+"}";changed=true;}
                 ImGui::EndCombo();
             }
         }
-        if(std::string(spec.key)=="audio")ImGui::TextDisabled("Enable audio in Settings to hear this action.");
-        if(std::string(spec.key)=="hide_mismatches")ImGui::TextWrapped("Hides items with the same item/location match that fail another condition.");
+        if(std::string(spec.key)=="audio")HudText::TextDisabled("Enable audio in Settings to hear this action.");
+        if(std::string(spec.key)=="hide_mismatches")HudText::TextWrapped("Hides items with the same item/location match that fail another condition.");
     }
     if(spec.kind==Kind::Color){
-        changed|=ImGui::ColorEdit4("##color",value.color.data(),ImGuiColorEditFlags_NoInputs|ImGuiColorEditFlags_AlphaBar);
-        if(std::string(spec.key)=="border"){ImGui::TextUnformatted("Thickness");ImGui::SetNextItemWidth(-1);changed|=ImGui::SliderFloat("##thickness",&value.thickness,1,12,"%.0f px");}
+        changed|=HudText::ColorEdit4("##color",value.color.data(),ImGuiColorEditFlags_NoInputs|ImGuiColorEditFlags_AlphaBar);
+        if(std::string(spec.key)=="border"){HudText::TextUnformatted("Thickness");ImGui::SetNextItemWidth(-1);changed|=HudText::SliderFloat("##thickness",&value.thickness,1,12,"%.0f px");}
     }
     return changed;
 }
@@ -169,11 +169,11 @@ inline bool Render(std::string& raw,std::string& status,const Catalog& catalog,i
     bool changed=false;
     auto set=[&](const std::string& key,const std::string& expression){if(SetField(raw,key,expression,status))changed=true;};
     if(section<=0){
-        ImGui::TextUnformatted("Rule name");ImGui::SetNextItemWidth(-1);ImGui::BeginDisabled(!titleEditable);
+        HudText::TextUnformatted("Rule name");ImGui::SetNextItemWidth(-1);ImGui::BeginDisabled(!titleEditable);
         if(InputText("##rule_name",&title))set("label",Quote(title));ImGui::EndDisabled();
-        ImGui::BeginDisabled(!enabledEditable);if(ImGui::Checkbox("Rule enabled",&enabled))set("enabled",enabled?"true":"false");ImGui::EndDisabled();
+        ImGui::BeginDisabled(!enabledEditable);if(HudText::Checkbox("Rule enabled",&enabled))set("enabled",enabled?"true":"false");ImGui::EndDisabled();
     }
-    if(!catalog.loaded&&!catalog.status.empty())ImGui::TextWrapped("%s",catalog.status.c_str());
+    if(!catalog.loaded&&!catalog.status.empty())HudText::TextWrapped("%s",catalog.status.c_str());
     for(bool actions:{false,true}){
         if(section>=0&&section!=int(actions))continue;
         Banner(actions?Symbol::Actions:Symbol::Conditions,actions?"Then apply these actions":"Match these conditions",actions?"Choose how matching items look or behave.":"All conditions must match. Multiple choices mean any.");
@@ -183,27 +183,27 @@ inline bool Render(std::string& raw,std::string& status,const Catalog& catalog,i
             ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,{14,12});
             ImGui::PushStyleColor(ImGuiCol_ChildBg,IM_COL32(23,22,20,230));
             ImGui::BeginChild("field",{0,0},ImGuiChildFlags_Borders|ImGuiChildFlags_AutoResizeY,ImGuiWindowFlags_NoScrollbar);
-            ImGui::TextColored({.85f,.76f,.56f,1},"%s",row.spec->label);
-            const float removeWidth=ImGui::CalcTextSize("Remove").x+ImGui::GetStyle().FramePadding.x*2;
+            HudText::TextColored({.85f,.76f,.56f,1},"%s",row.spec->label);
+            const float removeWidth=HudText::CalcTextSize("Remove").x+ImGui::GetStyle().FramePadding.x*2;
             if(ImGui::GetContentRegionAvail().x>removeWidth+12)ImGui::SameLine(ImGui::GetWindowContentRegionMax().x-removeWidth);
-            if(ImGui::SmallButton("Remove"))set(row.spec->key,"nil");
+            if(HudText::SmallButton("Remove"))set(row.spec->key,"nil");
             if(!row.value.editable){
-                ImGui::TextWrapped("Custom expression preserved. Edit in Rule code or replace with selections.");
+                HudText::TextWrapped("Custom expression preserved. Edit in Rule code or replace with selections.");
                 if(ThemeButton("Use selections")){row.value=Default(*row.spec,catalog);set(row.spec->key,Encode(*row.spec,row.value));}
             } else if(ValueControl(*row.spec,row.value,catalog))set(row.spec->key,Encode(*row.spec,row.value));
             ImGui::EndChild();ImGui::PopStyleColor();ImGui::PopStyleVar();ImGui::Spacing();ImGui::PopID();
         }
-        if(!any)ImGui::TextDisabled(actions?"No actions yet. Add an action below.":"All items match until you add conditions.");
+        if(!any)HudText::TextDisabled(actions?"No actions yet. Add an action below.":"All items match until you add conditions.");
         ImGui::SetNextItemWidth(-1);
-        if(ImGui::BeginCombo(actions?"##add_action":"##add_condition",actions?"+ Add an action...":"+ Add a condition...")){
+        if(HudText::BeginCombo(actions?"##add_action":"##add_condition",actions?"+ Add an action...":"+ Add a condition...")){
             for(const auto& spec:Specs){if(spec.action!=actions||std::any_of(rows.begin(),rows.end(),[&](const Row& row){return row.spec==&spec;}))continue;
-                if(ImGui::Selectable(spec.label)){Value value=Default(spec,catalog);set(spec.key,Encode(spec,value));}
+                if(HudText::Selectable(spec.label)){Value value=Default(spec,catalog);set(spec.key,Encode(spec,value));}
             }
             ImGui::EndCombo();
         }
     }
-    if(unknown)ImGui::TextWrapped("%d additional custom field(s) are preserved in this rule.",unknown);
-    if(rows.empty()&&RuleFields(raw).empty())ImGui::TextWrapped("If this rule is generated by a function, edit it in advanced mode or add a new rule.");
+    if(unknown)HudText::TextWrapped("%d additional custom field(s) are preserved in this rule.",unknown);
+    if(rows.empty()&&RuleFields(raw).empty())HudText::TextWrapped("If this rule is generated by a function, edit it in advanced mode or add a new rule.");
     return changed;
 }
 }

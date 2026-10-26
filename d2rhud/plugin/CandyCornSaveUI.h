@@ -1,4 +1,5 @@
 #pragma once
+#include "HudText.h"
 #include "CandyCornSave.h"
 #include "SettingsUI.h"
 #include <imgui.h>
@@ -25,10 +26,10 @@ inline void DrawNotification(){
     ImGui::PushStyleColor(ImGuiCol_Border,current.error?ImVec4(.8f,.18f,.18f,1):ImVec4(.55f,.18f,.18f,1));
     ImGui::PushStyleColor(ImGuiCol_Text,{.88f,.88f,.86f,1});
     if(HudSettings::bodyFont)ImGui::PushFont(HudSettings::bodyFont);
-    ImGui::Begin("Candy Corn update###CandyCornConversion",nullptr,ImGuiWindowFlags_NoDecoration|ImGuiWindowFlags_AlwaysAutoResize|
+    HudText::Begin("Candy Corn update###CandyCornConversion",nullptr,ImGuiWindowFlags_NoDecoration|ImGuiWindowFlags_AlwaysAutoResize|
         ImGuiWindowFlags_NoSavedSettings|ImGuiWindowFlags_NoInputs|ImGuiWindowFlags_NoFocusOnAppearing|ImGuiWindowFlags_NoNav);
-    ImGui::TextColored({.9f,.76f,.45f,1},"%s",current.title.c_str());
-    ImGui::Separator();ImGui::PushTextWrapPos(0);ImGui::TextUnformatted(current.message.c_str());ImGui::PopTextWrapPos();
+    HudText::TextColored({.9f,.76f,.45f,1},"%s",current.title.c_str());
+    ImGui::Separator();ImGui::PushTextWrapPos(0);HudText::TextUnformatted(current.message.c_str());ImGui::PopTextWrapPos();
     ImGui::End();
     if(HudSettings::bodyFont)ImGui::PopFont();
     ImGui::PopStyleColor(3);ImGui::PopStyleVar(3);

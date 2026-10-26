@@ -5,6 +5,7 @@
 #include "../d2rhud/plugin/ItemFilter/LootFilterRuleBuilder.h"
 #include "../d2rhud/plugin/ItemFilter/LootFilterPreview.h"
 #include <imgui_internal.h>
+#include "../d2rhud/plugin/HudText.h"
 #include <unordered_map>
 #include <iostream>
 

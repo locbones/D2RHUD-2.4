@@ -1,4 +1,5 @@
 #pragma once
+#include "../HudText.h"
 #include "../JournalSkin.h"
 #include "../SettingsUI.h"
 #include "../WindowLayout.h"
@@ -65,18 +66,18 @@ inline void Panel(){
 }
 inline bool Begin(const char* name,bool* open,ImGuiWindowFlags flags){
     if(embedded){ImGui::PushStyleColor(ImGuiCol_ChildBg,{0,0,0,0});ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,{16*ImGui::GetIO().FontGlobalScale,16*ImGui::GetIO().FontGlobalScale});}
-    const bool visible=embedded?ImGui::BeginChild(name,{0,0},ImGuiChildFlags_AlwaysUseWindowPadding,flags|ImGuiWindowFlags_NoSavedSettings):ImGui::Begin(name,open,flags);
+    const bool visible=embedded?ImGui::BeginChild(name,{0,0},ImGuiChildFlags_AlwaysUseWindowPadding,flags|ImGuiWindowFlags_NoSavedSettings):HudText::Begin(name,open,flags);
     if(embedded){ImGui::PopStyleVar();ImGui::PopStyleColor();}
     if(visible&&!embedded)Panel();return visible;
 }
 inline void End(){if(embedded)ImGui::EndChild();else ImGui::End();}
 inline bool Button(const char* label,ImVec2 size={}){
-    return nativeTheme?QuestJournalSkin::Button(label,size,ImGui::GetIO().FontGlobalScale):ImGui::Button(label,size);
+    return nativeTheme?QuestJournalSkin::Button(label,size,ImGui::GetIO().FontGlobalScale):HudText::Button(label,size);
 }
 inline void Heading(const char* text,float scale){
     if(HudSettings::headingFont)ImGui::PushFont(HudSettings::headingFont);
     if(nativeTheme)QuestJournalSkin::Plate(text,scale);
-    else {ImGui::TextUnformatted(text);ImGui::Separator();}
+    else {HudText::TextUnformatted(text);ImGui::Separator();}
     if(HudSettings::headingFont)ImGui::PopFont();
 }
 inline void ResizeGrip(float scale){
@@ -94,17 +95,17 @@ inline bool Navigation(const Entry& entry,bool selected,float scale){
     // Preserve the full clickable row and stable title ID while padding its
     // label away from the active marker and centering it vertically.
     ImGui::PushStyleColor(ImGuiCol_Text,{0,0,0,0});
-    const bool clicked=ImGui::Selectable(entry.title,selected,0,size);
+    const bool clicked=HudText::Selectable(entry.title,selected,0,size);
     ImGui::PopStyleColor();
     auto draw=ImGui::GetWindowDrawList();
     draw->PushClipRect({p.x+12*scale,p.y},{p.x+size.x-4*scale,p.y+size.y},true);
-    draw->AddText({p.x+12*scale,p.y+(size.y-ImGui::GetTextLineHeight())*.5f},textColor,entry.title);
+    HudText::AddText(draw,{p.x+12*scale,p.y+(size.y-ImGui::GetTextLineHeight())*.5f},textColor,entry.title);
     draw->PopClipRect();
     if(nativeTheme&&selected){
         draw->AddRect(p,{p.x+size.x,p.y+size.y},ImGui::GetColorU32(ImGuiCol_Border));
         draw->AddRectFilled(p,{p.x+3*scale,p.y+size.y},ImGui::GetColorU32(ImGuiCol_CheckMark));
     }
-    if(ImGui::IsItemHovered())ImGui::SetTooltip("%s",entry.description);
+    if(ImGui::IsItemHovered())HudText::SetTooltip("%s",entry.description);
     return clicked;
 }
 inline Page Home(float scale){
@@ -123,7 +124,7 @@ inline Page Home(float scale){
         }
         ImGui::EndTable();
     }
-    ImGui::Spacing();ImGui::TextDisabled("Resize corners and drag dividers to arrange your workspace.");
+    ImGui::Spacing();HudText::TextDisabled("Resize corners and drag dividers to arrange your workspace.");
     return target;
 }
 
@@ -134,17 +135,17 @@ template<class DrawPage> bool Workspace(Page& page,bool& open,float scale,const 
     HudWindowLayout::Prepare({1240*scale,860*scale});
     const auto display=ImGui::GetIO().DisplaySize;
     ImGui::SetNextWindowSizeConstraints({(std::min)(920*scale,display.x-16),(std::min)(600*scale,display.y-16)},{display.x-16,display.y-16});
-    if(ImGui::Begin("D2RHUD###HUDWorkspaceV2",&open,ImGuiWindowFlags_NoTitleBar|ImGuiWindowFlags_NoScrollbar|ImGuiWindowFlags_NoScrollWithMouse)){
+    if(HudText::Begin("D2RHUD###HUDWorkspaceV2",&open,ImGuiWindowFlags_NoTitleBar|ImGuiWindowFlags_NoScrollbar|ImGuiWindowFlags_NoScrollWithMouse)){
         if(nativeTheme)Panel();else if(workspaceBackground)workspaceBackground();
         Heading("D2RHUD",scale);
         if(nativeTheme)QuestJournalSkin::CloseButton(&open,scale);
         else {
             const auto cursor=ImGui::GetCursorScreenPos(),position=ImGui::GetWindowPos();
             ImGui::SetCursorScreenPos({position.x+ImGui::GetWindowWidth()-32*scale,position.y+10*scale});
-            if(ImGui::SmallButton("X"))open=false;
+            if(HudText::SmallButton("X"))open=false;
             ImGui::SetCursorScreenPos(cursor);
         }
-        ImGui::TextDisabled("%s",context);
+        HudText::TextDisabled("%s",context);
         const float footer=ImGui::GetTextLineHeightWithSpacing()+4*scale;
         const float height=(std::max)(1.f,ImGui::GetContentRegionAvail().y-footer);
         const float maxNav=(std::max)(180*scale,ImGui::GetContentRegionAvail().x-580*scale);
@@ -152,7 +153,7 @@ template<class DrawPage> bool Workspace(Page& page,bool& open,float scale,const 
         ImGui::BeginChild("WorkspaceNavigation",{230*scale,height},ImGuiChildFlags_ResizeX|ImGuiChildFlags_AlwaysUseWindowPadding);
         Panel();std::string_view group;
         for(const auto& entry:Entries){
-            if(group!=entry.group){group=entry.group;ImGui::Spacing();ImGui::TextColored(QuestJournalSkin::Gold,"%s",entry.group);}
+            if(group!=entry.group){group=entry.group;ImGui::Spacing();HudText::TextColored(QuestJournalSkin::Gold,"%s",entry.group);}
             if(Navigation(entry,page==entry.page,scale))page=entry.page;
         }
         ImGui::EndChild();ImGui::SameLine();
@@ -166,7 +167,7 @@ template<class DrawPage> bool Workspace(Page& page,bool& open,float scale,const 
             else {embedded=true;HudSettings::Style editor(scale);drawPage(Page::Home);embedded=false;}
         }
         else {embedded=true;HudSettings::Style editor(scale);drawPage(page);embedded=false;}
-        ImGui::EndChild();ImGui::TextDisabled("Esc: close     |     Window sizes and pane widths save automatically");
+        ImGui::EndChild();HudText::TextDisabled("Esc: close     |     Window sizes and pane widths save automatically");
         ResizeGrip(scale);
     }
     ImGui::End();return previous!=page;

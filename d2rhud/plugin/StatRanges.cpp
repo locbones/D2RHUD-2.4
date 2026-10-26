@@ -1,3 +1,4 @@
+#include "HudText.h"
 #include "StatRanges.h"
 #include "SettingsUI.h"
 #include "StatRangesData.h"
@@ -522,7 +523,7 @@ void Render(float resolutionScale) {
     auto draw = ImGui::GetBackgroundDrawList();
     for (const auto& line : lines) {
         ImVec2 pos(line.right + gap, line.middle - size * 0.5f);
-        draw->AddText(font, size, pos, ImGui::ColorConvertFloat4ToU32(config.color), line.text.c_str());
+        HudText::AddText(draw,font, size, pos, ImGui::ColorConvertFloat4ToU32(config.color), line.text.c_str());
     }
 }
 
