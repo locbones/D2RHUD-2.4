@@ -10,11 +10,19 @@ cl /nologo /std:c++latest /EHsc /O2 /MT /utf-8 /I"%deps%\include" /Fo"%outputRoo
 if not "%errorlevel%"=="0" exit /b %errorlevel%
 "%outputRoot%\extended-acts-test.exe" "%~2" "%~3"
 if not "%errorlevel%"=="0" exit /b %errorlevel%
+"%outputRoot%\extended-acts-test.exe" --file-config-test -txt
+if not "%errorlevel%"=="0" exit /b %errorlevel%
 cl /nologo /std:c++latest /EHsc /O2 /MT /utf-8 /Fo"%outputRoot%\\" /Fe"%outputRoot%\act6-native-storage-test.exe" "%~dp0act6-native-storage-test.cpp"
 if not "%errorlevel%"=="0" exit /b %errorlevel%
 "%outputRoot%\act6-native-storage-test.exe" "%~2"
 if not "%errorlevel%"=="0" exit /b %errorlevel%
 if "%~3"=="" exit /b 0
+if not exist "%~3\global\excel\actinfo.txt" (
+    echo BIN-only fixture: native/startup tests passed; skipping the TXT package-authoring test.
+    python "%~dp0act6-town-test.py"
+    if errorlevel 1 exit /b 1
+    exit /b 0
+)
 python "%~dp0stage-act6-test.py" "%~3"
 if not "%errorlevel%"=="0" exit /b %errorlevel%
 python "%~dp0act6-town-test.py"

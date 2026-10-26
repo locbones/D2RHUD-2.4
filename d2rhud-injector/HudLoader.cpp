@@ -64,6 +64,7 @@ int wmain(int argc, wchar_t** argv) {
         return 1;
     }
     const DWORD statesReadyRva = StatesStartup::ReadyExportRva(dll.c_str());
+    const DWORD startupDiagnosticsRva = StatesStartup::DiagnosticsExportRva(dll.c_str());
     std::wstring command = Quote(game);
     for (int i = hasMemoryPlan ? 2 : 1; i < argc; ++i) command += L" " + Quote(argv[i]);
     STARTUPINFOW startup{};
@@ -155,8 +156,12 @@ int wmain(int argc, wchar_t** argv) {
     const auto hudBase = ModuleBase(process.dwProcessId, L"d2rhud.dll");
     if (!hudBase) return fail("D2RHUD failed to load. Check its runtime dependencies.");
     if (statesReadyRva) {
-        if (!StatesStartup::WaitReady(process.hProcess, hudBase, statesReadyRva))
-            return fail("HUD rejected the extended-state hooks or did not finish initializing; state-table loading was stopped safely.");
+        if (!StatesStartup::WaitReady(process.hProcess, hudBase, statesReadyRva)) {
+            const DWORD error=GetLastError();
+            const auto message=StatesStartup::StartupErrorMessage(process.hProcess,hudBase,startupDiagnosticsRva,error);
+            SetLastError(error);
+            return fail(message.c_str());
+        }
         uint32_t limit = 0;
         if (!StatesStartup::Read(process.hProcess, statesBase + 0x1dc27a, limit) ||
             (stateRows <= 255 ? limit != 256 && limit != 513 : limit != 513)){

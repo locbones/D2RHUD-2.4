@@ -4,6 +4,8 @@
 #include <cstdint>
 #include <cstring>
 #include <array>
+#include <string>
+#include "../d2rhud/StartupDiagnostics.h"
 
 // Shared with Pandemonium's native HUD loader. This gate is armed only in a
 // newly created, suspended process. It does not attach to an existing game.
@@ -49,7 +51,8 @@ inline bool Write(HANDLE process,uintptr_t address,const void* bytes,SIZE_T size
 
 // Inspect an image resource without executing its entry point or constructors.
 // A missing export preserves the older loader behavior for older HUD builds.
-inline DWORD ReadyExportRva(const wchar_t* dll) {
+inline DWORD ExportRva(const wchar_t* dll,const char* symbol) {
+    const size_t symbolSize=strlen(symbol)+1;if(symbolSize>128)return 0;
     HMODULE image=LoadLibraryExW(dll,nullptr,LOAD_LIBRARY_AS_IMAGE_RESOURCE|LOAD_LIBRARY_AS_DATAFILE_EXCLUSIVE);
     if(!image)return 0;
     auto bytes=reinterpret_cast<const uint8_t*>(reinterpret_cast<uintptr_t>(image)&~uintptr_t(3));
@@ -69,9 +72,8 @@ inline DWORD ReadyExportRva(const wchar_t* dll) {
                     const auto names=reinterpret_cast<const DWORD*>(bytes+exports->AddressOfNames);
                     const auto ordinals=reinterpret_cast<const WORD*>(bytes+exports->AddressOfNameOrdinals);
                     const auto functions=reinterpret_cast<const DWORD*>(bytes+exports->AddressOfFunctions);
-                    constexpr char symbol[]="D2RHUD_States512Startup";
-                    for(DWORD i=0;i<exports->NumberOfNames;++i)if(range(names[i],sizeof(symbol)) &&
-                        !memcmp(bytes+names[i],symbol,sizeof(symbol)) && ordinals[i]<exports->NumberOfFunctions) {
+                    for(DWORD i=0;i<exports->NumberOfNames;++i)if(range(names[i],symbolSize) &&
+                        !memcmp(bytes+names[i],symbol,symbolSize) && ordinals[i]<exports->NumberOfFunctions) {
                         const DWORD rva=functions[ordinals[i]];
                         if(range(rva,4) && (rva<directory.VirtualAddress || uint64_t(rva)>=uint64_t(directory.VirtualAddress)+directory.Size))result=rva;
                         break;
@@ -81,6 +83,33 @@ inline DWORD ReadyExportRva(const wchar_t* dll) {
         }
     }
     FreeLibrary(image);return result;
+}
+inline DWORD ReadyExportRva(const wchar_t* dll){return ExportRva(dll,"D2RHUD_States512Startup");}
+inline DWORD DiagnosticsExportRva(const wchar_t* dll){return ExportRva(dll,"D2RHUD_StartupDiagnostics");}
+
+inline bool ReadDiagnostics(HANDLE process,uintptr_t hud,DWORD rva,StartupDiagnostics::Report& report){
+    return rva && Read(process,hud+rva,report) && report.magic==StartupDiagnostics::Magic &&
+        report.version==StartupDiagnostics::Version && report.size==sizeof(report) &&
+        report.stage<=uint32_t(StartupDiagnostics::Stage::Rejected) && !(report.failedFeatures&~uint32_t(7)) &&
+        !report.detail[sizeof(report.detail)-1];
+}
+inline std::string StartupErrorMessage(HANDLE process,uintptr_t hud,DWORD diagnosticsRva,DWORD error){
+    StartupDiagnostics::Report report;const bool known=ReadDiagnostics(process,hud,diagnosticsRva,report);
+    if(error==ERROR_DLL_INIT_FAILED){
+        std::string features;
+        if(known){
+            const auto add=[&](uint32_t bit,const char* name){if(report.failedFeatures&bit){if(!features.empty())features+=", ";features+=name;}};
+            add(StartupDiagnostics::States,"extended states");add(StartupDiagnostics::Classes,"extended classes / Warlock");add(StartupDiagnostics::Acts,"Act VI");
+        }
+        std::string message=features.empty()?"HUD startup initialization was rejected":"HUD startup failed ["+features+"]";
+        if(known && report.detail[0])message+=": "+std::string(report.detail);
+        else message+=". Check the current LOCALAPPDATA/D2RHUD/feature-status.txt report";
+        return message+="; game initialization was stopped safely.";
+    }
+    const std::string stage=known?StartupDiagnostics::StageName(report.stage):"HUD initialization";
+    if(error==ERROR_TIMEOUT)return "HUD startup timed out while initializing "+stage+"; game initialization was stopped safely.";
+    if(error==ERROR_PROCESS_ABORTED)return "The game exited while initializing "+stage+".";
+    return "Could not read HUD startup status while initializing "+stage+"; game initialization was stopped safely.";
 }
 
 // The initial thread is still suspended here, before any game code can race

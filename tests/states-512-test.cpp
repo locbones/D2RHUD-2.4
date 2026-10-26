@@ -69,6 +69,12 @@ void Executable(const std::filesystem::path& path){
         assert(*reinterpret_cast<uint32_t*>(image+0x1dc27a)==256&&Supported());
     }
     const uint64_t empty=0;memcpy(image+0x1c9ebf8,&empty,8);D2RHUD_States512Startup=0;
+    const auto signature=Signatures.front();image[signature.rva]^=1;
+    assert(!Install(false) && D2RHUD_States512Startup==0); // Disk report owns final readiness publication.
+    FinishStartup(false,StartupDiagnostics::States,Status());
+    assert(D2RHUD_States512Startup==2 && D2RHUD_StartupDiagnostics.failedFeatures==StartupDiagnostics::States && strstr(D2RHUD_StartupDiagnostics.detail,"signature mismatch"));
+    FinishStartup(true);assert(D2RHUD_States512Startup==1 && !D2RHUD_StartupDiagnostics.failedFeatures && !D2RHUD_StartupDiagnostics.detail[0]);
+    image[signature.rva]^=1;D2RHUD_States512Startup=0;
     for(const auto& s:Signatures){image[s.rva]^=1;assert(!Supported());image[s.rva]^=1;}
     assert(MH_Initialize()==MH_OK);
     void* conflict=nullptr;assert(MH_CreateHook(image+0xdd7d0,reinterpret_cast<void*>(Nothing),&conflict)==MH_OK);

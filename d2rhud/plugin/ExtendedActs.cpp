@@ -147,6 +147,28 @@ size_t Column(const Rows& table,const char* name) {
 enum class Config {Disabled,Enabled,Invalid,NeedsText};
 enum class DataGroup {All,Launch,Layouts};
 struct NeedsCompilation {};
+bool MatchesDataHash(const std::string& text,uint64_t expected){
+    auto hash=[](const std::string& bytes){return LegacyTransmog::Data::Hash({reinterpret_cast<const uint8_t*>(bytes.data()),bytes.size()});};
+    if(hash(text)==expected)return true;
+    // Git archives use LF while Windows checkouts can use CRLF. The manifest
+    // predates that conversion, so accept either newline encoding of the same
+    // bytes. Never ignore whitespace, BOMs or standalone carriage returns.
+    std::string lf;lf.reserve(text.size());
+    for(size_t i=0;i<text.size();++i){
+        if(text[i]=='\r'){
+            if(i+1<text.size() && text[i+1]=='\n')continue;
+            return false;
+        }
+        lf+=text[i];
+    }
+    if(hash(lf)==expected)return true;
+    std::string crlf;crlf.reserve(lf.size());
+    for(size_t i=0;i<lf.size();++i){
+        if(lf[i]=='\n')crlf+='\r';
+        crlf+=lf[i];
+    }
+    return hash(crlf)==expected;
+}
 void ValidateCompiledActs(const std::filesystem::path& data,uint64_t loadedActs,const std::array<int,9>& areas){
     auto read=[&](const char* name,size_t stride){
         std::ifstream input(data/"global/excel"/(std::string(name)+".bin"),std::ios::binary|std::ios::ate);
@@ -171,7 +193,6 @@ bool SelectData(const std::filesystem::path& data,const nlohmann::json& config,b
     struct Replacement {std::filesystem::path path;std::optional<std::string> before;std::string after;};
     std::vector<Replacement> replacements;
     auto read=[](const std::filesystem::path& path){std::ifstream f(path,std::ios::binary);if(!f){const auto name=path.u8string();throw std::runtime_error("Act VI data missing: "+std::string(reinterpret_cast<const char*>(name.data()),name.size()));}return std::string(std::istreambuf_iterator<char>(f),{});};
-    auto hash=[](const std::string& text){return LegacyTransmog::Data::Hash({reinterpret_cast<const uint8_t*>(text.data()),text.size()});};
     auto path=[&](const std::string& relative){auto p=std::filesystem::path(relative);if(p.is_absolute() || p.has_root_name())throw std::runtime_error("Invalid Act VI path");for(const auto& part:p)if(part=="..")throw std::runtime_error("Invalid Act VI path");return data/p;};
     std::set<std::string> layouts;
     if(config.contains("native_layouts"))for(const auto& name:config.at("native_layouts"))layouts.insert(name.get<std::string>());
@@ -192,7 +213,7 @@ bool SelectData(const std::filesystem::path& data,const nlohmann::json& config,b
             // rows. Monster/density/other ordinary edits remain byte-for-byte
             // on the active path instead of being replaced by an old snapshot.
             const auto six=read(path(file.at("enabled"))),five=read(path(file.at("disabled")));
-            if(hash(six)!=on || hash(five)!=off)throw std::runtime_error("Act VI template mismatch: "+relative);
+            if(!MatchesDataHash(six,on) || !MatchesDataHash(five,off))throw std::runtime_error("Act VI template mismatch: "+relative);
             const auto areas=config.at("levels").get<std::array<int,9>>();
             const auto archive=path("Pandemonium/ActVI/preserved-levels.txt");
             const std::optional<std::string> saved=enabled && std::filesystem::exists(archive)?std::optional<std::string>(read(archive)):std::nullopt;
@@ -206,7 +227,7 @@ bool SelectData(const std::filesystem::path& data,const nlohmann::json& config,b
         }
         if(relative=="local/lng/strings/levels.json" || relative=="local/lng/strings/quests.json") {
             const auto six=read(path(file.at("enabled"))),five=read(path(file.at("disabled")));
-            if(hash(six)!=on || hash(five)!=off)throw std::runtime_error("Act VI template mismatch: "+relative);
+            if(!MatchesDataHash(six,on) || !MatchesDataHash(five,off))throw std::runtime_error("Act VI template mismatch: "+relative);
             const auto archive=path("Pandemonium/ActVI/preserved-"+target.filename().string());
             const std::optional<std::string> saved=enabled && std::filesystem::exists(archive)?std::optional<std::string>(read(archive)):std::nullopt;
             const auto selected=StringEdits::Select(before,six,five,enabled,saved);
@@ -217,9 +238,9 @@ bool SelectData(const std::filesystem::path& data,const nlohmann::json& config,b
             if(before!=selected.text)replacements.push_back({target,before,selected.text});
             continue;
         }
-        if(hash(before)!=on && hash(before)!=off)throw std::runtime_error("Act VI target was edited: "+relative);
+        if(!MatchesDataHash(before,on) && !MatchesDataHash(before,off))throw std::runtime_error("Act VI target was edited: "+relative);
         const auto after=read(path(file.at(enabled?"enabled":"disabled")));
-        if(hash(after)!=(enabled?on:off))throw std::runtime_error("Act VI template mismatch: "+relative);
+        if(!MatchesDataHash(after,enabled?on:off))throw std::runtime_error("Act VI template mismatch: "+relative);
         if(before!=after)replacements.push_back({target,before,after});
     }
     auto write=[](const std::filesystem::path& target,const std::string& bytes){
@@ -238,7 +259,7 @@ bool SelectData(const std::filesystem::path& data,const nlohmann::json& config,b
     }
     return true;
 }
-Config ConfigureData(const std::filesystem::path& data,const nlohmann::json& config,bool want,bool txt,uint64_t loadedActs) {
+Config ConfigureRequiredData(const std::filesystem::path& data,const nlohmann::json& config,bool want,bool txt,uint64_t loadedActs) {
     requested=want;
     if(config.value("version",0)!=1 || !config.value("enabled",false))throw std::runtime_error("Act VI manifest is disabled or has an unsupported version");
     if(config.value("mod",std::string{})!="RMD-MP" || config.value("act",0)!=6 || config.value("first_waypoint",0)!=39)throw std::runtime_error("Act VI manifest identity is invalid");
@@ -290,6 +311,23 @@ Config ConfigureData(const std::filesystem::path& data,const nlohmann::json& con
     }
     return Config::Enabled;
 }
+Config OptionalDataFailure(bool want,bool txt,uint64_t loadedActs,const std::string& reason){
+    // A checkbox cannot turn six compiled acts back into five in this process.
+    // Those tables still require the complete native/UI integration to load.
+    // Conversely a saved preference cannot activate Act VI in a five-act BIN
+    // package. Its unused manifest must not prevent that game from starting.
+    if(loadedActs!=5 || (want && txt))throw std::runtime_error(reason);
+    configured=false;configuredManifest={};configuredData.clear();compileText=txt;pendingRestart=want;
+    ConfigurationMessage(std::string(want ?
+        "Act VI inactive: five-act BIN tables are loaded; the saved preference requires a six-act package. " :
+        "Act VI disabled. ")+"Five-act startup continues; optional Act VI data was not applied: "+reason);
+    return Config::Disabled;
+}
+Config ConfigureData(const std::filesystem::path& data,const nlohmann::json& config,bool want,bool txt,uint64_t loadedActs){
+    try{return ConfigureRequiredData(data,config,want,txt,loadedActs);}
+    catch(const NeedsCompilation&){if(loadedActs!=5 || (want && txt))throw;return OptionalDataFailure(want,txt,loadedActs,"Act VI data needs TXT compilation");}
+    catch(const std::exception& error){return OptionalDataFailure(want,txt,loadedActs,error.what());}
+}
 Config Configure() {
     std::lock_guard lock(selectionMutex);
     wchar_t exe[32768]{};char mod[128]{};SIZE_T n=0;
@@ -298,16 +336,33 @@ Config Configure() {
     mod[127]=0;std::string name=mod;std::transform(name.begin(),name.end(),name.begin(),[](unsigned char c){return char(tolower(c));});
     if(name!="rmd-mp")return Config::Disabled;
     const auto data=std::filesystem::path(exe).parent_path()/"Mods"/mod/(std::string(mod)+".mpq")/"data";
-    std::ifstream input(data/"Pandemonium/act6.json");if(!input)return Config::Disabled;
+    const auto loadedActs=Field<uint64_t>(At<void*>(0x1c9ea88));
+    requested=false;
+    configured=false;configuredManifest={};configuredData.clear();pendingRestart=false;
+    int argc=0;auto argv=CommandLineToArgvW(GetCommandLineW(),&argc);bool txt=false;
+    if(argv){for(int i=1;i<argc;++i)if(!_wcsicmp(argv[i],L"-txt"))txt=true;LocalFree(argv);}
+    const auto parse=[](std::ifstream& input,const std::filesystem::path& path,bool comments=false){
+        try{return nlohmann::json::parse(input,nullptr,true,comments);}
+        catch(const nlohmann::json::exception& error){
+            const auto name=path.u8string();
+            throw std::runtime_error("Invalid JSON in "+std::string(reinterpret_cast<const char*>(name.data()),name.size())+": "+error.what());
+        }
+    };
     try {
-        const auto config=nlohmann::json::parse(input);
-        std::ifstream preferences(std::filesystem::current_path()/("HUDConfig_"+std::string(mod)+".json"));
-        if(preferences)requested=nlohmann::json::parse(preferences,nullptr,true,true).value("ActVI",false);
-        int argc=0;auto argv=CommandLineToArgvW(GetCommandLineW(),&argc);bool txt=false;
-        if(argv){for(int i=1;i<argc;++i)if(!_wcsicmp(argv[i],L"-txt"))txt=true;LocalFree(argv);}
-        return ConfigureData(data,config,requested.load(),txt,Field<uint64_t>(At<void*>(0x1c9ea88)));
+        const auto preferencesPath=std::filesystem::current_path()/("HUDConfig_"+std::string(mod)+".json");
+        std::ifstream preferences(preferencesPath,std::ios::binary);
+        if(preferences)requested=parse(preferences,preferencesPath,true).value("ActVI",false);
+        const auto manifest=data/"Pandemonium/act6.json";
+        std::ifstream input(manifest,std::ios::binary);
+        if(!input)throw std::runtime_error("Missing Act VI manifest: Pandemonium/act6.json");
+        const auto config=parse(input,manifest);
+        return ConfigureData(data,config,requested.load(),txt,loadedActs);
     }catch(const NeedsCompilation&){return Config::NeedsText;}
-    catch(const std::exception& error){ConfigurationMessage(std::string("Act VI unavailable: ")+error.what());return Config::Invalid;}
+    catch(const std::exception& error){
+        if(loadedActs==5 && (!requested.load() || !txt))return OptionalDataFailure(requested.load(),txt,loadedActs,error.what());
+        ConfigurationMessage("Act VI unavailable (requested="+std::string(requested.load()?"on":"off")+
+            ", loaded acts="+std::to_string(loadedActs)+", TXT="+(txt?"on":"off")+"): "+error.what());return Config::Invalid;
+    }
 }
 bool Supported() {
     for(const auto& signature:Contracts::Signatures){

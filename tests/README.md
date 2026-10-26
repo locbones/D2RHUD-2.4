@@ -43,6 +43,17 @@ Whirlwind, extended tables/classes/acts, and native compatibility guards.
 Native fixtures use private executable mappings and bounded engine stubs;
 they do not replace live gameplay and multiplayer checks.
 
+Act VI startup tests call the production `Install` and `Configure` entry points
+with real files, including `"enabled": True`, `False`, truncated manifests,
+missing manifests and malformed preferences. Cases cover both preferences,
+five/six/unknown loaded acts and BIN/TXT launches. Five-act BIN games tolerate
+unused optional-data errors, while requested TXT/loaded-six-act validation stays
+strict. Files are preserved. The full startup/switching fixture also runs with GitHub LF line
+endings against the original Windows manifest hashes; content edits still fail.
+Startup-loader tests verify feature-specific rejection reasons,
+initialization-stage timeouts, diagnostic exports and older-DLL fallback. A
+BIN-only Act VI fixture skips the separate TXT package-authoring check.
+
 The `generate-*.py` scripts regenerate native compatibility headers from a
 matching executable. These tools require Python with `pefile` and `capstone`.
 Keep the generated headers in source control: they are build inputs, unlike

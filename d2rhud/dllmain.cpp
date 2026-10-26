@@ -43,7 +43,7 @@ void UninstallWndProcHook();
 
 // Capture installation failures before play, including native patches from
 // other components. This report is local and replaced on each game launch.
-static void WriteFeatureStatus(HMODULE hud) {
+static void WriteFeatureStatus(HMODULE hud,const std::string& startupFailure) {
     try {
         wchar_t local[32768]{}, gamePath[32768]{}, hudPath[32768]{};
         const auto size = GetEnvironmentVariableW(L"LOCALAPPDATA", local, 32768);
@@ -62,7 +62,9 @@ static void WriteFeatureStatus(HMODULE hud) {
         report << "D2RHUD build: " << __DATE__ << ' ' << __TIME__ << '\n'
             << "Game: " << utf8(gamePath) << '\n'
             << "HUD: " << utf8(hudPath) << '\n'
+            << "Startup result: " << (startupFailure.empty()?"ready":startupFailure) << '\n'
             << "State-table compatibility: " << States512::Status() << '\n'
+            << "Extended classes / Warlock: " << ExtendedClasses::Status() << '\n'
             << "TXT/BIN table metadata: " << CompiledNames::Status() << '\n'
             << "Automatic table metadata export: " << TableMetadataExport::Status() << '\n'
             << "Right-click item conversion: " << LegacyTransmog::Status() << '\n'
@@ -101,6 +103,20 @@ static void WriteFeatureStatus(HMODULE hud) {
     } catch (...) { OutputDebugStringA("D2RHUD: feature installation report could not be written.\n"); }
 }
 
+static void CompleteHudStartup(HMODULE hud,bool states,bool classes,bool acts){
+    uint32_t failed=0;std::string detail;
+    const auto add=[&](uint32_t feature,const char* reason){
+        failed|=feature;if(!detail.empty())detail+="; ";detail+=reason;
+    };
+    if(!states)add(StartupDiagnostics::States,States512::Status());
+    if(!classes)add(StartupDiagnostics::Classes,ExtendedClasses::Status());
+    if(!acts)add(StartupDiagnostics::Acts,ExtendedActs::Status());
+    // The helper can terminate a rejected process immediately. Close the fresh
+    // disk report before publishing either terminal readiness value.
+    WriteFeatureStatus(hud,detail);
+    States512::FinishStartup(failed==0,failed,detail.c_str());
+}
+
 DWORD WINAPI CreateConsole(LPVOID lParam) {
 #ifndef NDEBUG
     AllocConsole();
@@ -116,7 +132,10 @@ DWORD WINAPI AttachThread(LPVOID lParam) {
     CrashDiagnostics::Initialize();
     HMODULE hModule = static_cast<HMODULE>(lParam);
     D3D12::SetDllModule(hModule);
+    States512::StartupStage(StartupDiagnostics::Stage::States);
     const bool statesReady=States512::Install(false);
+    if(!statesReady){CompleteHudStartup(hModule,false,true,true);return 0;}
+    States512::StartupStage(StartupDiagnostics::Stage::Core);
     D2Ptrs::Initialize();
     wchar_t exe[32768]{};char selectedMod[128]{};SIZE_T selectedRead=0;
     if(GetModuleFileNameW(nullptr,exe,32768) && ReadProcessMemory(GetCurrentProcess(),reinterpret_cast<void*>(Pattern::Address(0x1bf084f)),selectedMod,sizeof(selectedMod),&selectedRead)){
@@ -142,13 +161,16 @@ DWORD WINAPI AttachThread(LPVOID lParam) {
     HellSpindle::Install();
     // Class storage must be widened before the suspended table loader resumes.
     // Install after features that verify the original player allocator bytes.
+    States512::StartupStage(StartupDiagnostics::Stage::Classes);
     const bool classesReady=ExtendedClasses::Install();
+    States512::StartupStage(StartupDiagnostics::Stage::Acts);
     const bool actsReady=ExtendedActs::Install();
     // Whirlwind verifies the original UI-open bytes before these UI detours.
+    States512::StartupStage(StartupDiagnostics::Stage::QuestUI);
     QuestJournal::ClientUI::Install();
+    States512::StartupStage(StartupDiagnostics::Stage::Metadata);
     if(statesReady && classesReady && actsReady && exe[0])TableMetadataExport::Start(std::filesystem::path(exe).parent_path(),selectedMod);
-    States512::FinishStartup(statesReady && classesReady && actsReady);
-    WriteFeatureStatus(hModule);
+    CompleteHudStartup(hModule,statesReady,classesReady,actsReady);
     if(!statesReady || !classesReady || !actsReady)return 0;
     LegacyTransmog::Skin::Load();
     if (D3D12::Init() == D3D12::Status::Success) {

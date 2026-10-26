@@ -140,6 +140,7 @@
     <ClInclude Include="d2\json.hpp" />
     <ClInclude Include="resource.h" />
     <ClInclude Include="Version.h" />
+    <ClInclude Include="StartupDiagnostics.h" />
     <ClInclude Include="plugin\FloatingDamage.h" />
     <ClInclude Include="plugin\BuffIcons.h" />
     <ClInclude Include="plugin\StatRanges.h" />

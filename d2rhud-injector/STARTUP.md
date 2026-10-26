@@ -8,8 +8,25 @@ Run `Pandemonium.HudLoader.exe` with the D2R installation as its working directo
 and pass the usual game arguments, e.g. `-mod RMD-MP -txt`. Pandemonium launchers
 can use this helper in place of their bundled helper; the existing binary memory
 plan protocol and progress messages are retained. The source is shared with
-Pandemonium's `CrossPlatform/native` integration; keep its three native source
-files synchronized when updating that launcher.
+Pandemonium's `CrossPlatform/native` integration; keep its native source files
+and the shared `d2rhud/StartupDiagnostics.h` ABI synchronized when updating that
+launcher, preserving the header's relative include path.
+
+Updated helpers identify rejected startup features (extended states, extended
+classes/Warlock, or Act VI) and include their failure reason. Timeouts identify
+the last initialization stage. The HUD writes `feature-status.txt` before
+publishing readiness or rejection, and includes the class/Warlock status.
+Distribute both the updated DLL and helper to get these error messages; older
+helpers remain compatible but retain their generic startup errors.
+
+With five acts loaded from BINs, missing, edited or malformed optional Act VI
+files do not block startup, even if a saved Act VI preference is on. That
+preference cannot activate a sixth act without matching compiled tables. With
+`-txt`, an enabled Act VI request still requires valid preparation data. Six-act
+games always require the complete integration, even with the preference off.
+The status report records ignored optional-data errors. JSON parsing errors
+identify the file being read; startup rejections also record the requested mode,
+loaded act count and `-txt` mode. No malformed JSON is silently rewritten.
 
 For HUDs exporting `D2RHUD_States512Startup`, the helper creates only its own new
 game suspended, verifies the native state loader, and arms a temporary two-byte

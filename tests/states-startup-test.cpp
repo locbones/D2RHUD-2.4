@@ -22,6 +22,8 @@ int wmain(int argc,wchar_t** argv) {
     assert(StatesStartup::ModuleSnapshot(GetCurrentProcessId(),0,TransientSnapshot)==INVALID_HANDLE_VALUE && snapshotCalls==1 && GetLastError()==ERROR_BAD_LENGTH);
     assert(StatesStartup::ReadyExportRva(argv[1])==0);
     const auto exportRva=StatesStartup::ReadyExportRva(argv[2]);assert(exportRva);
+    assert(!StatesStartup::DiagnosticsExportRva(argv[1]) && StatesStartup::DiagnosticsExportRva(argv[2]));
+    assert(!StatesStartup::ExportRva(argv[2],"D2RHUD_NonexistentExport"));
     std::ifstream input(std::filesystem::path(argv[1]),std::ios::binary|std::ios::ate);assert(input);
     std::vector<uint8_t> file(size_t(input.tellg()));input.seekg(0);input.read(reinterpret_cast<char*>(file.data()),file.size());assert(input);
     auto dos=reinterpret_cast<const IMAGE_DOS_HEADER*>(file.data());auto nt=reinterpret_cast<const IMAGE_NT_HEADERS64*>(file.data()+dos->e_lfanew);
@@ -29,6 +31,28 @@ int wmain(int argc,wchar_t** argv) {
     const auto sections=IMAGE_FIRST_SECTION(nt);
     for(unsigned i=0;i<nt->FileHeader.NumberOfSections;++i)memcpy(image+sections[i].VirtualAddress,file.data()+sections[i].PointerToRawData,sections[i].SizeOfRawData);
     const auto process=GetCurrentProcess();const auto base=reinterpret_cast<uintptr_t>(image);
+    StartupDiagnostics::Report diagnostic;
+    const auto diagnosticBase=reinterpret_cast<uintptr_t>(&diagnostic)-4;
+    for(uint32_t feature:{StartupDiagnostics::States,StartupDiagnostics::Classes,StartupDiagnostics::Acts}){
+        diagnostic.failedFeatures=feature;diagnostic.stage=uint32_t(StartupDiagnostics::Stage::Rejected);
+        const char* detail=feature==StartupDiagnostics::Acts?"Act VI target was edited: global/ui/layouts/controller/questlogpanelexpansionhd.json":"exact initialization failure";
+        strcpy_s(diagnostic.detail,detail);
+        const auto error=StatesStartup::StartupErrorMessage(process,diagnosticBase,4,ERROR_DLL_INIT_FAILED);
+        const auto name=feature==StartupDiagnostics::Acts?"Act VI":feature==StartupDiagnostics::Classes?"Warlock":"extended states";
+        assert(error.find(name)!=std::string::npos && error.find(detail)!=std::string::npos);
+    }
+    diagnostic.failedFeatures=StartupDiagnostics::States|StartupDiagnostics::Classes|StartupDiagnostics::Acts;
+    auto error=StatesStartup::StartupErrorMessage(process,diagnosticBase,4,ERROR_DLL_INIT_FAILED);
+    assert(error.find("extended states")!=std::string::npos && error.find("Warlock")!=std::string::npos && error.find("Act VI")!=std::string::npos);
+    diagnostic.stage=uint32_t(StartupDiagnostics::Stage::Acts);
+    assert(StatesStartup::StartupErrorMessage(process,diagnosticBase,4,ERROR_TIMEOUT).find("timed out while initializing Act VI")!=std::string::npos);
+    assert(StatesStartup::StartupErrorMessage(process,diagnosticBase,4,ERROR_PROCESS_ABORTED).find("exited while initializing Act VI")!=std::string::npos);
+    // Older DLLs have no diagnostics export; malformed records never leak a
+    // guessed feature name or cause an unbounded remote-memory read.
+    const auto fallback=StatesStartup::StartupErrorMessage(process,diagnosticBase,0,ERROR_DLL_INIT_FAILED);
+    assert(fallback.find("feature-status.txt")!=std::string::npos);
+    for(unsigned field=0;field<6;++field){auto saved=diagnostic;switch(field){case 0:diagnostic.magic=0;break;case 1:diagnostic.version=99;break;case 2:diagnostic.size=1;break;case 3:diagnostic.failedFeatures=128;break;case 4:diagnostic.stage=999;break;default:memset(diagnostic.detail,'x',sizeof(diagnostic.detail));}
+        assert(StatesStartup::StartupErrorMessage(process,diagnosticBase,4,ERROR_DLL_INIT_FAILED)==fallback);diagnostic=saved;}
     image[StatesStartup::LoaderRva]^=1;assert(!StatesStartup::Arm(process,base));image[StatesStartup::LoaderRva]^=1;
     assert(!memcmp(image+StatesStartup::CheckRva,StatesStartup::Original.data(),7));
     const auto originalLoader=std::vector<uint8_t>(image+StatesStartup::LoaderRva,image+StatesStartup::LoaderRva+StatesStartup::LoaderSize);
@@ -79,5 +103,6 @@ int wmain(int argc,wchar_t** argv) {
     SetLastError(ERROR_SUCCESS);ready=0;assert(!StatesStartup::WaitReady(process,reinterpret_cast<uintptr_t>(&ready)-4,4,10)&&GetLastError()==ERROR_TIMEOUT);
     SetLastError(ERROR_SUCCESS);ready=2;assert(!StatesStartup::WaitReady(process,reinterpret_cast<uintptr_t>(&ready)-4,4,10)&&GetLastError()==ERROR_DLL_INIT_FAILED);
     VirtualFree(image,0,MEM_RELEASE);
+    std::cout<<"Startup feature/reason reporting, stage-specific timeout errors, older-DLL fallback and malformed diagnostics rejection passed.\n";
     std::cout<<"Startup export/signature validation, native and worker loading gates for 1/255/256/259/512 rows, 513-row rejection, instruction restoration and explicit timeout/readiness errors passed.\n";
 }

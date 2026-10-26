@@ -65,6 +65,12 @@ Press **F12** to open the HUD, or change **Open HUD Menu** under the game's
 **Options > Controls**. Settings save per mod or character as appropriate.
 Installation diagnostics are written to
 `%LOCALAPPDATA%\D2RHUD\feature-status.txt`.
+Startup errors name the failed feature and its reason when using the matching
+updated helper and DLL. Optional Act VI data issues do not block five-act BIN
+games, including a saved Act VI preference that cannot activate with those BINs.
+Six-act packages and requested TXT preparation still require valid Act VI data.
+Act VI validation accepts both
+GitHub LF and Windows CRLF line endings while checking file contents.
 
 ## Source and publishing
 

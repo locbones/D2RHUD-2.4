@@ -87,20 +87,83 @@ void DataTests(){
     assert(restored=="original\r\n");
     put("actinfo.txt","user edit");bool rejected=false;
     try{SelectData(root,config,true);}catch(...){rejected=true;}assert(rejected);
+    // Reproduce GitHub archive LF bytes against Windows CRLF manifest hashes,
+    // and the inverse checkout conversion. Exercise both active and templates.
+    for(bool manifestCRLF:{false,true})for(bool activeCRLF:{false,true})for(bool templateCRLF:{false,true}){
+        config["switch_files"][0]["enabled_hash"]=hash(manifestCRLF?"six\r\n":"six\n");
+        config["switch_files"][0]["disabled_hash"]=hash(manifestCRLF?"original\r\n":"original\n");
+        put("actinfo.txt",activeCRLF?"original\r\n":"original\n");
+        put("six.txt",templateCRLF?"six\r\n":"six\n");
+        put("five.txt",templateCRLF?"original\r\n":"original\n");
+        assert(SelectData(root,config,true));assert(SelectData(root,config,false));
+        for(const char* invalid:{"original \n","original\n\n","original\r","original\r\r\n","\xef\xbb\xbforiginal\n"}){
+            put("actinfo.txt",invalid);rejected=false;
+            try{SelectData(root,config,true);}catch(...){rejected=true;}assert(rejected);
+        }
+        put("actinfo.txt",activeCRLF?"original\r\n":"original\n");put("six.txt","six \n");
+        rejected=false;try{SelectData(root,config,true);}catch(...){rejected=true;}assert(rejected);
+    }
     for(const char* name:{"actinfo.txt","six.txt","five.txt"})std::filesystem::remove(root/name);
     std::filesystem::remove(root);
 }
 #include "act6-level-edits-test.inl"
 #include "act6-string-edits-test.inl"
-void StartupDataTests(const char* sourcePath){
+void FileConfigurationTests(bool txt){
+    using namespace ExtendedActs;
+    wchar_t executable[32768]{};assert(GetModuleFileNameW(nullptr,executable,DWORD(std::size(executable))));
+    const auto exeDirectory=std::filesystem::canonical(std::filesystem::path(executable).parent_path());
+    const auto temp=std::filesystem::canonical(std::filesystem::temp_directory_path());
+    assert(exeDirectory.parent_path()==temp); // Never create fixtures beside a real game.
+    const auto fixture=exeDirectory/"Mods";
+    assert(!std::filesystem::exists(fixture));
+    const auto data=fixture/"RMD-MP/RMD-MP.mpq/data";
+    std::filesystem::create_directories(data/"Pandemonium");
+    const auto manifest=data/"Pandemonium/act6.json",preferences=data/"HUDConfig_RMD-MP.json";
+    const auto previousDirectory=std::filesystem::current_path();std::filesystem::current_path(data);
+    char mod[128]="RMD-MP";uint64_t count=5;
+    bindings={{0x1bf084f,reinterpret_cast<uintptr_t>(mod)},{0x1c9ea88,reinterpret_cast<uintptr_t>(&count)}};
+    auto put=[](const std::filesystem::path& path,const std::string& text){std::ofstream f(path,std::ios::binary);f<<text;f.close();assert(f);};
+    auto read=[](const std::filesystem::path& path){std::ifstream f(path,std::ios::binary);return std::string(std::istreambuf_iterator<char>(f),{});};
+    // Exercise the production Install -> Configure -> file parse path, rather
+    // than passing an already-parsed JSON object straight to ConfigureData.
+    for(bool want:{true,false})for(uint64_t loaded:{5,6,0}){
+        count=loaded;const auto prefs=std::string("{\"ActVI\":")+(want?"true}":"false}");put(preferences,prefs);
+        for(const std::string malformed:{"{\n  \"version\": 1,\n  \"enabled\": True\n}","{\n  \"version\": 1,\n  \"enabled\": False\n}","{\"enabled\":"}){
+            put(manifest,malformed);const bool expected=loaded==5 && (!want || !txt);
+            const bool result=Install();
+            if(result!=expected)std::cerr<<"File startup mismatch: requested="<<want<<", TXT="<<txt<<", loaded acts="<<loaded<<", status="<<Status()<<std::endl;
+            assert(result==expected && !Active() && !configured);
+            assert(read(manifest)==malformed && read(preferences)==prefs);
+            assert(std::string(Status()).find("act6.json")!=std::string::npos);
+        }
+        std::filesystem::remove(manifest);const bool expected=loaded==5 && (!want || !txt);
+        assert(Install()==expected && !Active() && !configured);
+    }
+    for(uint64_t loaded:{5,6}){
+        count=loaded;const std::string invalid="{\"ActVI\": True}";put(preferences,invalid);put(manifest,"{}");
+        assert(Install()==(loaded==5) && !Active() && !configured);
+        assert(std::string(Status()).find("HUDConfig_RMD-MP.json")!=std::string::npos && read(preferences)==invalid);
+    }
+    bindings.clear();std::filesystem::current_path(previousDirectory);
+    assert(fixture.parent_path()==exeDirectory && exeDirectory.parent_path()==temp);
+    std::filesystem::remove_all(fixture);
+    std::cout<<"Production file startup: malformed/missing manifests and malformed preferences; requested on/off, five/six/unknown acts, TXT="<<txt<<" passed.\n";
+}
+void StartupDataTests(const char* sourcePath,bool gitLineEndings=false){
     using namespace ExtendedActs;
     const auto source=std::filesystem::absolute(sourcePath);
     std::ifstream manifest(source/"Pandemonium/act6.json");assert(manifest);
     const auto config=nlohmann::json::parse(manifest);
     const auto temp=std::filesystem::canonical(std::filesystem::temp_directory_path());
-    const auto data=temp/("act6-startup-test-"+std::to_string(GetCurrentProcessId()));
+    const auto data=temp/("act6-startup-test-"+std::to_string(GetCurrentProcessId())+(gitLineEndings?"-lf":"-native"));
     assert(!std::filesystem::exists(data));std::filesystem::create_directory(data);
-    auto copy=[&](const std::string& from,const std::string& to){const auto destination=data/to;std::filesystem::create_directories(destination.parent_path());std::filesystem::copy_file(source/from,destination);};
+    auto copy=[&](const std::string& from,const std::string& to){
+        const auto destination=data/to;std::filesystem::create_directories(destination.parent_path());
+        if(!gitLineEndings){std::filesystem::copy_file(source/from,destination);return;}
+        std::ifstream input(source/from,std::ios::binary);assert(input);
+        std::string bytes(std::istreambuf_iterator<char>(input),{});std::erase(bytes,'\r');
+        std::ofstream(destination,std::ios::binary)<<bytes;
+    };
     for(const auto& file:config["switch_files"]){
         copy(file["enabled"],file["enabled"]);copy(file["disabled"],file["disabled"]);copy(file["disabled"],file["path"]);
     }
@@ -110,13 +173,32 @@ void StartupDataTests(const char* sourcePath){
             const bool enabled=layouts.contains(f["path"].get<std::string>())?layout:launch;
             std::ifstream input(data/f["path"].get<std::string>(),std::ios::binary);
             std::string text(std::istreambuf_iterator<char>(input),{});
-            const auto hash=LegacyTransmog::Data::Hash({reinterpret_cast<const uint8_t*>(text.data()),text.size()});
-            assert(hash==f[enabled?"enabled_hash":"disabled_hash"].get<uint64_t>());
+            std::ifstream reference(data/f[enabled?"enabled":"disabled"].get<std::string>(),std::ios::binary);
+            assert(reference && text==std::string(std::istreambuf_iterator<char>(reference),{}));
         }
     };
     // Real injector order: ActInfo has compiled before the States gate. Its
     // ordinary five-act count must not prevent a disabled HUD from starting.
     assert(ConfigureData(data,config,false,true,5)==Config::Disabled);check(false,false);
+    // Reproduce Tim's edited controller layout. Disabled five-act startup
+    // preserves that file and continues, including BIN-only and -txt launches.
+    const auto controller=data/"global/ui/layouts/controller/questlogpanelexpansionhd.json";
+    auto read=[](const std::filesystem::path& p){std::ifstream f(p,std::ios::binary);return std::string(std::istreambuf_iterator<char>(f),{});};
+    const auto originalController=read(controller);const auto customController=originalController+"\n ";
+    {std::ofstream f(controller,std::ios::binary);f<<customController;}
+    for(bool txt:{false,true}){
+        assert(ConfigureData(data,config,false,txt,5)==Config::Disabled && !configured);
+        assert(read(controller)==customController && std::string(Status()).find("Five-act startup continues")!=std::string::npos);
+    }
+    bool editedRequired=false;try{ConfigureData(data,config,true,true,5);}catch(const std::exception& e){editedRequired=std::string(e.what()).find("controller/questlogpanelexpansionhd.json")!=std::string::npos;}
+    assert(editedRequired && read(controller)==customController);
+    {std::ofstream f(controller,std::ios::binary);f<<originalController;}
+    auto invalid=config;invalid["version"]=999;
+    assert(ConfigureData(data,invalid,false,false,5)==Config::Disabled);
+    assert(ConfigureData(data,invalid,true,false,5)==Config::Disabled && !configured && pendingRestart);
+    bool invalidRequired=false;try{ConfigureData(data,invalid,true,true,5);}catch(...){invalidRequired=true;}assert(invalidRequired);
+    invalidRequired=false;try{ConfigureData(data,invalid,false,false,6);}catch(...){invalidRequired=true;}assert(invalidRequired);
+    assert(ConfigureData(data,config,false,true,5)==Config::Disabled && configured);check(false,false);
     SetRequested(true);check(true,false); // Never expose six-tab files to this five-act process.
     assert(ConfigureData(data,config,true,true,6)==Config::Enabled && !pendingRestart);check(true,true);
     SetRequested(false);check(false,true); // Its six-act process keeps six-tab layouts until restart.
@@ -140,9 +222,10 @@ void StartupDataTests(const char* sourcePath){
     assert(ConfigureData(data,config,false,false,5)==Config::Disabled);
     assert(ConfigureData(data,config,true,false,5)==Config::Disabled && pendingRestart);
     const auto required=data/"global/ui/layouts/questlogpanelexpansionhd.json";
-    std::filesystem::rename(required,required.string()+".backup");bool missingRequired=false;
-    try{ConfigureData(data,config,false,false,5);}catch(const std::exception& e){missingRequired=std::string(e.what()).find("global/ui/layouts/questlogpanelexpansionhd.json")!=std::string::npos;}
-    assert(missingRequired);std::filesystem::rename(required.string()+".backup",required);
+    std::filesystem::rename(required,required.string()+".backup");
+    assert(ConfigureData(data,config,false,false,5)==Config::Disabled && !configured);
+    assert(ConfigureData(data,config,true,false,5)==Config::Disabled && !configured && pendingRestart);
+    std::filesystem::rename(required.string()+".backup",required);
     auto bin=[&](const char* name,size_t stride,uint32_t count){
         std::vector<uint8_t> bytes(4+size_t(count)*stride);memcpy(bytes.data(),&count,4);
         if(std::string(name)=="actinfo")for(uint32_t n=0;n<count;++n){const auto id=n+1;memcpy(bytes.data()+4+size_t(n)*stride,&id,4);}
@@ -150,8 +233,18 @@ void StartupDataTests(const char* sourcePath){
         std::ofstream file(data/"global/excel"/(std::string(name)+".bin"),std::ios::binary);file.write(reinterpret_cast<char*>(bytes.data()),bytes.size());
     };
     bin("actinfo",0x8c,6);bin("levels",0x184,249);
+    std::filesystem::rename(required,required.string()+".backup");
+    for(bool want:{false,true}){
+        bool missingRequired=false;try{ConfigureData(data,config,want,false,6);}catch(const std::exception& e){missingRequired=std::string(e.what()).find("global/ui/layouts/questlogpanelexpansionhd.json")!=std::string::npos;}
+        assert(missingRequired && !std::filesystem::exists(required));
+    }
+    std::filesystem::rename(required.string()+".backup",required);
     assert(ConfigureData(data,config,true,false,6)==Config::Enabled && !pendingRestart && !compileText);
     assert(ConfigureData(data,config,false,false,6)==Config::Enabled && pendingRestart);
+    const auto sixController=read(controller);
+    {std::ofstream f(controller,std::ios::binary);f<<sixController<<"\n ";}
+    for(bool want:{false,true}){bool badLayout=false;try{ConfigureData(data,config,want,false,6);}catch(const std::exception& e){badLayout=std::string(e.what()).find("controller/questlogpanelexpansionhd.json")!=std::string::npos;}assert(badLayout);}
+    {std::ofstream f(controller,std::ios::binary);f<<sixController;}
     bin("levels",0x184,248);bool bad=false;
     try{ConfigureData(data,config,true,false,6);}catch(...){bad=true;}assert(bad);
     bin("levels",0x184,249);bin("actinfo",0x8c,5);bad=false;
@@ -159,7 +252,9 @@ void StartupDataTests(const char* sourcePath){
     configured=false;configuredManifest={};configuredData.clear();
     assert(std::filesystem::canonical(data).parent_path()==temp && data.filename().string().starts_with("act6-startup-test-"));
     std::filesystem::remove_all(data);
+    std::cout<<"Five-act BIN startup preserves invalid optional data with either preference; requested TXT or loaded-six-act validation stays strict.\n";
     std::cout<<"Actual five/six-row startup snapshots, one-restart checkbox transitions and current-process layout isolation passed.\n";
+    if(gitLineEndings)std::cout<<"GitHub LF package with unchanged Windows manifest hashes passed all startup and switching checks.\n";
 }
 std::array<uint8_t,0x40> room{};
 std::array<uint8_t,0xa0> roomEx{};
@@ -279,8 +374,10 @@ void NativeInstallTests(const char* path){
     VirtualFree(image,0,MEM_RELEASE);fixtureBase=0;
 }
 int main(int argc,char** argv){
+    if(argc>1 && std::string(argv[1])=="--file-config-test"){FileConfigurationTests(argc>2 && std::string(argv[2])=="-txt");return 0;}
+    FileConfigurationTests(false);
     ProgressTests();TransitionTests();DataTests();TickTests();ExitTests();
-    if(argc>2 && argv[2][0])StartupDataTests(argv[2]);
+    if(argc>2 && argv[2][0]){StartupDataTests(argv[2]);StartupDataTests(argv[2],true);}
     if(argc>1)NativeInstallTests(argv[1]);
     std::cout<<"Act VI difficulty progression, credits identity/timeout guards, data switching and native install/rollback passed.\n";
     return 0;

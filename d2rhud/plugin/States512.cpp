@@ -11,6 +11,7 @@
 // Startup-loader ABI: 0 = initializing, 1 = all hooks ready, 2 = rejected.
 // The launcher reads this exported DWORD while the table-loader thread is held.
 extern "C" { __declspec(dllexport) volatile LONG D2RHUD_States512Startup = 0; }
+extern "C" { __declspec(dllexport) StartupDiagnostics::Report D2RHUD_StartupDiagnostics; }
 
 namespace States512 {
 namespace {
@@ -201,7 +202,19 @@ int64_t __fastcall On(uint8_t* p){return Receive(p,originalOn,0);}
 int64_t __fastcall Stats(uint8_t* p){return Receive(p,originalStats,0x100);}
 int64_t __fastcall Off(uint8_t* p){return Receive(p,originalOff,0x400);}
 }
-void FinishStartup(bool success){InterlockedExchange(&D2RHUD_States512Startup,success?1:2);}
+void StartupStage(StartupDiagnostics::Stage stage){
+    InterlockedExchange(reinterpret_cast<volatile LONG*>(&D2RHUD_StartupDiagnostics.stage),LONG(stage));
+}
+void FinishStartup(bool success,uint32_t failedFeatures,const char* detail){
+    D2RHUD_StartupDiagnostics.failedFeatures=success?0:failedFeatures;
+    const size_t length=detail?(std::min)(strlen(detail),sizeof(D2RHUD_StartupDiagnostics.detail)-1):0;
+    memset(D2RHUD_StartupDiagnostics.detail,0,sizeof(D2RHUD_StartupDiagnostics.detail));
+    if(length)memcpy(D2RHUD_StartupDiagnostics.detail,detail,length);
+    StartupStage(success?StartupDiagnostics::Stage::Ready:StartupDiagnostics::Stage::Rejected);
+    // Publish the terminal flag last: the loader may stop the process as soon
+    // as it sees rejection, so both diagnostics and the disk report must exist.
+    InterlockedExchange(&D2RHUD_States512Startup,success?1:2);
+}
 bool Install(bool publishReady){
     if(installed.load())return true;
     uint64_t rows=0;
@@ -209,9 +222,9 @@ bool Install(bool publishReady){
         status="Native state compatibility: 255 rows or fewer; extended-state patches are not needed.";
         if(publishReady)FinishStartup(true);return true;
     }
-    if(!Supported()){status="Extended states unavailable: executable signature mismatch.";InterlockedExchange(&D2RHUD_States512Startup,2);return false;}
-    if(!BuildReceivers()){status="Extended states unavailable: native receiver relocation failed.";InterlockedExchange(&D2RHUD_States512Startup,2);return false;}
-    const auto init=MH_Initialize();if(init!=MH_OK && init!=MH_ERROR_ALREADY_INITIALIZED){InterlockedExchange(&D2RHUD_States512Startup,2);return false;}
+    if(!Supported()){status="Extended states unavailable: executable signature mismatch.";if(publishReady)FinishStartup(false,StartupDiagnostics::States,status.load());return false;}
+    if(!BuildReceivers()){status="Extended states unavailable: native receiver relocation failed.";if(publishReady)FinishStartup(false,StartupDiagnostics::States,status.load());return false;}
+    const auto init=MH_Initialize();if(init!=MH_OK && init!=MH_ERROR_ALREADY_INITIALIZED){status="Extended states unavailable: hook initialization failed.";if(publishReady)FinishStartup(false,StartupDiagnostics::States,status.load());return false;}
     void* replacements[]{reinterpret_cast<void*>(SendAll),reinterpret_cast<void*>(SendUpdates),reinterpret_cast<void*>(On),reinterpret_cast<void*>(Stats),reinterpret_cast<void*>(Off),reinterpret_cast<void*>(RemoveCurable)};
     void** originals[]{reinterpret_cast<void**>(&originalAll),reinterpret_cast<void**>(&originalUpdates),reinterpret_cast<void**>(&originalOn),reinterpret_cast<void**>(&originalStats),reinterpret_cast<void**>(&originalOff),reinterpret_cast<void**>(&originalRemove)};
     size_t created=0;for(;created<Hooks.size();++created)if(MH_CreateHook(Native<void*>(Hooks[created]),replacements[created],originals[created])!=MH_OK)break;
@@ -226,7 +239,7 @@ bool Install(bool publishReady){
     }
     for(size_t i=0;i<created;++i)MH_QueueDisableHook(Native<void*>(Hooks[i]));MH_ApplyQueued();
     for(size_t i=0;i<created;++i)MH_RemoveHook(Native<void*>(Hooks[i]));
-    status="Extended states could not be installed; the native limit was retained.";InterlockedExchange(&D2RHUD_States512Startup,2);return false;
+    status="Extended states could not be installed; the native limit was retained.";if(publishReady)FinishStartup(false,StartupDiagnostics::States,status.load());return false;
 }
 void Uninstall(){
     // Changing table width with a live character requires a game restart.
