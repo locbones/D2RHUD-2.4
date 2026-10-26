@@ -1,4 +1,5 @@
 #include "StatRanges.h"
+#include "SettingsUI.h"
 #include "StatRangesData.h"
 #include "TooltipText.h"
 #include "GameAssets.h"
@@ -551,42 +552,5 @@ void SaveToJson(nlohmann::ordered_json& root) {
         { "Format", ValidRangeFormat(config.format) ? config.format : DefaultRangeFormat },
         { "Color", { config.color.x, config.color.y, config.color.z, config.color.w } } };
 }
-void DrawSettingsPanel(float scale) {
-    int mode = config.hotkey ? 1 : 0;
-    if (ImGui::Combo("Operation mode", &mode, "Toggle (always on/off)\0Hotkey\0")) { config.hotkey = mode == 1; ResetActivation(); }
-    if (!config.hotkey) ImGui::Checkbox("Show stat ranges", &config.enabled);
-    else {
-        int behavior = config.hold ? 1 : 0;
-        if (ImGui::Combo("Hotkey behavior", &behavior, "Toggle on each press\0Hold to show\0")) { config.hold = behavior == 1; ResetActivation(); }
-        ImGui::TextWrapped("Assign Show Stat Ranges in Hotkey Controls. Hotkey toggle starts off when you enter a game.");
-        ImGui::TextWrapped("Real item tooltips preview ranges while this panel is open. The preview does not change your hotkey toggle state.");
-    }
-    ImGui::Separator();
-    ImGui::Checkbox("Show fixed rolls (min equals max)", &config.fixed);
-    ImGui::ColorEdit4("Range text color", &config.color.x, ImGuiColorEditFlags_AlphaBar);
-    ImGui::SliderFloat("Range text size", &config.size, 8, 40, "%.0f px");
-    ImGui::SliderFloat("Spacing from stat", &config.spacing, 0, 100, "%.0f px");
-    ImGui::InputText("Range format", config.format, sizeof(config.format));
-    ImGui::TextWrapped("First %%d = minimum, second %%d = maximum. Use %%%% for a percent sign. Example: Min: %%d, Max: %%d");
-    if (!ValidRangeFormat(config.format)) ImGui::TextWrapped("Use exactly two %%d placeholders on one line. Preview and saving use [%%d-%%d] until the format is valid.");
-    if (ImGui::Button("Reset format")) strcpy_s(config.format, DefaultRangeFormat);
-    ImGui::TextWrapped("Text size and spacing follow the HUD's resolution scaling.");
-    ImGui::Separator();
-    ImGui::TextUnformatted("Preview");
-    ImGui::TextUnformatted("+25 to Strength"); ImGui::SameLine(0, config.spacing * scale);
-    auto pos = ImGui::GetCursorScreenPos();
-    auto font = ImGui::GetFont(); const float size = config.size * scale;
-    const auto preview = FormatAnnotation({"[20-30]", true, {{20,30}}}, config.format);
-    auto extent = font->CalcTextSizeA(size, FLT_MAX, 0, preview.c_str());
-    ImGui::GetWindowDrawList()->AddText(font, size, pos, ImGui::ColorConvertFloat4ToU32(config.color), preview.c_str());
-    ImGui::Dummy(extent);
-    ImGui::Spacing();
-    ImGui::TextWrapped("Ranges use this item's unique/set properties and its actual affix IDs. Multiple contributions to the same stat and skill are added together. Set bonuses are handled as separate lines.");
-    ImGui::TextWrapped("Ranges show possible rolls for these properties. Combined damage lines format each roll range separately, separated by /.");
-    ImGui::Spacing(); ImGui::TextWrapped("%s", status.c_str());
-    if(ImGui::Button("Save diagnostic report"))SaveDiagnosticReport();
-    ImGui::TextWrapped("Hover an identified item with ranges enabled, then save this report to diagnose missing ranges.");
-    if(!diagnosticFile.empty())ImGui::TextWrapped("%s",diagnosticFile.c_str());
-    ImGui::TextWrapped("%s", TooltipText::LimitsExtended() ? "Extended stat descriptions: 16,384 bytes." : "Native stat descriptions: 1,024 bytes (extension unavailable for this executable).");
-}
+#include "StatRangesUI.inl"
 }

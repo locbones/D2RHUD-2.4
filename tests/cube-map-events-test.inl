@@ -59,6 +59,11 @@ void EventSynchronization(){
     run.event=Event::GoblinGrotto;run.eventPhase=EventPhase::Active;run.phase=Phase::Running;run.level=39;run.eventStarted=game->dwGameFrame;run.census.ready=run.census.entered=true;run.census.Observe(1,false);
     game->dwGameFrame+=1499;assert(!ProcessEvent(game,run,state) && run.eventPhase==EventPhase::Active);
     ++game->dwGameFrame;assert(!ProcessEvent(game,run,state) && run.eventPhase==EventPhase::Returning && run.timedOut && !run.success && run.returning==std::set<uint32_t>({55,56}) && run.rewards.empty());
+    // Trial's requested five-minute duration uses the same authoritative deadline.
+    run.event=Event::Trial;run.eventPhase=EventPhase::Active;run.phase=Phase::Running;run.timedOut=false;run.eventStarted=game->dwGameFrame;
+    assert(Info(Event::Trial).seconds==300);
+    game->dwGameFrame+=7499;assert(!ProcessEvent(game,run,state) && run.eventPhase==EventPhase::Active);
+    ++game->dwGameFrame;assert(!ProcessEvent(game,run,state) && run.eventPhase==EventPhase::Returning && run.timedOut && !run.success);
     game->pClientList=nullptr;assert(ProcessEvent(game,run,state) && !state.run);
     games.clear();populationCode=nullptr;installed=false;
     std::cout<<"Shared event waits for both authenticated participants, survives simultaneous act loading, rejects stale/foreign readiness and presents a full ten-second briefing.\n";
@@ -206,6 +211,38 @@ void RegularEventPopulation(){
     }
     populationCode=nullptr;installed=false;
     std::cout<<"Every regular event repopulates all rooms through native pack/champion generation and suppresses fixed monster/superunique presets.\n";
+}
+
+void __fastcall SoulSurprisePreset(Game* game,Room* room,void* preset){
+    MockPreset(game,room,preset);
+    assert(Field<int>(preset,4)==0); // Keep the authored monster despite a different random roster.
+    const int n=fixture.Index(room);Put(room,0xa8,&fixture.fresh[n]);
+}
+void __fastcall SoulSurpriseAmbient(Game*,Room* room){steps.push_back("empty"+std::to_string(fixture.Index(room)));}
+void SoulSurprisePresetPopulation(){
+    Reset();auto game=fixture.GamePtr();auto& state=State(game);state.run=std::make_unique<Run>();auto& run=*state.run;
+    run.level=256;run.event=Event::SoulSurprise;run.roster={1};
+    std::array<Bytes<0x1dc>,2> records{};for(auto& row:records)Put(row.data(),0x3c,uint32_t((1u<<25)|(1u<<15)|1));
+    uint8_t* table=records[0].data();uint64_t count=records.size();
+    bindings[0x1c9f878]=uintptr_t(&table);bindings[0x1c9f880]=uintptr_t(&count);assert(RandomCandidate(0));
+    originalSpawnPreset=SoulSurprisePreset;bindings[0x2c59d0]=uintptr_t(EventPresets);populationCode=reinterpret_cast<uint8_t*>(SoulSurpriseAmbient);
+    assert(Reload(game,run));
+    for(int n=0;n<3;++n){
+        assert(std::count(steps.begin(),steps.end(),"preset"+std::to_string(n))==1);
+        assert(std::count(steps.begin(),steps.end(),"empty"+std::to_string(n))==1);
+        assert(Field<Unit*>(fixture.r1[n].data(),0xa8)==&fixture.fresh[n] && !Dead(&fixture.fresh[n]));
+        assert(Field<uint32_t>(fixture.preset[n].data(),0x28)&1);
+    }
+    // Non-monster objects remain suppressed, as do fixed monsters in other events.
+    rebuilding=game;auto preset=fixture.preset[0].data();const auto calls=steps.size();
+    Put(preset,0x20,int(2));Put(preset,0x28,uint32_t(0));SpawnPresetHook(game,reinterpret_cast<Room*>(fixture.r1[0].data()),preset);
+    assert(steps.size()==calls && (Field<uint32_t>(preset,0x28)&1));Put(preset,0x20,int(1));
+    for(auto event:{Event::Trial,Event::GoblinGrotto,Event::Survivors,Event::ChampionClash}){
+        run.event=event;Put(preset,0x28,uint32_t(0));SpawnPresetHook(game,reinterpret_cast<Room*>(fixture.r1[0].data()),preset);
+        assert(steps.size()==calls && (Field<uint32_t>(preset,0x28)&1));
+    }
+    rebuilding=nullptr;Unpin(run);games.clear();populationCode=nullptr;installed=false;
+    std::cout<<"Soul Surprise restores authored monster presets with zero ambient population, preserves their identities, and retains other event/object suppression.\n";
 }
 
 std::map<int,int> trialResistance;int immunityWrites=0;

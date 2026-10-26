@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 <Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup Label="ProjectConfigurations">
     <ProjectConfiguration Include="Debug|x64">
@@ -97,6 +97,8 @@
     <ClCompile Include="plugin\StatRanges.cpp" />
     <ClCompile Include="plugin\StatRangesData.cpp" />
     <ClCompile Include="plugin\TooltipText.cpp" />
+    <ClCompile Include="plugin\SunderSystem.cpp" />
+    <ClCompile Include="plugin\HellSpindle.cpp" />
     <ClCompile Include="plugin\ImmunityLabels.cpp" />
     <ClCompile Include="plugin\AutomapLayers.cpp" />
     <ClCompile Include="plugin\ItemCodes.cpp" />
@@ -109,8 +111,13 @@
     <ClCompile Include="plugin\SummonPersistence.cpp" />
     <ClCompile Include="plugin\QuestKillEvents.cpp" />
     <ClCompile Include="plugin\QuestJournal.cpp" />
+    <ClCompile Include="plugin\QuestJournalClient.cpp" />
     <ClCompile Include="plugin\D3Whirlwind.cpp" />
     <ClCompile Include="plugin\SelectedAuras.cpp" />
+    <ClCompile Include="plugin\WidescreenBars.cpp" />
+    <ClCompile Include="plugin\WindowLayout.cpp" />
+    <ClCompile Include="plugin\HUDControls.cpp" />
+    <ClCompile Include="plugin\CandyCornSave.cpp" />
     <ClCompile Include="plugin\States512.cpp" />
     <ClCompile Include="plugin\ExtendedClasses.cpp" />
     <ClCompile Include="plugin\ExtendedActs.cpp" />
@@ -142,24 +149,28 @@
     <None Include="fonts\11.otf" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="..\..\..\Downloads\json.hpp" />
+    <ClInclude Include="json.hpp" />
     <ClInclude Include="d2\D2Enums.h" />
     <ClInclude Include="d2\D2Ptrs.h" />
     <ClInclude Include="d2\D2Structs.h" />
     <ClInclude Include="d2\json.hpp" />
     <ClInclude Include="d2\Reclass.h" />
     <ClInclude Include="D3D12Hook.h" />
-    <ClInclude Include="d3dx12.h" />
     <ClInclude Include="Logging.h" />
     <ClInclude Include="CrashDiagnostics.h" />
     <ClInclude Include="WineQueue.h" />
     <ClInclude Include="Pattern.h" />
     <ClInclude Include="resource.h" />
+    <ClInclude Include="Version.h" />
     <ClInclude Include="plugin\FloatingDamage.h" />
     <ClInclude Include="plugin\BuffIcons.h" />
     <ClInclude Include="plugin\StatRanges.h" />
     <ClInclude Include="plugin\StatRangesData.h" />
     <ClInclude Include="plugin\TooltipText.h" />
+    <ClInclude Include="plugin\SunderSystem.h" />
+    <ClInclude Include="plugin\HellSpindle.h" />
+    <ClInclude Include="plugin\ExtendedActsLevels.h" />
+    <ClInclude Include="plugin\ExtendedActsStrings.h" />
     <ClInclude Include="plugin\ImmunityLabels.h" />
     <ClInclude Include="plugin\AutomapLayers.h" />
     <ClInclude Include="plugin\ItemCodes.h" />
@@ -172,14 +183,18 @@
     <ClInclude Include="plugin\CubeMap.h" />
     <ClInclude Include="plugin\SummonPersistence.h" />
     <ClInclude Include="plugin\QuestJournal.h" />
+    <ClInclude Include="plugin\QuestJournalClient.h" />
     <ClInclude Include="plugin\QuestJournalData.h" />
     <ClInclude Include="plugin\D3Whirlwind.h" />
     <ClInclude Include="plugin\SelectedAuras.h" />
+    <ClInclude Include="plugin\WidescreenBars.h" />
+    <ClInclude Include="plugin\WidescreenBarsNative.h" />
     <ClInclude Include="plugin\SelectedAurasData.h" />
     <ClInclude Include="plugin\SelectedAurasNative.h" />
     <ClInclude Include="plugin\D3WhirlwindData.h" />
     <ClInclude Include="plugin\D3WhirlwindNative.h" />
     <ClInclude Include="plugin\D3WhirlwindPickup.h" />
+    <ClInclude Include="plugin\D3WhirlwindPotion.h" />
     <ClInclude Include="plugin\D3WhirlwindRestart.h" />
     <ClInclude Include="plugin\SummonPersistenceData.h" />
     <ClInclude Include="plugin\SummonPersistenceNative.h" />
@@ -260,6 +275,22 @@
     <ClInclude Include="plugin\Plugin.h" />
     <ClInclude Include="plugin\PluginManager.h" />
     <ClInclude Include="plugin\D2RHUD\D2RHUD.h" />
+    <ClInclude Include="plugin\D2RHUD\OptionsLayout.h" />
+    <ClInclude Include="plugin\D2RHUD\MenuWorkspace.h" />
+    <ClInclude Include="plugin\D2RHUD\OptionsCatalog.h" />
+    <ClInclude Include="plugin\D2RHUD\OptionsUI.inl" />
+    <ClInclude Include="plugin\JournalSkin.h" />
+    <ClInclude Include="plugin\SettingsUI.h" />
+    <ClInclude Include="plugin\StatRangesUI.inl" />
+    <ClInclude Include="plugin\BuffIconsUI.inl" />
+    <ClInclude Include="plugin\WindowLayout.h" />
+    <ClInclude Include="plugin\HUDControls.h" />
+    <ClInclude Include="plugin\HUDControlsStore.h" />
+    <ClInclude Include="plugin\CandyCornSave.h" />
+    <ClInclude Include="plugin\CandyCornSaveData.h" />
+    <ClInclude Include="plugin\CandyCornSaveTables.h" />
+    <ClInclude Include="plugin\CandyCornSaveStore.h" />
+    <ClInclude Include="plugin\CandyCornSaveUI.h" />
     <ClInclude Include="plugin\D2RHUD\TerrorZoneRotation.h" />
     <ClInclude Include="plugin\D2RHUD\TerrorZonePaths.h" />
     <ClInclude Include="stb_image.h" />

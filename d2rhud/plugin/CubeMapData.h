@@ -140,12 +140,13 @@ inline const char* FailureMessage(EventFailure failure){
     case EventFailure::Arrival:return "The event area's arrival position is unavailable.";
     case EventFailure::Participant:return "No event participant is ready in town.";
     case EventFailure::Portal:return "There is no safe position for the event portals.";
-    case EventFailure::TreasureClass:return "TormentGroupA is missing from the loaded treasure classes. Restart after adding it.";
+    case EventFailure::TreasureClass:return "MapGroupA is missing from the loaded treasure classes. Restart after adding it.";
     case EventFailure::ChampionTreasureClass:return "ChampClash is missing from the loaded treasure classes. Restart after adding it.";
     default:return "The realm is currently unavailable.";
     }
 }
-struct EventInfo {const char* name;const char* description;uint32_t seconds;};
+struct EventInfo {const char* name;const char* description;uint32_t seconds;
+    const char* scoutingReport=nullptr;const char* location=nullptr;const char* duration=nullptr;};
 inline constexpr std::array EventInfos{
     EventInfo{"", "", 0},
     EventInfo{"Golden Armada", "Unique item drop chance +500%.",300},
@@ -153,14 +154,28 @@ inline constexpr std::array EventInfos{
     EventInfo{"Fountain of Youth", "Your mana never runs out.",300},
     EventInfo{"Speed Demon", "Maximum movement, attack and cast speed.",300},
     EventInfo{"Midas' Meddling", "Every monster drops gold. Gold value +500%.",300},
-    EventInfo{"Goblin Grotto", "An entire Cow Level of treasure goblins. You have one minute!",60},
-    EventInfo{"Trials of Tribulation", "Defeat five level 125 bosses in two minutes. Each has at least three immunities. Victory awards +2 stat points.",120},
+    EventInfo{"Goblin Grotto", "An entire Cow Level of treasure goblins. You have one minute!",60,
+        "It appears goblins are congregating in a secret location. Now's our time to attack adventurer!\nI doubt we will have much time, the gods do not pamper us it seems.",
+        "Moo Moo Farm","One Minute"},
+    EventInfo{"Trials of Tribulation", "Defeat five level 125 bosses in five minutes. Each has at least three immunities. Victory awards +2 stat points.",300,
+        "Death. None of the rogues managed to return from their scout...\nAll that awaits is death...We are Forsaken Adventurer!",
+        "Moo Moo Farm","Five Minutes"},
     EventInfo{"Sanctuary Survivors", "Fight as your chosen Survivors class. Native class skills attack automatically. Earn saved class levels and upgrades, then slay the final boss before ten minutes expire.",600},
-    EventInfo{"Treasure Trove", "Set and unique item drop chances +500% for ten minutes, wherever you travel.",600},
-    EventInfo{"Golden Goose", "Gold amounts +500% for ten minutes, wherever you travel.",600},
-    EventInfo{"Champion Clash", "The Chaos Sanctuary is filled with champion and unique packs. Clear this instance; no time limit.",0},
-    EventInfo{"Plentiful Pirating", "NoDrop is zero and every treasure class gains one pick for ten minutes, wherever you travel.",600},
-    EventInfo{"Soul Surprise", "Teleport to level 239 and survive its monsters for one minute.",60},
+    EventInfo{"Treasure Trove", "Set and unique item drop chances +500% for ten minutes, wherever you travel.",600,
+        "Someone, or something, appears to be arming our enemies at an alarming scale!\nOur scouts report a five-fold increase in set and unique items being found on monster corpses",
+        "Everywhere","Ten Minutes"},
+    EventInfo{"Golden Goose", "Gold amounts +500% for ten minutes, wherever you travel.",600,
+        "It appears as if a dark stimulus package was sent to monsters around Sanctuary.\nOur scouts report a five-fold increase in market sales, apparently adventuring is quite lucrative currently...",
+        "Everywhere","Ten Minutes"},
+    EventInfo{"Champion Clash", "The Chaos Sanctuary is filled with champion and unique packs. Clear this instance; no time limit.",0,
+        "A legion of high-ranked demons and their cohorts have been spotted amassing in the Chaos Sanctuary!\nI fear if the number continues to grow, we will be overwhelmed. Please lend us your strength adventurer...",
+        "Chaos Sanctuary","None"},
+    EventInfo{"Plentiful Pirating", "NoDrop and Blank outcomes are removed for two minutes. The root treasure class gains one pick; nested pick counts stay unchanged.",120,
+        "An evil force seems to be funding our enemies conquest of evil!\nOur scouts report a marked increase in the equipment and supplies the demons carry...",
+        "Everywhere","Two Minutes"},
+    EventInfo{"Soul Surprise", "Teleport to level 239 and survive its monsters for one minute.",60,
+        "Our scouts have discovered an enemy safebox hidden in a stone room!\nYour legends of heroism and capability are well known here, we'd be honored if you'd pillage it...",
+        "Unknown","Unknown"},
 };
 inline const EventInfo& Info(Event event){return EventInfos[(std::min)(size_t(event),EventInfos.size()-1)];}
 inline uint32_t EventRemaining(uint32_t now,uint32_t start,Event event){const auto duration=Info(event).seconds*25;const auto elapsed=now-start;return elapsed>=duration ? 0 : (duration-elapsed+24)/25;}

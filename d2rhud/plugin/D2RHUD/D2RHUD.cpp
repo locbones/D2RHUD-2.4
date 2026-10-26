@@ -1,6 +1,10 @@
 ﻿#pragma region Includes
 
 #include "D2RHUD.h"
+#include "../../Version.h"
+#include "OptionsLayout.h"
+#include "MenuWorkspace.h"
+#include "OptionsCatalog.h"
 #include "TerrorZoneRotation.h"
 #include "TerrorZonePaths.h"
 #include "TerrorZoneTables.h"
@@ -19,11 +23,14 @@
 #include "../ExtendedActs.h"
 #include "../SummonPersistence.h"
 #include "../QuestJournal.h"
+#include "../QuestJournalClient.h"
 #include "../D3Whirlwind.h"
 #include "../SelectedAuras.h"
 #include "../States512.h"
-#include "../Sunder.h"
-#include "../ImmunityLabels.h"
+#include "../SunderSystem.h"
+#include "../WidescreenBars.h"
+#include "../HUDControls.h"
+#include "../CandyCornSaveUI.h"
 #include <imgui.h>
 #include "../ItemFilter/LootFilterEditorText.h"
 #include "../ItemFilter/LuaConfigIO.h"
@@ -87,7 +94,7 @@
 #pragma region Global Static/Structs
 
 std::string lootFile = "../D2R/lootfilter.lua";
-std::string Version = "1.7.6";
+std::string Version = D2RHUD_VERSION;
 
 using json = nlohmann::json;
 static MonsterStatsDisplaySettings cachedSettings;
@@ -411,14 +418,6 @@ D2GAME_UMOD8Array_t oD2GAME_UMOD8Array_1402fc530 = nullptr;
 typedef void* (__fastcall* DrawMonsterHPBar_t)(int param1, void* param2, void* param3);
 static DrawMonsterHPBar_t DrawMonsterHPBar = reinterpret_cast<DrawMonsterHPBar_t>(Pattern::Address(0x830B0));
 
-struct AppliedSunderEntry
-{
-    D2UnitStrc* unit = nullptr;
-    D2StatListExStrc* stats = nullptr;
-    Sunder::Values reductions{};
-};
-static std::unordered_map<DWORD, AppliedSunderEntry> g_appliedSunder;
-static std::mutex g_sunderMutex;
 
 #pragma endregion
 
@@ -1258,7 +1257,7 @@ MonsterStatsDisplaySettings getMonsterStatsDisplaySetting(const std::string& con
     cachedSettings.sunderedMonUMods = getBool({ "SunderedMonUMods" }, true);
     cachedSettings.minionEquality = getBool({ "MinionEquality" }, true);
     cachedSettings.gambleForce = getBool({ "GambleCostControl" }, true);
-    cachedSettings.SunderValue = getInt({ "SunderValue" }, 99);
+    cachedSettings.SunderValue = 99;
     cachedSettings.CombatLog = getBool({ "CombatLog" }, true);
     cachedSettings.TransmogVisuals = getBool({ "TransmogVisuals" }, true);
     cachedSettings.ExtendedItemcodes = getBool({ "ExtendedItemcodes" }, true);
@@ -1702,12 +1701,7 @@ void __fastcall ScaleDamage(D2DamageInfoStrc* pDamageInfo, D2DamageStatTableStrc
     }
 }
 
-static void ApplyLinearSunderToMonster(D2GameStrc* pGame, D2UnitStrc* pUnit, bool requireUModSetting);
-
 void __fastcall HookedSUNITDMG_ApplyResistancesAndAbsorb(D2DamageInfoStrc* pDamageInfo, D2DamageStatTableStrc* pDamageStatTableRecord, int32_t bDontAbsorb) {
-    if (pDamageInfo && pDamageInfo->bDefenderIsMonster && pDamageInfo->pDefender)
-        ApplyLinearSunderToMonster(pDamageInfo->pGame, pDamageInfo->pDefender, true);
-
     oSUNITDMG_ApplyResistancesAndAbsorb(pDamageInfo, pDamageStatTableRecord, bDontAbsorb);
 
     TryQueuePoisonDamageFromStatTable(pDamageInfo, pDamageStatTableRecord);
@@ -1719,94 +1713,9 @@ void __fastcall HookedSUNITDMG_ApplyResistancesAndAbsorb(D2DamageInfoStrc* pDama
 
 #pragma endregion
 
-#pragma region Sunder Mechanic
+#pragma region Monster Stat Helpers
 
 constexpr uint16_t UNIQUE_LAYER = 1337;
-
-static void LogSunder(const std::string& msg)
-{
-    std::ofstream log("debug_sunder_log.txt", std::ios::app);
-    if (!log.is_open()) return;
-
-    std::time_t now = std::time(nullptr);
-    std::tm tm{};
-#ifdef _WIN32
-    localtime_s(&tm, &now);
-#else
-    localtime_r(&now, &tm);
-#endif
-    char timebuf[32];
-    std::strftime(timebuf, sizeof(timebuf), "[%Y-%m-%d %H:%M:%S] ", &tm);
-    log << timebuf << msg << "\n";
-}
-
-static D2GameStrc* g_lastSunderGame = nullptr;
-static uint32_t g_sunderGameSeed = 0;
-
-// Caller holds g_sunderMutex. Clear on game changes as well as unit respawns;
-// reused unit IDs/stat-list allocations must not inherit an earlier reduction.
-static void ResetSunderGame(D2GameStrc* game)
-{
-    const uint32_t seed = game ? game->dwInitSeed : 0;
-    if (game != g_lastSunderGame || seed != g_sunderGameSeed)
-    {
-        g_appliedSunder.clear();
-        g_lastSunderGame = game;
-        g_sunderGameSeed = seed;
-    }
-}
-
-static void MergeSunderStatsFromPlayer(Sunder::Values& stats, D2UnitStrc* player)
-{
-    if (!player) return;
-    Sunder::Values values{};
-    for (size_t i = 0; i < values.size(); ++i)
-        values[i] = STATLIST_GetUnitStatSigned(player, Sunder::ImmunityStats[i], 0);
-    Sunder::MergeMaximum(stats, values);
-}
-
-static Sunder::Values GetActiveSunderStats(D2GameStrc* game)
-{
-    Sunder::Values stats{};
-    if (game)
-    {
-        for (auto client = game->pClientList; client; client = client->pNext)
-        {
-            if (client->pGame && client->pGame != game) continue;
-            MergeSunderStatsFromPlayer(stats, client->pPlayer);
-            if (client->dwUnitGUID)
-                MergeSunderStatsFromPlayer(stats, UNITS_GetServerUnitByTypeAndId(game, UNIT_PLAYER, client->dwUnitGUID));
-        }
-    }
-    for (int i = 0; i < 8; ++i)
-    {
-        auto client = gpClientList[i];
-        if (!client || (game && client->pGame && client->pGame != game)) continue;
-        MergeSunderStatsFromPlayer(stats, client->pPlayer);
-        if (game && client->dwUnitGUID)
-            MergeSunderStatsFromPlayer(stats, UNITS_GetServerUnitByTypeAndId(game, UNIT_PLAYER, client->dwUnitGUID));
-    }
-    return stats;
-}
-
-static void ApplyLinearSunderToMonster(D2GameStrc* game, D2UnitStrc* unit, bool requireUModSetting)
-{
-    if (!game || !unit || unit->dwUnitType != UNIT_MONSTER || !unit->pStatListEx) return;
-    if (requireUModSetting && !settings.sunderedMonUMods) return;
-    std::lock_guard<std::mutex> lock(g_sunderMutex);
-    ResetSunderGame(game);
-    auto& entry = g_appliedSunder[unit->dwUnitId];
-    if (entry.unit != unit || entry.stats != unit->pStatListEx)
-        entry = {unit, unit->pStatListEx, {}};
-    const auto pierce = GetActiveSunderStats(game);
-    if (!sgptDataTables || !sgptDataTables->pItemStatCostTxt || sgptDataTables->nItemStatCostTxtRecordCount <= 45) return;
-    using ReadBaseStat = int(__fastcall*)(D2StatListExStrc*, uint32_t, const D2ItemStatCostTxt*);
-    const auto readBase = reinterpret_cast<ReadBaseStat>(Pattern::Address(0x1e2e00));
-    Sunder::RefreshBase(entry.reductions, pierce, settings.SunderValue,
-        [&](uint32_t stat) { return STATLIST_GetUnitStatSigned(unit, stat, 0); },
-        [&](uint32_t stat) { return readBase(unit->pStatListEx, stat << 16, &sgptDataTables->pItemStatCostTxt[stat]); },
-        [&](uint32_t stat, int value) { return STATLISTEX_SetStatListExStat(unit->pStatListEx, static_cast<D2C_ItemStats>(stat), value, 0) != FALSE; });
-}
 
 void SetStat(D2UnitStrc* pUnit, D2C_ItemStats nStatId, uint32_t nValue) {
     int currentValue = STATLIST_GetUnitStatSigned(pUnit, nStatId, 0);
@@ -1826,23 +1735,6 @@ void AddToCurrentStat(D2UnitStrc* pUnit, D2C_ItemStats nStatId, uint32_t nValue)
     if (STATLIST_GetUnitStatSigned(pUnit, STAT_ALIGNMENT, 0) != 1)
         STATLISTEX_SetStatListExStat(pUnit->pStatListEx, nStatId, currentValue + nValue, 0);
 }
-
-void __fastcall ApplyGhettoSunder(D2GameStrc* pGame, D2ActiveRoomStrc* pRoom, D2UnitStrc* pUnit, int64_t* pMonRegData, D2MonStatsInitStrc* monStatsInit)
-{
-    if (!pGame || !pUnit)
-    {
-        LogSunder("Invalid game/unit pointer in ApplyGhettoSunder");
-        return;
-    }
-
-    LogSunder("=== Begin ApplyGhettoSunder ===");
-
-    ApplyLinearSunderToMonster(pGame, pUnit, false);
-
-    LogSunder("=== End ApplyGhettoSunder ===");
-}
-
-
 
 #pragma endregion
 
@@ -3677,6 +3569,7 @@ struct D2RHUDConfig
     bool SurvivorArena = false;
     bool ActVI = false;
     bool D3StyleWhirlwind = false;
+    bool NoWidescreenBars = false;
     bool QuantityRightClicks = true;
     bool DisableRightClickItemPickup = false;
     bool MinimalistQuantityPopup = false;
@@ -3801,7 +3694,9 @@ static void ShowBuffIconsMenu();
 static void ShowStatRangesMenu();
 static void ShowFloatingDamageMenu();
 static bool showSettingsPanel = false;
-static std::string s_UITheme = "Default";
+static std::string s_UITheme = HudMenu::DefaultTheme(modName);
+static HudMenu::Page s_WorkspacePage = HudMenu::Page::Home;
+static bool s_LastJournalVisible = false;
 // Per-slot image override: s_UIColorImageOverrides[i] = filename from D2RHUD_Images (empty = use color only)
 static std::vector<std::string> s_UIColorImageOverrides;
 static std::vector<ImVec4> s_UICustomColors;  // when theme is "Custom", applied by index
@@ -3959,12 +3854,8 @@ ImVec2 CenterWindow(ImVec2 size)
     float scale = GetMenuScaleFactor();
     size.x *= scale;
     size.y *= scale;
-    ImGuiIO& io = ImGui::GetIO();
-    ImVec2 centerPos = ImVec2((io.DisplaySize.x - size.x) * 0.5f,
-        (io.DisplaySize.y - size.y) * 0.5f);
-    ImGui::SetNextWindowPos(centerPos, ImGuiCond_Once);
-    ImGui::SetNextWindowSize(size, ImGuiCond_Once);
-    return centerPos;
+    HudMenu::Prepare(size);
+    return {};
 }
 
 ImFont* GetFont(int index)
@@ -3976,7 +3867,7 @@ ImFont* GetFont(int index)
 void PushFontSafe(int index)
 {
     if (ImFont* f = GetFont(index))
-        ImGui::PushFont(f);
+        ImGui::PushFont(HudMenu::embedded && HudSettings::bodyFont && (index==1 || index==2) ? HudSettings::bodyFont : f);
 }
 
 void PopFontSafe(int index)
@@ -3987,7 +3878,9 @@ void PopFontSafe(int index)
 
 bool DrawWindowTitleAndClose(const char* title, bool* open)
 {
+    if (HudMenu::embedded) return true;
     float scale = GetMenuScaleFactor();
+    if (HudMenu::nativeTheme) { QuestJournalSkin::Load();QuestJournalSkin::Plate(title,scale,45);QuestJournalSkin::CloseButton(open,scale);return true; }
     float closeBtnSize = 20.0f * scale;
     float padding = 5.0f * scale;
     ImVec2 contentSize = ImGui::GetContentRegionAvail();
@@ -4052,24 +3945,30 @@ void EnableAllInput() {
 }
 
 bool D2RHUD::IsAnyMenuOpen() {
-    return showGrailMenu || showHotkeyMenu || showLootMenu || showD2RHUDMenu || showCameraMenu || showFloatingDamageMenu || showBuffIconsMenu || showStatRangesMenu || showQuestJournalMenu;
+    return showMainMenu || showSettingsPanel || showGrailMenu || showHotkeyMenu || showLootMenu || showD2RHUDMenu || showCameraMenu || showFloatingDamageMenu || showBuffIconsMenu || showStatRangesMenu || showQuestJournalMenu;
+}
+
+static void SyncWorkspacePages() {
+    using HudMenu::Page;
+    showD2RHUDMenu = showMainMenu && s_WorkspacePage == Page::Options;
+    showLootMenu = showMainMenu && s_WorkspacePage == Page::Loot;
+    showGrailMenu = showMainMenu && s_WorkspacePage == Page::Grail;
+    showHotkeyMenu = showMainMenu && s_WorkspacePage == Page::Hotkeys;
+    showCameraMenu = showMainMenu && s_WorkspacePage == Page::Camera;
+    showFloatingDamageMenu = showMainMenu && s_WorkspacePage == Page::Damage;
+    showBuffIconsMenu = showMainMenu && s_WorkspacePage == Page::Buffs;
+    showStatRangesMenu = showMainMenu && s_WorkspacePage == Page::Ranges;
+    showSettingsPanel = showMainMenu && s_WorkspacePage == Page::Appearance;
+    showQuestJournalMenu = showMainMenu && s_WorkspacePage == Page::Journal;
 }
 
 bool D2RHUD::TryCloseMenuOnEscape()
 {
-    if (showQuestJournalMenu) { showQuestJournalMenu = false; return true; }
-    if (showHotkeyMenu) { showHotkeyMenu = false; return true; }
-    if (showGrailMenu) { showGrailMenu = false; return true; }
-    if (showLootMenu) { showLootMenu = false; return true; }
-    if (showCameraMenu) { showCameraMenu = false; return true; }
-    if (showBuffIconsMenu) { showBuffIconsMenu = false; return true; }
-    if (showStatRangesMenu) { showStatRangesMenu = false; return true; }
-    if (showFloatingDamageMenu) { showFloatingDamageMenu = false; return true; }
-    if (showD2RHUDMenu) { showD2RHUDMenu = false; return true; }
-    if (showSettingsPanel) { showSettingsPanel = false; return true; }
-    if (showHUDSettingsMenu) { showHUDSettingsMenu = false; return true; }
-    if (showMainMenu) { showMainMenu = false; return true; }
-    return false;
+    if (!showMainMenu && !IsAnyMenuOpen() && !showSettingsPanel && !showHUDSettingsMenu) return false;
+    showMainMenu = false;
+    showHUDSettingsMenu = false;
+    SyncWorkspacePages();
+    return true;
 }
 
 void ProcessBackups()
@@ -5500,9 +5399,10 @@ void LoadD2RHUDConfig(const std::string& path)
         d2rHUDConfig.HPRolloverPercent = j.value("HPRollover%", d2rHUDConfig.HPRolloverPercent);
         d2rHUDConfig.HPRolloverDifficulty = j.value("HPRolloverDifficulty", d2rHUDConfig.HPRolloverDifficulty);
         d2rHUDConfig.SunderedMonUMods = j.value("SunderedMonUMods", d2rHUDConfig.SunderedMonUMods);
-        d2rHUDConfig.SunderValue = j.value("SunderValue", d2rHUDConfig.SunderValue);
+        d2rHUDConfig.SunderValue = 99;
         settings.sunderedMonUMods = d2rHUDConfig.SunderedMonUMods;
-        settings.SunderValue = d2rHUDConfig.SunderValue;
+        settings.SunderValue = 99;
+        SunderSystem::SetEnabled(d2rHUDConfig.SunderedMonUMods);
         d2rHUDConfig.MinionEquality = j.value("MinionEquality", d2rHUDConfig.MinionEquality);
         d2rHUDConfig.PersistentSummons = j.value("PersistentSummons", false);
         d2rHUDConfig.ActVI = j.value("ActVI", false);
@@ -5512,6 +5412,8 @@ void LoadD2RHUDConfig(const std::string& path)
         SummonPersistence::SetEnabled(d2rHUDConfig.PersistentSummons);
         d2rHUDConfig.D3StyleWhirlwind = j.value("D3StyleWhirlwind", false);
         D3Whirlwind::SetEnabled(d2rHUDConfig.D3StyleWhirlwind);
+        d2rHUDConfig.NoWidescreenBars = j.value("NoWidescreenBars", false);
+        WidescreenBars::SetEnabled(d2rHUDConfig.NoWidescreenBars);
         d2rHUDConfig.QuantityRightClicks = j.value("QuantityRightClicks", true);
         d2rHUDConfig.DisableRightClickItemPickup = j.value("DisableRightClickItemPickup", false);
         D3Whirlwind::SetRightClickPickupDisabled(d2rHUDConfig.DisableRightClickItemPickup);
@@ -5526,7 +5428,7 @@ void LoadD2RHUDConfig(const std::string& path)
         FloatingDamage::LoadFromJson(j);
         BuffIcons::LoadFromJson(j);
         StatRanges::LoadFromJson(j);
-        d2rHUDConfig.FloatingDamage = FloatingDamage::GetConfig().enabled;
+        d2rHUDConfig.FloatingDamage = FloatingDamage::IsEnabled();
         settings.FloatingDamage = d2rHUDConfig.FloatingDamage;
         cachedSettings.FloatingDamage = d2rHUDConfig.FloatingDamage;
         d2rHUDConfig.ChatSounds = j.value("ChatSounds", d2rHUDConfig.ChatSounds);
@@ -5619,14 +5521,15 @@ void LoadD2RHUDConfig(const std::string& path)
                 s_UICustomColors.insert(s_UICustomColors.begin() + 7, fb);
             }
         }
-        s_UITheme = j.value("UITheme", s_UITheme);
+        s_UITheme = HudMenu::ResolveTheme(modName,j.value("UITheme",std::string{}),j.value("UIThemeDefaultsVersion",0));
+        s_WorkspacePage = HudMenu::ValidPage(j.value("HUDWorkspacePage",0));
         {
-            bool valid = (s_UITheme == "Default" || s_UITheme == "Golden Sunset" || s_UITheme == "Hell's Embrace" || s_UITheme == "RMD Blue" || s_UITheme == "RMD Red" || s_UITheme == "RMD Purple" || s_UITheme == "RMD Green" || s_UITheme == "RMD Gold" || s_UITheme == "RMD Dark" || s_UITheme == "Custom");
+            bool valid = (s_UITheme == "Sanctuary" || s_UITheme == "Default" || s_UITheme == "Golden Sunset" || s_UITheme == "Hell's Embrace" || s_UITheme == "RMD Blue" || s_UITheme == "RMD Red" || s_UITheme == "RMD Purple" || s_UITheme == "RMD Green" || s_UITheme == "RMD Gold" || s_UITheme == "RMD Dark" || s_UITheme == "Custom");
             if (!valid)
                 for (const auto& p : s_UIThemePresets)
                     if (p.first == s_UITheme) { valid = true; break; }
             if (!valid)
-                s_UITheme = "Default";
+                s_UITheme = HudMenu::DefaultTheme(modName);
         }
         if (j.contains("UIColorImageOverrides") && j["UIColorImageOverrides"].is_array())
         {
@@ -5811,12 +5714,13 @@ bool SaveFullGrailConfig(const std::string& userPath, bool isAutoBackup)
         j["HPRollover%"] = d2rHUDConfig.HPRolloverPercent;
         j["HPRolloverDifficulty"] = d2rHUDConfig.HPRolloverDifficulty;
         j["SunderedMonUMods"] = d2rHUDConfig.SunderedMonUMods;
-        j["SunderValue"] = d2rHUDConfig.SunderValue;
+        j["SunderValue"] = 99;
         j["MinionEquality"] = d2rHUDConfig.MinionEquality;
         j["PersistentSummons"] = d2rHUDConfig.PersistentSummons;
         j["ActVI"] = d2rHUDConfig.ActVI;
         j["SurvivorArena"] = d2rHUDConfig.SurvivorArena;
         j["D3StyleWhirlwind"] = d2rHUDConfig.D3StyleWhirlwind;
+        j["NoWidescreenBars"] = d2rHUDConfig.NoWidescreenBars;
         j["QuantityRightClicks"] = d2rHUDConfig.QuantityRightClicks;
         j["DisableRightClickItemPickup"] = d2rHUDConfig.DisableRightClickItemPickup;
         j["MinimalistQuantityPopup"] = d2rHUDConfig.MinimalistQuantityPopup;
@@ -5827,7 +5731,7 @@ bool SaveFullGrailConfig(const std::string& userPath, bool isAutoBackup)
         j["ChatSounds"] = d2rHUDConfig.ChatSounds;
         if (!d2rHUDConfig.ChatSoundPath.empty())
             j["ChatSoundPath"] = d2rHUDConfig.ChatSoundPath;
-        FloatingDamage::GetConfig().enabled = d2rHUDConfig.FloatingDamage;
+        FloatingDamage::SetEnabled(d2rHUDConfig.FloatingDamage);
         FloatingDamage::SaveToJson(j);
         BuffIcons::SaveToJson(j);
         StatRanges::SaveToJson(j);
@@ -5877,6 +5781,8 @@ bool SaveFullGrailConfig(const std::string& userPath, bool isAutoBackup)
         j["CameraAutoloadLastPreset"] = d2rHUDConfig.CameraAutoloadLastPreset;
         j["CameraLastPresetIndex"] = d2rHUDConfig.CameraLastPresetIndex;
         j["UITheme"] = s_UITheme;
+        j["UIThemeDefaultsVersion"] = 1;
+        j["HUDWorkspacePage"] = int(s_WorkspacePage);
         if ((int)s_UIColorImageOverrides.size() != s_ThemeColorCount)
             s_UIColorImageOverrides.resize(s_ThemeColorCount, "");
         {
@@ -6043,7 +5949,7 @@ void RegisterModOverrides()
     ModOverrideSettings RMD;
 
     RMD.ForcedMonsterStatsDisplay = false;
-    RMD.SunderedMonUMods = { true, "Disabling causes immunity reduction discrepancies" };
+    RMD.SunderedMonUMods = { true, "Required by this mod's immunity-pierce item stats" };
     RMD.ForcedMinionEquality = false;
     RMD.ForcedGambleCostControl = true;
     RMD.GambleCostControl = { true, "Disabling this feature serves no benefit in ReMoDDeD" };
@@ -6111,10 +6017,11 @@ void ApplyModOverrides(const std::string& modName)
         d2rHUDConfig.SunderValue = o.ForcedSunderValue;
 
     settings.sunderedMonUMods = d2rHUDConfig.SunderedMonUMods;
-    settings.SunderValue = d2rHUDConfig.SunderValue;
+    settings.SunderValue = 99;
+    SunderSystem::SetEnabled(d2rHUDConfig.SunderedMonUMods);
     settings.FloatingDamage = d2rHUDConfig.FloatingDamage;
     cachedSettings.FloatingDamage = d2rHUDConfig.FloatingDamage;
-    FloatingDamage::GetConfig().enabled = d2rHUDConfig.FloatingDamage;
+    FloatingDamage::SetEnabled(d2rHUDConfig.FloatingDamage);
 }
 
 const LockedValueInfo* GetLockInfo(const std::string& modName, const LockedValueInfo ModOverrideSettings::* field)
@@ -6142,13 +6049,6 @@ void RightColumnSeparator(float rightWidth, float thickness = 2.0f)
 void ShowGrailMenu()
 {
     static bool wasOpen = false;
-    static bool initialized = false;
-    if (!initialized)
-    {
-        LoadD2RHUDConfig(configFilePath);
-        initialized = true;
-    }
-
     if (!showGrailMenu)
     {
         // Menu just closed? Save progress including AutoBackup settings
@@ -6240,15 +6140,12 @@ void ShowGrailMenu()
 
     const float grailBaseH = kGrailHeightNormal + (showStashParseDebug ? debugSectionH / menuScale : 0.0f);
     CenterWindow(ImVec2(850, grailBaseH));
-    ImGui::SetNextWindowSize(
-        ImVec2(850.0f * menuScale, grailBaseH * menuScale),
-        ImGuiCond_Always);
 
     ImGui::PushStyleColor(ImGuiCol_WindowBg, ShouldDrawWindowBackgroundImage(kWindowBg_Grail) ? ImVec4(0, 0, 0, 0) : s_WindowBgColors[kWindowBg_Grail]);
     PushFontSafe(3);
     const ImGuiWindowFlags grailWindowFlags =
-        ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoScrollbar;
-    if (ImGui::Begin("Grail Tracker", &showGrailMenu, grailWindowFlags))
+        ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoScrollbar;
+    if (HudMenu::Begin("Grail Tracker", &showGrailMenu, grailWindowFlags))
     {
         QuestJournal::Viewed("GrailTracker");
         if (ShouldDrawWindowBackgroundImage(kWindowBg_Grail))
@@ -6275,7 +6172,9 @@ void ShowGrailMenu()
         float leftWidth = 240.0f * menuScale;
 
         // LEFT PANEL
-        ImGui::BeginChild("left_panel", ImVec2(leftWidth, mainAvail.y), true);
+        HudWindowLayout::PrepareLeftPane(menuScale);
+        ImGui::BeginChild("left_panel", ImVec2(leftWidth, mainAvail.y), ImGuiChildFlags_Borders | ImGuiChildFlags_ResizeX);
+        leftWidth = ImGui::GetWindowSize().x;
         ImVec4 darkRed = ImVec4(0.6f, 0.1f, 0.1f, 1.0f);
 
         // --- Search ---
@@ -7014,10 +6913,13 @@ void ShowGrailMenu()
             ScanStashPages();
 
         ImGui::PopStyleColor();
-        ImGui::End();
+        HudMenu::End();
     }
-    else
+    else {
         ImGui::PopStyleColor();
+        HudMenu::End();
+        PopFontSafe(3);
+    }
 }
 
 void ShowHotkeyMenu()
@@ -7047,7 +6949,7 @@ void ShowHotkeyMenu()
     CenterWindow(windowSize);
     ImGui::PushStyleColor(ImGuiCol_WindowBg, ShouldDrawWindowBackgroundImage(kWindowBg_Hotkeys) ? ImVec4(0, 0, 0, 0) : s_WindowBgColors[kWindowBg_Hotkeys]);
     PushFontSafe(3);
-    if (ImGui::Begin("D2R Hotkeys", &showHotkeyMenu, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoTitleBar))
+    if (HudMenu::Begin("D2R Hotkeys", &showHotkeyMenu, ImGuiWindowFlags_NoTitleBar))
     {
         if (ShouldDrawWindowBackgroundImage(kWindowBg_Hotkeys))
             DrawWindowBackgroundImage(kWindowBg_Hotkeys);
@@ -7065,19 +6967,20 @@ void ShowHotkeyMenu()
         hoveredHotkey.clear();
 
         // --- 2-column layout ---
-        ImGui::Columns(2, nullptr, true);
-        ImGui::SetColumnWidth(0, 450.0f * menuScale);
-        ImGui::SetColumnWidth(1, 450.0f * menuScale);
+        if (ImGui::BeginTable("HotkeyPanes", 2, ImGuiTableFlags_Resizable | ImGuiTableFlags_BordersInnerV))
+        {
+        ImGui::TableSetupColumn("Standard", ImGuiTableColumnFlags_WidthStretch);
+        ImGui::TableSetupColumn("Commands", ImGuiTableColumnFlags_WidthStretch);
+        ImGui::TableNextColumn();
 
         ImFont* inputFont = GetFont(1);
 
         // --- LEFT COLUMN: Single Hotkeys ---
-        float leftColumnStartY = ImGui::GetCursorPosY();
         PushFontSafe(2);
         const char* colTitle = "Standard Hotkeys";
-        float colWidth = ImGui::GetColumnWidth();
+        float colWidth = ImGui::GetContentRegionAvail().x;
         float textW = ImGui::CalcTextSize(colTitle).x;
-        ImGui::SetCursorPosX((colWidth - textW) * 0.5f);
+        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (colWidth - textW) * 0.5f);
         ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.3f, 1.0f), "%s", colTitle);
         ImGui::Dummy(ImVec2(0.0f, 3.0f));
         ImGui::Separator();
@@ -7097,6 +7000,7 @@ void ShowHotkeyMenu()
             "Transmute",
             "Force Save",
             "Open Cube Panel",
+            "Open Quest Journal",
             "Remove Ground Items",
             "Reset Skills",
             "Reset Stats",
@@ -7115,14 +7019,18 @@ void ShowHotkeyMenu()
                 g_Hotkeys[name] = { "", "" };
         }
 
+        ImGui::TextWrapped("%s", HUDControls::Status());
+        ImGui::Spacing();
         for (const auto& name : hotkeyOrder)
         {
+            if (name == "Open HUDCC Menu" && HUDControls::Installed()) continue;
             auto it = g_Hotkeys.find(name);
             if (it == g_Hotkeys.end())
                 continue;
 
             auto& pair = it->second;
 
+            ImGui::AlignTextToFramePadding();
             ImGui::Text("%s:", name.c_str());
             ImGui::SameLine();
 
@@ -7231,11 +7139,10 @@ void ShowHotkeyMenu()
         }
 
         // --- RIGHT COLUMN: Command Hotkeys ---
-        ImGui::NextColumn();
-        ImGui::SetCursorPosY(leftColumnStartY);
+        ImGui::TableNextColumn();
         {
             const char* colTitle = "Command Hotkeys";
-            float colWidth = ImGui::GetColumnWidth();
+            float colWidth = ImGui::GetContentRegionAvail().x;
             float colStartX = ImGui::GetCursorPosX();
 
             float textW = ImGui::CalcTextSize(colTitle).x;
@@ -7377,16 +7284,20 @@ void ShowHotkeyMenu()
 
         }
 
-        ImGui::Columns(1);
+        ImGui::EndTable();
+        }
 
         std::string desc = hoveredHotkey.empty() ? "Hover over a hotkey to see details." : "Set the hotkey for " + hoveredHotkey + ".";
         DrawBottomDescription(desc);
 
         ImGui::PopStyleColor();
-        ImGui::End();
+        HudMenu::End();
     }
-    else
+    else {
         ImGui::PopStyleColor();
+        HudMenu::End();
+        PopFontSafe(3);
+    }
     io.ConfigFlags = ImGui::GetIO().ConfigFlags;
 }
 
@@ -7591,12 +7502,12 @@ void ShowCameraMenu()
 
     EnableAllInput();
     float menuScale = GetMenuScaleFactor();
-    ImVec2 windowSize = ImVec2(680.0f * menuScale, 380.0f * menuScale);
+    ImVec2 windowSize = ImVec2(680.0f, 380.0f);
     CenterWindow(windowSize);
 
     ImGui::PushStyleColor(ImGuiCol_WindowBg, ShouldDrawWindowBackgroundImage(kWindowBg_Camera) ? ImVec4(0, 0, 0, 0) : s_WindowBgColors[kWindowBg_Camera]);
     PushFontSafe(3);
-    if (ImGui::Begin("Camera Controls", &showCameraMenu, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoTitleBar))
+    if (HudMenu::Begin("Camera Controls", &showCameraMenu, ImGuiWindowFlags_NoTitleBar))
     {
         if (ShouldDrawWindowBackgroundImage(kWindowBg_Camera))
             DrawWindowBackgroundImage(kWindowBg_Camera);
@@ -7644,7 +7555,8 @@ void ShowCameraMenu()
         const float presetColWidth = 350.0f * menuScale;
 
         // Left: Presets | Right: All values + reset buttons
-        ImGui::BeginChild("CameraPresets", ImVec2(presetColWidth, 0), true);
+        HudWindowLayout::PrepareLeftPane(menuScale);
+        ImGui::BeginChild("CameraPresets", ImVec2(presetColWidth, 0), ImGuiChildFlags_Borders | ImGuiChildFlags_ResizeX);
         ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.3f, 1.0f), "Presets");
         ImGui::Separator();
 
@@ -7701,6 +7613,7 @@ void ShowCameraMenu()
             }
         }
         const char* presetLabels[4] = { presetLabel0, presetLabel1, presetLabel2, presetLabel3 };
+        ImGui::AlignTextToFramePadding();
         ImGui::Text("Slot");
         ImGui::SameLine(cameraLabelWidth);
         ImGui::SetNextItemWidth(-1);
@@ -7708,6 +7621,7 @@ void ShowCameraMenu()
         ImGui::Combo("##PresetSlot", &selectedPreset, presetLabels, IM_ARRAYSIZE(presetLabels));
         EndFrameBgImageRegion();
 
+        ImGui::AlignTextToFramePadding();
         ImGui::Text("Name");
         ImGui::SameLine(cameraLabelWidth);
         ImGui::SetNextItemWidth(-1);
@@ -7774,21 +7688,25 @@ void ShowCameraMenu()
         ImGui::Separator();
 
         ImGui::BeginDisabled(!camera.programEnabled || !camera.valuesFound);
+        ImGui::AlignTextToFramePadding();
         ImGui::Text("Pitch");
         ImGui::SameLine(cameraLabelWidth);
         ImGui::SetNextItemWidth(cameraInputWidth);
         if (ImGui::DragFloat("##Pitch", &camera.pitch, 0.01f, -10.0f, 10.0f, "%.3f"))
             ApplyAngleValues();
+        ImGui::AlignTextToFramePadding();
         ImGui::Text("Yaw");
         ImGui::SameLine(cameraLabelWidth);
         ImGui::SetNextItemWidth(cameraInputWidth);
         if (ImGui::DragFloat("##Pan", &camera.pan, 0.01f, -10.0f, 10.0f, "%.3f"))
             ApplyAngleValues();
+        ImGui::AlignTextToFramePadding();
         ImGui::Text("Roll");
         ImGui::SameLine(cameraLabelWidth);
         ImGui::SetNextItemWidth(cameraInputWidth);
         if (ImGui::DragFloat("##Roll", &camera.roll, 0.01f, -10.0f, 10.0f, "%.3f"))
             ApplyAngleValues();
+        ImGui::AlignTextToFramePadding();
         ImGui::Text("Height");
         ImGui::SameLine(cameraLabelWidth);
         ImGui::SetNextItemWidth(cameraInputWidth);
@@ -7797,6 +7715,7 @@ void ShowCameraMenu()
         ImGui::EndDisabled();
 
         ImGui::BeginDisabled(!camera.programEnabled || !camera.zoomFound);
+        ImGui::AlignTextToFramePadding();
         ImGui::Text("Zoom");
         ImGui::SameLine(cameraLabelWidth);
         ImGui::SetNextItemWidth(cameraInputWidth);
@@ -7827,10 +7746,13 @@ void ShowCameraMenu()
         ImGui::EndChild();
 
         ImGui::PopStyleColor();
-        ImGui::End();
+        HudMenu::End();
     }
-    else
+    else {
         ImGui::PopStyleColor();
+        HudMenu::End();
+        PopFontSafe(3);
+    }
 }
 
 static const LootFilterConfig::Builder::Catalog& GetLootFilterBuilderCatalog()
@@ -7943,7 +7865,7 @@ void ShowLootMenu()
     hoveredKey.clear();
     ImGui::PushStyleColor(ImGuiCol_WindowBg, ShouldDrawWindowBackgroundImage(kWindowBg_Loot) ? ImVec4(0, 0, 0, 0) : s_WindowBgColors[kWindowBg_Loot]);
     PushFontSafe(3);
-    if (ImGui::Begin("D2RLoot Settings", &showLootMenu, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoTitleBar))
+    if (HudMenu::Begin("D2RLoot Settings", &showLootMenu, ImGuiWindowFlags_NoTitleBar))
     {
         if (ShouldDrawWindowBackgroundImage(kWindowBg_Loot))
             DrawWindowBackgroundImage(kWindowBg_Loot);
@@ -8100,10 +8022,13 @@ void ShowLootMenu()
         }
 
         ImGui::PopStyleColor();
-        ImGui::End();
+        HudMenu::End();
     }
-    else
+    else {
         ImGui::PopStyleColor();
+        HudMenu::End();
+        PopFontSafe(3);
+    }
 }
 
 static void ApplyUITheme(const std::string& themeName);
@@ -8148,7 +8073,7 @@ static std::vector<ImVec4> GetCurrentThemeColors()
 
 static bool ShouldDrawWindowBackgroundImage(WindowBgId id)
 {
-    if (id < 0 || id >= kWindowBgCount) return false;
+    if (HudMenu::nativeTheme || id < 0 || id >= kWindowBgCount) return false;
     return !s_WindowBgImageOverrides[id].empty() && D3D12::GetWindowBgTextureId((int)id) != 0;
 }
 
@@ -8211,6 +8136,7 @@ static void EndFrameBgImageRegion()
 
 static bool ThemeButton(const char* label, const ImVec2& size)
 {
+    if (HudMenu::nativeTheme) return HudMenu::Button(label,size);
     uint64_t texIdAny = 0;
     for (int s = 2; s >= 0 && texIdAny == 0; --s)
         texIdAny = D3D12::GetButtonTextureId(s);
@@ -8250,6 +8176,7 @@ static bool ThemeButton(const char* label, const ImVec2& size)
 
 static bool ThemeCheckbox(const char* label, bool* v)
 {
+    if (HudMenu::nativeTheme) return ImGui::Checkbox(label,v);
     ImGuiStyle& style = ImGui::GetStyle();
     ImVec4 cb = ((int)s_UICustomColors.size() > 7) ? s_UICustomColors[7] : style.Colors[ImGuiCol_FrameBg];
     ImVec4 cbH = ((int)s_UICustomColors.size() > 8) ? s_UICustomColors[8] : style.Colors[ImGuiCol_FrameBgHovered];
@@ -8313,7 +8240,17 @@ static void ClearThemeImageOverrides()
 
 static void ApplyUITheme(const std::string& themeName)
 {
+    HudMenu::nativeTheme = themeName == "Sanctuary";
     ImGuiStyle& style = ImGui::GetStyle();
+    style.WindowRounding = style.ChildRounding = style.FrameRounding = 0;
+    if (HudMenu::nativeTheme) {
+        ClearThemeImageOverrides();
+        HudMenu::ApplySanctuaryPalette();
+        auto colors=style.Colors;
+        for(auto& color:s_WindowBgColors)color=colors[ImGuiCol_WindowBg];
+        s_UICustomColors=GetCurrentThemeColors();
+        return;
+    }
     if (themeName == "Dark")
     {
         ImGui::StyleColorsDark();
@@ -8662,46 +8599,30 @@ void ShowSettingsPanel()
 
     float menuScale = GetMenuScaleFactor();
     ImVec2 panelSize = ImVec2(480.0f * menuScale, 560.0f * menuScale);
-    ImVec2 centerPos = ImVec2((ImGui::GetIO().DisplaySize.x - panelSize.x) * 0.5f, (ImGui::GetIO().DisplaySize.y - panelSize.y) * 0.5f);
-    ImGui::SetNextWindowPos(centerPos, ImGuiCond_Once);
-    ImGui::SetNextWindowSize(panelSize, ImGuiCond_Once);
+    HudMenu::Prepare(panelSize);
 
     ImGuiIO& io = ImGui::GetIO();
     int fontIndexTitle = 3;
     int fontIndexBody = 1;
     ImFont* fontTitle = (fontIndexTitle >= 0 && fontIndexTitle < io.Fonts->Fonts.Size) ? io.Fonts->Fonts[fontIndexTitle] : nullptr;
-    ImFont* fontBody = (fontIndexBody >= 0 && fontIndexBody < io.Fonts->Fonts.Size) ? io.Fonts->Fonts[fontIndexBody] : nullptr;
+    ImFont* fontBody = HudSettings::bodyFont ? HudSettings::bodyFont : (fontIndexBody >= 0 && fontIndexBody < io.Fonts->Fonts.Size) ? io.Fonts->Fonts[fontIndexBody] : nullptr;
     if (fontTitle) ImGui::PushFont(fontTitle);
 
     ImGui::PushStyleColor(ImGuiCol_WindowBg, ShouldDrawWindowBackgroundImage(kWindowBg_ThemeControl) ? ImVec4(0, 0, 0, 0) : s_WindowBgColors[kWindowBg_ThemeControl]);
-    if (ImGui::Begin("Theme Control", &showSettingsPanel, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoTitleBar))
+    const bool themeVisible=HudMenu::Begin("Theme Control", &showSettingsPanel, ImGuiWindowFlags_NoTitleBar);
+    if (themeVisible)
     {
         if (ShouldDrawWindowBackgroundImage(kWindowBg_ThemeControl))
             DrawWindowBackgroundImage(kWindowBg_ThemeControl);
-        const char* panelTitle = "Theme Control";
-        float titleWidth = ImGui::CalcTextSize(panelTitle).x;
-        ImVec2 contentSize = ImGui::GetContentRegionAvail();
-        float closeBtnSize = 18.0f;
-        float padding = 5.0f;
-        ImGui::SetCursorPosX((contentSize.x - titleWidth) * 0.5f);
-        ImGui::TextColored(ImVec4(0.95f, 0.85f, 0.5f, 1.0f), "%s", panelTitle);
-        ImGui::SameLine(contentSize.x - closeBtnSize - padding);
-        ImVec2 btnPos = ImGui::GetCursorScreenPos();
-        ImGui::InvisibleButton("CloseBtnSettings", ImVec2(closeBtnSize, closeBtnSize));
-        if (ImGui::IsItemClicked())
-            showSettingsPanel = false;
-        ImDrawList* drawList = ImGui::GetWindowDrawList();
-        ImVec2 textSize = ImGui::CalcTextSize("X");
-        ImVec2 textPos = ImVec2(btnPos.x + (closeBtnSize - textSize.x) * 0.5f, btnPos.y + (closeBtnSize - textSize.y) * 0.5f);
-        drawList->AddText(textPos, IM_COL32(255, 80, 80, 255), "X");
+        DrawWindowTitleAndClose("Appearance", &showSettingsPanel);
         ImGui::Separator();
-        ImGui::Dummy(ImVec2(0.0f, 4.0f * menuScale));
         if (fontTitle) ImGui::PopFont();
         if (fontBody) ImGui::PushFont(fontBody);
 
         // Build theme list: Default, Golden Sunset, Hell's Embrace, RMD Blue, RMD Red, RMD Purple, RMD Green, RMD Gold, RMD Dark, Custom, then user presets
         static std::vector<std::string> s_ThemeComboNames;
         s_ThemeComboNames.clear();
+        s_ThemeComboNames.push_back("Sanctuary");
         s_ThemeComboNames.push_back("Default");
         s_ThemeComboNames.push_back("Golden Sunset");
         s_ThemeComboNames.push_back("Hell's Embrace");
@@ -8721,9 +8642,7 @@ void ShowSettingsPanel()
             if (s_ThemeComboNames[i] == s_UITheme) { themeComboIndex = (int)i; break; }
 
         // --- Theme preset ---
-        ImGui::Text("Theme preset");
-        ImGui::SameLine(110.0f);
-        ImGui::SetNextItemWidth(180.0f);
+        HudSettings::InlineField("Theme preset",180.0f,menuScale);
         BeginFrameBgImageRegion();
         if (ImGui::Combo("##Theme", &themeComboIndex, [](void* data, int idx, const char** out) {
             const auto* names = (const std::vector<std::string>*)data;
@@ -8738,6 +8657,9 @@ void ShowSettingsPanel()
         }
         EndFrameBgImageRegion();
 
+        HudSettings::Note(s_UITheme=="Sanctuary"?"Stone panels, red accents and high-contrast controls inspired by the quest journal.":"Choose a preset above, or expand the controls below to customize your theme.");
+        ImGui::Dummy({0,16*menuScale});
+        if(ImGui::CollapsingHeader("Customize colors and artwork")){
         // Save current as new preset
         static char s_NewPresetName[64] = "";
         ImGui::SetNextItemWidth(180.0f);
@@ -9018,624 +8940,18 @@ void ShowSettingsPanel()
                 s_ImagePickerForSlot = -1;
         }
         ImGui::EndChild();
+        }
         ImGui::PopStyleColor();
     }
-    else
+    else {
         ImGui::PopStyleColor();
-    ImGui::End();
-    if (fontBody) ImGui::PopFont();
+        if (fontTitle) ImGui::PopFont();
+    }
+    HudMenu::End();
+    if (themeVisible && fontBody) ImGui::PopFont();
 }
 
-void ShowD2RHUDMenu()
-{
-    if (!showD2RHUDMenu) return;
-
-    static std::string saveStatusMessage = "";
-    static ImVec4 saveStatusColor = ImVec4(0, 1, 0, 1); // default green
-    static bool initialized = false;
-    if (!initialized)
-    {
-        LoadD2RHUDConfig(configFilePath);
-        RegisterModOverrides();
-        ApplyModOverrides(modName);
-        ApplyUITheme(s_UITheme);
-        initialized = true;
-    }
-
-    float menuScale = GetMenuScaleFactor();
-    ImVec2 windowSize = ImVec2(850.0f * menuScale, 520.0f * menuScale);
-    ImVec2 centerPos = ImVec2((ImGui::GetIO().DisplaySize.x - windowSize.x) * 0.5f, (ImGui::GetIO().DisplaySize.y - windowSize.y) * 0.5f);
-    ImGui::SetNextWindowPos(centerPos, ImGuiCond_Once);
-    ImGui::SetNextWindowSize(windowSize, ImGuiCond_Once);
-
-    ImGuiIO& io = ImGui::GetIO();
-    io.ConfigFlags &= ~ImGuiConfigFlags_NoKeyboard;
-
-    int fontIndex = 3;
-    ImFont* fontSize = (fontIndex >= 0 && fontIndex < io.Fonts->Fonts.Size) ? io.Fonts->Fonts[fontIndex] : nullptr;
-    if (fontSize) ImGui::PushFont(fontSize);
-
-    ImGui::PushStyleColor(ImGuiCol_WindowBg, ShouldDrawWindowBackgroundImage(kWindowBg_D2RHUDOptions) ? ImVec4(0, 0, 0, 0) : s_WindowBgColors[kWindowBg_D2RHUDOptions]);
-    if (ImGui::Begin("D2RHUD Options", &showD2RHUDMenu, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoTitleBar))
-    {
-        if (ShouldDrawWindowBackgroundImage(kWindowBg_D2RHUDOptions))
-            DrawWindowBackgroundImage(kWindowBg_D2RHUDOptions);
-        // --- CENTERED WINDOW TITLE WITH TOP-RIGHT CLOSE BUTTON ---
-        ImGuiIO& io = ImGui::GetIO();
-        int fontIndex = 3;
-        ImFont* fontSize = (fontIndex >= 0 && fontIndex < io.Fonts->Fonts.Size) ? io.Fonts->Fonts[fontIndex] : nullptr;
-        const char* windowTitle = "D2RHUD Options";
-        float closeBtnSize = 20.0f * menuScale;
-        float padding = -10.0f * menuScale;
-
-        // Compute window content size
-        ImVec2 contentSize = ImGui::GetContentRegionAvail();
-        float titleWidth = ImGui::CalcTextSize(windowTitle).x;
-
-        // --- Centered window title (themes icon only on Control Center) ---
-        ImGui::SetCursorPosX((contentSize.x - titleWidth) * 0.5f);
-        ImGui::TextColored(ImVec4(0.95f, 0.85f, 0.5f, 1.0f), "%s", windowTitle);
-
-        // --- Same line: position close button at top-right ---
-        ImGui::SameLine(contentSize.x - closeBtnSize - padding);
-        ImVec2 btnPos = ImGui::GetCursorScreenPos();
-
-        // Invisible button to capture clicks
-        ImGui::InvisibleButton("CloseBtn", ImVec2(closeBtnSize, closeBtnSize));
-        if (ImGui::IsItemClicked())
-        {
-            showD2RHUDMenu = false;
-        }
-
-        // Draw centered "X" in button
-        ImDrawList* drawList = ImGui::GetWindowDrawList();
-        ImVec2 textSize = ImGui::CalcTextSize("X");
-        ImVec2 textPos = ImVec2(
-            btnPos.x + (closeBtnSize - textSize.x) * 0.5f,
-            btnPos.y + (closeBtnSize - textSize.y) * 0.5f
-        );
-        drawList->AddText(textPos, IM_COL32(255, 80, 80, 255), "X");
-        if (fontSize) ImGui::PopFont();
-        ImGui::Separator();
-
-        // --- two columns: left = controls, right = descriptions ---
-        ImGui::Columns(2, nullptr, true);
-        ImGui::SetColumnWidth(0, 280.0f * menuScale); // width of control column
-
-        static std::string descriptionTitle = "";
-        static std::string descriptionText = "";
-        static std::string descriptionNote = "";
-
-        // --- SUBHEADER (centered in first column) ---
-        ImVec2 columnStartPos = ImGui::GetCursorPos();
-        float columnWidth = ImGui::GetColumnWidth();
-        float headerWidth = ImGui::CalcTextSize("Current Options").x;
-        ImGui::SetCursorPosX(columnStartPos.x + (columnWidth - headerWidth) * 0.5f);
-        ImGui::TextColored(ImVec4(0.0157f, 0.380f, 0.8f, 1.0f), "Current Options");
-        ImGui::Separator();
-
-        // --- MENU CONTROLS (LEFT COLUMN) ---
-        auto drawCheckbox = [&](const char* label, bool* value, const char* title, const char* desc, const char* descnote, const LockedValueInfo* lockInfo)
-            {
-                // Disable checkbox if locked
-                if (lockInfo && lockInfo->locked)
-                    ImGui::BeginDisabled();
-
-                ThemeCheckbox(label, value);
-
-                if (lockInfo && lockInfo->locked)
-                    ImGui::EndDisabled();
-
-                // Update main description variables (existing behavior) even if disabled
-                if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-                {
-                    descriptionTitle = title;
-                    descriptionText = desc;
-                    descriptionNote = descnote;
-                }
-
-                if (lockInfo && lockInfo->locked && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-                {
-                    ImVec2 mousePos = ImGui::GetIO().MousePos;
-                    ImGui::SetNextWindowPos(ImVec2(mousePos.x + 70, mousePos.y), ImGuiCond_Always);
-                    ImGui::BeginTooltip();
-                    float tooltipWidth = 600.0f;
-                    ImGui::PushTextWrapPos(ImGui::GetCursorPos().x + tooltipWidth);
-                    ImGui::TextColored(ImVec4(1.0f, 0.2f, 0.2f, 1.0f), "Locked by Mod Author(s)"); // red
-                    ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "This setting cannot be changed while this mod is active"); // gray
-                    ImGui::TextWrapped("");
-                    ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f), "Reason:"); // orange
-                    ImGui::SameLine();
-                    ImGui::TextWrapped("%s", lockInfo->reason.c_str());
-                    ImGui::PopTextWrapPos();
-                    ImGui::EndTooltip();
-                }
-
-            };
-
-        auto drawLabeledInput = [&](const char* label, auto widgetFunc, const char* title, const char* desc, const char* descnote, bool sameLine = true, int slValue = 35, const LockedValueInfo* lockInfo = nullptr)
-            {
-                ImGui::BeginGroup();
-
-                ImGui::Text("%s", label);
-
-                if (sameLine)
-                    ImGui::SameLine(0.0f, slValue);
-
-                // Disable input if locked
-                if (lockInfo && lockInfo->locked)
-                    ImGui::BeginDisabled();
-
-                widgetFunc();
-
-                if (lockInfo && lockInfo->locked)
-                    ImGui::EndDisabled();
-
-                ImGui::EndGroup();
-
-                // Right Panel Description
-                if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-                {
-                    descriptionTitle = title;
-                    descriptionText = desc;
-                    descriptionNote = descnote;
-                }
-
-                // Lock Reason Tooltip
-                if (lockInfo && lockInfo->locked &&
-                    ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-                {
-                    ImVec2 mousePos = ImGui::GetIO().MousePos;
-                    ImGui::SetNextWindowPos(ImVec2(mousePos.x + 70, mousePos.y), ImGuiCond_Always);
-
-                    ImGui::BeginTooltip();
-                    ImGui::PushTextWrapPos(ImGui::GetCursorPos().x + 600.0f);
-
-                    ImGui::TextColored(
-                        ImVec4(1.0f, 0.2f, 0.2f, 1.0f),
-                        "Locked by Mod Author(s)"
-                    );
-
-                    ImGui::TextColored(
-                        ImVec4(0.7f, 0.7f, 0.7f, 1.0f),
-                        "This value cannot be changed while this mod is active\n"
-                    );
-
-                    ImGui::TextWrapped("");
-
-                    ImGui::TextColored(
-                        ImVec4(1.0f, 0.5f, 0.0f, 1.0f),
-                        "Reason:"
-                    );
-                    ImGui::SameLine();
-                    ImGui::TextWrapped("%s", lockInfo->reason.c_str());
-
-                    ImGui::PopTextWrapPos();
-                    ImGui::EndTooltip();
-                }
-            };
-
-        drawCheckbox("Monster Stats Display", &d2rHUDConfig.MonsterStatsDisplay, "Monster Stats Display", "- Displays HP and Resistances of Monsters in real-time\n- Uses data retrieved directly from the game for accuracy\n- Values for -Enemy Resistance% (when applied by items) are not shown, they don't actually affect monsters\n\n", "This setting is best displayed using either of the Advanced Display Modes in D2RLAN", GetLockInfo(modName, &ModOverrideSettings::MonsterStatsDisplay));
-        drawCheckbox("Sundered Monster UMods", &d2rHUDConfig.SunderedMonUMods, "Sundered Monster UMods", "- Applies immunity reduction to MonUMod bonuses\n(Bonuses such as Cold Enchanted, Stone Skin, etc)\n- Refreshes on damage, monster hover, and UMod changes\n\n", "If the monster is under 100 resistance (sunder threshold), then this edit will not apply", GetLockInfo(modName, &ModOverrideSettings::SunderedMonUMods));
-        drawCheckbox("Minion Equality", &d2rHUDConfig.MinionEquality, "Minion Equality", "- Champ/Uniques minions assume their master's drops\n(Determined by your TreasureClassEx.txt entries)\n\n", "Uses TXT or BIN tables. Custom terror drop columns in BIN-only releases use the exported HUD table metadata.", GetLockInfo(modName, &ModOverrideSettings::MinionEquality));
-        drawCheckbox("Gamble Cost Control", &d2rHUDConfig.GambleCostControl, "Gamble Cost Control", "- Allows the gamble cost column to be used by AMW.txt\n- If a value of -1 is specified, it will use retail cost logic\n- If Disabled, only ring and amulet costs may be changed\n\n", "The maximum gamble cost will be determined by your in-game gold limits (defined in Memory Edits)", GetLockInfo(modName, &ModOverrideSettings::GambleCostControl));
-        drawCheckbox("Combat Log", &d2rHUDConfig.CombatLog, "Combat Log", "- Displays real-time combat logs in system chat\n    - RNG rolls for Hit, Block and Dodge results\n    - Elemental Type, +DMG%, Length and Final Damage\n    - Remaining Monster Health\n- Uses data retrieved directly from the game for accuracy\n\n", "This feature is also utilized by the 'attackinfo 1' cheat\nExpect formatting and usage to adapt over time", GetLockInfo(modName, &ModOverrideSettings::CombatLog));
-        drawCheckbox("Transmog Visuals", &d2rHUDConfig.TransmogVisuals, "Transmog Visuals", "- Allows you to transform visuals of applicable items\n(Make your Hand Axe look like a Short Sword, etc)\n- Uses the mod's transmog stat and transmog TXT/JSON mapping\n- Mod Author decides all transmog possibilities\n- Applies both in-game and at the main menu\n\n", "Four-character item codes work independently when native HD support is active", GetLockInfo(modName, &ModOverrideSettings::TransmogVisuals));
-        const float pickupLabelWidth = ImGui::CalcTextSize("Disable Right-Click Item Pickup").x + ImGui::GetFrameHeight() + ImGui::GetStyle().ItemInnerSpacing.x;
-        const char* pickupLabel = pickupLabelWidth <= ImGui::GetContentRegionAvail().x
-            ? "Disable Right-Click Item Pickup###DisableRightClickItemPickup"
-            : "Disable Right-Click\nItem Pickup###DisableRightClickItemPickup";
-        if (ThemeCheckbox(pickupLabel, &d2rHUDConfig.DisableRightClickItemPickup))
-        {
-            D3Whirlwind::SetRightClickPickupDisabled(d2rHUDConfig.DisableRightClickItemPickup);
-            SaveFullGrailConfig(configFilePath, false);
-        }
-        if (ImGui::IsItemHovered())
-        {
-            descriptionTitle = "Disable Right-Click Item Pickup";
-            descriptionText = "- Prevents right-clicks from picking up ground items\n"
-                "- Use left-click to pick up items instead\n"
-                "- Also applies while using D3 Style Whirlwind\n"
-                "- Inventory right-click actions and automatic gold pickup are unchanged\n\n";
-            descriptionNote = "Applies immediately. Defaults off.";
-        }
-        if (ThemeCheckbox("Quantity Right-Clicks", &d2rHUDConfig.QuantityRightClicks))
-        {
-            LegacyTransmog::SetQuantityRightClicks(d2rHUDConfig.QuantityRightClicks);
-            SaveFullGrailConfig(configFilePath, false);
-        }
-        if (ImGui::IsItemHovered())
-        {
-            descriptionTitle = "Quantity Right-Clicks";
-            descriptionText = "- Right-click a non-transmog stack to separate one item\n- Keep shows the original stack; New stack receives the chosen amount\n- Choose the final quantity and click Split\n- Example: choose 20 from 88 to keep stacks of 68 and 20\n- Uses free inventory, cube or personal stash slots\n- Close or click elsewhere to keep the initial one-item split\n- Full storage leaves the original stack unchanged\n\n";
-            descriptionNote = LegacyTransmog::StackSplitStatus();
-        }
-        ImGui::Indent();
-        if (ThemeCheckbox("Minimalist Quantity Popup", &d2rHUDConfig.MinimalistQuantityPopup))
-        {
-            LegacyTransmog::SetMinimalistQuantityPopup(d2rHUDConfig.MinimalistQuantityPopup);
-            SaveFullGrailConfig(configFilePath, false);
-        }
-        if (ImGui::IsItemHovered())
-        {
-            descriptionTitle = "Minimalist Quantity Popup";
-            descriptionText = "- Uses the compact quantity-entry layout\n- Hides item images and the two-stack preview\n- Applies immediately and remembers your preference\n\n";
-            descriptionNote = "Quantity Right-Clicks must be enabled.";
-        }
-        ImGui::Unindent();
-        if (ThemeCheckbox("Persistent Summons", &d2rHUDConfig.PersistentSummons))
-        {
-            SummonPersistence::SetEnabled(d2rHUDConfig.PersistentSummons);
-            SaveFullGrailConfig(configFilePath, false);
-        }
-        if (ImGui::IsItemHovered())
-        {
-            descriptionTitle = "Persistent Summons";
-            descriptionText = "- Restores surviving permanent minions in your next game\n"
-                "- Supports all classes and custom permanent summons\n"
-                "- Timed summons are excluded\n"
-                "- Iron Golem retains its native save behavior\n\n";
-            descriptionNote = "Requires offline play or the local TCP/IP host's D2RHUD; the host controls persistence.";
-            const ImVec2 mousePos = ImGui::GetIO().MousePos;
-            ImGui::SetNextWindowPos(ImVec2(mousePos.x + 70.0f, mousePos.y), ImGuiCond_Always);
-            ImGui::BeginTooltip();
-            ImGui::PushTextWrapPos(ImGui::GetCursorPos().x + 440.0f * menuScale);
-            ImGui::TextUnformatted("Restore surviving permanent minions next game. Timed summons are excluded. Iron Golem keeps its native save behavior. Requires offline play or a local TCP/IP host running D2RHUD.");
-            ImGui::Separator();
-            ImGui::TextWrapped("%s", SummonPersistence::Status());
-            const auto summonStorageStatus = SummonPersistence::StorageStatus();
-            ImGui::TextWrapped("%s", summonStorageStatus.c_str());
-            ImGui::PopTextWrapPos();
-            ImGui::EndTooltip();
-        }
-        if (ThemeCheckbox("D3 Style Whirlwind", &d2rHUDConfig.D3StyleWhirlwind))
-        {
-            D3Whirlwind::SetEnabled(d2rHUDConfig.D3StyleWhirlwind);
-            SaveFullGrailConfig(configFilePath, false);
-        }
-        if (ImGui::IsItemHovered())
-        {
-            descriptionTitle = "D3 Style Whirlwind";
-            descriptionText = "- Hold the assigned mouse button to keep Whirlwind active\n"
-                "- Steer continuously by moving the cursor\n"
-                "- Click nearby items with the other mouse button to pick them up\n"
-                "- Pays the native cast cost once per second\n\n";
-            descriptionNote = "Available for your local/offline or TCP/IP host character. Charged item skills retain native behavior.";
-            const ImVec2 mousePos = ImGui::GetIO().MousePos;
-            ImGui::SetNextWindowPos(ImVec2(mousePos.x + 70.0f, mousePos.y), ImGuiCond_Always);
-            ImGui::BeginTooltip();
-            ImGui::PushTextWrapPos(ImGui::GetCursorPos().x + 440.0f * menuScale);
-            ImGui::TextUnformatted("Hold Whirlwind's assigned mouse button and move the cursor to steer. Click nearby ground items with the other mouse button to pick them up. Uses one native cast cost per second. Available for your local/offline or TCP/IP host character.");
-            ImGui::PopTextWrapPos();
-            ImGui::EndTooltip();
-        }
-        if (!ItemCodes::Installed()) {
-            drawCheckbox("Extended Itemcodes (legacy)", &d2rHUDConfig.ExtendedItemcodes, "Extended Itemcodes", "- Legacy visual fallback for four-character item codes\n- Uses transmog TXT/JSON mapping when native HD support is unavailable\n\n", "Used when native four-character HD support is unavailable", GetLockInfo(modName, &ModOverrideSettings::ExtendedItemcodes));
-        }
-        drawCheckbox("Chat Sounds", &d2rHUDConfig.ChatSounds, "Chat Sounds", "- Plays a notification sound when other players send chat\n- Does not play for your own messages\n- Controlled by D2RHUD options (not chat panel widget)\n\n", "Toggle this to enable or disable chat notification sounds", nullptr);
-        if (ImGui::IsItemDeactivatedAfterEdit())
-            SaveFullGrailConfig(configFilePath, false);
-
-        bool chatSoundSelectionChanged = false;
-        drawLabeledInput(
-            "Chat Sound",
-            [&]() {
-                chatSoundSelectionChanged = DrawChatSoundSelector(menuScale);
-            },
-            "Chat Sound",
-            "- Sound played when another player sends chat (if Chat Sounds is enabled)\n"
-            "- Auto uses the first file in My Filters/sounds, Pandemonium/Sounds, or D2RLAN/Sounds\n"
-            "- Pick a listed file or choose Custom path for any .wav, .mp3, or .flac\n\n",
-            "Add sounds in D2RLoot Settings > Sounds, or paste a full path for custom",
-            false,
-            35.0f,
-            nullptr
-        );
-        if (chatSoundSelectionChanged)
-        {
-            InvalidateChatSoundPathCache();
-            SaveFullGrailConfig(configFilePath, false);
-        }
-
-        drawCheckbox("Floating Damage", &d2rHUDConfig.FloatingDamage, "Floating Damage", "- Displays floating damage values above monsters\n- Coalesces rapid ticks (poison, fire, etc.)\n- Optional DPS meter with rolling window\n- Customize appearance in the Floating Damage menu\n\n", "Enable or disable floating damage display", GetLockInfo(modName, &ModOverrideSettings::FloatingDamage));
-        if (ImGui::IsItemDeactivatedAfterEdit())
-        {
-            FloatingDamage::GetConfig().enabled = d2rHUDConfig.FloatingDamage;
-            settings.FloatingDamage = d2rHUDConfig.FloatingDamage;
-            cachedSettings.FloatingDamage = d2rHUDConfig.FloatingDamage;
-        }
-        drawCheckbox("HP Rollover Mods", &d2rHUDConfig.HPRolloverMods, "HP Rollover Mods", "- Prevents HP rollovers on high player counts by:\n- Capping the maximum health bonus % applied to monsters\n- Applying damage reduction logic to the Player\n- Scales Reduction % by the calculated rollover amount\n\n", "This feature cannot guarantee no rollovers\nHowever, it should work for mods with retail-ish values", GetLockInfo(modName, &ModOverrideSettings::HPRolloverMods));
-
-        // --- HPRolloverDifficulty ---
-        const char* difficultyItems[] = { "Normal or Higher", "Nightmare or Higher", "Hell Only" };
-        int difficultyIndex = d2rHUDConfig.HPRolloverDifficulty + 1;
-
-        // label hover detection:
-        drawLabeledInput(
-            "HP Rollover Difficulty",
-            [&]() {
-                ImGui::PushItemWidth(250.0f * menuScale);
-                BeginFrameBgImageRegion();
-                if (ImGui::Combo("##HPRolloverDifficulty", &difficultyIndex,
-                    difficultyItems, IM_ARRAYSIZE(difficultyItems)))
-                {
-                    d2rHUDConfig.HPRolloverDifficulty = difficultyIndex - 1;
-                }
-                EndFrameBgImageRegion();
-                ImGui::PopItemWidth();
-            },
-            "HP Rollover Difficulty", "- Control the applied Difficulty of HP Rollover Mods\n\n", "Only valid if HP Rollover Mods are enabled", false, 35.0f, GetLockInfo(modName, &ModOverrideSettings::HPRolloverDifficulty)
-        );
-
-        ImGui::Dummy(ImVec2(0.0f, 3.0f));
-
-        drawLabeledInput(
-            "HP Rollover %",
-            [&]() {
-                ImGui::PushItemWidth(100.0f * menuScale);
-                BeginFrameBgImageRegion();
-                if (ImGui::InputInt("##HPRolloverPercent", &d2rHUDConfig.HPRolloverPercent, 1, 10))
-                {
-                    d2rHUDConfig.HPRolloverPercent =
-                        std::clamp(d2rHUDConfig.HPRolloverPercent, 0, 100);
-                }
-                EndFrameBgImageRegion();
-                ImGui::PopItemWidth();
-            },
-            "HP Rollover %", "- Controls the maximum amount of Damage reduction\n\n", "Only valid if HP Rollover Mods are enabled", true, 35.0f, GetLockInfo(modName, &ModOverrideSettings::HPRolloverPercent)
-        );
-
-        drawLabeledInput(
-            "Sunder Value",
-            [&]() {
-                ImGui::PushItemWidth(100.0f * menuScale);
-                BeginFrameBgImageRegion();
-                if (ImGui::InputInt("##SunderValue", &d2rHUDConfig.SunderValue, 1, 10))
-                {
-                    d2rHUDConfig.SunderValue =
-                        std::clamp(d2rHUDConfig.SunderValue, 0, 100);
-                }
-                EndFrameBgImageRegion();
-                ImGui::PopItemWidth();
-            },
-            "Sunder Value", "- Sets the floor for immunity reduction (default: 99)\n- Subtracts immunity pierce linearly from resistance >= 100\n- Refreshes after equipment or resistance changes\n- States like Conviction will apply at full effect\n(Instead of by 1/5 if the monster is immune)\n- For TCPIP, the highest sunder value for each element\nFound among all players will be applied\n\n", "Requires compatible sunder-edited mod files to use\nMore info available at D2RModding Discord", true, 42.0f, GetLockInfo(modName, &ModOverrideSettings::SunderValue)
-        );
-
-        ImGui::Separator();
-        const bool workshopOpen = ImGui::CollapsingHeader("Workshop");
-        if (ImGui::IsItemHovered() || ImGui::IsItemToggledOpen()) {
-            descriptionTitle = "Workshop";
-            descriptionText = "Unfinished features for exploring the engine's limits and planning future modding work.\n\n"
-                "These prototypes are experiments and may change as development continues.\n\n"
-                "- Survivor Arena: an automatic-combat survival experiment\n"
-                "- Act VI: a sixth-act campaign and engine expansion prototype\n\n";
-            descriptionNote = "Both features default to off. Enable the ones you want to explore; use a separate test character.";
-        }
-        if (workshopOpen) {
-            ImGui::Indent();
-            if (ThemeCheckbox("Survivor Arena", &d2rHUDConfig.SurvivorArena)) {
-                CubeMap::SetSurvivorsEnabled(d2rHUDConfig.SurvivorArena);
-                SaveFullGrailConfig(configFilePath, false);
-            }
-            if (ImGui::IsItemHovered()) {
-                descriptionTitle = "Survivor Arena";
-                descriptionText = "Unfinished prototype for exploring engine limits and planning future mods.\n\n"
-                    "- Approach Charsi in Act I to enter Sanctuary Survivors\n"
-                    "- Survive ten minutes with automatic class attacks\n"
-                    "- Each class has separate saved arena progress\n"
-                    "- Your normal hero returns with their original equipment and skills\n\n";
-                descriptionNote = "Defaults off. The host must enable it for entry. Disabling blocks new entries; an active run can still finish or return to town.";
-                const auto mouse = ImGui::GetIO().MousePos;
-                ImGui::SetNextWindowPos(ImVec2(mouse.x + 70.0f, mouse.y), ImGuiCond_Always);
-                ImGui::BeginTooltip();
-                ImGui::PushTextWrapPos(ImGui::GetCursorPos().x + 440.0f * menuScale);
-                ImGui::TextUnformatted("Unfinished Workshop prototype. Enable to approach Charsi in Act I and explore the Survivor Arena. The host must also enable it. Existing runs can finish after disabling.");
-                ImGui::Separator();
-                ImGui::TextWrapped("%s", CubeMap::Status());
-                ImGui::PopTextWrapPos();
-                ImGui::EndTooltip();
-            }
-            if (!_stricmp(modName.c_str(),"RMD-MP")) {
-                if (ThemeCheckbox("Act VI", &d2rHUDConfig.ActVI)) {
-                    ExtendedActs::SetRequested(d2rHUDConfig.ActVI);
-                    SaveFullGrailConfig(configFilePath, false);
-                }
-                if (ImGui::IsItemHovered()) {
-                    descriptionTitle="Act VI";
-                    descriptionText="Unfinished prototype for exploring engine limits and planning future mods.\n\n- Baal unlocks Act VI in the same difficulty\n- Return to Act VI town after the credits\n- Act VI's final quest unlocks the next difficulty\n\n";
-                    descriptionNote="Requires a full D2R restart. Prototype content; use a separate test character.";
-                    const auto mouse=ImGui::GetIO().MousePos;
-                    ImGui::SetNextWindowPos(ImVec2(mouse.x+70.0f,mouse.y),ImGuiCond_Always);
-                    ImGui::BeginTooltip();
-                    ImGui::PushTextWrapPos(ImGui::GetCursorPos().x+440.0f*menuScale);
-                    ImGui::TextUnformatted("Unfinished Workshop prototype. Baal unlocks Act VI; its final quest unlocks the next difficulty. Requires a matching compiled Act VI data pack (or -txt when compiling source tables). Full D2R restart required. Prototype content; use a separate test character.");
-                    if(ExtendedActs::Requested()!=ExtendedActs::Active())ImGui::TextUnformatted("Restart D2R to apply the selected option.");
-                    ImGui::Separator();ImGui::TextWrapped("%s",ExtendedActs::Status());
-                    ImGui::PopTextWrapPos();ImGui::EndTooltip();
-                }
-            }
-            ImGui::Unindent();
-        }
-
-        // --- END LEFT COLUMN ---
-        ImGui::NextColumn();
-
-        // --- DESCRIPTION PANEL (RIGHT COLUMN) ---
-        float colX = ImGui::GetColumnOffset(1);
-        float colW = ImGui::GetColumnWidth(1);
-        fontIndex = 3;
-        fontSize = (fontIndex >= 0 && fontIndex < io.Fonts->Fonts.Size) ? io.Fonts->Fonts[fontIndex] : nullptr;
-        if (fontSize) ImGui::PushFont(fontSize);
-
-        // get column-local cursor X and width
-        float colLocalX = ImGui::GetCursorPosX();
-        float colWidthLocal = ImGui::GetColumnWidth(1);
-
-        // measure title and center it (use local coords)
-        float titleW = ImGui::CalcTextSize(descriptionTitle.c_str()).x;
-        ImGui::SetCursorPosX((colLocalX + (colWidthLocal - titleW) * 0.5f) - 10.0f * menuScale);
-        ImGui::TextColored(ImVec4(0.0157f, 0.380f, 0.8f, 1.0f), "%s", descriptionTitle.c_str());
-        if (fontSize) ImGui::PopFont();
-
-        // --- Description (right column, fixed width 570px) ---
-        if (!descriptionText.empty())
-        {
-            const float colWidth = 550.0f * menuScale;
-            const float paddingRight = 10.0f * menuScale;
-            const float wrapPos = ImGui::GetCursorPosX() + colWidth - paddingRight;
-            ImGui::PushTextWrapPos(wrapPos);
-
-            // Center the wrapped main description text
-            ImVec2 textSize = ImGui::CalcTextSize(descriptionText.c_str(), nullptr, false, colWidth);
-            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (colWidth - textSize.x) * 0.5f);
-            ImGui::TextWrapped("%s", descriptionText.c_str());
-
-            // Center the wrapped description note in orangish-yellow
-            ImVec2 noteSize = ImGui::CalcTextSize(descriptionNote.c_str(), nullptr, false, colWidth);
-            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (colWidth - noteSize.x) * 0.5f);
-            ImGui::TextColored(ImVec4(1.0f, 0.65f, 0.0f, 1.0f), "%s", descriptionNote.c_str());
-
-            ImGui::PopTextWrapPos();
-        }
-
-        ImGui::Columns(1);
-        ImGui::Separator();
-        ImGui::Dummy(ImVec2(0.0f, 3.0f));
-
-        // --- Centered buttons on the same line ---
-        float windowWidth = ImGui::GetWindowSize().x;
-        float buttonWidth = 150.0f;
-        float spacing = 20.0f;
-        float totalWidth = buttonWidth * 2 + spacing;
-        ImGui::SetCursorPosX((windowWidth - totalWidth) * 0.5f);
-
-        // --- Test Settings Button ---
-        ImGui::PushID("TestSettings");
-        if (ThemeButton("Test Settings", ImVec2(buttonWidth, 0)))
-        {
-            // Update cachedSettings with the latest values
-            cachedSettings.HPRollover = d2rHUDConfig.HPRolloverMods;
-            cachedSettings.SunderValue = d2rHUDConfig.SunderValue;
-            cachedSettings.monsterStatsDisplay = d2rHUDConfig.MonsterStatsDisplay;
-            cachedSettings.HPRolloverAmt = d2rHUDConfig.HPRolloverPercent;
-            cachedSettings.sunderedMonUMods = d2rHUDConfig.SunderedMonUMods;
-            cachedSettings.minionEquality = d2rHUDConfig.MinionEquality;
-            cachedSettings.gambleForce = d2rHUDConfig.GambleCostControl;
-            cachedSettings.CombatLog = d2rHUDConfig.CombatLog;
-            cachedSettings.TransmogVisuals = d2rHUDConfig.TransmogVisuals;
-            cachedSettings.ExtendedItemcodes = d2rHUDConfig.ExtendedItemcodes;
-            cachedSettings.FloatingDamage = d2rHUDConfig.FloatingDamage;
-            settings.sunderedMonUMods = cachedSettings.sunderedMonUMods;
-            settings.SunderValue = cachedSettings.SunderValue;
-
-            saveStatusMessage = "New Settings Applied!";
-            saveStatusColor = ImVec4(0.0f, 1.0f, 0.0f, 1.0f); // green
-        }
-
-        if (ImGui::IsItemHovered())
-        {
-            descriptionTitle = "Test Settings";
-            descriptionText = "- Applies your current settings to the active game session\n- These settings will not persist for future game launches\n\n";
-            descriptionNote = "This applies only to the options in this panel";
-        }
-        ImGui::PopID();
-        ImGui::SameLine(0.0f, spacing);
-        ImGui::PushID("SaveConfig");
-
-        // Make the button green
-        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.0f, 0.3f, 0.0f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.0f, 0.5f, 0.0f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.1f, 0.6f, 0.1f, 1.0f));
-
-        if (ThemeButton("Save Config", ImVec2(buttonWidth, 0)))
-        {
-            namespace fs = std::filesystem;
-            std::string modName = GetModName();
-            fs::path relativePath = configFilePath;
-            fs::path configPath = fs::absolute(relativePath);
-
-            if (fs::exists(configPath)) {
-                bool result = SaveFullGrailConfig(configFilePath, false);
-
-                if (result)
-                {
-                    saveStatusMessage = "Config saved successfully!";
-                    saveStatusColor = ImVec4(0.0f, 1.0f, 0.0f, 1.0f); // green
-                }
-                else
-                {
-                    saveStatusMessage = "Failed to save config!";
-                    saveStatusColor = ImVec4(0.8f, 0.3f, 0.0f, 1.0f); // dark orange/red
-                }
-            }
-            else {
-                bool result = SaveFullGrailConfig(configFilePath, false);
-
-                if (result)
-                {
-                    saveStatusMessage = "Config saved successfully!";
-                    saveStatusColor = ImVec4(0.0f, 1.0f, 0.0f, 1.0f); // green
-                }
-                else
-                {
-                    saveStatusMessage = "Failed to save config!";
-                    saveStatusColor = ImVec4(0.8f, 0.3f, 0.0f, 1.0f); // dark orange/red
-                }
-            }
-
-            // Update cached settings as before...
-            cachedSettings.HPRollover = d2rHUDConfig.HPRolloverMods;
-            cachedSettings.SunderValue = d2rHUDConfig.SunderValue;
-            cachedSettings.monsterStatsDisplay = d2rHUDConfig.MonsterStatsDisplay;
-            cachedSettings.HPRolloverAmt = d2rHUDConfig.HPRolloverPercent;
-            cachedSettings.sunderedMonUMods = d2rHUDConfig.SunderedMonUMods;
-            cachedSettings.minionEquality = d2rHUDConfig.MinionEquality;
-            cachedSettings.gambleForce = d2rHUDConfig.GambleCostControl;
-            cachedSettings.CombatLog = d2rHUDConfig.CombatLog;
-            cachedSettings.TransmogVisuals = d2rHUDConfig.TransmogVisuals;
-            cachedSettings.ExtendedItemcodes = d2rHUDConfig.ExtendedItemcodes;
-            cachedSettings.FloatingDamage = d2rHUDConfig.FloatingDamage;
-            settings.sunderedMonUMods = cachedSettings.sunderedMonUMods;
-            settings.SunderValue = cachedSettings.SunderValue;
-
-            // Reload HUD config
-            d2rHUDConfig.HPRolloverPercent = cachedSettings.HPRolloverAmt;
-            d2rHUDConfig.SunderValue = cachedSettings.SunderValue;
-            d2rHUDConfig.MonsterStatsDisplay = cachedSettings.monsterStatsDisplay;
-            d2rHUDConfig.HPRolloverMods = cachedSettings.HPRollover;
-            d2rHUDConfig.SunderedMonUMods = cachedSettings.sunderedMonUMods;
-            d2rHUDConfig.MinionEquality = cachedSettings.minionEquality;
-            d2rHUDConfig.GambleCostControl = cachedSettings.gambleForce;
-            d2rHUDConfig.CombatLog = cachedSettings.CombatLog;
-            d2rHUDConfig.TransmogVisuals = cachedSettings.TransmogVisuals;
-            d2rHUDConfig.ExtendedItemcodes = cachedSettings.ExtendedItemcodes;
-            d2rHUDConfig.FloatingDamage = cachedSettings.FloatingDamage;
-        }
-        // Assign hover description
-        if (ImGui::IsItemHovered())
-        {
-            descriptionTitle = "Save Config";
-            descriptionText = "- Applies your current settings and updates the config file\n- This ensures your settings are kept for future launches\n\n";
-            descriptionNote = "This applies only to the options in this panel";
-        }
-
-        ImGui::PopStyleColor(3);
-        ImGui::PopID();
-
-        // --- Status message below buttons ---
-        if (!saveStatusMessage.empty())
-        {
-            ImGui::Spacing();
-            ImGui::SetCursorPosX((windowWidth - ImGui::CalcTextSize(saveStatusMessage.c_str()).x) * 0.5f);
-            ImGui::TextColored(saveStatusColor, "%s", saveStatusMessage.c_str());
-        }
-
-        ImGui::PopStyleColor();
-        ImGui::End();
-    }
-    else
-        ImGui::PopStyleColor();
-}
+#include "OptionsUI.inl"
 
 void ShowHUDSettingsMenu()
 {
@@ -9668,208 +8984,28 @@ static void DrawThemeWheelIcon(ImDrawList* drawList, const ImVec2& buttonMin, fl
     drawList->AddCircle(center, radius, IM_COL32(255, 255, 255, 150), segments, buttonSize * 0.025f);
 }
 
+static void DrawWorkspaceEditors(HudMenu::Page page) {
+    SyncWorkspacePages();
+    ShowD2RHUDMenu();ShowLootMenu();ShowGrailMenu();ShowHotkeyMenu();ShowCameraMenu();
+    ShowFloatingDamageMenu();ShowBuffIconsMenu();ShowStatRangesMenu();ShowSettingsPanel();
+    if(showMainMenu&&page==HudMenu::Page::Journal&&!QuestJournal::Bindings())
+        ImGui::TextWrapped("The quest journal is available when playing RMD-MP. Your other HUD tools are available in every mod.");
+    else ShowQuestJournalMenu();
+}
+
 void ShowMainMenu()
 {
-    if (!showMainMenu)
-        return;
-
-    ImGuiIO& io = ImGui::GetIO();
-    float menuScale = GetMenuScaleFactor();
-    ImVec2 windowSize = ImVec2(640.0f * menuScale, 590.0f * menuScale);
-
-    // Center the window only on the first run
-    static bool firstRun = true;
-    if (firstRun)
-    {
-        ImVec2 centerPos = ImVec2((io.DisplaySize.x - windowSize.x) * 0.5f, (io.DisplaySize.y - windowSize.y) * 0.5f);
-        ImGui::SetNextWindowPos(centerPos, ImGuiCond_Once);
-        firstRun = false;
-    }
-
-    ImGui::SetNextWindowSize(windowSize, ImGuiCond_Always);
-    ImGui::PushStyleColor(ImGuiCol_WindowBg, ShouldDrawWindowBackgroundImage(kWindowBg_ControlCenter) ? ImVec4(0, 0, 0, 0) : s_WindowBgColors[kWindowBg_ControlCenter]);
-    if (ImGui::Begin("D2RHUD Control Center", &showMainMenu, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoTitleBar))
-    {
-        if (ShouldDrawWindowBackgroundImage(kWindowBg_ControlCenter))
-            DrawWindowBackgroundImage(kWindowBg_ControlCenter);
-        // --- HEADER ---
-        int fontIndex = 3;
-        ImFont* fontSize = (fontIndex >= 0 && fontIndex < io.Fonts->Fonts.Size) ? io.Fonts->Fonts[fontIndex] : nullptr;
-        if (fontSize) ImGui::PushFont(fontSize);
-
-        const char* windowTitle = "D2RHUD Control Center";
-        float closeBtnSize = 20.0f * menuScale;
-        float padding = 5.0f * menuScale;
-        ImVec2 contentSize = ImGui::GetContentRegionAvail();
-        float titleWidth = ImGui::CalcTextSize(windowTitle).x;
-
-        // Theme.png may override the built-in wheel; both fit the icon button.
-        float gearBtnSize = 28.0f * menuScale;
-        float leftPadding = 8.0f * menuScale;
-        ImGui::SetCursorPosX(leftPadding);
-        ImGui::InvisibleButton("SettingsGear", ImVec2(gearBtnSize, gearBtnSize));
-        if (ImGui::IsItemClicked())
-            showSettingsPanel = true;
-        if (ImGui::IsItemHovered())
-        {
-            ImVec2 mouse = ImGui::GetIO().MousePos;
-            ImGui::SetNextWindowPos(ImVec2(mouse.x + 30.0f, mouse.y - 30.0f), ImGuiCond_Always);
-            ImGui::SetTooltip("Theme Control (Beta)");
-        }
-        ImVec2 gearMin = ImGui::GetItemRectMin();
-        int gearW = 0, gearH = 0;
-        D3D12::GetGearTextureSize(&gearW, &gearH);
-        ImTextureID gearTexId = (ImTextureID)(uint64_t)D3D12::GetGearTextureId();
-        if (gearTexId && gearW > 0 && gearH > 0) {
-            ImVec2 gearSize((float)gearW, (float)gearH);
-            float scale = (gearBtnSize - 4.0f) / (gearSize.x > gearSize.y ? gearSize.x : gearSize.y);
-            if (scale > 1.0f) scale = 1.0f;
-            ImVec2 drawSize(gearSize.x * scale, gearSize.y * scale);
-            ImVec2 center(gearMin.x + (gearBtnSize - drawSize.x) * 0.5f, gearMin.y + (gearBtnSize - drawSize.y) * 0.5f);
-            ImGui::GetWindowDrawList()->AddImage(gearTexId, center, ImVec2(center.x + drawSize.x, center.y + drawSize.y), ImVec2(0, 0), ImVec2(1, 1), IM_COL32(255, 255, 255, 255));
-        }
-        else
-            DrawThemeWheelIcon(ImGui::GetWindowDrawList(), gearMin, gearBtnSize);
-
-        // --- Centered title ---
-        ImGui::SameLine((contentSize.x - titleWidth) * 0.5f);
-        ImGui::TextColored(ImVec4(0.95f, 0.85f, 0.5f, 1.0f), "%s", windowTitle);
-
-        ImGui::SameLine(contentSize.x - closeBtnSize - padding);
-        ImVec2 btnPos = ImGui::GetCursorScreenPos();
-        ImGui::InvisibleButton("CloseBtn", ImVec2(closeBtnSize, closeBtnSize));
-        if (ImGui::IsItemClicked()) showMainMenu = false;
-
-        ImDrawList* drawList = ImGui::GetWindowDrawList();
-        ImVec2 textSize = ImGui::CalcTextSize("X");
-        ImVec2 textPos = ImVec2(btnPos.x + (closeBtnSize - textSize.x) * 0.5f,
-            btnPos.y + (closeBtnSize - textSize.y) * 0.5f);
-        drawList->AddText(textPos, IM_COL32(255, 80, 80, 255), "X");
-        if (fontSize) ImGui::PopFont();
-
-        fontIndex = 1;
-        fontSize = (fontIndex >= 0 && fontIndex < io.Fonts->Fonts.Size) ? io.Fonts->Fonts[fontIndex] : nullptr;
-        if (fontSize) ImGui::PushFont(fontSize);
-        ImGuiTextCentered("Quickly view or command custom options offered by D2RHUD");
-        ImGuiTextCentered("This menu can be toggled using the hotkey set in D2RLAN");
-        if (fontSize) ImGui::PopFont();
-
-        fontIndex = 2;
-        fontSize = (fontIndex >= 0 && fontIndex < io.Fonts->Fonts.Size) ? io.Fonts->Fonts[fontIndex] : nullptr;
-        if (fontSize) ImGui::PushFont(fontSize);
-
-        // Prepare version line
-        std::string label = "Version:";
-        std::string number = Version;
-        ImVec2 labelSize = ImGui::CalcTextSize(label.c_str());
-        ImVec2 numberSize = ImGui::CalcTextSize(number.c_str());
-        float totalWidth = labelSize.x + numberSize.x;
-        float contentWidth = ImGui::GetWindowContentRegionMax().x - ImGui::GetWindowContentRegionMin().x;
-        ImGui::SetCursorPosX((contentWidth - totalWidth) * 0.5f);
-
-        // Draw the two colored segments
-        ImGui::TextColored(ImVec4(0.95f, 0.85f, 0.5f, 1.0f), "%s", label.c_str());
-        ImGui::SameLine();
-        ImGui::TextColored(ImVec4(0.0157f, 0.380f, 0.8f, 1.0f), "%s", number.c_str());
-
-        if (fontSize) ImGui::PopFont();
-        ImGui::Separator();
-
-        // --- MENU BUTTONS AND DESCRIPTION AREA ---
-        float buttonWidth = 200.0f * menuScale;
-        float buttonHeight = 43.0f * menuScale;
-        float separatorX = buttonWidth + 20.0f * menuScale;
-        float descriptionWidth = windowSize.x - separatorX - 15.0f * menuScale;
-        const char* descriptionTitle = "";
-        const char* descriptionText = "";
-        const char* descriptionNote = "";
-
-        fontIndex = 2;
-        fontSize = (fontIndex >= 0 && fontIndex < io.Fonts->Fonts.Size) ? io.Fonts->Fonts[fontIndex] : nullptr;
-        if (fontSize) ImGui::PushFont(fontSize);
-
-        if (ThemeButton("D2RHUD Options", ImVec2(buttonWidth, buttonHeight)))
-            showD2RHUDMenu = true;
-        ShowD2RHUDMenu();
-        if (showSettingsPanel)
-            ShowSettingsPanel();
-        if (ImGui::IsItemHovered()) { descriptionTitle = "D2RHUD Options"; descriptionText = "Explore and Control enabled D2RHUD Options\n\n- Values are retrieved and stored in D2RLAN/Launcher/config.json\n- Overrides can be applied by the author in data/D2RLAN/config_override.json\n- Expect implementation changes over the next updates"; }
-
-        if (ThemeButton("D2RLoot Settings", ImVec2(buttonWidth, buttonHeight)))
-            showLootMenu = true;
-        ShowLootMenu();
-        if (ImGui::IsItemHovered()) { descriptionTitle = "D2RLoot Settings"; descriptionText = "Explore and control your currently active loot filter\n\n- Filters operate in real-time with user-defined rules\n- Accessible in D2RLAN > Options > Loot Filter\n- Rules are defined in D2RLAN/D2R/lootfilter_config.lua"; }
-
-        if (QuestJournal::Bindings()) {
-            if (ThemeButton("Quest Journal", ImVec2(buttonWidth, buttonHeight))) showQuestJournalMenu = true;
-            if (ImGui::IsItemHovered()) { descriptionTitle = "Quest Journal"; descriptionText = "Follow RMD-MP's tutorial quests\n\n- Character progress and rewards\n- Objectives, guidance and charm upgrade choices\n- Optional one-time legacy import"; }
-        }
-
-        if (ThemeButton("Grail Tracker", ImVec2(buttonWidth, buttonHeight)))
-            showGrailMenu = true;
-        ShowGrailMenu();
-        if (ImGui::IsItemHovered()) { descriptionTitle = "Grail Tracker"; descriptionText = "View the progress of your Set/Unique item hunting\n\n- Grail Entries are manually stored for now\n- This feature works for all mods* (or TCP)\n(Uses the mod’s set/unique TXT or BIN tables)\n- Grail Progress/Settings are stored in D2RLAN/D2R/HUD_Settings_ModName.json"; }
-
-        if (ThemeButton("Hotkey Controls", ImVec2(buttonWidth, buttonHeight)))
-            showHotkeyMenu = true;
-        ShowHotkeyMenu();
-        if (ImGui::IsItemHovered()) { descriptionTitle = "Hotkey Controls"; descriptionText = "Manage your hotkeys used by various tools\n\n- Hotkeys are achieved by utilizing internal game functions\n- They can also be used to dynamically control your loot filter\n- Hotkeys are defined in D2RLAN/Launcher/D2RLAN_Config.txt"; }
-
-        if (ThemeButton("Camera Controls", ImVec2(buttonWidth, buttonHeight)))
-            showCameraMenu = true;
-        ShowCameraMenu();
-        if (ImGui::IsItemHovered()) { descriptionTitle = "Camera Controls"; descriptionText = "Modify the in-game camera angles and zoom\n\n- Scans memory to find camera control values\n- Angle/zoom scans required for every fresh session\n- Future versions likely to include more automation/controls"; }
-
-        if (ThemeButton("Floating Damage", ImVec2(buttonWidth, buttonHeight)))
-            showFloatingDamageMenu = true;
-        ShowFloatingDamageMenu();
-        if (ImGui::IsItemHovered()) { descriptionTitle = "Floating Damage"; descriptionText = "Customize floating damage display and DPS meter\n\n- Pop/fade animations, hit combining, and spread columns\n- Enable or disable in D2RHUD Options"; }
-
-        if (ThemeButton("Buff Icons", ImVec2(buttonWidth, buttonHeight)))
-            showBuffIconsMenu = true;
-        if (ImGui::IsItemHovered()) { descriptionTitle = "Buff Icons"; descriptionText = "Show selected active skills using their original icons\n\n- Choose from your character's available buff skills\n- Move and scale the icon area\n- Read remaining duration directly from active states"; }
-
-        if (ThemeButton("Show Stat Ranges", ImVec2(buttonWidth, buttonHeight)))
-            showStatRangesMenu = true;
-        if (ImGui::IsItemHovered()) { descriptionTitle = "Show Stat Ranges"; descriptionText = "Display possible stat rolls beside item tooltip lines\n\n- Combine unique/set properties and actual affixes\n- Customize range color, size, and spacing\n- Always show, toggle with a hotkey, or hold a hotkey"; }
-
-        if (fontSize) ImGui::PopFont();
-
-        // Vertical separator + Description Panel (on 4K, move description down ~300px so it isn't shifted too high)
-        float descriptionPanelY = 100.0f + (menuScale >= 2.0f ? 100.0f : 0.0f);
-        ImGui::GetWindowDrawList()->AddLine(ImVec2(ImGui::GetWindowPos().x + separatorX, ImGui::GetWindowPos().y + descriptionPanelY), ImVec2(ImGui::GetWindowPos().x + separatorX, ImGui::GetWindowPos().y + windowSize.y - 3.0f), IM_COL32(180, 150, 80, 255), 2.0f);
-        ImGui::SetCursorPosX(separatorX - 200.0f);
-        ImGui::SetCursorPosY(descriptionPanelY);
-
-        // Title style
-        fontIndex = 3;
-        fontSize = (fontIndex >= 0 && fontIndex < io.Fonts->Fonts.Size) ? io.Fonts->Fonts[fontIndex] : nullptr;
-        if (fontSize) ImGui::PushFont(fontSize);
-        if (descriptionTitle && descriptionTitle[0] != '\0')
-        {
-            ImVec2 textSize = ImGui::CalcTextSize(descriptionTitle);
-            ImGui::SetCursorPosX(separatorX + 5.0f + (descriptionWidth - textSize.x) * 0.5f);
-            ImGui::TextColored(ImVec4(0.0157f, 0.380f, 0.8f, 1.0f), descriptionTitle);
-        }
-        if (fontSize) ImGui::PopFont();
-
-        // Description style
-        fontIndex = 1;
-        fontSize = (fontIndex >= 0 && fontIndex < io.Fonts->Fonts.Size) ? io.Fonts->Fonts[fontIndex] : nullptr;
-        if (fontSize) ImGui::PushFont(fontSize);
-        if (descriptionText && descriptionText[0] != '\0')
-        {
-            ImVec2 textSize = ImGui::CalcTextSize(descriptionText, nullptr, false, descriptionWidth);
-            ImGui::SetCursorPosX(separatorX + 5.0f + (descriptionWidth - textSize.x) * 0.5f);
-            ImGui::TextWrapped("%s", descriptionText);
-        }
-        if (fontSize) ImGui::PopFont();
-
-        ImGui::PopStyleColor();
-        ImGui::End();
-    }
-    else
-        ImGui::PopStyleColor();
+    if (!showMainMenu) return;
+    EnableAllInput();
+    PushFontSafe(1);
+    HudMenu::workspaceBackground=[](){if(ShouldDrawWindowBackgroundImage(kWindowBg_ControlCenter))DrawWindowBackgroundImage(kWindowBg_ControlCenter);};
+    ImGui::PushStyleColor(ImGuiCol_WindowBg,s_WindowBgColors[kWindowBg_ControlCenter]);
+    const std::string context=(modName.empty()?"Sanctuary":modName)+"  /  D2RHUD "+Version;
+    if(HudMenu::Workspace(s_WorkspacePage,showMainMenu,GetMenuScaleFactor(),context.c_str(),DrawWorkspaceEditors))
+        SaveFullGrailConfig(configFilePath,false);
+    ImGui::PopStyleColor();
+    PopFontSafe(1);
+    SyncWorkspacePages();
 }
 
 #pragma endregion
@@ -9878,25 +9014,8 @@ void ShowMainMenu()
 
 #pragma region Game Hooks
 
-void __fastcall Hooked_D2GAME_UMOD8Array_1402fc530(D2UnitStrc* unit, int32_t umod, int32_t unique)
-{
-    oD2GAME_UMOD8Array_1402fc530(unit, umod, unique);
-    D2GameStrc* game = nullptr;
-    {
-        std::lock_guard<std::mutex> lock(g_sunderMutex);
-        game = g_lastSunderGame;
-    }
-    if (game) ApplyLinearSunderToMonster(game, unit, true);
-}
-
 void __fastcall HookedMONSTER_InitializeStatsAndSkills(D2GameStrc* pGame, D2ActiveRoomStrc* pRoom, D2UnitStrc* pUnit, int64_t* pMonRegData)
 {
-    {
-        std::lock_guard<std::mutex> lock(g_sunderMutex);
-        ResetSunderGame(pGame);
-        if (pUnit && pUnit->dwUnitType == UNIT_MONSTER)
-            g_appliedSunder.erase(pUnit->dwUnitId);
-    }
     if (pUnit && pUnit->dwUnitType == UNIT_MONSTER)
         g_unitsEditedStats.erase(pUnit->dwUnitId);
 
@@ -9904,8 +9023,6 @@ void __fastcall HookedMONSTER_InitializeStatsAndSkills(D2GameStrc* pGame, D2Acti
         oMONSTER_InitializeStatsAndSkills(pGame, pRoom, pUnit, pMonRegData);
 
     if (CubeMap::InitializeMonster(pGame, pRoom, pUnit)) {
-        D2MonStatsInitStrc mapInit = {};
-        ApplyGhettoSunder(pGame, pRoom, pUnit, pMonRegData, &mapInit);
         return;
     }
 
@@ -9940,7 +9057,6 @@ void __fastcall HookedMONSTER_InitializeStatsAndSkills(D2GameStrc* pGame, D2Acti
             gZonesLoaded = true;
         });
 
-    ApplyGhettoSunder(pGame, pRoom, pUnit, pMonRegData, &monStatsInit);
 
     if (!GetBaalQuest(pUnitPlayer, pGame))
         return;
@@ -9949,7 +9065,6 @@ void __fastcall HookedMONSTER_InitializeStatsAndSkills(D2GameStrc* pGame, D2Acti
         ApplyGhettoTerrorZone(pGame, pRoom, pUnit, pMonRegData, &monStatsInit);
 
     ApplyMonsterDifficultyScalingNonTZ(pUnit, difficulty, playerLevel, playerCountGlobal, pGame);
-    ApplyGhettoSunder(pGame, pRoom, pUnit, pMonRegData, &monStatsInit);
 
     time_t currentUtc = std::time(nullptr);
 
@@ -10099,7 +9214,7 @@ DamageInfo_t oDamageInfo = nullptr;
 
 static bool IsFloatingDamageActive()
 {
-    return d2rHUDConfig.FloatingDamage || settings.FloatingDamage || cachedSettings.FloatingDamage;
+    return FloatingDamage::IsEnabled();
 }
 
 void __fastcall Hooked_DamageInfo(void* param1, D2UnitStrc* attacker, D2UnitStrc* target, int baseDamage, int param5, void* param6, int finalDamage, void* param8, char param9, void* param10);
@@ -11052,7 +10167,11 @@ static void QueuePoisonDamageEvent(
 
 static void UpdatePoisonDoTWatch()
 {
-    if (!IsFloatingDamageActive())
+    static bool wasActive = false;
+    const bool active = IsFloatingDamageActive();
+    const bool resume = active && !wasActive;
+    wasActive = active;
+    if (!active)
         return;
 
     const auto now = std::chrono::steady_clock::now();
@@ -11115,7 +10234,7 @@ static void UpdatePoisonDoTWatch()
             continue;
 
         PoisonWatchEntry& watch = g_poisonWatch[key];
-        if (watch.lastHpPoints >= 0 && hp < watch.lastHpPoints)
+        if (!resume && watch.lastHpPoints >= 0 && hp < watch.lastHpPoints)
         {
             const int delta = watch.lastHpPoints - hp;
             if (delta > 0)
@@ -11338,6 +10457,10 @@ void __fastcall Hooked_DamageInfo(void* param1, D2UnitStrc* attacker, D2UnitStrc
 
     oDamageInfo(param1, attacker, target, baseDamage, param5, param6, finalDamage, param8, param9, param10);
 
+    // The hook stays installed for fast re-enable; disabled hits still take
+    // their normal native path but never update damage-number tracking.
+    if (!IsFloatingDamageActive())
+        return;
     if (!target || !target->pDynamicPath)
         return;
 
@@ -11385,65 +10508,47 @@ void __fastcall Hooked_DamageInfo(void* param1, D2UnitStrc* attacker, D2UnitStrc
         element);
 }
 
+struct PreferenceEditorState { bool wasOpen=false,dirty=false,failed=false; };
+
+template<class Draw,class Snapshot>
+static void DrawPreferenceEditor(const char* title,bool& open,ImVec2 initialSize,PreferenceEditorState& state,Draw draw,Snapshot snapshot) {
+    if(!open){
+        if(state.wasOpen&&state.dirty){state.failed=!SaveFullGrailConfig(configFilePath,false);state.dirty=state.failed;}
+        state.wasOpen=false;return;
+    }
+    state.wasOpen=true;
+    const float scale=GetMenuScaleFactor();
+    HudMenu::Prepare({initialSize.x*scale,initialSize.y*scale});
+    if(HudMenu::Begin(title,&open,ImGuiWindowFlags_NoTitleBar)){
+        if(!HudMenu::embedded){PushFontSafe(3);DrawWindowTitleAndClose(title,&open);PopFontSafe(3);}
+        const float footer=state.failed?2*ImGui::GetFrameHeightWithSpacing()+8*scale:ImGui::GetTextLineHeightWithSpacing()+6*scale;
+        ImGui::BeginChild("PreferenceFields",{0,-footer},0,ImGuiWindowFlags_NoBackground);
+        const auto before=snapshot();draw(scale);
+        if(before!=snapshot()){state.dirty=true;state.failed=false;}
+        ImGui::EndChild();
+        if(state.dirty&&!state.failed&&!ImGui::IsAnyItemActive()){
+            state.failed=!SaveFullGrailConfig(configFilePath,false);state.dirty=state.failed;
+        }
+        HudSettings::Note(state.failed?"Changes apply now, but could not be saved.":"Changes apply and save automatically.");
+        if(state.failed&&ThemeButton("Retry saving")){state.failed=!SaveFullGrailConfig(configFilePath,false);state.dirty=state.failed;}
+    }
+    HudMenu::End();
+}
+
 void ShowBuffIconsMenu()
 {
-    static bool wasOpen = false;
-    if (showBuffIconsMenu)
-    {
-        const float scale = GetMenuScaleFactor();
-        const ImGuiStyle& style = ImGui::GetStyle();
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(style.WindowPadding.x * scale, style.WindowPadding.y * scale));
-        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(style.FramePadding.x * scale, style.FramePadding.y * scale));
-        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(style.ItemSpacing.x * scale, style.ItemSpacing.y * scale));
-        ImGui::PushStyleVar(ImGuiStyleVar_ScrollbarSize, style.ScrollbarSize * scale);
-        ImGui::PushStyleVar(ImGuiStyleVar_GrabMinSize, style.GrabMinSize * scale);
-        ImGui::SetNextWindowSize(ImVec2(720 * scale, 760 * scale), ImGuiCond_Always);
-        if (ImGui::Begin("Buff Icons", &showBuffIconsMenu, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoTitleBar))
-        {
-            PushFontSafe(3);
-            DrawWindowTitleAndClose("Buff Icons", &showBuffIconsMenu);
-            PopFontSafe(3);
-            ImGui::Separator();
-            PushFontSafe(2);
-            BuffIcons::DrawSettingsPanel(scale);
-            if (ThemeButton("Save Buff Icons")) SaveFullGrailConfig(configFilePath, false);
-            PopFontSafe(2);
-        }
-        ImGui::End();
-        ImGui::PopStyleVar(5);
-    }
-    if (wasOpen && !showBuffIconsMenu) SaveFullGrailConfig(configFilePath, false);
-    wasOpen = showBuffIconsMenu;
+    static PreferenceEditorState state;
+    DrawPreferenceEditor("Buff Icons",showBuffIconsMenu,{720,760},state,BuffIcons::DrawSettingsPanel,[]{
+        nlohmann::ordered_json value;BuffIcons::SaveToJson(value);return value;
+    });
 }
 
 void ShowStatRangesMenu()
 {
-    static bool wasOpen = false;
-    if (showStatRangesMenu)
-    {
-        const float scale = GetMenuScaleFactor();
-        const ImGuiStyle& style = ImGui::GetStyle();
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(style.WindowPadding.x * scale, style.WindowPadding.y * scale));
-        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(style.FramePadding.x * scale, style.FramePadding.y * scale));
-        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(style.ItemSpacing.x * scale, style.ItemSpacing.y * scale));
-        ImGui::PushStyleVar(ImGuiStyleVar_ScrollbarSize, style.ScrollbarSize * scale);
-        ImGui::PushStyleVar(ImGuiStyleVar_GrabMinSize, style.GrabMinSize * scale);
-        ImGui::SetNextWindowSize(ImVec2(650 * scale, 570 * scale), ImGuiCond_Always);
-        if (ImGui::Begin("Show Stat Ranges", &showStatRangesMenu, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoTitleBar))
-        {
-            PushFontSafe(3);
-            DrawWindowTitleAndClose("Show Stat Ranges", &showStatRangesMenu);
-            PopFontSafe(3);
-            ImGui::Separator();
-            PushFontSafe(2);
-            StatRanges::DrawSettingsPanel(scale);
-            if (ThemeButton("Save Stat Ranges")) SaveFullGrailConfig(configFilePath, false);
-            PopFontSafe(2);
-        }
-        ImGui::End(); ImGui::PopStyleVar(5);
-    }
-    if (wasOpen && !showStatRangesMenu) SaveFullGrailConfig(configFilePath, false);
-    wasOpen = showStatRangesMenu;
+    static PreferenceEditorState state;
+    DrawPreferenceEditor("Show Stat Ranges",showStatRangesMenu,{850,720},state,StatRanges::DrawSettingsPanel,[]{
+        nlohmann::ordered_json value;StatRanges::SaveToJson(value);return value;
+    });
 }
 
 // Polling reads releases as well as presses, including release of a modifier in
@@ -11492,28 +10597,10 @@ static bool IsStatRangesBindingDown()
 
 void ShowFloatingDamageMenu()
 {
-    static bool wasOpen = false;
-
-    if (!showFloatingDamageMenu)
-    {
-        if (wasOpen)
-            SaveFullGrailConfig(configFilePath, false);
-        wasOpen = false;
-        return;
-    }
-
-    wasOpen = true;
-
-    float menuScale = GetMenuScaleFactor();
-    ImVec2 windowSize = ImVec2(860.0f * menuScale, 820.0f * menuScale);
-    ImGui::SetNextWindowSize(windowSize, ImGuiCond_FirstUseEver);
-
-    if (ImGui::Begin("Floating Damage", &showFloatingDamageMenu, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoTitleBar))
-    {
-        DrawWindowTitleAndClose("Floating Damage", &showFloatingDamageMenu);
-        FloatingDamage::DrawSettingsPanel(menuScale);
-    }
-    ImGui::End();
+    static PreferenceEditorState state;
+    DrawPreferenceEditor("Floating Damage",showFloatingDamageMenu,{860,820},state,FloatingDamage::DrawSettingsPanel,[]{
+        nlohmann::ordered_json value;FloatingDamage::SaveToJson(value);return value;
+    });
 }
 
 #pragma endregion
@@ -11523,18 +10610,14 @@ void ShowFloatingDamageMenu()
 
 #pragma region Draw Loop for Detours and Stats Display
 void D2RHUD::OnDraw() {
+    WidescreenBars::SetInGame(GetClientStatus() == 1);
     SelectedAuras::Update();
-    ImmunityLabels::Install([](D2GameStrc* game, D2UnitStrc* monster) { ApplyLinearSunderToMonster(game, monster, true); });
     D2GameStrc* pGame = nullptr;
     D2Client* pGameClient = GetClientPtr();
 
     if (pGameClient != nullptr)
         pGame = (D2GameStrc*)pGameClient->pGame;
 
-    {
-        std::lock_guard<std::mutex> lock(g_sunderMutex);
-        ResetSunderGame(pGame);
-    }
 
     if (!configLoaded)
     {
@@ -11542,8 +10625,18 @@ void D2RHUD::OnDraw() {
         LoadD2RHUDConfig(configFilePath);
         RegisterModOverrides();
         ApplyModOverrides(modName);
+        ApplyUITheme(s_UITheme);
 
+        HUDControls::Configure(FindKeybind("Open HUDCC Menu") ? FindKeybind("Open HUDCC Menu")->key.c_str() : nullptr);
         configLoaded = true;
+    }
+
+    CandyCornSave::DrawNotification();
+    HUDControls::Tick();
+    if (HUDControls::TakeToggle()) {
+        const bool saveGrail = showGrailMenu && showMainMenu;
+        showMainMenu = !showMainMenu;
+        if (saveGrail && !showMainMenu) SaveFullGrailConfig(configFilePath, false);
     }
 
     RefreshLocalChatFilterNameCache();
@@ -11652,7 +10745,7 @@ void D2RHUD::OnDraw() {
         DetourTransactionCommit();
     }
 
-    if ((settings.HPRollover || cachedSettings.HPRollover || settings.sunderedMonUMods || cachedSettings.sunderedMonUMods) && !g_SunitdmHookInstalled)
+    if ((settings.HPRollover || cachedSettings.HPRollover) && !g_SunitdmHookInstalled)
         EnsureSunitdmHook();
 
         {
@@ -11666,13 +10759,8 @@ void D2RHUD::OnDraw() {
         if (floatingDamageEnabled)
         {
             EnsureDamageInfoHook();
-            FloatingDamage::GetConfig().enabled = true;
-            UpdatePoisonDoTWatch();
         }
-        else
-        {
-            FloatingDamage::GetConfig().enabled = false;
-        }
+        UpdatePoisonDoTWatch();
 
         if (floatingDamageEnabled || floatingDamagePreview)
         {
@@ -11683,26 +10771,22 @@ void D2RHUD::OnDraw() {
 
 
 
-    // Scale all menu UI by 200% on 4K resolution
-    {
-        bool anyMenuOpen = showMainMenu || showHUDSettingsMenu || showD2RHUDMenu || showSettingsPanel || showLootMenu || showHotkeyMenu || showGrailMenu || showCameraMenu || showFloatingDamageMenu || showBuffIconsMenu || showStatRangesMenu || showQuestJournalMenu;
-        ImGuiIO& io = ImGui::GetIO();
-        io.FontGlobalScale = anyMenuOpen ? GetMenuScaleFactor() : 1.0f;
-    }
-
-    if (showMainMenu)
-        ShowMainMenu();
+    QuestJournal::ClientUI::Update(showQuestJournalMenu, GetClientStatus() == 1);
+    // Native quest alerts and the journal hotkey open this same workspace page.
+    HudMenu::RouteJournal(s_WorkspacePage,showMainMenu,showQuestJournalMenu,s_LastJournalVisible);
+    if(showHUDSettingsMenu){s_WorkspacePage=HudMenu::Page::Loot;showMainMenu=true;showHUDSettingsMenu=false;}
+    SyncWorkspacePages();
+    ImGui::GetIO().FontGlobalScale=showMainMenu?GetMenuScaleFactor():1.f;
     QuestJournal::PollMenus();
-    ShowQuestJournalMenu();
-
-    BuffIcons::Update(pGameClient, modName, showBuffIconsMenu);
-    ShowBuffIconsMenu();
-    BuffIcons::Render(showBuffIconsMenu, GetMenuScaleFactor());
+    BuffIcons::Update(pGameClient,modName,showBuffIconsMenu);
+    StatRanges::Update(modName,GetClientStatus()==1,showMainMenu,IsStatRangesBindingDown(),showStatRangesMenu);
+    if(showMainMenu)ShowMainMenu();
+    else DrawWorkspaceEditors(s_WorkspacePage);
+    s_LastJournalVisible=showQuestJournalMenu;
+    BuffIcons::Render(showBuffIconsMenu,GetMenuScaleFactor());
     CubeMap::Draw(GetMenuScaleFactor(), GetClientStatus() == 1);
     D3Whirlwind::SetInputBlocked(GetClientStatus() != 1 || showMainMenu || IsAnyMenuOpen() ||
         ImGui::GetIO().WantCaptureMouse || ImGui::GetIO().WantTextInput);
-    StatRanges::Update(modName, GetClientStatus() == 1, showMainMenu || IsAnyMenuOpen(), IsStatRangesBindingDown(), showStatRangesMenu);
-    ShowStatRangesMenu();
     StatRanges::Render(GetMenuScaleFactor());
 
 
@@ -11727,14 +10811,6 @@ void D2RHUD::OnDraw() {
     */
 
 
-    if (!oD2GAME_UMOD8Array_1402fc530)
-    {
-        DetourTransactionBegin();
-        DetourUpdateThread(GetCurrentThread());
-        oD2GAME_UMOD8Array_1402fc530 = reinterpret_cast<D2GAME_UMOD8Array_t>(Pattern::Address(0x2FC530));
-        DetourAttach(&(PVOID&)oD2GAME_UMOD8Array_1402fc530, Hooked_D2GAME_UMOD8Array_1402fc530);
-        DetourTransactionCommit();
-    }
 
     /*
     if (!oD2GAME_SpawnMonsters_140301b5f)
@@ -11931,9 +11007,6 @@ void D2RHUD::OnDraw() {
 
         if (pUnitServer && (cachedSettings.monsterStatsDisplay || settings.monsterStatsDisplay))
         {
-            if (pGame != nullptr)
-                ApplyLinearSunderToMonster(pGame, pUnitServer, true);
-
             float totalWidth = 0.f;
             float spaceWidth = ImGui::CalcTextSize(Seperator).x;
             std::string resistances[6];
@@ -11941,7 +11014,7 @@ void D2RHUD::OnDraw() {
 
             for (int i = 0; i < 6; i++)
             {
-                int resistanceValue = STATLIST_GetUnitStatSigned(pUnitServer, ResistanceStats[i], 0);
+                int resistanceValue = SunderSystem::EffectiveResistance(pGame, pUnitServer, ResistanceStats[i], STATLIST_GetUnitStatSigned(pUnitServer, ResistanceStats[i], 0));
                 resistances[i] = std::format("{}", resistanceValue);
             }
 
@@ -12131,6 +11204,11 @@ bool D2RHUD::OnKeyPressed(short key)
 
     // ---------------- UI / panels ----------------
 
+    if (QuestJournal::Bindings() && !showHotkeyMenu && !ImGui::GetIO().WantTextInput &&
+        !*reinterpret_cast<const uint8_t*>(Pattern::Address(0x1d53fb8 + 5)))
+        if (auto kb = g_Hotkeys.find("Open Quest Journal"); kb != g_Hotkeys.end())
+            CheckAndAddMatch(kb->second.first, 0, []() { QuestJournal::ClientUI::Hotkey(); });
+
     if (auto kb = FindKeybind("Open Cube Panel"))
     {
         CheckAndAddMatch(kb->key, 0, [=]() {
@@ -12144,7 +11222,7 @@ bool D2RHUD::OnKeyPressed(short key)
             });
     }
 
-    if (auto kb = FindKeybind("Open HUDCC Menu"))
+    if (!HUDControls::Installed()) if (auto kb = FindKeybind("Open HUDCC Menu"))
     {
         CheckAndAddMatch(kb->key, 0, [=]() {
             bool wasOpen = showGrailMenu && showMainMenu;

@@ -11,8 +11,8 @@ namespace ImmunityLabels {
 namespace {
 using ReadStat = int(__fastcall*)(D2StatListExStrc*, uint32_t, const void*);
 ReadStat originalRead = nullptr;
-RefreshSunder refreshSunder = nullptr;
-uintptr_t labelReturn = 0;
+ProjectResistance projectResistance = nullptr;
+uintptr_t labelReturn = 0, combatReturn = 0;
 bool attempted = false, installed = false;
 
 // These class-ID guards suppress only native Uber display. Keep the native
@@ -81,10 +81,24 @@ constexpr std::array<uint8_t, 65> labelInstructions{
     0x48,0x8b,0xc2,0x73,0x1a,0x4c,0x69,0xc0,0x44,0x01,0,0,0x4c,0x03,0x05,0x25,
     0xc2,0xc1,0x01,0x74,0x0a,0xc1,0xe2,0x10,0xe8,0x13,0xf5,0x15,0,0xeb,0x02,0x33,0xc0
 };
+// SUNITDMG's effective-resistance helper reads the defender before checking
+// immunity and deciding whether ordinary attacker resistance pierce applies.
+constexpr std::array<uint8_t, 85> combatInstructions{
+    0x48,0x8b,0x41,0x18,0x48,0x85,0xc0,0x74,0x38,0x48,0x8b,0x88,0x88,0,0,0,
+    0x48,0x85,0xc9,0x74,0x2c,0x85,0xf6,0x78,0x28,0x48,0x3b,0x35,0x45,0xab,0x97,0x01,
+    0x48,0x8b,0xc6,0x73,0x1c,0x4c,0x69,0xc0,0x44,0x01,0,0,0x4c,0x03,0x05,0x2a,
+    0xab,0x97,0x01,0x74,0x0c,0x8b,0xd6,0xc1,0xe2,0x10,0xe8,0x16,0xde,0xeb,0xff,
+    0x8b,0xd8,0x49,0x63,0x56,0x10,0x83,0xfa,0xff,0x74,0x4e,0x83,0xfb,0x64,0x7c,0x06,
+    0x83,0x7f,0x24,0,0x75,0x43
+};
+bool CombatSupported(uintptr_t site) {
+    std::array<uint8_t, combatInstructions.size()> bytes{};
+    return Read(site, bytes) && bytes == combatInstructions;
+}
 bool Supported(uintptr_t site, uintptr_t reader) {
     std::array<uint8_t, 65> bytes{};
     std::array<uint8_t, 14> entry{};
-    // Full function detour, scoped to the audited native label call site, avoids
+    // Full function detour, scoped to the audited native call sites, avoids
     // transplanting a mid-function assembly stub or old DLL-relative addresses.
     constexpr std::array<uint8_t, 14> expected{0x48,0x89,0x5c,0x24,0x08,0x57,0x48,0x83,0xec,0x20,0x48,0x63,0x41,0x1c};
     return Read(site, bytes) && bytes == labelInstructions && Read(reader, entry) && entry == expected;
@@ -95,39 +109,48 @@ D2GameStrc* CurrentGame() {
     return Read(Pattern::Address(0x1d637f0), client) && Read(client + 0x230, game) ? game : nullptr;
 }
 int ReadForCaller(D2StatListExStrc* stats, uint32_t encodedStat, const void* cost, uintptr_t caller) {
-    if (caller != labelReturn || (encodedStat & 0xffff) || !Sunder::IsResistance(encodedStat >> 16))
-        return originalRead(stats, encodedStat, cost);
+    if ((caller != labelReturn && caller != combatReturn) || (encodedStat & 0xffff) ||
+        !Sunder::IsResistance(encodedStat >> 16) || !projectResistance)
+        return ReadNative(stats, encodedStat, cost);
     const uint32_t stat = encodedStat >> 16;
-    // D2R's extended stat-list owner is at 0x78 (not the list's allocation pool).
-    D2UnitStrc* client = nullptr;
-    if (!Read(reinterpret_cast<uintptr_t>(stats) + 0x78, client) || !client ||
-        client->dwUnitType != UNIT_MONSTER || client->pStatListEx != stats)
-        return originalRead(stats, encodedStat, cost);
-    auto selected = client;
+    // Only extended root lists own a Unit* at 0x78. Ordinary state lists have
+    // another layout and must never be interpreted as monster roots.
+    int32_t flags = 0;
+    D2UnitStrc* owner = nullptr;
+    if (!stats || !Read(reinterpret_cast<uintptr_t>(stats) + 0x1c, flags) || flags >= 0 ||
+        !Read(reinterpret_cast<uintptr_t>(stats) + 0x78, owner) || !owner ||
+        owner->dwUnitType != UNIT_MONSTER || owner->pStatListEx != stats)
+        return ReadNative(stats, encodedStat, cost);
+    if (caller == combatReturn)
+        return projectResistance(nullptr, owner, stat, ReadNative(stats, encodedStat, cost));
+
+    // Labels start with a client monster. Project only its matching server
+    // monster so stale client resistance never replaces authoritative stats.
     if (auto game = CurrentGame(); game && UNITS_GetServerUnitByTypeAndId) {
-        auto server = UNITS_GetServerUnitByTypeAndId(game, UNIT_MONSTER, client->dwUnitId);
-        if (server && server->dwUnitType == UNIT_MONSTER && server->dwUnitId == client->dwUnitId && server->pStatListEx) {
-            // Physical is first in the native six-element loop. Refresh once,
-            // before any label is tested, including after equipment changes.
-            if (stat == 36 && refreshSunder) refreshSunder(game, server);
-            selected = server;
-        }
+        auto server = UNITS_GetServerUnitByTypeAndId(game, UNIT_MONSTER, owner->dwUnitId);
+        if (server && server->dwUnitType == UNIT_MONSTER && server->dwUnitId == owner->dwUnitId && server->pStatListEx)
+            return projectResistance(game, server, stat, ReadNative(server->pStatListEx, encodedStat, cost));
     }
-    // Calling the trampoline also prevents recursion through the general stat
-    // reader. Ordinary resistance pierce is never folded into these labels.
-    return originalRead(selected->pStatListEx, encodedStat, cost);
+    return ReadNative(stats, encodedStat, cost);
 }
 int __fastcall HookRead(D2StatListExStrc* stats, uint32_t encodedStat, const void* cost) {
     return ReadForCaller(stats, encodedStat, cost, reinterpret_cast<uintptr_t>(_ReturnAddress()));
 }
 }
-bool Install(RefreshSunder refresh) {
+int ReadNative(D2StatListExStrc* stats, uint32_t encodedStat, const void* cost) {
+    const auto reader = originalRead ? originalRead : reinterpret_cast<ReadStat>(Pattern::Address(0x1e2e70));
+    return reader ? reader(stats, encodedStat, cost) : 0;
+}
+bool Install(ProjectResistance project) {
     if (attempted) return installed;
     attempted = true;
     const auto site = Pattern::Address(0x83920), reader = Pattern::Address(0x1e2e70);
     const std::array<uintptr_t, 2> uberSites{Pattern::Address(uberImmunityRva), Pattern::Address(uberModifiersRva)};
-    if (!Supported(site, reader) || !UberSupported(uberSites)) return false;
-    labelReturn = Pattern::Address(0x8395d); refreshSunder = refresh;
+    if (!project || !Supported(site, reader) || !CombatSupported(Pattern::Address(0x32501b)) ||
+        !UberSupported(uberSites)) return false;
+    labelReturn = Pattern::Address(0x8395d);
+    combatReturn = Pattern::Address(0x32505a);
+    projectResistance = project;
     originalRead = reinterpret_cast<ReadStat>(reader);
     if (DetourTransactionBegin() != NO_ERROR) return false;
     if (DetourUpdateThread(GetCurrentThread()) != NO_ERROR) { DetourTransactionAbort(); return false; }
@@ -148,6 +171,6 @@ void Uninstall() {
     // modification by another module during unload.
     ChangeUberDisplay({Pattern::Address(uberImmunityRva), Pattern::Address(uberModifiersRva)}, false);
     installed = attempted = false;
-    refreshSunder = nullptr; originalRead = nullptr; labelReturn = 0;
+    projectResistance = nullptr; originalRead = nullptr; labelReturn = combatReturn = 0;
 }
 }

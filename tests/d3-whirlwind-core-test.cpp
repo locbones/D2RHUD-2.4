@@ -601,4 +601,5 @@ void AutomaticGoldRequests(){
 }
 #include "d3-whirlwind-gold-native-test.inl"
 #include "d3-whirlwind-restart-test.inl"
-int main(int argc,char** argv) { assert(!RightClickPickupDisabled()); RightClickPickupPreference(); StartAndAuthentication(); PickupAndLifecycle(); SteeringIntegration(); BoundedLocalSession(); InitialCastOrdering(); CapturedItemClicks(); WhirlwindPickupPreference(); LiveHudActivation(); RepeatedHeldActions(); ImmediateCursorControls(); AutomaticGoldRequests(); if(argc>1){NativeAutoGold(argv[1]);NativeAssassinRestart(argv[1]);} }
+#include "d3-whirlwind-potion-test.inl"
+int main(int argc,char** argv) { assert(!RightClickPickupDisabled()); RightClickPickupPreference(); StartAndAuthentication(); PickupAndLifecycle(); SteeringIntegration(); BoundedLocalSession(); InitialCastOrdering(); CapturedItemClicks(); WhirlwindPickupPreference(); LiveHudActivation(); RepeatedHeldActions(); ImmediateCursorControls(); AutomaticGoldRequests(); WhirlwindPotions(); if(argc>1){NativeAutoGold(argv[1]);NativeAssassinRestart(argv[1]);NativeWhirlwindPotions(argv[1]);} }

@@ -53,7 +53,7 @@ void Parsing(){
     packet.eventSeconds=301;assert(!Data::Valid(packet));packet.eventSeconds=30;packet.die=7;assert(!Data::Valid(packet));packet.die=0;assert(!Data::Valid(packet));
     for(uint8_t die=1;die<=6;++die){int secret=0;for(unsigned roll=0;roll<100;++roll){const auto event=SelectEvent(die,roll,false);secret+=event==Event::Trial;assert(roll<5 || event==RegularEvents[die-1]);assert(SelectEvent(die,roll,true)==Event::Trial);}assert(secret==5);}
     assert(EventRemaining(100,100,Event::GoblinGrotto)==60);assert(EventRemaining(1599,100,Event::GoblinGrotto)==1);assert(!EventRemaining(1600,100,Event::GoblinGrotto));
-    assert(EventRemaining(0xfffffff0u+25,0xfffffff0u,Event::Trial)==119);
+    assert(EventRemaining(0xfffffff0u+25,0xfffffff0u,Event::Trial)==299);
     std::cout<<"Map parsing, source recovery, missing/dead/revived census and bounded ordered packets passed.\n";
 }
 struct Fixture {
@@ -179,8 +179,8 @@ void PartyEntry(){
     bindings[0x2c49c0]=reinterpret_cast<uintptr_t>(GateLookup);bindings[0x209530]=reinterpret_cast<uintptr_t>(GateRoom);bindings[0x1d1280]=reinterpret_cast<uintptr_t>(GateDelete);originalRemove=GateRemove;
     Run run;run.level=256;b.dwClientState=1;CaptureMapParty(fixture.GamePtr(),run,&first);
     assert(run.entryParty==std::set<uint32_t>({1,2}));run.portals={10,11};run.census.entered=true;
-    CloseMapEntry(fixture.GamePtr(),run);assert(gateDeletes.empty()); // Second participant is in town.
-    gateRooms[&second]=mapRoom;CloseMapEntry(fixture.GamePtr(),run);assert(gateDeletes==std::vector<uint32_t>({10,11}) && !run.portals[0] && !run.portals[1]);
+    CloseMapEntry(fixture.GamePtr(),run);assert(gateDeletes.empty() && !run.entryClosed); // Second participant is in town.
+    gateRooms[&second]=mapRoom;CloseMapEntry(fixture.GamePtr(),run);assert(gateDeletes==std::vector<uint32_t>({10,11}) && !run.portals[0] && !run.portals[1] && run.entryClosed);
     CloseMapEntry(fixture.GamePtr(),run);assert(gateDeletes.size()==2); // Each portal is removed once.
     run.portals={10,11};gateDeletes.clear();gateRooms[&second]=townRoom;a.pNext=nullptr;
     CloseMapEntry(fixture.GamePtr(),run);assert(gateDeletes.size()==2); // Disconnected participants cannot lock the portal.
@@ -189,6 +189,7 @@ void PartyEntry(){
     installed=false;
     std::cout<<"Both map portals close once the town party arrives; loading/missing players wait, disconnects unblock entry, and Survivors portals stay independent.\n";
 }
+#include "cube-map-travel-test.inl"
 void OrdinaryRestoration(){
     Reset();bindings[NativeData::Source]=reinterpret_cast<uintptr_t>(MockPopulation);
     Run ordinary;ordinary.level=256;assert(Reload(fixture.GamePtr(),ordinary,true));
@@ -385,13 +386,14 @@ void NativeBuffLifetime(uint8_t* image){
         if(type){EnsureMonsterBuff(&unit,run);assert(Stat(&unit,6)==40<<8 && Stat(&unit,39)==115 && lifetimeAllocations==2);}
         else run.players[77]=Attach(&unit,run,Side::Player);
         if(type){
-            Sunder::Values applied{},pierce{};pierce[1]=50;
-            auto refresh=[&](){Sunder::RefreshBase(applied,pierce,99,
-                [&](uint32_t stat){return Stat(&unit,int(stat));},
-                [&](uint32_t stat){return Native<int(__fastcall*)(void*,uint32_t,void*)>(0x1e2e00)(unit.pStatListEx,stat<<16,costs[stat].data());},
-                [&](uint32_t stat,int value){return Native<int(__fastcall*)(void*,int,int,uint16_t)>(0x1e5270)(unit.pStatListEx,int(stat),value,0)!=0;});};
-            for(int frame=10002;frame<10102;++frame){expire(&unit,frame,1.0f);EnsureMonsterBuff(&unit,run);refresh();assert(Stat(&unit,39)==99 && Stat(&unit,6)==40<<8 && lifetimeAllocations==2);}
-            pierce[1]=0;refresh();assert(Stat(&unit,39)==115);
+            int pierce=50;
+            auto project=[&](){
+                const int base=Native<int(__fastcall*)(void*,uint32_t,void*)>(0x1e2e00)(unit.pStatListEx,39u<<16,costs[39].data());
+                const int bonus=Stat(&unit,39)-base;
+                return Sunder::Calculate(base,(std::max)(bonus,0),(std::min)(bonus,0),pierce);
+            };
+            for(int frame=10002;frame<10102;++frame){expire(&unit,frame,1.0f);EnsureMonsterBuff(&unit,run);const auto resistance=project();assert(resistance.valid && resistance.effective==99 && Stat(&unit,39)==115 && Stat(&unit,6)==40<<8 && lifetimeAllocations==2);}
+            pierce=0;assert(project().effective==115 && Stat(&unit,39)==115);
         }
         Detach(&unit,type ? run.monsters.at(77) : run.players.at(77),259);
         assert(Stat(&unit,39)==75 && Stat(&unit,6)==40<<8 && lifetimeFrees==2);
@@ -400,6 +402,7 @@ void NativeBuffLifetime(uint8_t* image){
 }
 #include "cube-map-events-test.inl"
 #include "cube-map-event-updates-test.inl"
+#include "cube-map-demo-test.inl"
 #include "cube-map-automap-test.inl"
 #include "cube-map-survivors-test.inl"
 void SurvivorCompatibilityDiagnostics(){
@@ -511,7 +514,7 @@ void Executable(const std::filesystem::path& path){
         assert(!memcmp(save.data(),image+0x318c80,32));
         image[damaged]^=1;
     }
-    assert(Install());assert(!*SurvivorsCompatibilityDetails());assert(populationCode && populationCode[0xd8]==0xeb && image[0x2ddc18]==0x75);Uninstall();assert(Supported());
+    assert(Install());NativeMapTravelHooks(image);assert(!*SurvivorsCompatibilityDetails());assert(populationCode && populationCode[0xd8]==0xeb && image[0x2ddc18]==0x75);Uninstall();assert(Supported());
     // Reproduce the exact launcher edit from the colleague's report. All eight
     // stack/buffer operands must agree, including those after the first window.
     for(const auto rva:SurvivorsNative::SaveLimitPatchSites)image[rva]=0x80;
@@ -587,4 +590,4 @@ void Executable(const std::filesystem::path& path){
     testImage=0;VirtualFree(image,0,MEM_RELEASE);
     std::cout<<"Audited signatures, hook lifecycle, scoped population copy/unwind metadata and real cross-act native warp passed.\n";
 }
-int main(int argc,char** argv){std::cout<<std::unitbuf;assert(!SurvivorsEnabled());AddVectoredExceptionHandler(1,Fault);Parsing();TimedRewards();RandomDestinations();MapModifierRolls();MapPacks();ChampionClashPacks();Reloading();PartyEntry();OrdinaryRestoration();LayoutRecords();LayoutSynchronization();LayoutRerolls();MapReplacement();RandomizationAndRewards();EventSynchronization();EventUpdates();EventMana();MidasDrops();EncounterRosters();RegularEventPopulation();TrialImmunities();GoblinObjectives();EventAutomapPackets();EventAutomapGeometry();EventAutomapScope();EventAutomapSynchronization();SurvivorsAttributes();SurvivorsClientPause();SurvivorsRosterPersistence();SurvivorsProgression();SurvivorsCombat();SurvivorsEmptyArena();SurvivorsSpawningAndLoot();SurvivorsAuthentication();SurvivorsNpcEntry();SurvivorCompatibilityDiagnostics();if(argc>1)Executable(argv[1]);return 0;}
+int main(int argc,char** argv){std::cout<<std::unitbuf;assert(!SurvivorsEnabled());AddVectoredExceptionHandler(1,Fault);Parsing();TimedRewards();RandomDestinations();MapModifierRolls();MapPacks();ChampionClashPacks();Reloading();PartyEntry();MapTravelLock();OrdinaryRestoration();LayoutRecords();LayoutSynchronization();LayoutRerolls();MapReplacement();RandomizationAndRewards();EventSynchronization();EventUpdates();EventDemoShortcuts();EventMana();MidasDrops();EncounterRosters();RegularEventPopulation();SoulSurprisePresetPopulation();TrialImmunities();GoblinObjectives();EventAutomapPackets();EventAutomapGeometry();EventAutomapScope();EventAutomapSynchronization();SurvivorsAttributes();SurvivorsClientPause();SurvivorsRosterPersistence();SurvivorsProgression();SurvivorsCombat();SurvivorsEmptyArena();SurvivorsSpawningAndLoot();SurvivorsAuthentication();SurvivorsNpcEntry();SurvivorCompatibilityDiagnostics();if(argc>1)Executable(argv[1]);return 0;}

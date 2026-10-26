@@ -1,2 +1,133 @@
 
-/.vs
+# Visual Studio and local editor state
+.vs/
+.vscode/
+.idea/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+*.VC.db
+*.VC.db-*
+*.VC.opendb
+*.sdf
+*.opensdf
+
+# Native build output, including nested/accidental output directories
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+Win32/
+ARM64/
+build/
+build-*/
+out/
+dist/
+ipch/
+*.obj
+*.o
+*.pch
+*.gch
+*.res
+*.tlog
+*.lastbuildstate
+*.recipe
+*.exe
+*.dll
+*.lib
+*.exp
+*.pdb
+*.ilk
+*.iobj
+*.ipdb
+
+# Restored dependencies and package caches; keep d2rhud/vcpkg.json
+vcpkg_installed/
+vcpkg/buildtrees/
+vcpkg/downloads/
+vcpkg/packages/
+packages/
+node_modules/
+
+# Python environments and generated caches
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Release archives, rollback copies, logs and temporary files
+*.zip
+*.7z
+*.rar
+*.bak
+*.backup
+*.old
+*.orig
+*.rej
+*.tmp
+*.temp
+*.log
+*~
+/artifacts/
+/scratch/
+/tmp/
+/temp/
+/d2rhud-copy/
+
+# Internal documentation, AI notes and agent/editor metadata stay local
+/docs/
+/notes/
+/plans/
+/local-notes/
+.agents/
+.codex/
+.claude/
+.cursor/
+.aider*
+AGENTS.md
+CLAUDE.md
+GEMINI.md
+AI_NOTES*
+CODEX_NOTES*
+
+# Generated previews/reports; retain the actual mod sound and content assets
+/examples/whirlwind-audio/whirlwind-loop-preview.wav
+/examples/whirlwind-audio/whirlwind-original-repeated.wav
+/examples/whirlwind-audio/loop-report.json
+/content/act6/layout.png
+
+# Player saves and machine-specific runtime preferences
+*.d2s
+*.d2i
+*.d2rl
+*.ma[0-9]
+*.map
+*.ctl
+*.ctlo
+*.key
+*.keyo
+HUDConfig_*.json
+lootfilter_config.lua
+imgui.ini
+ui-layout.ini
+
+# Operating-system metadata
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Existing launcher downloads depend on these three published runtime files.
+# Keep every other root/nested build product excluded.
+!/x64/
+/x64/*
+!/x64/Release/
+/x64/Release/*
+!/x64/Release/d2rhud.dll
+!/x64/Release/Pandemonium.HudLoader.exe
+!/x64/Release/lootfilter.lua

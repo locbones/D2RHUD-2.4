@@ -12,7 +12,7 @@ bool HasTimedReward(Game* game,Unit* player,Event event){
     const auto participant=found->second.timedRewards.find(TimedRewardOwner(game,player));
     if(participant==found->second.timedRewards.end())return false;
     const auto reward=participant->second.find(event);
-    return reward!=participant->second.end() && RewardsData::Remaining(game->dwGameFrame,reward->second)!=0;
+    return reward!=participant->second.end() && RewardsData::Remaining(game->dwGameFrame,reward->second,event)!=0;
 }
 void GrantTimedReward(Game* game,uint32_t guid,Event event){
     if(!game || RewardsData::Index(event)<0)return;
@@ -26,7 +26,7 @@ void ProcessTimedRewards(Game* game,GameState& state,bool force=false){
     if(found==games.end() || &found->second!=&state || state.seed!=game->dwInitSeed)return;
     for(auto player=state.timedRewards.begin();player!=state.timedRewards.end();){
         for(auto reward=player->second.begin();reward!=player->second.end();){
-            if(RewardsData::Index(reward->first)<0 || !RewardsData::Remaining(game->dwGameFrame,reward->second))reward=player->second.erase(reward);
+            if(RewardsData::Index(reward->first)<0 || !RewardsData::Remaining(game->dwGameFrame,reward->second,reward->first))reward=player->second.erase(reward);
             else ++reward;
         }
         if(player->second.empty())player=state.timedRewards.erase(player);else ++player;
@@ -41,7 +41,7 @@ void ProcessTimedRewards(Game* game,GameState& state,bool force=false){
         packet.recipient=client->dwUnitGUID;packet.sequence=state.rewardSequence;
         if(const auto participant=state.timedRewards.find(TimedRewardOwner(game,player));participant!=state.timedRewards.end())
             for(const auto [event,start]:participant->second)if(const int index=RewardsData::Index(event);index>=0)
-                packet.remaining[size_t(index)]=RewardsData::Remaining(game->dwGameFrame,start);
+                packet.remaining[size_t(index)]=RewardsData::Remaining(game->dwGameFrame,start,event);
         Native<void(__fastcall*)(Client*)>(0x2d0130)(client);
         void* range[]{&packet,reinterpret_cast<uint8_t*>(&packet)+sizeof(packet)};
         Native<void(__fastcall*)(void*,uint32_t,void**)>(0x422ac0)(Native<void*>(0x18682b0),client->dwClientId,range);

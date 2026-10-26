@@ -1,6 +1,8 @@
 #include "FloatingDamage.h"
+#include "SettingsUI.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cctype>
 #include <cfloat>
@@ -62,6 +64,7 @@ struct TickPopup {
 };
 
 struct DamageEvent {
+    bool preview = false;
     int amount = 0;
     float screenX = 0.0f;
     float screenY = 0.0f;
@@ -73,6 +76,7 @@ struct DamageEvent {
 };
 
 struct DamageNumber {
+    bool preview = false;
     std::string text;
     float x = 0.0f;
     float y = 0.0f;
@@ -108,6 +112,7 @@ struct DpsSample {
 };
 
 Config g_config;
+std::atomic<bool> g_enabled{true};
 std::vector<DamageNumber> g_numbers;
 std::vector<DamageEvent> g_pendingEvents;
 std::deque<DpsSample> g_dpsSamples;
@@ -300,6 +305,8 @@ float GetScreenDistance(float x1, float y1, float x2, float y2)
 
 bool IsSpreadRelatedNumber(const DamageNumber& number, const DamageEvent& event)
 {
+    if (number.preview != event.preview)
+        return false;
     const bool eventHasTarget = HasDamageTarget(event.targetUnitType, event.targetUnitId);
     const bool numberHasTarget = HasDamageTarget(number.targetUnitType, number.targetUnitId);
 
@@ -430,6 +437,8 @@ bool TryCombineRapidHit(const DamageEvent& event)
     for (auto it = g_numbers.rbegin(); it != g_numbers.rend(); ++it)
     {
         DamageNumber& number = *it;
+        if (number.preview != event.preview)
+            continue;
         if (!number.canCombineHits)
             continue;
         if (number.age >= number.lifetime)
@@ -453,6 +462,7 @@ void SpawnNumberFromEvent(const DamageEvent& event)
     const SpreadPlacement placement = CalculateSpreadPlacement(event);
 
     DamageNumber number{};
+    number.preview = event.preview;
     number.text = FormatDamageAmount(event.amount);
     number.anchorX = event.screenX;
     number.anchorY = event.screenY;
@@ -489,6 +499,8 @@ void TrimActiveNumbers()
 
 void RecordDpsEvent(const DamageEvent& event)
 {
+    if (event.preview)
+        return;
     if (event.amount <= 0)
         return;
 
@@ -757,16 +769,36 @@ Config& GetConfig()
     return g_config;
 }
 
+bool IsEnabled()
+{
+    return g_enabled.load();
+}
+
+void SetEnabled(bool enabled)
+{
+    // Serialize the disable with the producer's final enabled check, so an
+    // installed native hook cannot leave a game event queued after disable.
+    std::lock_guard<std::mutex> lock(g_queueMutex);
+    g_config.enabled = enabled;
+    g_enabled.store(enabled);
+    if (!enabled)
+    {
+        std::erase_if(g_pendingEvents, [](const DamageEvent& event) { return !event.preview; });
+        std::erase_if(g_numbers, [](const DamageNumber& number) { return !number.preview; });
+        g_dpsSamples.clear();
+        g_rollingDamage = 0;
+    }
+}
+
 void ResetToDefaults()
 {
-    const bool wasEnabled = g_config.enabled;
+    const bool wasEnabled = IsEnabled();
     g_config = Config{};
     g_config.enabled = wasEnabled;
 }
 
 static void LoadSettingsFromJsonObject(const nlohmann::json& j)
 {
-    g_config.enabled = j.value("Enabled", g_config.enabled);
     g_config.textSize = JsonValueOrLegacy(j, "TextSize", "FontSize", g_config.textSize);
     g_config.criticalHitSize = JsonValueOrLegacy(j, "CriticalHitSize", "CritFontSize", g_config.criticalHitSize);
     g_config.textOutlineWidth = JsonValueOrLegacy(j, "TextOutlineWidth", "OutlineThickness", g_config.textOutlineWidth);
@@ -855,25 +887,29 @@ static void LoadSettingsFromJsonObject(const nlohmann::json& j)
 
 void LoadFromJson(const nlohmann::json& root)
 {
-    if (root.contains("FloatingDamage") && root["FloatingDamage"].is_boolean())
-        g_config.enabled = root["FloatingDamage"].get<bool>();
-
+    const nlohmann::json* appearance = nullptr;
     if (root.contains("FloatingDamageSettings") && root["FloatingDamageSettings"].is_object())
-    {
-        LoadSettingsFromJsonObject(root["FloatingDamageSettings"]);
-        return;
-    }
+        appearance = &root["FloatingDamageSettings"];
+    else if (root.contains("DamageNumbers") && root["DamageNumbers"].is_object())
+        appearance = &root["DamageNumbers"];
+    if (appearance)
+        LoadSettingsFromJsonObject(*appearance);
 
-    if (root.contains("DamageNumbers") && root["DamageNumbers"].is_object())
-        LoadSettingsFromJsonObject(root["DamageNumbers"]);
+    bool enabled = IsEnabled();
+    // The main option is authoritative. Nested Enabled is a legacy fallback.
+    if (root.contains("FloatingDamage") && root["FloatingDamage"].is_boolean())
+        enabled = root["FloatingDamage"].get<bool>();
+    else if (appearance && appearance->contains("Enabled") && (*appearance)["Enabled"].is_boolean())
+        enabled = (*appearance)["Enabled"].get<bool>();
+    SetEnabled(enabled);
 }
 
 void SaveToJson(nlohmann::ordered_json& root)
 {
-    root["FloatingDamage"] = g_config.enabled;
+    root["FloatingDamage"] = IsEnabled();
 
     ordered_json j;
-    j["Enabled"] = g_config.enabled;
+    j["Enabled"] = IsEnabled();
     j["TextSize"] = g_config.textSize;
     j["CriticalHitSize"] = g_config.criticalHitSize;
     j["TextOutlineWidth"] = g_config.textOutlineWidth;
@@ -932,7 +968,7 @@ void SaveToJson(nlohmann::ordered_json& root)
 
 void QueueGameDamage(int amount, float screenX, float screenY, uint32_t unitType, uint32_t unitId, Kind kind, Element element)
 {
-    if (amount <= 0)
+    if (amount <= 0 || !IsEnabled())
         return;
 
     DamageEvent event{};
@@ -946,21 +982,21 @@ void QueueGameDamage(int amount, float screenX, float screenY, uint32_t unitType
     event.targetUnitId = unitId;
     {
         std::lock_guard<std::mutex> lock(g_queueMutex);
+        if (!IsEnabled())
+            return;
         g_pendingEvents.push_back(event);
     }
 }
 
 void QueueDamage(int amount, float screenX, float screenY, uint32_t unitType, uint32_t unitId, Kind kind, Element element)
 {
-    if (!g_config.enabled || amount <= 0)
-        return;
-
     QueueGameDamage(amount, screenX, screenY, unitType, unitId, kind, element);
 }
 
 void QueuePreviewAt(float screenX, float screenY, Kind kind)
 {
     DamageEvent event{};
+    event.preview = true;
     event.amount = GeneratePreviewAmount(kind);
     event.screenX = screenX;
     event.screenY = screenY;
@@ -1009,7 +1045,7 @@ void Update(float dt)
     std::vector<DamageEvent> pending;
     {
         std::lock_guard<std::mutex> lock(g_queueMutex);
-        if (g_pendingEvents.empty() && g_numbers.empty())
+        if (g_pendingEvents.empty() && g_numbers.empty() && g_dpsSamples.empty())
             return;
         pending.swap(g_pendingEvents);
     }
@@ -1089,8 +1125,8 @@ void Render(ImDrawList* drawList, const ImVec2& displaySize)
     if (!font)
         return;
 
-    const bool showNumbers = g_config.enabled || !g_numbers.empty();
-    const bool showDps = g_config.enabled && g_config.showDpsCounter;
+    const bool showNumbers = IsEnabled() || !g_numbers.empty();
+    const bool showDps = IsEnabled() && g_config.showDpsCounter;
     if (!showNumbers && !showDps)
         return;
 
@@ -1132,6 +1168,7 @@ void Render(ImDrawList* drawList, const ImVec2& displaySize)
 void DrawSettingsPanel(float menuScale)
 {
     Config& cfg = g_config;
+    HudSettings::Style form(menuScale);
     const float fieldWidth = 160.0f * menuScale;
 
     auto showTooltipOnHover = [menuScale](const char* title, const char* text)
@@ -1146,7 +1183,7 @@ void DrawSettingsPanel(float menuScale)
             ImGui::PushTextWrapPos(ImGui::GetCursorPos().x + tooltipWidth);
             if (title && title[0])
             {
-                ImGui::TextColored(ImVec4(0.75294f, 0.50196f, 0.94902f, 1.0f), "%s", title);
+                ImGui::TextColored(ImVec4(0.85f, 0.75f, 0.53f, 1.0f), "%s", title);
                 ImGui::Spacing();
             }
             ImGui::TextUnformatted(text);
@@ -1162,56 +1199,63 @@ void DrawSettingsPanel(float menuScale)
 
     auto settingSliderFloat = [&](const char* label, float* value, float minValue, float maxValue, const char* format, const char* tooltip, const char* tooltipTitle = nullptr)
         {
-            ImGui::SliderFloat(label, value, minValue, maxValue, format);
+            HudSettings::BeginField(label,menuScale);
+            ImGui::SliderFloat("##value", value, minValue, maxValue, format);
             showTooltipOnHover(tooltipTitle ? tooltipTitle : label, tooltip);
+            HudSettings::EndField(menuScale);
         };
 
     auto settingSliderInt = [&](const char* label, int* value, int minValue, int maxValue, const char* format, ImGuiSliderFlags flags, const char* tooltip, const char* tooltipTitle = nullptr)
         {
-            ImGui::SliderInt(label, value, minValue, maxValue, format, flags);
+            HudSettings::BeginField(label,menuScale);
+            ImGui::SliderInt("##value", value, minValue, maxValue, format, flags);
             showTooltipOnHover(tooltipTitle ? tooltipTitle : label, tooltip);
+            HudSettings::EndField(menuScale);
         };
 
     auto settingSliderIntSimple = [&](const char* label, int* value, int minValue, int maxValue, const char* tooltip, const char* tooltipTitle = nullptr)
         {
-            ImGui::SliderInt(label, value, minValue, maxValue);
+            HudSettings::BeginField(label,menuScale);
+            ImGui::SliderInt("##value", value, minValue, maxValue);
             showTooltipOnHover(tooltipTitle ? tooltipTitle : label, tooltip);
+            HudSettings::EndField(menuScale);
         };
 
     auto settingColor = [&](const char* label, float color[4], const char* tooltip, const char* tooltipTitle = nullptr)
         {
-            ImGui::ColorEdit4(label, color);
+            HudSettings::BeginField(label,menuScale);
+            ImGui::ColorEdit4("##value", color, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_AlphaBar);
             showTooltipOnHover(tooltipTitle ? tooltipTitle : label, tooltip);
+            HudSettings::EndField(menuScale);
         };
 
-    static std::unordered_map<std::string, bool> s_sectionExpanded;
-    auto drawSectionHeader = [&](const char* label) -> bool
-        {
-            bool& expanded = s_sectionExpanded[label];
-            ImGuiTreeNodeFlags flags = expanded ? ImGuiTreeNodeFlags_DefaultOpen : ImGuiTreeNodeFlags_None;
-            const bool open = ImGui::CollapsingHeader(label, flags);
-            if (ImGui::IsItemToggledOpen())
-                expanded = open;
-            return open;
-        };
-
-    if (ImGui::Button("Reset to Defaults", ImVec2(fieldWidth * 1.5f, 0.0f)))
-        ResetToDefaults();
-    showTooltipOnHover(
-        "Reset to Defaults",
-        "Restores every Floating Damage setting to its built-in default.\n\nDoes not change the main Floating Damage on/off toggle in D2RHUD Options.");
-    ImGui::Separator();
+    static int section=0;
+    constexpr const char* labels[]{"Appearance","Motion","Hit combining","Layout","DPS meter","Preview"};
+    if(ImGui::BeginTabBar("DamageSettingsSections",ImGuiTabBarFlags_FittingPolicyScroll)){
+        for(int i=0;i<int(std::size(labels));++i)if(ImGui::BeginTabItem(labels[i])){section=i;ImGui::EndTabItem();}
+        ImGui::EndTabBar();
+    }
+    ImGui::Dummy({0,10*menuScale});
+    auto drawSectionHeader = [&](const char* label) -> bool {
+        if(!strcmp(label,"Element Colors"))return HudSettings::Disclosure("Damage type colors");
+        constexpr const char* original[]{"Appearance","Animation","Combine Rapid Hits","Spread Overlapping Numbers","DPS Meter","Preview"};
+        constexpr const char* descriptions[]{"Text size, font and damage colors.","How numbers appear, move and fade.","Combine rapid hits into a single updating number.","Keep simultaneous numbers from overlapping.","A rolling damage-per-second readout.","Try your settings without entering combat."};
+        if(strcmp(label,original[section]))return false;
+        HudSettings::BeginSection("DamageSection",labels[section],descriptions[section],menuScale);
+        return true;
+    };
 
     const bool appearanceOpen = drawSectionHeader("Appearance");
-    showTooltipOnHover("Appearance", "Controls text size, colors, and outline styling for floating damage numbers.");
     if (appearanceOpen)
     {
         int fontIndex = std::clamp(cfg.fontIndex, 0, kFontPresetCount - 1);
-        ImGui::Combo("Font", &fontIndex, kFontPresetLabels, kFontPresetCount);
+        HudSettings::BeginField("Font",menuScale);
+        ImGui::Combo("##value", &fontIndex, kFontPresetLabels, kFontPresetCount);
         cfg.fontIndex = fontIndex;
         showTooltipOnHover(
             "Font",
             "Choose the typeface used for floating damage numbers.\n\nBundled fonts are embedded in D2RHUD. Defaults to Exocet.");
+        HudSettings::EndField(menuScale);
 
         settingCheckbox(
             "Color by Damage Type",
@@ -1271,10 +1315,10 @@ void DrawSettingsPanel(float menuScale)
         settingColor(
             "Shadow Color", &cfg.shadowColor.x,
             "Color of the drop shadow drawn behind each number.");
+        HudSettings::EndSection(menuScale);
     }
 
     const bool animationOpen = drawSectionHeader("Animation");
-    showTooltipOnHover("Animation", "Controls how numbers spawn, pop in, float upward, and fade out over time.");
     if (animationOpen)
     {
         settingSliderFloat(
@@ -1321,10 +1365,10 @@ void DrawSettingsPanel(float menuScale)
             "Max Numbers On Screen", &cfg.maxNumbersOnScreen, 20, 400,
             "Maximum number of floating values allowed on screen at once.\n\nOldest numbers are removed when this limit is exceeded.",
             "Max Numbers On Screen");
+        HudSettings::EndSection(menuScale);
     }
 
     const bool combineRapidHitsOpen = drawSectionHeader("Combine Rapid Hits");
-    showTooltipOnHover("Combine Rapid Hits", "Combines rapid hits on the same target into a single updating number.\n\nUseful for poison DoT, fast attacks, and other tick-based damage.");
     if (combineRapidHitsOpen)
     {
         settingCheckbox(
@@ -1373,10 +1417,10 @@ void DrawSettingsPanel(float menuScale)
             "Tick Popup Height Offset", &cfg.tickPopupHeightOffset, -80.0f, 40.0f, "%.0f",
             "Vertical offset applied to tick popup text relative to the combined number.",
             "Tick Popup Height Offset");
+        HudSettings::EndSection(menuScale);
     }
 
     const bool spreadOverlappingNumbersOpen = drawSectionHeader("Spread Overlapping Numbers");
-    showTooltipOnHover("Spread Overlapping Numbers", "Spreads simultaneous numbers on the same target across horizontal columns.\n\nReduces overlap when many hits land at once.");
     if (spreadOverlappingNumbersOpen)
     {
         settingCheckbox(
@@ -1404,10 +1448,10 @@ void DrawSettingsPanel(float menuScale)
             "Max Stack Height", &cfg.maxStackHeight, 0.0f, 200.0f, "%.0f",
             "Maximum upward offset applied by column placement.",
             "Max Stack Height");
+        HudSettings::EndSection(menuScale);
     }
 
     const bool dpsMeterOpen = drawSectionHeader("DPS Meter");
-    showTooltipOnHover("DPS Meter", "Shows a rolling damage-per-second readout on screen.\n\nUseful for comparing builds or checking sustained output.");
     if (dpsMeterOpen)
     {
         settingCheckbox(
@@ -1427,10 +1471,10 @@ void DrawSettingsPanel(float menuScale)
             "DPS Sample Time (sec)", &cfg.dpsSampleTimeSeconds, 0.5f, 30.0f, "%.1f",
             "Time period used to calculate DPS.\n\nShorter windows react faster; longer windows show smoother sustained output.",
             "DPS Sample Time");
+        HudSettings::EndSection(menuScale);
     }
 
     const bool previewOpen = drawSectionHeader("Preview");
-    showTooltipOnHover("Preview", "Preview floating damage settings using synthetic numbers.\n\nUseful for tuning appearance and animation without combat.");
     if (previewOpen)
     {
         settingSliderIntSimple(
@@ -1449,6 +1493,11 @@ void DrawSettingsPanel(float menuScale)
             Render(ImGui::GetBackgroundDrawList(), io.DisplaySize);
         }
         showTooltipOnHover("Preview at Screen Center", "Spawns a burst of synthetic damage numbers at the center of the screen.");
+        HudSettings::EndSection(menuScale);
+        if(HudSettings::Disclosure("Restore defaults")){
+            HudSettings::Note("Restore appearance and animation settings. The main Floating Damage toggle is kept.");
+            if(ImGui::Button("Reset damage settings"))ResetToDefaults();
+        }
     }
 }
 

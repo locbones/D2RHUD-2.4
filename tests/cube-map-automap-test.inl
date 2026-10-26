@@ -82,7 +82,7 @@ void EventAutomapScope(){
     Put(fixture.level.data(),0x1f8,109);checkNative();Put(fixture.level.data(),0x1f8,39);
     view.event=Event::None;checkNative();view.event=Event::Trial;
     for(auto phase:{EventPhase::WaitingTown,EventPhase::Ceremony,EventPhase::Briefing,EventPhase::Returning,EventPhase::Finished,EventPhase::Cancelled}){view.eventPhase=phase;checkNative();}
-    view.eventPhase=EventPhase::Active;view.eventElapsed=120000;checkNative();view.eventElapsed=0;view.recipient=56;checkNative();view.recipient=55;
+    view.eventPhase=EventPhase::Active;view.eventElapsed=Info(Event::Trial).seconds*1000;checkNative();view.eventElapsed=0;view.recipient=56;checkNative();view.recipient=55;
     receivedAt=GetTickCount64()-4001;checkNative();receivedAt=GetTickCount64();
     automapResets=0;MapResetHook();assert(automapResets==1 && !receivedAt && !view.run && !eventGeometry && !automapStreams[1].ready);checkNative();
     installed=false;populationCode=nullptr;

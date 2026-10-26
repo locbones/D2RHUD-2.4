@@ -2,6 +2,7 @@
 #include "D3WhirlwindData.h"
 #include "D3WhirlwindNative.h"
 #include "D3WhirlwindPickup.h"
+#include "D3WhirlwindPotion.h"
 #include "D3WhirlwindRestart.h"
 #include "../d2/D2Ptrs.h"
 #include <MinHook.h>
@@ -21,12 +22,14 @@ using ServerMovement = int(__fastcall*)(Game*, Unit*);
 using ClientMovement = int(__fastcall*)(Unit*, bool);
 using ClientAction = void(__fastcall*)(int, Unit*, int, int);
 using ClientInteraction = int(__fastcall*)(Unit*, int, int, int, uint16_t);
+using ItemDisabled = int(__fastcall*)(Unit*);
 ServerSkill originalServerStart = nullptr, originalServerDo = nullptr;
 ClientSkill originalClientStart = nullptr, originalClientDo = nullptr;
 ServerMovement originalServerMove = nullptr;
 ClientMovement originalClientMove = nullptr;
 ClientAction originalClientAction = nullptr;
 ClientInteraction originalClientInteraction = nullptr;
+ItemDisabled originalItemDisabled = nullptr;
 Pickup::Dispatcher originalDispatcher = nullptr;
 std::atomic<bool> ready{false}, enabled{false}, inputBlocked{true};
 std::atomic<bool> rightClickPickupDisabled{false};
@@ -287,6 +290,21 @@ int __fastcall ClientInteractionHook(Unit* unit,int action,int x,int y,uint16_t 
     }
     return originalClientInteraction(unit,action,x,y,modifiers);
 }
+bool ClientPotionAllowed(Unit* item){
+    if(!ready.load()||!enabled.load()||!client.active||!Alive(client.player)||LocalPlayer()!=client.player||
+        Skill(client.player)!=client.skill||!Active(client.skill)||!Whirlwind(client.skill))return false;
+    uint32_t seed=0;
+    return LocalSession(client.player,seed)&&seed==client.seed&&Potion::BeltItem(client.player,item);
+}
+int __fastcall ItemDisabledHook(Unit* item){
+    if(ClientPotionAllowed(item)){
+        // Retain item-specific disabled states and the original belt/tooltip
+        // callers; only the local channel's Whirlwind gate is bypassed.
+        Potion::MoveStateScope allow(client.player);
+        return originalItemDisabled(item);
+    }
+    return originalItemDisabled(item);
+}
 int __fastcall DispatcherHook(Game* game, Unit* unit, const void* bytes, int size) {
     if (bytes && size >= 10 && size <= 512 && Data::Ours({static_cast<const uint8_t*>(bytes), size_t(size)})) {
         if (size != sizeof(Data::Command)) return 1;
@@ -307,10 +325,19 @@ int __fastcall DispatcherHook(Game* game, Unit* unit, const void* bytes, int siz
         std::lock_guard lock(serverMutex);
         if (auto channel = Channel(game, unit); channel && Holding(game, unit, *channel)) return Pickup::ServerRequest(game, unit, bytes, size);
     }
+    if(ready.load()&&enabled.load()&&bytes&&size==36&&*static_cast<const uint8_t*>(bytes)==0x26){
+        std::lock_guard lock(serverMutex);
+        if(auto channel=Channel(game,unit);channel&&Holding(game,unit,*channel)&&Potion::RequestItem(game,unit,bytes,size)){
+            // Call through the full dispatcher, including existing transmog/map
+            // hooks, owner/location checks, item effects and native consumption.
+            Potion::MoveStateScope allow(unit);
+            return originalDispatcher(game,unit,bytes,size);
+        }
+    }
     return originalDispatcher(game, unit, bytes, size);
 }
 
-constexpr std::array<uint32_t, 9> Hooks{ServerStart, ServerDo, ServerMove, ClientStart, ClientDo, ClientMove, 0xa6120, Pickup::DispatcherRva, Pickup::ClientInteractionRva};
+constexpr std::array<uint32_t, 10> Hooks{ServerStart, ServerDo, ServerMove, ClientStart, ClientDo, ClientMove, 0xa6120, Pickup::DispatcherRva, Pickup::ClientInteractionRva,Potion::ItemDisabledRva};
 uint64_t Hash(const std::array<uint8_t, 32>& bytes) {
     uint64_t value = 14695981039346656037ULL;
     for (const auto byte : bytes) value = (value ^ byte) * 1099511628211ULL;
@@ -326,17 +353,17 @@ template<class Signatures> bool Matches(const Signatures& signatures) {
 }
 bool Install() {
     if (ready.load()) return true;
-    if (!Matches(NativeData::Signatures) || !Matches(NativeData::InputSignatures) || !Matches(Pickup::Signatures)) {
+    if (!Matches(NativeData::Signatures) || !Matches(NativeData::InputSignatures) || !Matches(Pickup::Signatures)||!Matches(Potion::Signatures)) {
         status.store("D3 style Whirlwind unavailable: executable signature mismatch."); return false;
     }
     const auto initialized = MH_Initialize();
     if (initialized != MH_OK && initialized != MH_ERROR_ALREADY_INITIALIZED) return false;
     void* replacements[]{reinterpret_cast<void*>(ServerStartHook), reinterpret_cast<void*>(ServerDoHook), reinterpret_cast<void*>(ServerMoveHook),
         reinterpret_cast<void*>(ClientStartHook), reinterpret_cast<void*>(ClientDoHook), reinterpret_cast<void*>(ClientMoveHook),
-        reinterpret_cast<void*>(ClientActionHook), reinterpret_cast<void*>(DispatcherHook), reinterpret_cast<void*>(ClientInteractionHook)};
+        reinterpret_cast<void*>(ClientActionHook), reinterpret_cast<void*>(DispatcherHook), reinterpret_cast<void*>(ClientInteractionHook),reinterpret_cast<void*>(ItemDisabledHook)};
     void** originals[]{reinterpret_cast<void**>(&originalServerStart), reinterpret_cast<void**>(&originalServerDo), reinterpret_cast<void**>(&originalServerMove),
         reinterpret_cast<void**>(&originalClientStart), reinterpret_cast<void**>(&originalClientDo), reinterpret_cast<void**>(&originalClientMove),
-        reinterpret_cast<void**>(&originalClientAction), reinterpret_cast<void**>(&originalDispatcher), reinterpret_cast<void**>(&originalClientInteraction)};
+        reinterpret_cast<void**>(&originalClientAction), reinterpret_cast<void**>(&originalDispatcher), reinterpret_cast<void**>(&originalClientInteraction),reinterpret_cast<void**>(&originalItemDisabled)};
     size_t created = 0;
     for (; created < Hooks.size(); ++created) if (MH_CreateHook(At<void*>(Hooks[created]), replacements[created], originals[created]) != MH_OK) break;
     if (created == Hooks.size()) {

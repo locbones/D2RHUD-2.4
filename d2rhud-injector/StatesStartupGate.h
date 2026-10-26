@@ -98,31 +98,68 @@ inline bool Arm(HANDLE process,uintptr_t base) {
 // The engine has resolved its mod globals by this point, unlike DLL injection
 // before entry. Hold only its initial thread, restore the original instruction
 // for HUD's signature checks, then let HUD initialize on its own threads.
-inline bool HoldAtGate(HANDLE process,HANDLE initialThread,uintptr_t base,DWORD timeout=30000) {
+enum class GateProbe { Running,Held,Failed };
+inline GateProbe ProbeGate(HANDLE process,HANDLE thread,uintptr_t base) {
+    if(SuspendThread(thread)==DWORD(-1))return GateProbe::Failed;
+    CONTEXT context{};context.ContextFlags=CONTEXT_CONTROL;
+    if(!GetThreadContext(thread,&context)){
+        const DWORD error=GetLastError();ResumeThread(thread);SetLastError(error);return GateProbe::Failed;
+    }
+    if(context.Rip==base+CheckRva) {
+        std::array<uint8_t,2> branch{};
+        if(!Read(process,base+CheckRva,branch)){const DWORD error=GetLastError();ResumeThread(thread);SetLastError(error);return GateProbe::Failed;}
+        if(branch[0]!=0xeb || branch[1]!=0xfe){ResumeThread(thread);SetLastError(ERROR_INVALID_DATA);return GateProbe::Failed;}
+        if(!Write(process,base+CheckRva,Original.data(),2)){const DWORD error=GetLastError();ResumeThread(thread);SetLastError(error);return GateProbe::Failed;}
+        return GateProbe::Held;
+    }
+    return ResumeThread(thread)==DWORD(-1)?GateProbe::Failed:GateProbe::Running;
+}
+// Return an independently owned handle to the thread actually stopped at the
+// state loader, including BIN-loading workers. The caller resumes that handle.
+// With no output handle, retain the original initial-thread-only test API.
+inline bool HoldAtGate(HANDLE process,HANDLE initialThread,uintptr_t base,DWORD timeout=120000,HANDLE* heldThread=nullptr) {
+    if(heldThread)*heldThread=nullptr;
+    const DWORD pid=GetProcessId(process),initialId=GetThreadId(initialThread);
+    ULONGLONG nextWorkers=0;
     const ULONGLONG start=GetTickCount64();
     while(GetTickCount64()-start<timeout && WaitForSingleObject(process,0)==WAIT_TIMEOUT) {
-        if(SuspendThread(initialThread)==DWORD(-1))return false;
-        CONTEXT context{};context.ContextFlags=CONTEXT_CONTROL;
-        if(!GetThreadContext(initialThread,&context)){ResumeThread(initialThread);return false;}
-        if(context.Rip==base+CheckRva) {
-            std::array<uint8_t,2> branch{};
-            return Read(process,base+CheckRva,branch) && branch[0]==0xeb && branch[1]==0xfe &&
-                Write(process,base+CheckRva,Original.data(),2);
+        const auto probe=ProbeGate(process,initialThread,base);
+        if(probe==GateProbe::Failed)return false;
+        if(probe==GateProbe::Held){
+            if(heldThread && !DuplicateHandle(GetCurrentProcess(),initialThread,GetCurrentProcess(),heldThread,0,FALSE,DUPLICATE_SAME_ACCESS)){
+                const DWORD error=GetLastError();ResumeThread(initialThread);SetLastError(error);return false;
+            }
+            SetLastError(ERROR_SUCCESS);return true;
         }
-        if(ResumeThread(initialThread)==DWORD(-1))return false;
+        if(heldThread && GetTickCount64()>=nextWorkers){
+            nextWorkers=GetTickCount64()+100;
+            const auto snapshot=CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD,0);
+            if(snapshot==INVALID_HANDLE_VALUE)return false;
+            THREADENTRY32 entry{};entry.dwSize=sizeof(entry);
+            if(Thread32First(snapshot,&entry))do{
+                if(entry.th32OwnerProcessID!=pid || entry.th32ThreadID==initialId || entry.th32ThreadID==GetCurrentThreadId())continue;
+                const auto worker=OpenThread(THREAD_SUSPEND_RESUME|THREAD_GET_CONTEXT|THREAD_QUERY_INFORMATION,FALSE,entry.th32ThreadID);
+                if(!worker)continue; // Workers can finish between enumeration and OpenThread.
+                const auto workerProbe=ProbeGate(process,worker,base);
+                if(workerProbe==GateProbe::Held){*heldThread=worker;CloseHandle(snapshot);SetLastError(ERROR_SUCCESS);return true;}
+                CloseHandle(worker);
+            }while(Thread32Next(snapshot,&entry));
+            CloseHandle(snapshot);
+        }
         Sleep(5);
     }
-    return false;
+    SetLastError(WaitForSingleObject(process,0)==WAIT_OBJECT_0?ERROR_PROCESS_ABORTED:ERROR_TIMEOUT);return false;
 }
 
 inline bool WaitReady(HANDLE process,uintptr_t hud,DWORD readyRva,DWORD timeout=30000) {
     const ULONGLONG start=GetTickCount64();
     while(GetTickCount64()-start<timeout && WaitForSingleObject(process,0)==WAIT_TIMEOUT) {
         LONG state=0;
-        if(!Read(process,hud+readyRva,state) || state==2)return false;
+        if(!Read(process,hud+readyRva,state))return false;
+        if(state==2){SetLastError(ERROR_DLL_INIT_FAILED);return false;}
         if(state==1)return true;
         Sleep(5);
     }
-    return false;
+    SetLastError(WaitForSingleObject(process,0)==WAIT_OBJECT_0?ERROR_PROCESS_ABORTED:ERROR_TIMEOUT);return false;
 }
 }

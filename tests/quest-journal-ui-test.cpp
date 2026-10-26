@@ -1,6 +1,8 @@
+#pragma push_macro("main")
+#undef main
 #define main ExistingEditorTestMain
 #include "lootfilter-editor-test.cpp"
-#undef main
+#pragma pop_macro("main")
 #include "../d2rhud/plugin/QuestJournalData.h"
 #include "../d2rhud/plugin/StackSplitSkin.h"
 static bool showQuestJournalMenu=true;
@@ -23,6 +25,7 @@ void RequestAcknowledge(const View&){}
 void RequestReward(const View&){}
 void RequestProofRecovery(const View&){}
 }
+#include "../d2rhud/plugin/D2RHUD/MenuWorkspace.h"
 #include "../d2rhud/plugin/QuestJournalUI.inl"
 int main(int argc,char** argv){try{
     Check(argc>=6,"Usage: quest-journal-ui-test output cubemain quests panel font");

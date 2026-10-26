@@ -85,6 +85,9 @@ struct Config {
 };
 
 Config& GetConfig();
+// Call on the render/settings thread; damage callbacks use IsEnabled().
+void SetEnabled(bool enabled);
+bool IsEnabled();
 void ResetToDefaults();
 void LoadFromJson(const nlohmann::json& root);
 void SaveToJson(nlohmann::ordered_json& root);

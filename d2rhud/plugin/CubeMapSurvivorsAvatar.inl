@@ -63,7 +63,15 @@ int __fastcall SurvivorLoadHook(Game* game,Client* client,Unit** output){
     if(survivorHandoff && survivorHandoff->game==game && survivorHandoff->client==client){*output=client->pPlayer;return *output?0:14;}
     SummonPersistence::BeforeLoad(game,client);
     QuestJournal::BeforeLoad(game,client);
-    const int result=originalSurvivorLoad(game,client,output);
+    int result=0;
+    {
+        // Companion checkpoints above identify the ORIGINAL save. Only the
+        // synchronous leaf reader borrows a converted copy; native descriptors
+        // retain their allocation and ownership through success/failure.
+        CandyCornSave::LoadScope conversion(client,output);
+        result=originalSurvivorLoad(game,client,output);
+        conversion.Complete(result==0);
+    }
     SummonPersistence::AfterLoad(game,client,output?*output:nullptr,result==0);
     QuestJournal::AfterLoad(game,client,output?*output:nullptr,result==0);
     return result;

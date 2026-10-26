@@ -63,6 +63,12 @@ void Executable(const std::filesystem::path& path){
         FlushInstructionCache(GetCurrentProcess(),code,16);return reinterpret_cast<uint8_t(__fastcall*)(uint64_t)>(code)(rows)!=0;
     };
     assert(belowLimit(255) && !belowLimit(256));
+    for(const uint64_t rows:{1,255}){
+        memcpy(image+0x1c9ebf8,&rows,8);D2RHUD_States512Startup=0;
+        assert(Install()&&!installed.load()&&!receiverCode&&D2RHUD_States512Startup==1);
+        assert(*reinterpret_cast<uint32_t*>(image+0x1dc27a)==256&&Supported());
+    }
+    const uint64_t empty=0;memcpy(image+0x1c9ebf8,&empty,8);D2RHUD_States512Startup=0;
     for(const auto& s:Signatures){image[s.rva]^=1;assert(!Supported());image[s.rva]^=1;}
     assert(MH_Initialize()==MH_OK);
     void* conflict=nullptr;assert(MH_CreateHook(image+0xdd7d0,reinterpret_cast<void*>(Nothing),&conflict)==MH_OK);

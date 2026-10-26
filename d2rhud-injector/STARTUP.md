@@ -13,14 +13,25 @@ files synchronized when updating that launcher.
 
 For HUDs exporting `D2RHUD_States512Startup`, the helper creates only its own new
 game suspended, verifies the native state loader, and arms a temporary two-byte
-branch at RVA 0x1dc277. Once the initial thread reaches this instruction, mod
-globals are available. The helper suspends that thread and restores the original
+branch at RVA 0x1dc277. Once the loading thread reaches this instruction, mod
+globals are available. The helper checks the initial thread and BIN-loading
+workers, suspends the actual loading thread and restores the original
 instruction before loading HUD, so HUD's code signatures still verify exactly.
 Other game threads remain free to load the DLL and initialize its hooks. The
-helper resumes table loading only after HUD publishes readiness and the patched
-comparison is verified as 513 (accepting 512 data rows). Failure or timeout stops
+helper resumes table loading only after HUD publishes readiness and the
+appropriate comparison is verified. Actual loaded counts of 1–255 rows use
+native compatibility mode; 256–512 rows require the extended hooks and a
+comparison of 513. The choice uses the game's loaded table, including BIN-only
+installs, rather than a possibly absent or outdated states.txt. Distribute the
+updated helper with the updated DLL for native compatibility mode. Failure or timeout stops
 only the helper's new child. Unsupported code is rejected before execution.
 No executable file or mod table is patched on disk.
+
+The gate allows up to two minutes for table loading on slower systems. Timeout,
+process exit, invalid table data and rejected HUD initialization return explicit
+Windows error codes instead of a stale success code. The progress log prints
+the row count and selected compatibility mode; feature-status.txt records the
+HUD's state-table mode as well.
 
 Module discovery retries `ERROR_BAD_LENGTH` for up to five seconds. Windows
 can invalidate a Toolhelp module snapshot while the HUD's initialization thread

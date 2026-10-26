@@ -4,13 +4,14 @@
 
 namespace CubeMap::RewardsData {
 constexpr uint8_t Operation=6;
-constexpr uint32_t DurationSeconds=600,FramesPerSecond=25,DurationFrames=DurationSeconds*FramesPerSecond;
+constexpr uint32_t FramesPerSecond=25;
 inline constexpr std::array Types{Data::Event::TreasureTrove,Data::Event::GoldenGoose,Data::Event::PlentifulPirating};
 inline constexpr std::array<const char*,3> Names{"Treasure Trove","Golden Goose","Plentiful Pirating"};
 inline int Index(Data::Event event){for(size_t i=0;i<Types.size();++i)if(Types[i]==event)return int(i);return -1;}
-inline uint16_t Remaining(uint32_t now,uint32_t start){
-    const uint32_t elapsed=now-start;
-    return elapsed>=DurationFrames ? 0 : uint16_t((DurationFrames-elapsed+FramesPerSecond-1)/FramesPerSecond);
+inline uint32_t DurationSeconds(Data::Event event){return Index(event)>=0 ? Data::Info(event).seconds : 0;}
+inline uint16_t Remaining(uint32_t now,uint32_t start,Data::Event event){
+    const uint32_t elapsed=now-start,duration=DurationSeconds(event)*FramesPerSecond;
+    return elapsed>=duration ? 0 : uint16_t((duration-elapsed+FramesPerSecond-1)/FramesPerSecond);
 }
 #pragma pack(push,1)
 struct Wire {
@@ -23,7 +24,7 @@ struct Wire {
 static_assert(sizeof(Wire)==0xce && sizeof(Wire)==sizeof(Data::Packet));
 inline bool Valid(const Wire& packet){
     if(packet.opcode!=0x2b || packet.magic!=Data::PacketMagic || packet.operation!=Operation || packet.version!=1 || !packet.epoch || !packet.sequence)return false;
-    for(auto seconds:packet.remaining)if(seconds>DurationSeconds)return false;
+    for(size_t i=0;i<Types.size();++i)if(packet.remaining[i]>DurationSeconds(Types[i]))return false;
     return true;
 }
 // The wire is authorized against the current layout handshake before Accept.

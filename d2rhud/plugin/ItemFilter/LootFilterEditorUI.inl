@@ -114,7 +114,7 @@ static void RenderLootFilterEditor()
         selectRules = false;
         ImGui::BeginDisabled(!g_LootConfigDocument.error.empty() || sourceDirty);
         const float paneHeight=(std::max)(100.f,ImGui::GetContentRegionAvail().y-5.f);
-        const bool columns=ImGui::BeginTable("RuleBuilderLayout",2,ImGuiTableFlags_BordersInnerV);
+        const bool columns=ImGui::BeginTable("RuleBuilderLayout",2,ImGuiTableFlags_BordersInnerV|ImGuiTableFlags_Resizable);
         if(columns){ImGui::TableSetupColumn("Rule list",ImGuiTableColumnFlags_WidthFixed,(std::min)(280.f*ImGui::GetFontSize()/18.f,ImGui::GetContentRegionAvail().x*.26f));ImGui::TableSetupColumn("Rule builder",ImGuiTableColumnFlags_WidthStretch);ImGui::TableNextColumn();}
         ImGui::BeginChild("RuleLibrary",{0,paneHeight});
         LootFilterConfig::Builder::UI::Banner(LootFilterConfig::Builder::UI::Symbol::Rules,"Your rules");

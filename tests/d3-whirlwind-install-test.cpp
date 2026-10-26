@@ -51,7 +51,7 @@ int main(int argc, char** argv) {
     }
     assert(FlushInstructionCache(GetCurrentProcess(), mappedImage, imageSize));
     using namespace D3Whirlwind;
-    assert(Matches(NativeData::Signatures) && Matches(NativeData::InputSignatures) && Matches(Pickup::Signatures));
+    assert(Matches(NativeData::Signatures) && Matches(NativeData::InputSignatures) && Matches(Pickup::Signatures)&&Matches(Potion::Signatures));
     std::array<std::array<uint8_t, 32>, Hooks.size()> originals;
     for (size_t i = 0; i < Hooks.size(); ++i) originals[i] = First32(Hooks[i]);
     const auto manaOriginal = First32(0x294e70);
@@ -62,6 +62,17 @@ int main(int argc, char** argv) {
     assert(MH_EnableHook(manaAddress) == MH_OK);
     const auto manaPatched = First32(0x294e70);
     assert(manaPatched != manaOriginal);
+    // These entry points already belong to the map item-use and transmog
+    // features. Potion support must validate their bodies and retain the chain.
+    const std::array<uint32_t,2> itemHooks{0x2b6450,0x2b7370};
+    std::array<std::array<uint8_t,32>,2> itemOriginals,itemPatched;
+    std::array<void*,2> itemTrampolines{};
+    for(size_t i=0;i<itemHooks.size();++i){
+        itemOriginals[i]=First32(itemHooks[i]);auto entry=reinterpret_cast<void*>(Pattern::Address(itemHooks[i]));
+        assert(MH_CreateHook(entry,reinterpret_cast<void*>(ExistingManaHook),&itemTrampolines[i])==MH_OK);
+        assert(MH_EnableHook(entry)==MH_OK);itemPatched[i]=First32(itemHooks[i]);
+    }
+    assert(Matches(Potion::Signatures));
     // CubeMap owns this prologue in production. The +0x20 signature window must
     // still validate while the first bytes contain an existing detour.
     assert(Matches(NativeData::Signatures));
@@ -70,6 +81,7 @@ int main(int argc, char** argv) {
     assert(installed && ready.load());
     for (size_t i = 0; i < Hooks.size(); ++i) assert(First32(Hooks[i]) != originals[i]);
     assert(First32(0x294e70) == manaPatched);
+    for(size_t i=0;i<itemHooks.size();++i)assert(First32(itemHooks[i])==itemPatched[i]);
     Uninstall();
     assert(!ready.load());
     for (size_t i = 0; i < Hooks.size(); ++i) assert(First32(Hooks[i]) == originals[i]);
@@ -91,9 +103,19 @@ int main(int argc, char** argv) {
         for(size_t i=0;i<Hooks.size();++i)assert(First32(Hooks[i])==originals[i]);
         assert(First32(0x294e70)==manaPatched);
     }
+    for(const auto signature:Potion::Signatures){
+        mappedImage[signature.rva]^=1;
+        assert(!Install()&&!ready.load());
+        mappedImage[signature.rva]^=1;
+        for(size_t i=0;i<Hooks.size();++i)assert(First32(Hooks[i])==originals[i]);
+    }
+    for(size_t i=0;i<itemHooks.size();++i){auto entry=reinterpret_cast<void*>(Pattern::Address(itemHooks[i]));
+        assert(First32(itemHooks[i])==itemPatched[i]);assert(MH_DisableHook(entry)==MH_OK&&MH_RemoveHook(entry)==MH_OK);
+        assert(First32(itemHooks[i])==itemOriginals[i]);
+    }
     assert(MH_DisableHook(manaAddress) == MH_OK && MH_RemoveHook(manaAddress) == MH_OK);
     assert(First32(0x294e70) == manaOriginal);
     assert(MH_Uninitialize() == MH_OK);
     assert(VirtualFree(mappedImage, 0, MEM_RELEASE)); mappedImage = nullptr;
-    std::cout << "All nine real Whirlwind detours install beside an existing mana hook, restore every prologue on uninstall, and reject signature mismatch without changes. No game code executed.\n";
+    std::cout << "All ten real Whirlwind detours install beside existing mana, transmog and map hooks, restore every prologue on uninstall, and reject signature mismatch without changes. No game code executed.\n";
 }

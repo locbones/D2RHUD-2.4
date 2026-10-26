@@ -103,8 +103,9 @@ void SurvivorsSpawningAndLoot(){
     auto& state=State(game);state.run=std::make_unique<Run>();auto& run=*state.run;run.event=Event::Survivors;run.eventPhase=EventPhase::Active;run.phase=Phase::Running;run.level=39;run.monsterLevel=85;run.eventStarted=100;run.pins.push_back({fixture.r2[0].data(),true});run.random.seed(42);
     survivorCreates=0;survivorSpawnStats.clear();auto ordinary=SurvivorSpawn(game,run,&player,2,false);
     assert(ordinary && survivorSpawnStats.at(7)==2500*256 && survivorSpawnStats.at(6)==2500*256 && !survivorSpawnStats.at(13) && !survivorSpawnStats.at(74) && survivorSpawnStats.at(12)==85 && survivorSpawnStats.at(39)==75 && !run.survival.elites.contains(ordinary->dwUnitId));
-    Sunder::Values applied{},pierce{};pierce[1]=50;int resistance=survivorSpawnStats.at(39);
-    for(int n=0;n<20;++n)Sunder::RefreshBase(applied,pierce,99,[&](uint32_t stat){return stat==39?resistance:0;},[&](uint32_t stat){return stat==39?resistance:0;},[&](uint32_t stat,int value){assert(stat==39);resistance=value;return true;});assert(resistance==75 && !applied[1]);
+    const int resistance=survivorSpawnStats.at(39);
+    for(int n=0;n<20;++n){const auto projection=Sunder::Calculate(resistance,0,0,50);assert(projection.valid && projection.effective==75 && !projection.applied);}
+    assert(survivorSpawnStats.at(39)==75);
     auto elite=SurvivorSpawn(game,run,&player,2,true);assert(elite && survivorSpawnStats.at(7)==10000*256 && run.survival.elites.contains(elite->dwUnitId));
     int count=99;assert(Drop(game,ordinary,&player,1,0,85,0,nullptr,&count,0,MidasOriginal) && !count);
     assert(!Drop(game,elite,&player,1,0,85,0,nullptr,&count,0,MidasOriginal));run.survival.boss=ordinary->dwUnitId;assert(!Drop(game,ordinary,&player,1,0,85,0,nullptr,&count,0,MidasOriginal));

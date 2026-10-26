@@ -1,4 +1,5 @@
 #include "BuffIcons.h"
+#include "SettingsUI.h"
 #include "BuffIconsData.h"
 #include "BuffIconsTables.h"
 #include "GameAssets.h"
@@ -602,74 +603,5 @@ void Render(bool preview, float resolutionScale) {
     if (hasBodyFont) ImGui::PopFont();
 }
 
-void DrawSettingsPanel(float scale) {
-    ImGui::Checkbox("Enable Buff Icons", &config.enabled);
-    ImGui::Checkbox("Show remaining time", &config.timers);
-    ImGui::Checkbox("Preview and drag icon area", &previewEnabled);
-    ImGui::Checkbox("Show skill labels", &config.labels);
-    if (config.labels && ImGui::CollapsingHeader("Label appearance")) {
-        int position = config.labelBottom ? 1 : 0;
-        if (ImGui::Combo("Label position", &position, "Top\0Bottom\0")) config.labelBottom = position == 1;
-        ImGui::SliderFloat("Label text size", &config.labelSize, 8, 32, "%.0f px");
-        ImGui::ColorEdit4("Label text color", &config.labelColor.x);
-    }
-    if (config.timers && ImGui::CollapsingHeader("Timer appearance")) {
-        ImGui::Combo("Timer position", &config.timerPosition, "Below icon\0Above icon\0Top inside icon\0Bottom inside icon\0");
-        ImGui::SliderFloat("Timer text size", &config.timerSize, 8, 32, "%.0f px");
-        ImGui::ColorEdit4("Timer text color", &config.timerColor.x);
-        ImGui::Combo("Timer format", &config.timerFormat, "Automatic\0Seconds (125s)\0Decimal seconds (1.2s)\0Minutes:seconds (2:05)\0Hours:minutes:seconds (0:02:05)\0");
-        ImGui::Checkbox("Highlight expiring buffs", &config.highlightExpiring);
-        if (config.highlightExpiring) {
-            ImGui::SliderFloat("Warning below", &config.expiringSeconds, 0, 60, "%.0f seconds");
-            ImGui::ColorEdit4("Warning text color", &config.expiringColor.x);
-        }
-    }
-    ImGui::SliderFloat("Horizontal position", &config.x, 0, 100, "%.1f%%");
-    ImGui::SliderFloat("Vertical position", &config.y, 0, 100, "%.1f%%");
-    ImGui::SliderFloat("Icon scale", &config.scale, 0.5f, 3, "%.2fx");
-    ImGui::SliderInt("Icons per row", &config.columns, 1, 20);
-    if (ImGui::Button("Reset placement")) { config.x = 40; config.y = 12; config.scale = 1; config.columns = 10; }
-    ImGui::Separator();
-    if (!loaded) { ImGui::TextWrapped("Loading skill data and original icon sprites..."); return; }
-    if (!database.error.empty()) {
-        ImGui::TextWrapped("%s", database.error.c_str());
-        if (ImGui::Button("Retry loading game data")) { loaded = false; loadStarted = false; }
-        return;
-    }
-    if (character.empty()) { ImGui::TextWrapped("Enter a game to choose from your character's available buff skills."); return; }
-    ImGui::TextWrapped("Choose skills to show while their effects are active. Choices are saved for each character.");
-    ImGui::TextDisabled("%s", runtimeStatus.c_str());
-    ImGui::InputText("Filter skills", search, sizeof(search));
-    auto& selection = config.characters[character];
-    if (ImGui::Button("Select available")) for (const auto& skill : available) selection.insert(skill.id);
-    ImGui::SameLine();
-    if (ImGui::Button("Clear selection")) selection.clear();
-    const char* footer = "Timers follow game simulation time and refresh on recast. Effects without an expiration show an icon without a countdown.";
-    const float footerHeight = ImGui::CalcTextSize(footer, nullptr, false, ImGui::GetContentRegionAvail().x).y;
-    const float reserved = footerHeight + ImGui::GetFrameHeightWithSpacing() + 2 * ImGui::GetStyle().ItemSpacing.y;
-    const float choicesHeight = (std::max)(2 * ImGui::GetTextLineHeightWithSpacing(),
-        (std::min)(260 * scale, ImGui::GetContentRegionAvail().y - reserved));
-    ImGui::BeginChild("Buff skill choices", ImVec2(0, choicesHeight), true);
-    const auto filter = Lower(search);
-    if (available.empty()) ImGui::TextWrapped("No available skills with a buff state were found.");
-    for (const auto& live : available) {
-        const auto& skill = database.skills.at(live.id);
-        if (!filter.empty() && Lower(skill.name).find(filter) == std::string::npos) continue;
-        ImGui::PushID(live.id);
-        bool selected = selection.count(live.id) != 0;
-        if (ImGui::Checkbox("##selected", &selected)) {
-            if (selected) selection.insert(live.id); else selection.erase(live.id);
-        }
-        ImGui::SameLine();
-        const ImVec2 pos = ImGui::GetCursorScreenPos();
-        DrawIcon(ImGui::GetWindowDrawList(), skill, pos, 28 * scale, -1, true, false);
-        ImGui::Dummy(ImVec2(28 * scale, 28 * scale)); ImGui::SameLine();
-        ImGui::Text("%s (level %d)%s", skill.name.c_str(), live.level, live.active ? " - active" : "");
-        if (database.atlases.find(skill.sprite) == database.atlases.end() && ImGui::IsItemHovered())
-            ImGui::SetTooltip("Icon sprite unavailable; the skill ID is shown as a fallback.");
-        ImGui::PopID();
-    }
-    ImGui::EndChild();
-    ImGui::TextWrapped("%s", footer);
-}
+#include "BuffIconsUI.inl"
 }

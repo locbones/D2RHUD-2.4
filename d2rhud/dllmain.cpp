@@ -1,4 +1,4 @@
-#include <Windows.h>
+﻿#include <Windows.h>
 #include <TlHelp32.h>
 #include "D3D12Hook.h"
 #include <utility>
@@ -19,10 +19,15 @@
 #include "plugin/RestartGame.h"
 #include "plugin/SummonPersistence.h"
 #include "plugin/QuestJournal.h"
+#include "plugin/QuestJournalClient.h"
+#include "plugin/HUDControls.h"
+#include "plugin/CandyCornSave.h"
 #include "plugin/QuestKillEvents.h"
 #include "plugin/D3Whirlwind.h"
 #include "plugin/SelectedAuras.h"
-#include "plugin/ImmunityLabels.h"
+#include "plugin/WidescreenBars.h"
+#include "plugin/SunderSystem.h"
+#include "plugin/HellSpindle.h"
 #include "plugin/States512.h"
 #include "plugin/ExtendedClasses.h"
 #include "plugin/ExtendedActs.h"
@@ -57,6 +62,7 @@ static void WriteFeatureStatus(HMODULE hud) {
         report << "D2RHUD build: " << __DATE__ << ' ' << __TIME__ << '\n'
             << "Game: " << utf8(gamePath) << '\n'
             << "HUD: " << utf8(hudPath) << '\n'
+            << "State-table compatibility: " << States512::Status() << '\n'
             << "TXT/BIN table metadata: " << CompiledNames::Status() << '\n'
             << "Automatic table metadata export: " << TableMetadataExport::Status() << '\n'
             << "Right-click item conversion: " << LegacyTransmog::Status() << '\n'
@@ -66,8 +72,14 @@ static void WriteFeatureStatus(HMODULE hud) {
             << "Cube maps / Survivors: " << CubeMap::Status() << '\n'
             << "Character save/load: " << CubeMap::SummonLifecycleStatus() << '\n'
             << "Persistent Summons: " << SummonPersistence::Status() << '\n'
+            << "Native HUD Controls: " << HUDControls::Status() << '\n'
+            << "Candy Corn save conversion: " << CandyCornSave::Status() << '\n'
+            << "Immunity Sunder: " << SunderSystem::Status() << '\n'
+            << "Hell Spindle: " << HellSpindle::Status() << '\n'
+            << "No Widescreen Bars: " << WidescreenBars::Status() << '\n'
             << "Quest kills: " << QuestKillEvents::Status() << '\n'
             << "Quest Journal: " << QuestJournal::Status() << '\n'
+            << "Quest Journal shortcuts: " << QuestJournal::ClientUI::Status() << '\n'
             << "Restart Game: " << RestartGame::Status() << '\n'
             << "Act VI: " << ExtendedActs::Status() << '\n';
         if(const auto details=CubeMap::SurvivorsCompatibilityDetails();*details){
@@ -111,6 +123,7 @@ DWORD WINAPI AttachThread(LPVOID lParam) {
         selectedMod[127]=0;
         CompiledNames::Load(std::filesystem::path(exe).parent_path(),selectedMod);
     }
+    CandyCornSave::Initialize(selectedMod);
     ItemCodes::Install();
     RestartGame::Install();
     AutomapLayers::Install();
@@ -123,10 +136,16 @@ DWORD WINAPI AttachThread(LPVOID lParam) {
     QuestJournal::SetAvailable(questKills&&questDefinitions&&questDefinitions->events&&questDefinitions->error.empty()&&CubeVisual::QuestJournalSupported()&&CubeMap::SummonLifecycleAvailable());
     D3Whirlwind::Install();
     SelectedAuras::Install();
+    WidescreenBars::Install();
+    HUDControls::Install();
+    SunderSystem::Install();
+    HellSpindle::Install();
     // Class storage must be widened before the suspended table loader resumes.
     // Install after features that verify the original player allocator bytes.
     const bool classesReady=ExtendedClasses::Install();
     const bool actsReady=ExtendedActs::Install();
+    // Whirlwind verifies the original UI-open bytes before these UI detours.
+    QuestJournal::ClientUI::Install();
     if(statesReady && classesReady && actsReady && exe[0])TableMetadataExport::Start(std::filesystem::path(exe).parent_path(),selectedMod);
     States512::FinishStartup(statesReady && classesReady && actsReady);
     WriteFeatureStatus(hModule);
@@ -170,14 +189,18 @@ BOOL APIENTRY DllMain( HMODULE hModule,
         if (lpReserved != nullptr) break;
         ExtendedActs::Uninstall();
         SelectedAuras::Uninstall();
+        HUDControls::Uninstall();
+        WidescreenBars::Uninstall();
         RestartGame::Uninstall();
-        ImmunityLabels::Uninstall();
+        SunderSystem::Uninstall();
+        HellSpindle::Uninstall();
         AutomapLayers::Uninstall();
         ItemCodes::Uninstall();
         LegacyTransmog::Uninstall();
         D3Whirlwind::Uninstall();
         SummonPersistence::Uninstall();
-        QuestJournal::SetAvailable(false);QuestKillEvents::Uninstall();
+        QuestJournal::ClientUI::Uninstall();QuestJournal::SetAvailable(false);QuestKillEvents::Uninstall();
+        CandyCornSave::Uninstall();
         CubeMap::Uninstall();
         CubeVisual::Uninstall();
         States512::Uninstall();

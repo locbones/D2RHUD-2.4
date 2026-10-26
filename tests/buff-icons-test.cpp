@@ -6,6 +6,7 @@
 #include <iostream>
 #include <limits>
 #include <fstream>
+#include "settings-tabs-test.h"
 
 #include "buff-icons-bin-test.inl"
 
@@ -211,6 +212,8 @@ int main(int argc, char** argv) {
             }
             config.timerPosition = 0; config.timerFormat = 0;
         }
+        config.labels=true;config.timers=true;config.highlightExpiring=true;
+        ExerciseSettingsTabs("Buff settings tabs","BuffSettingsSections",4,[]{DrawSettingsPanel(2);});
         ImGui::DestroyContext();
     }
     std::cout << "Buff icon timer, state removal/recast, sprite validation and config tests passed\n";

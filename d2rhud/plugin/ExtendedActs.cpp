@@ -3,6 +3,8 @@
 #include "ExtendedActsPatchPlan.h"
 #include "ExtendedActsProgress.h"
 #include "ExtendedActsTransition.h"
+#include "ExtendedActsLevels.h"
+#include "ExtendedActsStrings.h"
 #include "RestartGame.h"
 #include "LegacyTransmogData.h"
 #include "../Pattern.h"
@@ -166,7 +168,7 @@ void ValidateCompiledActs(const std::filesystem::path& data,uint64_t loadedActs,
     }
 }
 bool SelectData(const std::filesystem::path& data,const nlohmann::json& config,bool enabled,bool canCompile=true,DataGroup group=DataGroup::All) {
-    struct Replacement {std::filesystem::path path;std::string before,after;};
+    struct Replacement {std::filesystem::path path;std::optional<std::string> before;std::string after;};
     std::vector<Replacement> replacements;
     auto read=[](const std::filesystem::path& path){std::ifstream f(path,std::ios::binary);if(!f){const auto name=path.u8string();throw std::runtime_error("Act VI data missing: "+std::string(reinterpret_cast<const char*>(name.data()),name.size()));}return std::string(std::istreambuf_iterator<char>(f),{});};
     auto hash=[](const std::string& text){return LegacyTransmog::Data::Hash({reinterpret_cast<const uint8_t*>(text.data()),text.size()});};
@@ -185,6 +187,36 @@ bool SelectData(const std::filesystem::path& data,const nlohmann::json& config,b
         if(layout && theme && !std::filesystem::exists(target))continue;
         const auto before=read(target);
         const uint64_t on=file.at("enabled_hash"),off=file.at("disabled_hash");
+        if(relative=="global/excel/levels.txt") {
+            // Validate immutable templates, then change only the owned Act VI
+            // rows. Monster/density/other ordinary edits remain byte-for-byte
+            // on the active path instead of being replaced by an old snapshot.
+            const auto six=read(path(file.at("enabled"))),five=read(path(file.at("disabled")));
+            if(hash(six)!=on || hash(five)!=off)throw std::runtime_error("Act VI template mismatch: "+relative);
+            const auto areas=config.at("levels").get<std::array<int,9>>();
+            const auto archive=path("Pandemonium/ActVI/preserved-levels.txt");
+            const std::optional<std::string> saved=enabled && std::filesystem::exists(archive)?std::optional<std::string>(read(archive)):std::nullopt;
+            const auto selected=LevelEdits::Select(before,six,five,areas,enabled,saved);
+            if(selected.archive) {
+                const std::optional<std::string> old=std::filesystem::exists(archive)?std::optional<std::string>(read(archive)):std::nullopt;
+                if(old!=selected.archive)replacements.push_back({archive,old,*selected.archive});
+            }
+            if(before!=selected.text)replacements.push_back({target,before,selected.text});
+            continue;
+        }
+        if(relative=="local/lng/strings/levels.json" || relative=="local/lng/strings/quests.json") {
+            const auto six=read(path(file.at("enabled"))),five=read(path(file.at("disabled")));
+            if(hash(six)!=on || hash(five)!=off)throw std::runtime_error("Act VI template mismatch: "+relative);
+            const auto archive=path("Pandemonium/ActVI/preserved-"+target.filename().string());
+            const std::optional<std::string> saved=enabled && std::filesystem::exists(archive)?std::optional<std::string>(read(archive)):std::nullopt;
+            const auto selected=StringEdits::Select(before,six,five,enabled,saved);
+            if(selected.archive) {
+                const std::optional<std::string> old=std::filesystem::exists(archive)?std::optional<std::string>(read(archive)):std::nullopt;
+                if(old!=selected.archive)replacements.push_back({archive,old,*selected.archive});
+            }
+            if(before!=selected.text)replacements.push_back({target,before,selected.text});
+            continue;
+        }
         if(hash(before)!=on && hash(before)!=off)throw std::runtime_error("Act VI target was edited: "+relative);
         const auto after=read(path(file.at(enabled?"enabled":"disabled")));
         if(hash(after)!=(enabled?on:off))throw std::runtime_error("Act VI template mismatch: "+relative);
@@ -193,12 +225,16 @@ bool SelectData(const std::filesystem::path& data,const nlohmann::json& config,b
     auto write=[](const std::filesystem::path& target,const std::string& bytes){
         auto temporary=target;temporary+=L".act6-pending";
         {std::ofstream f(temporary,std::ios::binary|std::ios::trunc);f.write(bytes.data(),bytes.size());f.close();if(!f)return false;}
-        return MoveFileExW(temporary.c_str(),target.c_str(),MOVEFILE_REPLACE_EXISTING|MOVEFILE_WRITE_THROUGH)!=0;
+        if(MoveFileExW(temporary.c_str(),target.c_str(),MOVEFILE_REPLACE_EXISTING|MOVEFILE_WRITE_THROUGH))return true;
+        std::error_code error;std::filesystem::remove(temporary,error);return false;
     };
     size_t applied=0;
     if(!replacements.empty() && !canCompile)throw NeedsCompilation{};
     for(;applied<replacements.size();++applied)if(!write(replacements[applied].path,replacements[applied].after)){
-        while(applied){--applied;write(replacements[applied].path,replacements[applied].before);}return false;
+        while(applied){--applied;const auto& replacement=replacements[applied];
+            if(replacement.before)write(replacement.path,*replacement.before);
+            else {std::error_code error;std::filesystem::remove(replacement.path,error);}
+        }return false;
     }
     return true;
 }

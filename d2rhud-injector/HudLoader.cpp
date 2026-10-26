@@ -82,12 +82,14 @@ int wmain(int argc, wchar_t** argv) {
     std::cout << "PANDEMONIUM_HUD_PROGRESS: Created game process " << process.dwProcessId << "." << std::endl;
     void* allocation = nullptr;
     HANDLE thread = nullptr;
+    HANDLE stateThread = nullptr;
     auto fail = [&](const char* message) {
         DWORD error = GetLastError();
         // Only the new child belongs to us. Do not leave it running without its required HUD.
         TerminateProcess(process.hProcess, 1);
         WaitForSingleObject(process.hProcess, 5000);
         if (thread) CloseHandle(thread);
+        if (stateThread) CloseHandle(stateThread);
         if (process.hThread) CloseHandle(process.hThread);
         CloseHandle(process.hProcess);
         std::cout << "PANDEMONIUM_HUD_ERROR: " << message << " Windows error " << error << std::endl;
@@ -97,18 +99,22 @@ int wmain(int argc, wchar_t** argv) {
     // Pause at that exact point, after mod globals exist, rather than racing a
     // grace-period timer. Older builds retain their established startup path.
     uintptr_t statesBase = 0;
+    uint64_t stateRows = 0;
     if (statesReadyRva) {
         statesBase = StatesStartup::ImageBase(process.hProcess);
         if (!statesBase || !StatesStartup::Arm(process.hProcess, statesBase))
             return fail("Extended-state startup does not support this executable; no game code was resumed.");
         if (ResumeThread(process.hThread) == DWORD(-1)) return fail("Cannot start the game initialization thread.");
         progress("Waiting for mod globals at the state-table loading gate");
-        if (!StatesStartup::HoldAtGate(process.hProcess, process.hThread, statesBase))
+        if (!StatesStartup::HoldAtGate(process.hProcess, process.hThread, statesBase, 120000, &stateThread))
             return fail("Cannot hold state-table loading for HUD initialization.");
-        uint64_t rows = 0;
-        if (!StatesStartup::Read(process.hProcess, statesBase + 0x1c9ebf8, rows) || rows > 512)
+        if (!StatesStartup::Read(process.hProcess, statesBase + 0x1c9ebf8, stateRows) || !stateRows || stateRows > 512){
+            SetLastError(ERROR_INVALID_DATA);
             return fail("The state table exceeds 512 rows or could not be read.");
-        progress("State-table loading held until all extended-state hooks are ready");
+        }
+        std::cout << "PANDEMONIUM_HUD_PROGRESS: Loaded state table has " << stateRows
+            << " rows; " << (stateRows <= 255 ? "native compatibility" : "extended-state") << " mode selected." << std::endl;
+        progress("State-table loading held until HUD hooks are ready");
     }
     // D2RHUD snapshots game globals (including the mod name) during DLL loading.
     // Input-idle can signal before those globals are initialized. Match Pandemonium's
@@ -152,10 +158,13 @@ int wmain(int argc, wchar_t** argv) {
         if (!StatesStartup::WaitReady(process.hProcess, hudBase, statesReadyRva))
             return fail("HUD rejected the extended-state hooks or did not finish initializing; state-table loading was stopped safely.");
         uint32_t limit = 0;
-        if (!StatesStartup::Read(process.hProcess, statesBase + 0x1dc27a, limit) || limit != 513)
-            return fail("The 512-state loader limit was not verified.");
-        if (ResumeThread(process.hThread) == DWORD(-1)) return fail("Cannot resume state-table loading.");
-        progress("Extended-state hooks and 512-row limit verified; state-table loading resumed");
+        if (!StatesStartup::Read(process.hProcess, statesBase + 0x1dc27a, limit) ||
+            (stateRows <= 255 ? limit != 256 && limit != 513 : limit != 513)){
+            SetLastError(ERROR_INVALID_DATA);return fail("The state-table loader limit was not verified.");
+        }
+        if (ResumeThread(stateThread) == DWORD(-1)) return fail("Cannot resume state-table loading.");
+        CloseHandle(stateThread);stateThread=nullptr;
+        progress("HUD hooks and state-table limit verified; state-table loading resumed");
     }
     CloseHandle(process.hThread);
     process.hThread = nullptr;

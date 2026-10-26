@@ -66,7 +66,7 @@ int main(int argc,char** argv){
     SetArtworkProvider(nullptr);
     Put(fixture.level.data(),0x1f8,int(39));view.active=1;view.level=39;view.eventPhase=EventPhase::Active;view.event=Event::Trial;
     for(const auto display:{ImVec2{1280,720},ImVec2{3840,2160}})for(uint32_t seconds:{11u,10u,1u,0u}){
-        io.DisplaySize=display;view.eventElapsed=(120-seconds)*1000;receivedAt=GetTickCount64();ImGui::NewFrame();Draw(display.y/1080,true);ImGui::Render();auto data=ImGui::GetDrawData();assert(data->TotalVtxCount>0);
+        io.DisplaySize=display;view.eventElapsed=(Info(Event::Trial).seconds-seconds)*1000;receivedAt=GetTickCount64();ImGui::NewFrame();Draw(display.y/1080,true);ImGui::Render();auto data=ImGui::GetDrawData();assert(data->TotalVtxCount>0);
         bool red=false;for(int l=0;l<data->CmdListsCount;++l)for(const auto& v:data->CmdLists[l]->VtxBuffer){assert(v.pos.x>=0 && v.pos.x<=display.x && v.pos.y>=0 && v.pos.y<=display.y);red|=v.col==IM_COL32(255,65,45,255);}assert(red==(seconds<=10));
     }
     // Keep a 12px default selected, reproducing the old timer's blurry input.
@@ -75,7 +75,7 @@ int main(int argc,char** argv){
         const float scale=display.x>=3840?2.0f:1.0f;io.DisplaySize=display;view.eventElapsed=0;receivedAt=GetTickCount64();
         ImGui::NewFrame();assert(ImGui::GetFont()->FontSize==12);Draw(scale,true);
         const auto font=eventFonts.ForSize(32*scale);assert(font && font->FontSize==32*scale);
-        const auto glyph=font->FindGlyph('2');const auto& vertices=ImGui::GetForegroundDrawList()->VtxBuffer;
+        const auto glyph=font->FindGlyph('5');const auto& vertices=ImGui::GetForegroundDrawList()->VtxBuffer;
         assert(vertices.Size>=4 && glyph && vertices[0].uv.x==glyph->U0 && vertices[0].uv.y==glyph->V0);
         assert(vertices[2].pos.x-vertices[0].pos.x==glyph->X1-glyph->X0);
         ImGui::Render();
@@ -83,7 +83,7 @@ int main(int argc,char** argv){
     // Location-free bonuses must still draw with no current map snapshot,
     // and Champion Clash must never display a zero-second countdown.
     for(const auto display:{ImVec2{1280,720},ImVec2{3840,2160}}){
-        io.DisplaySize=display;clientLayoutSessionKnown=true;clientLayoutSession=91;clientLayoutEpoch=10;RewardsData::Wire rewards;rewards.session=91;rewards.epoch=10;rewards.sequence=1;rewards.recipient=55;rewards.remaining={600,600,600};
+        io.DisplaySize=display;clientLayoutSessionKnown=true;clientLayoutSession=91;clientLayoutEpoch=10;RewardsData::Wire rewards;rewards.session=91;rewards.epoch=10;rewards.sequence=1;rewards.recipient=55;rewards.remaining={600,600,120};
         ClearClientRewards();assert(ReceiveRewards(reinterpret_cast<const uint8_t*>(&rewards),sizeof(rewards)));receivedAt=0;ImGui::NewFrame();Draw(display.y/1080,true);ImGui::Render();auto draw=ImGui::GetDrawData();assert(draw->TotalVtxCount>0);
         for(int l=0;l<draw->CmdListsCount;++l)for(const auto& v:draw->CmdLists[l]->VtxBuffer)assert(v.pos.x>=0 && v.pos.x<=display.x && v.pos.y>=0 && v.pos.y<=display.y);
         ClearClientRewards();view.event=Event::ChampionClash;view.level=108;view.eventPhase=EventPhase::Active;view.active=1;view.eventElapsed=100000000;Put(fixture.level.data(),0x1f8,108);receivedAt=GetTickCount64();ImGui::NewFrame();Draw(display.y/1080,true);ImGui::Render();assert(ImGui::GetForegroundDrawList()->VtxBuffer.empty());
@@ -98,6 +98,22 @@ int main(int argc,char** argv){
         uint32_t count=0;for(int l=0;l<data->CmdListsCount;++l)count+=data->CmdLists[l]->CmdBuffer.Size;out.write(reinterpret_cast<const char*>(&count),4);
         uint32_t first=0;for(int l=0;l<data->CmdListsCount;++l){auto list=data->CmdLists[l];for(const auto& cmd:list->CmdBuffer){const uint32_t start=first+cmd.IdxOffset,n=cmd.ElemCount;const uint64_t texture=cmd.GetTexID();out.write(reinterpret_cast<const char*>(&start),4);out.write(reinterpret_cast<const char*>(&n),4);out.write(reinterpret_cast<const char*>(&texture),8);}first+=list->IdxBuffer.Size;}
     };
+    // Every supplied scouting report must fit above the countdown, including
+    // wrapping on small screens and the longest report in the real game font.
+    Put(fixture.level.data(),0x1f8,109);view.active=0;view.eventPhase=EventPhase::Briefing;view.eventElapsed=7000;
+    SetArtworkProvider(TestArtwork);
+    for(const auto display:{ImVec2{1280,720},ImVec2{1920,1080},ImVec2{3840,2160}}){
+        io.DisplaySize=display;const float scale=display.y/1080;
+        const float ui=(std::min)((std::max)(scale,0.5f),(std::min)(display.x/1000,display.y/750));
+        for(auto event:{Event::GoblinGrotto,Event::TreasureTrove,Event::GoldenGoose,Event::ChampionClash,Event::PlentifulPirating,Event::SoulSurprise,Event::Trial}){
+            const auto& info=Info(event);assert(info.scoutingReport && info.location && info.duration);
+            ImGui::NewFrame();const auto bottom=DrawScoutingReport(ImGui::GetForegroundDrawList(),info,display.x*0.5f,display.y*0.44f,850*ui,ui);
+            assert(bottom+12*ui<display.y*0.87f-8*ui);ImGui::Render();
+            view.event=event;receivedAt=GetTickCount64();ImGui::NewFrame();DrawCelebration(scale,true);ImGui::Render();
+            saveScene("event-intro-"+std::to_string(unsigned(event))+"-"+std::to_string(int(display.x)));
+        }
+    }
+    SetArtworkProvider(nullptr);Put(fixture.level.data(),0x1f8,39);view.active=1;
     for(const auto display:{ImVec2{1280,720},ImVec2{3840,2160}}){
         const float scale=display.x>=3840?2.0f:1.0f;io.DisplaySize=display;view.event=Event::Survivors;view.eventPhase=EventPhase::Active;view.eventElapsed=90000;
         survivorView={};survivorView.recipient=55;survivorView.run=view.run;survivorView.session=view.session;survivorView.phase=EventPhase::Active;

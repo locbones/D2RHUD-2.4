@@ -14,6 +14,7 @@
 #include "SurvivorsNative.h"
 #include "SurvivorsRoster.h"
 #include "SummonPersistence.h"
+#include "CandyCornSave.h"
 #include "QuestJournal.h"
 #include "CubeVisual.h"
 #include "CompiledNames.h"
@@ -68,9 +69,18 @@ using Name=const char*(__fastcall*)(Unit*);
 using ObjectLabel=void(__fastcall*)(char*,Unit*);
 struct Operation {Game* game;Unit* object;Unit* player;void* region;int index;};
 using Operate=int(__fastcall*)(Operation*,int);
+using TownPortalCast=bool(__fastcall*)(Game*,Unit*);
+using ItemUse=int(__fastcall*)(Game*,Unit*,const uint8_t*,bool);
+using CreatePortal=int(__fastcall*)(Game*,Unit*,Room*,int,int,int,Unit**,int,int,int);
+using WaypointRequest=int(__fastcall*)(Game*,Unit*,const void*,int);
 Tick originalTick=nullptr;
 Remove originalRemove=nullptr;
 Operate originalOperate=nullptr;
+Operate originalWaypointOperate=nullptr;
+TownPortalCast originalTownPortalCast=nullptr;
+ItemUse originalItemUse=nullptr;
+CreatePortal originalCreatePortal=nullptr;
+WaypointRequest originalWaypointRequest=nullptr;
 Destroy originalDestroy=nullptr;
 SpawnPreset originalSpawnPreset=nullptr;
 Choose originalChoose=nullptr;
@@ -143,7 +153,7 @@ struct Run {
     Position entrance{};
     std::array<uint32_t,2> portals{};
     std::set<uint32_t> entryParty;
-    bool entryCaptured=false,populationChanged=false;
+    bool entryCaptured=false,entryClosed=false,populationChanged=false;
     uint32_t layoutSeed=0;
     std::vector<Pin> pins;
     std::optional<Pin> entrancePin;
@@ -205,6 +215,7 @@ struct GameState {
     std::set<std::pair<uint32_t,uint32_t>> layoutResets;
     std::map<uint32_t,std::map<Event,uint32_t>> timedRewards;
     uint32_t rewardSequence=0,lastRewardSent=0;
+    uint8_t demoKeys=0;
 };
 void EventTrace(Game* game,const Run& run,const char* stage,int monster=-1,int unique=-1){
     if(run.event!=Event::None)CrashDiagnostics::Event(stage,run.id,unsigned(run.event),game->dwGameFrame,monster,unique);
@@ -601,6 +612,55 @@ void CloseMapEntry(Game* game,Run& run){
         if(!player || Level(player)!=run.level)return;
     }
     for(auto& id:run.portals)if(id){const auto old=id;id=0;DeletePortal(game,old);}
+    run.entryClosed=true;
+}
+bool MapTravelLocked(Game* game,Unit* player){
+    if(!installed.load() || !game || !player || player->dwUnitType!=0)return false;
+    const auto run=Active(game);
+    return run && run->event==Event::None && run->entryClosed && run->phase!=Phase::Closed && Level(player)==run->level;
+}
+bool __fastcall TownPortalCastHook(Game* game,Unit* player){
+    std::lock_guard lock(serverMutex);
+    // Reject before the item spell creates a portal or reports success to the
+    // inventory caller, so a refused scroll/tome use consumes no quantity.
+    if(MapTravelLocked(game,player))return false;
+    return originalTownPortalCast(game,player);
+}
+bool TownPortalItem(Unit* item){
+    const auto table=Field<const uint8_t*>(Native<void*>(0x1ca0390),0);
+    const auto count=Field<uint64_t>(Native<void*>(0x1ca0398),0);
+    if(!item || item->dwUnitType!=4 || !table || count>1000000 || item->dwClassId>=count)return false;
+    const auto code=Field<uint32_t>(table+size_t(item->dwClassId)*0x1b4,0x80);
+    return code==0x206b6274 || code==0x20637374; // tbk / tsc
+}
+int __fastcall ItemUseHook(Game* game,Unit* player,const uint8_t* packet,bool queued){
+    std::lock_guard lock(serverMutex);
+    // The shared inventory-use transaction runs before preparation, quantity
+    // changes and queued execution. Its refusal result is 1 (success is 4).
+    if(game && player && packet && TownPortalItem(Lookup(game,4,Field<uint32_t>(packet,10)))){
+        const bool locked=MapTravelLocked(game,player);const auto run=Active(game);
+        CrashDiagnostics::Event(locked?"portal-item-refused":"portal-item-allowed",run?run->id:0,run?unsigned(run->event):0,game->dwGameFrame,Level(player),run&&run->entryClosed?1:0);
+        if(locked)return 1;
+    }
+    return originalItemUse(game,player,packet,queued);
+}
+int __fastcall CreatePortalHook(Game* game,Unit* player,Room* room,int x,int y,int destination,Unit** output,int object,int permanent,int flags){
+    std::lock_guard lock(serverMutex);
+    // Also cover skill/script paths which bypass the inventory transaction.
+    // Red map/event/story portals use object 60 and keep their normal behavior.
+    if(object==59 && MapTravelLocked(game,player)){if(output)*output=nullptr;return 0;}
+    return originalCreatePortal(game,player,room,x,y,destination,output,object,permanent,flags);
+}
+int __fastcall WaypointOperateHook(Operation* op,int operation){
+    std::lock_guard lock(serverMutex);
+    if(op && MapTravelLocked(op->game,op->player))return 0;
+    return originalWaypointOperate(op,operation);
+}
+int __fastcall WaypointRequestHook(Game* game,Unit* player,const void* packet,int size){
+    std::lock_guard lock(serverMutex);
+    // Also guard the authoritative request if a waypoint menu was already open.
+    if(MapTravelLocked(game,player))return 0;
+    return originalWaypointRequest(game,player,packet,size);
 }
 bool RestoreSurvivor(Game*,Unit*,bool notify=true);
 void Clean(Game* game,Run& run){
@@ -795,6 +855,52 @@ bool DemoSixHeld(Unit* player){
 #include "CubeMapSurvivors.inl"
 #include "CubeMapRewards.inl"
 #include "CubeMapEvents.inl"
+// One request per press, including presses refused while busy or outside town.
+// Simultaneous function keys are ambiguous; require a fresh single-key press.
+uint8_t TakeDemoShortcut(uint8_t& previous,uint8_t held){
+    const auto pressed=uint8_t(held & ~previous);previous=held;
+    if(!held || (held & (held-1)) || !pressed)return 0;
+    for(uint8_t key=1;key<=7;++key)if(pressed & (1u<<(key-1)))return key;
+    return 0;
+}
+bool StartDemoEvent(Game* game,GameState& state,Unit* player,uint8_t key){
+    if(!player || player->dwUnitType!=0 || key<1 || key>7 || Dead(player) || !Town(Level(player))){
+        status.store("Event test: use Ctrl+F1-F7 while alive in town.");return false;
+    }
+    const auto client=Field<Client*>(player->pPlayerData,0xf0);
+    if(!client || client->pGame!=game || client->dwClientState!=4 || client->dwUnitGUID!=player->dwUnitId || Lookup(game,0,player->dwUnitId)!=player)return false;
+    if(state.run && !(state.run->phase==Phase::Closed && (state.run->eventPhase==EventPhase::Finished || state.run->eventPhase==EventPhase::Cancelled))){
+        status.store("Event test: finish the current map or event first.");return false;
+    }
+    if(!state.restoreLevels.empty()){status.store("Event test: wait for the previous area's population to finish restoring.");return false;}
+    const auto mapState=MapState();
+    if(mapState<0){status.store("Event test: the loaded tables need the hud_cube_map state.");return false;}
+    auto run=std::make_unique<Run>();run->id=++serial;if(!run->id)run->id=++serial;
+    run->creator=player->dwUnitId;run->characterLevel=(std::max)(1,Stat(player,12));
+    run->state=mapState;run->created=run->eventFrame=game->dwGameFrame;run->entrance=Location(player);
+    run->event=key==7 ? Event::Trial : RegularEvents[key-1];run->die=key==7 ? 6 : key;
+    // WaitingTown uses the normal authenticated client-ready handshake, dice
+    // ceremony, briefing, native event entry and eventual cleanup/rewards.
+    run->phase=Phase::Closed;run->eventPhase=EventPhase::WaitingTown;
+    run->random.seed(uint32_t(game->dwInitSeed)^game->dwGameFrame^(run->id*0x85ebca6b));
+    run->stats.fill(-1);run->pairedStats.fill(-1);
+    for(auto participant:Players(game))if(!Dead(participant) && Town(Level(participant)))run->returns.emplace(participant->dwUnitId,Location(participant));
+    if(!run->returns.contains(player->dwUnitId))return false;
+    state.run=std::move(run);
+    D2RHUD_CubeMapDiagnostics.run=state.run->id;
+    status.store("Event test requested. Waiting for the party to finish loading town.");
+    EventTrace(game,*state.run,"event-test");Sync(game,*state.run,true);return true;
+}
+void PollDemoEvents(Game* game,GameState& state){
+    uint8_t held=0;DWORD foreground=0;GetWindowThreadProcessId(GetForegroundWindow(),&foreground);
+    if(foreground==GetCurrentProcessId() && (GetAsyncKeyState(VK_CONTROL)&0x8000))
+        for(unsigned i=0;i<7;++i)if(GetAsyncKeyState(VK_F1+i)&0x8000)held|=uint8_t(1u<<i);
+    const auto key=TakeDemoShortcut(state.demoKeys,held);if(!key)return;
+    // Only the local hosting process owns this game tick. Never send a remote
+    // request or choose an event from another client's keyboard.
+    const auto local=LocalPlayer();if(!local || local->dwUnitType!=0)return;
+    auto player=Lookup(game,0,local->dwUnitId);if(player)StartDemoEvent(game,state,player,key);
+}
 void Process(Game* game){
     std::lock_guard lock(serverMutex);auto& state=State(game);
     SendLayouts(game,state);
@@ -807,6 +913,7 @@ void Process(Game* game){
         if(restored)it=state.restoreLevels.erase(it);else ++it;
     }
     for(auto player:Players(game)){const auto p=Location(player);if(Town(p.level))state.towns[player->dwUnitId]=p;}
+    PollDemoEvents(game,state);
     if(!state.run)return;
     auto& run=*state.run;
     if(ProcessEvent(game,run,state))return;
@@ -900,6 +1007,11 @@ void __fastcall DestroyHook(uint64_t id,Game* game){
     originalDestroy(id,game);
 }
 void __fastcall SpawnPresetHook(Game* game,Room* room,void* preset){
+    // Soul Surprise uses its authored DS1 monster instead of the random event roster.
+    if(game==rebuilding && Field<int>(preset,0x20)==1)
+        if(auto run=Active(game);run && run->event==Event::SoulSurprise){
+            originalSpawnPreset(game,room,preset);return;
+        }
     if(game==rebuilding)if(auto run=Active(game);run && run->event!=Event::None && Field<int>(preset,0x20)==1){Set(preset,0x28,Field<uint32_t>(preset,0x28)|1u);return;}
     if(game==rebuilding && Field<int>(preset,0x20)!=1){Set(preset,0x28,Field<uint32_t>(preset,0x28)|1u);return;}
     if(game==rebuilding) {
@@ -924,6 +1036,7 @@ void __fastcall RemoveHook(Game* game,Unit* unit){
 int __fastcall OperateHook(Operation* op,int operation){
     if(!op || !op->game || !op->object || !op->player)return originalOperate(op,operation);
     std::lock_guard lock(serverMutex);auto run=Active(op->game);
+    if(op->object->dwUnitType==2 && op->object->dwClassId==59 && MapTravelLocked(op->game,op->player))return 0;
     // Chaos seals are quest triggers, not Champion Clash encounters. Keep
     // their persisted objects without allowing them to spawn quest bosses.
     if(run && run->event==Event::ChampionClash && run->phase!=Phase::Closed && Level(op->object)==108 && op->object->dwClassId>=392 && op->object->dwClassId<=396)return 0;
@@ -1104,13 +1217,17 @@ void GoldSixfold(Unit* item){
 }
 int EventTreasureClass(Game* game,const Run* run,Unit* source,bool timed){
     if(!source || source->dwUnitType!=1)return -1;
+    // Grotto's goblin variants have specialized native treasure classes.
+    // Keep those roots even with a location-free loot bonus; the bonus can
+    // still modify quality, gold or picks through the ordinary scoped path.
+    if(run && run->event==Event::GoblinGrotto && Level(source)==run->level)return -1;
     if(run && run->event!=Event::None && run->event!=Event::Survivors && !TimedEvent(run->event) &&
        (run->eventPhase==EventPhase::Entering || run->eventPhase==EventPhase::Active) &&
        Level(source)==run->level && RunMonster(source,*run))return run->eventTreasureClass;
     // Location-free rewards change random hostile monster drops. Named quest
     // encounters retain their own table, while all sources receive loot bonuses.
     if(timed && Monster(source) && RandomCandidate(int(source->dwClassId)) && !(source->pMonsterData->nTypeFlag&2)){
-        const int tc=LookupName(0x1c9f6a8,"TormentGroupA");return tc>0 ? tc : -1;
+        const int tc=LookupName(0x1c9f6a8,"MapGroupA");return tc>0 ? tc : -1;
     }
     return -1;
 }
@@ -1270,6 +1387,28 @@ void DrawDie(ImDrawList* draw,ImVec2 center,float radius,uint8_t result,float ag
     }
 }
 #include "CubeMapSurvivorsUI.inl"
+float DrawScoutingReport(ImDrawList* draw,const EventInfo& info,float center,float top,float wrap,float ui){
+    struct Line {const char* text;float size,gap;ImU32 color;};
+    const auto gold=IM_COL32(220,190,133,255),body=IM_COL32(225,213,190,255);
+    const std::array lines{
+        Line{"Rogue Scouting Report:",32,8,gold},Line{info.scoutingReport,26,18,body},
+        Line{"Location:",28,3,gold},Line{info.location,26,16,body},
+        Line{"Duration:",28,3,gold},Line{info.duration,26,0,body}
+    };
+    const float left=center-wrap*0.5f;
+    float bottom=top;
+    for(const auto& line:lines){const float size=line.size*ui;
+        bottom+=EventFont(size)->CalcTextSizeA(size,FLT_MAX,wrap,line.text).y+line.gap*ui;}
+    // Long reports sit over the artwork; a dark backing keeps every section legible.
+    draw->AddRectFilled({left-18*ui,top-12*ui},{left+wrap+18*ui,bottom+12*ui},IM_COL32(0,0,0,195),8*ui);
+    float y=top;
+    for(const auto& line:lines){const float size=line.size*ui;const auto font=EventFont(size);
+        draw->AddText(font,size,{left+2*ui,y+2*ui},IM_COL32(0,0,0,230),line.text,nullptr,wrap);
+        draw->AddText(font,size,{left,y},line.color,line.text,nullptr,wrap);
+        y+=font->CalcTextSizeA(size,FLT_MAX,wrap,line.text).y+line.gap*ui;
+    }
+    return bottom;
+}
 void DrawCelebration(float scale,bool clientReady=true){
     auto player=LocalPlayer();Packet packet;uint64_t received;
     {std::lock_guard lock(viewMutex);packet=view;received=receivedAt;}
@@ -1300,7 +1439,7 @@ void DrawCelebration(float scale,bool clientReady=true){
     };
     if(phase==EventPhase::Finished || phase==EventPhase::Cancelled){
         if(elapsed>6000)return;
-        text(phase==EventPhase::Cancelled ? "The event could not begin" : TimedEvent(packet.event) && packet.success ? "Ten-minute bonus granted!" : packet.success ? "Victory!" : packet.event==Event::Survivors ? "Survivor run ended" : "Time has run out",48,height*0.12f);
+        text(phase==EventPhase::Cancelled ? "The event could not begin" : TimedEvent(packet.event) && packet.success ? (packet.event==Event::PlentifulPirating ? "Two-minute bonus granted!" : "Ten-minute bonus granted!") : packet.success ? "Victory!" : packet.event==Event::Survivors ? "Survivor run ended" : "Time has run out",48,height*0.12f);
         if(TimedEvent(packet.event) && phase!=EventPhase::Cancelled)text(Info(packet.event).name,28,height*0.12f+65*ui);
         if(phase==EventPhase::Cancelled)text(FailureMessage(packet.failure),24,height*0.12f+65*ui);
         if(packet.reward==2)text("You received +2 stat points",28,height*0.12f+65*ui);
@@ -1314,12 +1453,14 @@ void DrawCelebration(float scale,bool clientReady=true){
         const float w=960*ui,h=640*ui;const ImVec2 p{(width-w)*0.5f,height*0.015f};
         draw->AddImage(ImTextureID(texture),p,{p.x+w,p.y+h},{0,0},{1,1},IM_COL32(255,255,255,phase==EventPhase::Briefing ? 235 : 85));
     }
-    const ImVec2 center{width*0.5f,height*0.48f};const float age=float(elapsed)/1000;
+    const auto& info=Info(packet.event);const bool scouting=phase==EventPhase::Briefing && info.scoutingReport;
+    const float ringScale=scouting ? 0.62f : 1.0f;
+    const ImVec2 center{width*0.5f,height*(scouting ? 0.30f : 0.48f)};const float age=float(elapsed)/1000;
     for(int ring=0;ring<3;++ring){
-        const float r=(128+ring*12)*ui;draw->AddCircle(center,r,IM_COL32(172,125,60,75-ring*15),96,1.4f*ui);
+        const float r=(128+ring*12)*ui*ringScale;draw->AddCircle(center,r,IM_COL32(172,125,60,75-ring*15),96,1.4f*ui);
     }
     for(int n=0;n<24;++n){
-        const float a=n*6.2831853f/24+age*0.09f,r=166*ui;
+        const float a=n*6.2831853f/24+age*0.09f,r=166*ui*ringScale;
         const ImVec2 p{center.x+cosf(a)*r,center.y+sinf(a)*r};
         draw->AddCircleFilled(p,(1.2f+0.8f*sinf(age*2+n))*ui,IM_COL32(239,190,89,140),8);
     }
@@ -1332,7 +1473,7 @@ void DrawCelebration(float scale,bool clientReady=true){
             text("A secret trial awakens...",34,height*0.77f);
         }else if(elapsed>=DiceRevealMs)text(Info(packet.event).name,42,height*0.76f);
     }else {
-        if(packet.event!=Event::Survivors)DrawDie(draw,center,76*ui,packet.die,age,true);
+        if(packet.event!=Event::Survivors)DrawDie(draw,center,76*ui*(scouting ? 0.72f : 1.0f),packet.die,age,true);
         else {
             for(int n=0;n<3;++n){const float angle=age*0.4f+n*6.2831853f/3;
                 const ImVec2 p{center.x+cosf(angle)*64*ui,center.y+sinf(angle)*64*ui};
@@ -1341,11 +1482,14 @@ void DrawCelebration(float scale,bool clientReady=true){
             }
         }
         text(Info(packet.event).name,44,height*0.13f);
-        const float descriptionSize=23*ui,wrap=850*ui;
-        const auto description=Info(packet.event).description;
-        const auto font=EventFont(descriptionSize);const auto extent=font->CalcTextSizeA(descriptionSize,FLT_MAX,wrap,description);
-        draw->AddText(font,descriptionSize,{(width-extent.x)*0.5f,height*0.71f},IM_COL32(225,213,190,255),description,nullptr,wrap);
-        text(packet.event==Event::Trial ? "Five bosses. No second chances." : packet.event==Event::Survivors ? "Keep moving. Choose upgrades. Survive." : TimedEvent(packet.event) ? "A ten-minute bonus. Explore wherever you like." : packet.event==Event::ChampionClash ? "Clear the Chaos Sanctuary. No time limit." : "Clear the realm before time runs out.",22,height*0.80f);
+        if(scouting)DrawScoutingReport(draw,info,width*0.5f,height*0.44f,850*ui,ui);
+        else {
+            const float descriptionSize=23*ui,wrap=850*ui;
+            const auto description=Info(packet.event).description;
+            const auto font=EventFont(descriptionSize);const auto extent=font->CalcTextSizeA(descriptionSize,FLT_MAX,wrap,description);
+            draw->AddText(font,descriptionSize,{(width-extent.x)*0.5f,height*0.71f},IM_COL32(225,213,190,255),description,nullptr,wrap);
+            text(packet.event==Event::Trial ? "Five bosses. No second chances." : packet.event==Event::Survivors ? "Keep moving. Choose upgrades. Survive." : TimedEvent(packet.event) ? (packet.event==Event::PlentifulPirating ? "A two-minute bonus. Explore wherever you like." : "A ten-minute bonus. Explore wherever you like.") : packet.event==Event::ChampionClash ? "Clear the Chaos Sanctuary. No time limit." : "Clear the realm before time runs out.",22,height*0.80f);
+        }
         const auto seconds=(std::max)(0,10-int(elapsed/1000));
         const auto countdown="The event begins in "+std::to_string(seconds);
         text(countdown.c_str(),34,height*0.87f);
@@ -1416,6 +1560,9 @@ bool Install(){
     std::vector<uint32_t> hooks{0x27e1d0,0x3c1080,0x2c35b0,0x27c360,0x2c5900,0x28b920,0x6c750,0x85060,0x2f8a60,0x294e70,0x294f40,0x1e5440,0x1e5590,0x969f0,0x93690};
     std::vector<void*> replacements{reinterpret_cast<void*>(TickHook),reinterpret_cast<void*>(OperateHook),reinterpret_cast<void*>(RemoveHook),reinterpret_cast<void*>(DestroyHook),reinterpret_cast<void*>(SpawnPresetHook),reinterpret_cast<void*>(ChooseHook),reinterpret_cast<void*>(NameHook),reinterpret_cast<void*>(ObjectLabelHook),reinterpret_cast<void*>(QualityHook),reinterpret_cast<void*>(ManaConsumeHook),reinterpret_cast<void*>(ManaCheckHook),reinterpret_cast<void*>(ManaSetHook),reinterpret_cast<void*>(ManaAddHook),reinterpret_cast<void*>(MapCellsHook),reinterpret_cast<void*>(MapResetHook)};
     std::vector<void**> originals{reinterpret_cast<void**>(&originalTick),reinterpret_cast<void**>(&originalOperate),reinterpret_cast<void**>(&originalRemove),reinterpret_cast<void**>(&originalDestroy),reinterpret_cast<void**>(&originalSpawnPreset),reinterpret_cast<void**>(&originalChoose),reinterpret_cast<void**>(&originalName),reinterpret_cast<void**>(&originalObjectLabel),reinterpret_cast<void**>(&originalQuality),reinterpret_cast<void**>(&originalManaConsume),reinterpret_cast<void**>(&originalManaCheck),reinterpret_cast<void**>(&originalManaSet),reinterpret_cast<void**>(&originalManaAdd),reinterpret_cast<void**>(&originalMapCells),reinterpret_cast<void**>(&originalMapReset)};
+    for(auto hook:{0x34fa70u,0x3c20e0u,0x2bcaf0u,0x2b6450u,0x29ab60u})hooks.push_back(hook);
+    for(auto hook:{reinterpret_cast<void*>(TownPortalCastHook),reinterpret_cast<void*>(WaypointOperateHook),reinterpret_cast<void*>(WaypointRequestHook),reinterpret_cast<void*>(ItemUseHook),reinterpret_cast<void*>(CreatePortalHook)})replacements.push_back(hook);
+    for(auto original:{reinterpret_cast<void**>(&originalTownPortalCast),reinterpret_cast<void**>(&originalWaypointOperate),reinterpret_cast<void**>(&originalWaypointRequest),reinterpret_cast<void**>(&originalItemUse),reinterpret_cast<void**>(&originalCreatePortal)})originals.push_back(original);
     if(saveLoadAvailable){
         for(auto hook:{0x2934b0u,0x318c80u})hooks.push_back(hook);
         for(auto hook:{reinterpret_cast<void*>(SurvivorLoadHook),reinterpret_cast<void*>(SurvivorSaveHook)})replacements.push_back(hook);
@@ -1447,6 +1594,7 @@ void Uninstall(){
     D2RHUD_CubeMapDiagnostics.installed=0;
     D2RHUD_CubeMapDiagnostics.survivorsEnabled=0;
     std::vector<uint32_t> hooks{0x27e1d0u,0x3c1080u,0x2c35b0u,0x27c360u,0x2c5900u,0x28b920u,0x6c750u,0x85060u,0x2f8a60u,0x294e70u,0x294f40u,0x1e5440u,0x1e5590u,0x969f0u,0x93690u};
+    for(auto hook:{0x34fa70u,0x3c20e0u,0x2bcaf0u,0x2b6450u,0x29ab60u})hooks.push_back(hook);
     hooks.push_back(0x1e8390u);hooks.push_back(0x1e7f70u);hooks.push_back(0x1d0a20u);
     if(saveLoadAvailable)for(auto hook:{0x2934b0u,0x318c80u})hooks.push_back(hook);
     if(survivorsAvailable)for(auto hook:{0x28f2b0u,0x29f350u,0x29f090u,0x28c740u,0x6ff60u})hooks.push_back(hook);

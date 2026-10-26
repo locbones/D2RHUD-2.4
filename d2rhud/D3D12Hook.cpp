@@ -1,5 +1,9 @@
-﻿#include "D3D12Hook.h"
+﻿#include "plugin/HUDControls.h"
+#include "D3D12Hook.h"
 #include "WineQueue.h"
+#include "plugin/QuestJournalClient.h"
+#include "plugin/WindowLayout.h"
+#include "plugin/SettingsUI.h"
 #include "plugin/BuffIconsData.h"
 #include "plugin/CubeMap.h"
 #include "plugin/D3Whirlwind.h"
@@ -745,7 +749,7 @@ namespace D3D12 {
 			IMGUI_CHECKVERSION();
 			ImGui::CreateContext();
 			ImGuiIO& io = ImGui::GetIO();
-			io.IniFilename = nullptr;
+			HudWindowLayout::Initialize();
 			//io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;     // Enable Keyboard Controls
 			//io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;      // Enable Gamepad Controls
 
@@ -782,6 +786,18 @@ namespace D3D12 {
 			}
 
 			LoadAllEmbeddedFloatingDamageFonts();
+            {
+                HudSettings::bodyFont=HudSettings::noteFont=HudSettings::headingFont=nullptr;
+                const unsigned char* bytes=nullptr;size_t size=0;
+                if(LoadEmbeddedFloatingDamageFontResource(10,&bytes,&size)) {
+                    ImFontConfig cfg{};cfg.FontDataOwnedByAtlas=false;
+                    HudSettings::bodyFont=io.Fonts->AddFontFromMemoryTTF(const_cast<unsigned char*>(bytes),int(size),36.f,&cfg);
+                    HudSettings::noteFont=io.Fonts->AddFontFromMemoryTTF(const_cast<unsigned char*>(bytes),int(size),32.f,&cfg);
+                    if(HudSettings::bodyFont)HudSettings::bodyFont->Scale=.5f;
+                    if(HudSettings::noteFont)HudSettings::noteFont->Scale=.5f;
+                }
+                HudSettings::headingFont=io.Fonts->Fonts.Size>3?io.Fonts->Fonts[3]:nullptr;
+            }
             LoadMapEventFonts(eventFontPath);
 			ImGui_ImplDX12_CreateDeviceObjects();
 
@@ -898,6 +914,7 @@ namespace D3D12 {
 		g_pD3DCommandList->OMSetRenderTargets(1, &currentFrameContext.main_render_target_descriptor, FALSE, nullptr);
 		g_pD3DCommandList->SetDescriptorHeaps(1, &g_pD3DSrvDescHeap);
 		ImGui::Render();
+		HudWindowLayout::Tick();
 		ImGui_ImplDX12_RenderDrawData(ImGui::GetDrawData(), g_pD3DCommandList);
 		barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
 		barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PRESENT;
@@ -952,6 +969,7 @@ namespace D3D12 {
 	void ResetState() {
 		if (g_Initialized) {
 			g_Initialized = false;
+			HudWindowLayout::Shutdown();
 			ImGui_ImplWin32_Shutdown();
 			ImGui_ImplDX12_Shutdown();
 		}
@@ -1228,7 +1246,13 @@ namespace D3D12 {
 				if(msg==WM_INPUT)return DefWindowProcW(hWnd,msg,wParam,lParam);
 				return 0;
 			}
-			g_PluginManager->WndProc(hWnd, msg, wParam, lParam);
+            if(HUDControls::HandleInput(msg,wParam,lParam,io.WantTextInput))return 0;
+            QuestJournal::ClientUI::BeginInput(msg==WM_KEYDOWN && (lParam&(LPARAM(1)<<30))!=0);
+            g_PluginManager->WndProc(hWnd, msg, wParam, lParam);
+            if(QuestJournal::ClientUI::ConsumeInput()){
+                ImGui_ImplWin32_WndProcHandler(hWnd,msg,wParam,lParam);
+                return 0;
+            }
 			switch (msg) {
 			case WM_LBUTTONDBLCLK:
 			case WM_LBUTTONDOWN:
@@ -1240,6 +1264,7 @@ namespace D3D12 {
 			case WM_MBUTTONDOWN:
 			case WM_MBUTTONUP:
 			case WM_MOUSEWHEEL:
+            case WM_MOUSEHWHEEL:
 			case WM_MOUSEMOVE:
 				ImGui_ImplWin32_WndProcHandler(hWnd, msg, wParam, lParam);
 				if (!io.WantCaptureMouse) {

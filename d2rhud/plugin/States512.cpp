@@ -204,6 +204,11 @@ int64_t __fastcall Off(uint8_t* p){return Receive(p,originalOff,0x400);}
 void FinishStartup(bool success){InterlockedExchange(&D2RHUD_States512Startup,success?1:2);}
 bool Install(bool publishReady){
     if(installed.load())return true;
+    uint64_t rows=0;
+    if(Read(Pattern::Address(0x1c9ebf8),rows) && rows && rows<=Data::NativeStates){
+        status="Native state compatibility: 255 rows or fewer; extended-state patches are not needed.";
+        if(publishReady)FinishStartup(true);return true;
+    }
     if(!Supported()){status="Extended states unavailable: executable signature mismatch.";InterlockedExchange(&D2RHUD_States512Startup,2);return false;}
     if(!BuildReceivers()){status="Extended states unavailable: native receiver relocation failed.";InterlockedExchange(&D2RHUD_States512Startup,2);return false;}
     const auto init=MH_Initialize();if(init!=MH_OK && init!=MH_ERROR_ALREADY_INITIALIZED){InterlockedExchange(&D2RHUD_States512Startup,2);return false;}

@@ -2,15 +2,18 @@
 bool BeginEvent(Game* game,Run& run){
     if(!State(game).restoreLevels.empty())return false;
     EventTrace(game,run,"event-begin");
-    const auto treasureName=run.event==Event::ChampionClash ? "ChampClash" : "TormentGroupA";
-    run.eventTreasureClass=LookupName(0x1c9f6a8,treasureName);
-    if(run.eventTreasureClass<=0){run.failure=run.event==Event::ChampionClash ? EventFailure::ChampionTreasureClass : EventFailure::TreasureClass;return false;}
+    run.eventTreasureClass=-1;
+    if(run.event!=Event::GoblinGrotto){
+        const auto treasureName=run.event==Event::ChampionClash ? "ChampClash" : "MapGroupA";
+        run.eventTreasureClass=LookupName(0x1c9f6a8,treasureName);
+        if(run.eventTreasureClass<=0){run.failure=run.event==Event::ChampionClash ? EventFailure::ChampionTreasureClass : EventFailure::TreasureClass;return false;}
+    }
     if(TimedEvent(run.event)){
         size_t granted=0;for(auto player:Players(game))if(run.returns.contains(player->dwUnitId) && !Dead(player) && Town(Level(player))){GrantTimedReward(game,player->dwUnitId,run.event);++granted;}
         if(!granted){run.failure=EventFailure::Participant;return false;}
         run.phase=Phase::Closed;run.success=true;run.eventPhase=EventPhase::Finished;run.eventFrame=game->dwGameFrame;run.completedAt=game->dwGameFrame;
         run.rolls.clear();run.failure=EventFailure::None;ProcessTimedRewards(game,State(game),true);
-        status.store("Ten-minute event bonus granted. You can continue exploring or open another map.");return true;
+        status.store("Event bonus granted. You can continue exploring or open another map.");return true;
     }
     run.level=EventLevel(run.event);run.phase=Phase::Preparing;run.rolls.clear();run.players.clear();run.monsters.clear();run.bosses.clear();
     if(!ValidLevel(run.level)){run.failure=EventFailure::Reset;return false;}

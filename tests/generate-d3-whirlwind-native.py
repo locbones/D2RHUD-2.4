@@ -23,6 +23,7 @@ EXPECTED = {
 ROOT = Path(__file__).resolve().parents[1]
 SOURCES = [ROOT / "d2rhud/plugin/D3WhirlwindNative.h",
            ROOT / "d2rhud/plugin/D3WhirlwindPickup.h",
+           ROOT / "d2rhud/plugin/D3WhirlwindPotion.h",
            ROOT / "d2rhud/plugin/D3Whirlwind.cpp"]
 ARRAY = re.compile(r"\b(\w*Signatures)\s*\{\{(.*?)\}\};", re.S)
 ENTRY = re.compile(r"\{\s*(0x[0-9a-fA-F]+|[A-Za-z_]\w*)\s*,\s*0x([0-9a-fA-F]+)ULL\s*\}")
@@ -97,13 +98,13 @@ def main():
         if not args.check_compatible and updated != content:
             path.write_text(updated, encoding="utf-8")
     required = {(SOURCES[0].name, "Signatures"), (SOURCES[0].name, "InputSignatures"),
-                (SOURCES[1].name, "Signatures")}
+                (SOURCES[1].name, "Signatures"), (SOURCES[2].name, "Signatures")}
     if not required.issubset(seen):
-        raise SystemExit("Missing native/input/pickup signature arrays")
+        raise SystemExit("Missing native/input/pickup/potion signature arrays")
     if args.check_compatible and failures:
         raise SystemExit("Compatibility signature mismatch: " + ", ".join(failures))
     print(f"Verified executable SHA-256 and four native skill table slots; "
-          f"{'checked' if args.check_compatible else 'regenerated'} {total} native/input/pickup 32-byte FNV signatures.")
+          f"{'checked' if args.check_compatible else 'regenerated'} {total} native/input/pickup/potion 32-byte FNV signatures.")
 
 
 if __name__ == "__main__":

@@ -57,9 +57,11 @@ def root(e):
 groups={}
 for e in entries.values():groups.setdefault(root(e),[]).append(e)
 addresses=[0x27e1d0,0x27c360,0x3c1080,0x2c35b0,0x2c49c0,0x2e0fb0,0x2e16d0,0x2c7a90,0x25a080,0x26f360,0x25d830,0x241e50,0x27d2d0,0x2ed040,0x2edb80,0x1d1420,0x1d1280,0x2c5760,0x2c5900,0x2c59d0,0x301a00,0x2c42a0,0x209530,0x2a80d0,0x2232c0,0x209c60,0x22e750,0x1e4700,0x1e4ea0,0x1e5270,0x1e4300,0x1e45b0,0x1e5620,0x1e5440,0x6d0470,0x2d0130,0x422ac0,0x93690,0x94140,0x969f0,0x977a0,0x978a0,0x228230,begin]
+travel=[0x34fa70,0x3c20e0,0x2bcaf0,0x2b6450,0x29ab60]
+addresses=travel+addresses
 out+=['struct Signature {uint32_t rva,size;uint64_t hash;};',f'inline constexpr std::array<Signature,{len(addresses)}> Signatures{{{{']
 for r in addresses:
-    group=groups[root(entries[r])];e=max(x.EndAddress for x in group)
+    group=groups[root(entries[r])];e=r+32 if r in travel else max(x.EndAddress for x in group)
     h=14695981039346656037
     for value in data[r:e]:h=((h^value)*1099511628211)&((1<<64)-1)
     out.append('    {0x%x,0x%x,0x%016xULL},'%(r,e-r,h))

@@ -1,6 +1,7 @@
 // Scoped root/all-node TC rules. The original wrapper chooses the normal
 // difficulty/monster-level upgrade unless an event explicitly overrides it.
-// Surge changes a private root; Plentiful also resolves every child privately.
+// Surge changes root picks; Plentiful adds one root pick and clears NoDrop
+// on private root/child copies, removing Blank weights without adding nested picks.
 using SelectedTreasure=void(__fastcall*)(Game*,Unit*,Unit*,void*,int,int,int,Unit**,int*,int);
 std::unique_ptr<MonsterInitializer> lootSelector;
 std::unique_ptr<MonsterInitializer> plentifulLootWalker;
@@ -39,10 +40,9 @@ struct PrivateTreasureGraph {
         auto isBlank=[&](const void* entry){return (Field<uint8_t>(entry,0xc)&4) && Field<uint16_t>(entry,8)==blank;};
         bool found=false;for(uint64_t n=0;n<size;++n)if(isBlank(source+n*0x1c)){found=true;break;}
         if(!found)return true;
-        // The two native cumulative distributions have independent classic
-        // and expansion weights. Rebuild both, keeping each real entry's
-        // relative weight and metadata; removing a nested Blank TC removes
-        // its entire probability interval without reroll loops.
+        // Treat the named empty TC like NoDrop=0: remove its probability
+        // interval instead of rerolling. Preserve both native distributions
+        // and all real entries' relative weights in private copies only.
         std::array<int,2> totals{};
         for(uint64_t n=0;n<size;++n){
             const auto entry=source+n*0x1c;std::array<int,2> weights{};
@@ -69,11 +69,11 @@ struct PrivateTreasureGraph {
         const auto filtered=node.record;source=filtered.data();
         const int picks=Field<int>(source,0xc);
         if(picks==INT_MIN || picks>INT_MAX-bonus)return valid=false;
-        if(picks>=0)Set(node.record.data(),0xc,(std::max)(picks,1)+bonus);
-        else{
+        if(picks>=0){if(bonus)Set(node.record.data(),0xc,picks+bonus);}
+        else if(bonus){
             // A two-pick deterministic wrapper retains every vanilla negative
-            // pick and then performs only the added weighted picks. Each child
-            // referenced by either phase still receives the all-TC modifier.
+            // pick and then performs only the added ROOT weighted picks.
+            // Descendants retain native Picks; only their Blank weights are removed.
             const int originalId=synthetic;auto original=Raw(source);if(!original)return false;
             const int bonusId=synthetic;auto extra=Raw(source);if(!extra)return false;
             Set(extra->record.data(),0xc,bonus);
@@ -88,7 +88,7 @@ struct PrivateTreasureGraph {
             if(!id || id>=count)return valid=false;
             if(!records.contains(id)){
                 auto next=std::make_unique<PrivateTreasure>();auto pointer=next.get();records.emplace(id,std::move(next));
-                if(!Transform(*pointer,table+size_t(id)*LootNativeData::RecordSize,1))return false;
+                if(!Transform(*pointer,table+size_t(id)*LootNativeData::RecordSize,0))return false;
             }
         }
         return true;

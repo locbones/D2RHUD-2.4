@@ -90,6 +90,8 @@ void DataTests(){
     for(const char* name:{"actinfo.txt","six.txt","five.txt"})std::filesystem::remove(root/name);
     std::filesystem::remove(root);
 }
+#include "act6-level-edits-test.inl"
+#include "act6-string-edits-test.inl"
 void StartupDataTests(const char* sourcePath){
     using namespace ExtendedActs;
     const auto source=std::filesystem::absolute(sourcePath);
@@ -123,6 +125,8 @@ void StartupDataTests(const char* sourcePath){
     assert(ConfigureData(data,config,true,true,6)==Config::Enabled && !pendingRestart);check(true,true);
     assert(ConfigureData(data,config,false,true,6)==Config::Enabled && pendingRestart);check(false,true);
     assert(ConfigureData(data,config,false,true,5)==Config::Disabled);check(false,false);
+    LevelEditTests(data,config);check(false,false);
+    StringEditTests(data,config,source);check(false,false);
     // Distribute only compiled tables and the existing JSON/layout assets.
     // No authoring or enabled/disabled template TXT is needed for startup.
     for(const auto& path:std::filesystem::recursive_directory_iterator(data))if(path.is_regular_file()&&path.path().extension()==".txt")std::filesystem::remove(path.path());
@@ -279,5 +283,6 @@ int main(int argc,char** argv){
     if(argc>2 && argv[2][0])StartupDataTests(argv[2]);
     if(argc>1)NativeInstallTests(argv[1]);
     std::cout<<"Act VI difficulty progression, credits identity/timeout guards, data switching and native install/rollback passed.\n";
+    return 0;
 }
 
