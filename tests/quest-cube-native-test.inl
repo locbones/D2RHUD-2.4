@@ -4,12 +4,13 @@
 namespace QuestCubeNativeTest {
 using Bytes=std::array<uint8_t,0x1b4>;
 std::array<Bytes,3> definitions{};
+std::vector<Bytes> eventDefinitions;
 std::array<std::array<uint8_t,0x144>,512> costs{};
 std::array<Unit,2> units{};std::array<D2ItemDataStrc,2> metadata{};
 D2InventoryStrc inventory{};Unit owner{};Game game{};
 int hidden=7,playerStat=0,itemSpecial=5,statReads=0,baseReads=0;
 template<class T>void Put(void* p,size_t offset,T value){memcpy(static_cast<uint8_t*>(p)+offset,&value,sizeof(value));}
-uint32_t __fastcall Code(Unit* item){return QuestNative::Field<uint32_t>(definitions[item->dwClassId].data(),0x80);}
+uint32_t __fastcall Code(Unit* item){return QuestNative::Field<uint32_t>((eventDefinitions.empty()?definitions[item->dwClassId]:eventDefinitions.at(item->dwClassId)).data(),0x80);}
 int __fastcall Stat(void*,uint32_t key,void*){
     ++statReads;if(key==(398u<<16))return hidden;if(key==(474u<<16))return itemSpecial;
     assert(key==(12u<<16) || key==(210u<<16));return playerStat;
@@ -74,6 +75,38 @@ void Native(uint8_t* image){
     // Exercise the public adapter, including ordinary fallthrough when an
     // earlier quest stage is unavailable and gates on unrelated stats.
     const auto previousRules=::testQuestRules;const auto previousProgress=::testQuestProgress;
+    // Reproduce the event's native wildcard portal recipe, followed by an
+    // ordinary single-item recipe. The unsafe row must not shadow the latter,
+    // including when no journal is configured at all.
+    ::testQuestRules.reset();metadata[1].nPage=0;
+    recipes.assign(3,Recipe{});recipes[0].header[0]=1;recipes[0].header[3]=255;recipes[0].header[0x10]=1;
+    recipes[0].outputs[0]=CubeMap::Data::Encode(0);
+    recipes[1].header[0]=1;recipes[1].header[3]=255;recipes[1].header[0x10]=1;Put(recipes[1].header.data(),0x14,uint16_t(1));
+    Put(image,0x1ca0b18,recipes.data());assert(run(recipes)&&match.row==0);
+    const auto malformedSource=recipes;
+    assert(TryQuestMatch(&match,&game,&owner,output)&&match.matched&&match.row==1);
+    assert(!memcmp(malformedSource.data(),recipes.data(),recipes.size()*sizeof(Recipe)));
+    if(!eventTableFixture.empty()){
+        auto load=[&]<class T>(const char* name,std::vector<T>& rows){
+            std::ifstream file(eventTableFixture/name,std::ios::binary|std::ios::ate);assert(file);
+            const auto bytes=file.tellg();file.seekg(0);uint32_t count=0;file.read(reinterpret_cast<char*>(&count),4);
+            assert(count&&bytes==std::streamoff(4+size_t(count)*sizeof(T)));const auto start=rows.size();rows.resize(start+count);
+            file.read(reinterpret_cast<char*>(rows.data()+start),size_t(count)*sizeof(T));assert(file);
+        };
+        load("weapons.bin",eventDefinitions);load("armor.bin",eventDefinitions);load("misc.bin",eventDefinitions);
+        std::vector<Recipe> eventRecipes;load("cubemain.bin",eventRecipes);assert(eventRecipes.size()>298);
+        const auto found=std::find_if(eventDefinitions.begin(),eventDefinitions.end(),[](const auto& row){return !memcmp(row.data()+0x80,"m01 ",4);});
+        assert(found!=eventDefinitions.end());const auto mapItem=uint32_t(found-eventDefinitions.begin());
+        assert(!UnrestrictedMapRecipe(eventRecipes[298]));
+        Put(image,0x1ca0390,eventDefinitions.data());Put(image,0x1ca0398,uint64_t(eventDefinitions.size()));
+        std::vector<Recipe> portal{eventRecipes[298]};
+        for(uint32_t ordinary:{0u,1u,1544u,1545u}){units[0].dwClassId=ordinary;assert(!run(portal));}
+        units[0].dwClassId=mapItem;assert(run(portal)&&match.row==0);
+        units[0].dwClassId=0;eventDefinitions.clear();
+        Put(image,0x1ca0390,definitions.data());Put(image,0x1ca0398,uint64_t(definitions.size()));
+        std::cout<<"Actual event BIN map recipe rejects ordinary items and existing m03/m04; accepts the appended m01 item.\n";
+    }
+    metadata[1].nPage=3;
     recipes.assign(3,Make());recipes[2].header[4]=0;Put(image,0x1ca0b18,recipes.data());
     auto rules=std::make_shared<QuestJournal::Rules>();rules->rows=3;
     rules->gates={{0,1,false,1,2,18,398,7},{1,1,true,1,2,18,398,7}};

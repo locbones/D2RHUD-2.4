@@ -3,6 +3,7 @@
 #endif
 #include "../d2rhud/plugin/CubeMap.cpp"
 #include "../d2rhud/plugin/Sunder.h"
+#include "../d2rhud/plugin/QuestJournalData.h"
 #include "../d2rhud/plugin/D3WhirlwindData.h"
 #include <cassert>
 #include <filesystem>
@@ -409,6 +410,7 @@ void NativeBuffLifetime(uint8_t* image){
 #include "cube-map-event-updates-test.inl"
 #include "cube-map-demo-test.inl"
 #include "cube-map-automap-test.inl"
+#include "cube-map-monster-reveal-test.inl"
 #include "cube-map-survivors-test.inl"
 void SurvivorCompatibilityDiagnostics(){
     std::array<uint8_t,64> code{};
@@ -595,4 +597,4 @@ void Executable(const std::filesystem::path& path){
     testImage=0;VirtualFree(image,0,MEM_RELEASE);
     std::cout<<"Audited signatures, hook lifecycle, scoped population copy/unwind metadata and real cross-act native warp passed.\n";
 }
-int main(int argc,char** argv){std::cout<<std::unitbuf;assert(!SurvivorsEnabled());AddVectoredExceptionHandler(1,Fault);Parsing();TimedRewards();RandomDestinations();MapModifierRolls();MapPacks();ChampionClashPacks();Reloading();PartyEntry();MapTravelLock();OrdinaryRestoration();LayoutRecords();LayoutSynchronization();LayoutRerolls();MapReplacement();RandomizationAndRewards();EventSynchronization();EventUpdates();EventDemoShortcuts();EventMana();MidasDrops();EncounterRosters();RegularEventPopulation();SoulSurprisePresetPopulation();TrialImmunities();GoblinObjectives();EventAutomapPackets();EventAutomapGeometry();EventAutomapScope();EventAutomapSynchronization();SurvivorsAttributes();SurvivorsClientPause();SurvivorsRosterPersistence();SurvivorsProgression();SurvivorsCombat();SurvivorsEmptyArena();SurvivorsSpawningAndLoot();SurvivorsAuthentication();SurvivorsNpcEntry();SurvivorCompatibilityDiagnostics();if(argc>1)Executable(argv[1]);return 0;}
+int main(int argc,char** argv){std::cout<<std::unitbuf;assert(!SurvivorsEnabled());AddVectoredExceptionHandler(1,Fault);Parsing();TimedRewards();RandomDestinations();MapModifierRolls();MapPacks();ChampionClashPacks();Reloading();PartyEntry();MapTravelLock();OrdinaryRestoration();LayoutRecords();LayoutSynchronization();LayoutRerolls();MapReplacement();RandomizationAndRewards();EventSynchronization();EventUpdates();EventDemoShortcuts();EventMana();MidasDrops();EncounterRosters();RegularEventPopulation();SoulSurprisePresetPopulation();TrialImmunities();GoblinObjectives();EventAutomapPackets();EventAutomapGeometry();EventAutomapScope();EventAutomapSynchronization();MapMonsterReveal();SurvivorsAttributes();SurvivorsClientPause();SurvivorsRosterPersistence();SurvivorsProgression();SurvivorsCombat();SurvivorsEmptyArena();SurvivorsSpawningAndLoot();SurvivorsAuthentication();SurvivorsNpcEntry();SurvivorCompatibilityDiagnostics();if(argc>1)Executable(argv[1]);return 0;}

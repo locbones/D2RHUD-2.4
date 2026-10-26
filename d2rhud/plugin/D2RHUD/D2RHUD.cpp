@@ -657,7 +657,7 @@ void __fastcall SCMDHANDLER_Custom(uint8_t* pPacket) {
         else if (pData->opcode2 == 7) {
             QuestJournal::Receive(pPacket, 0xCE);
         }
-        else if (pData->opcode2 >= 1 && pData->opcode2 <= 6) {
+        else if ((pData->opcode2 >= 1 && pData->opcode2 <= 6) || pData->opcode2 == 8) {
             CubeMap::Receive(pPacket, 0xCE);
         }
     }

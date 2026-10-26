@@ -1,6 +1,7 @@
 ﻿#include "CubeMap.h"
 #include "CubeMapData.h"
 #include "CubeMapAutomapData.h"
+#include "CubeMapMonsterRevealData.h"
 #include "CubeMapNative.h"
 #include "CubeMapMonsterNative.h"
 #include "CubeMapQualityNative.h"
@@ -215,6 +216,8 @@ struct GameState {
     std::set<std::pair<uint32_t,uint32_t>> layoutResets;
     std::map<uint32_t,std::map<Event,uint32_t>> timedRewards;
     uint32_t rewardSequence=0,lastRewardSent=0;
+    std::map<uint32_t,std::pair<int,uint32_t>> revealSent;
+    uint32_t revealRevision=0,lastRevealSent=0;
     uint8_t demoKeys=0;
 };
 void EventTrace(Game* game,const Run& run,const char* stage,int monster=-1,int unique=-1){
@@ -854,6 +857,7 @@ bool DemoSixHeld(Unit* player){
 }
 #include "CubeMapSurvivors.inl"
 #include "CubeMapRewards.inl"
+#include "CubeMapMonsterReveal.inl"
 #include "CubeMapEvents.inl"
 // One request per press, including presses refused while busy or outside town.
 // Simultaneous function keys are ambiguous; require a fresh single-key press.
@@ -905,6 +909,7 @@ void Process(Game* game){
     std::lock_guard lock(serverMutex);auto& state=State(game);
     SendLayouts(game,state);
     ProcessTimedRewards(game,state);
+    ProcessMonsterReveal(game,state);
     // Room observers can remain briefly after the return warp. Let native
     // client teardown finish before restoring the ordinary population.
     for(auto it=state.restoreLevels.begin();it!=state.restoreLevels.end();) {
@@ -1309,6 +1314,7 @@ uint64_t ClientLayerSeed(uint32_t layer){
 bool Receive(const uint8_t* bytes,size_t size){
     if(size!=sizeof(Packet) || !bytes)return false;
     if(bytes[9]==RewardsData::Operation)return ReceiveRewards(bytes,size);
+    if(bytes[9]==MonsterRevealData::Operation)return ReceiveMonsterReveal(bytes,size);
     if(bytes[9]==LayoutData::Operation){LayoutData::Wire packet;memcpy(&packet,bytes,sizeof(packet));return ReceiveLayout(packet);}
     if(bytes[9]==Survivors::Operation)return ReceiveSurvivor(bytes,size);
     if(bytes[9]==AutomapData::Operation){AutomapData::Wire packet;memcpy(&packet,bytes,sizeof(packet));return ReceiveAutomap(packet);}
@@ -1602,6 +1608,7 @@ void Uninstall(){
     if(MH_ApplyQueued()==MH_OK)for(auto hook:hooks)MH_RemoveHook(Native<void*>(hook));
     championClashPopulation.reset();
     {std::lock_guard lock(viewMutex);ClearEventAutomap();view={};receivedAt=0;survivorView={};survivorReceived=0;}
+    ClearMonsterReveal();
     // DLL unloading during a live run would invalidate native temporary lists.
     // The launcher unloads only after game shutdown; process teardown lets the
     // operating system reclaim the registered population allocation.

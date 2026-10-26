@@ -28,6 +28,7 @@ void __fastcall MapResetHook(){
     // next game can generate levels using the same offline world seed.
     ClearClientLayouts();
     ClearClientRewards();
+    ClearMonsterReveal();
 }
 void DrawEventMarkers(const std::vector<AutomapData::Entry>& markers,const uint8_t* transform){
     const float scale=Field<float>(transform,0x38);
@@ -47,19 +48,26 @@ void __fastcall MapCellsHook(int style,void* tree,uint8_t* transform,void* opaci
     std::shared_ptr<const std::vector<AutomapData::Entry>> monsters;
     {std::lock_guard lock(viewMutex);packet=view;time=receivedAt;geometry=eventGeometry;monsters=automapStreams[1].ready;}
     auto player=LocalPlayer();
-    if(!installed.load() || !time || !player || !AutomapData::Visible(packet,GetTickCount64()-time,player->dwUnitId,Level(player))){originalMapCells(style,tree,transform,opacity);return;}
+    if(!installed.load() || !player){originalMapCells(style,tree,transform,opacity);return;}
+    const auto age=GetTickCount64()-time;
+    const bool eventVisible=time && AutomapData::Visible(packet,age,player->dwUnitId,Level(player));
+    auto reveal=VisibleMonsterReveal(player,packet,time?age:UINT64_MAX);
+    if(!eventVisible && !reveal){originalMapCells(style,tree,transform,opacity);return;}
     const auto layer=Field<uint8_t*>(Native<void*>(0x1d56150),0);
     if(!layer || !transform){originalMapCells(style,tree,transform,opacity);return;}
-    if(!geometry && packet.eventPhase==EventPhase::Active){
+    if(eventVisible && !geometry && packet.eventPhase==EventPhase::Active){
         bool request=false;const auto now=GetTickCount64();
         {std::lock_guard lock(viewMutex);if(!lastAutomapRequest || now-lastAutomapRequest>=1000){lastAutomapRequest=now;request=true;}}
         if(request){CommandPacket command;command.run=packet.run;command.session=packet.session;command.phase=EventPhase::Active;
             Native<void(__fastcall*)(void*,int)>(0x10dce0)(&command,sizeof(command));}
     }
     void* visible=tree;
-    const bool validImages=geometry && geometry->highestImage<Field<int>(Native<void*>(0x1c9b89c),0) && Field<int>(Native<void*>(0x1c9b898),0)>0;
+    const bool validImages=eventVisible && geometry && geometry->highestImage<Field<int>(Native<void*>(0x1c9b89c),0) && Field<int>(Native<void*>(0x1c9b898),0)>0;
     if(validImages && geometry->trees[0].count && tree==layer+8)visible=&geometry->trees[0];
     if(validImages && geometry->trees[1].count && tree==layer+0x30)visible=&geometry->trees[1];
     originalMapCells(style,visible,transform,opacity);
-    if(tree==layer+0x58 && monsters)DrawEventMarkers(*monsters,transform);
+    if(tree==layer+0x58){
+        if(eventVisible && monsters)DrawEventMarkers(*monsters,transform);
+        else if(reveal)DrawEventMarkers(*reveal,transform);
+    }
 }

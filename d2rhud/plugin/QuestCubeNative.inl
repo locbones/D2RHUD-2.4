@@ -93,10 +93,10 @@ bool InitQuestMatcher(){
 void ShutdownQuestMatcher(){QuestNative::ready.store(false);}
 bool TryQuestMatch(RuneMatch* result,Game* game,Unit* player,Input* inputs){
     const auto rules=QuestJournal::Bindings();
-    if(!rules || rules->gates.empty())return false;
+    const bool journal=rules&&!rules->gates.empty();
     if(!result || !inputs)return false;
     *result={};std::fill_n(inputs,3,Input{});
-    auto refuse=[&](const char* message){QuestJournal::Refused(game,player,message);return true;};
+    auto refuse=[&](const char* message){if(journal)QuestJournal::Refused(game,player,message);return journal;};
     if(!QuestNative::ready.load())return refuse("Quest recipes unavailable: native matcher signature mismatch.");
     if(!game || !QuestNative::SafeInventory(player))return refuse("Quest recipes unavailable: unsafe cube inventory.");
     Recipe* source=nullptr;uint64_t count=0;
@@ -106,7 +106,7 @@ bool TryQuestMatch(RuneMatch* result,Game* game,Unit* player,Input* inputs){
     if(!ReadProcessMemory(GetCurrentProcess(),source,copies.data(),copies.size()*sizeof(Recipe),&got) || got!=copies.size()*sizeof(Recipe))
         return refuse("Quest recipes unavailable: cube table cannot be read.");
     const auto progress=QuestJournal::Inspect(game,player);std::vector<bool> seen(copies.size());
-    for(const auto& gate:rules->gates){
+    if(journal)for(const auto& gate:rules->gates){
         if(gate.row>=copies.size() || seen[gate.row])return refuse("Quest recipes unavailable: invalid or duplicate quest recipe binding.");
         seen[gate.row]=true;auto& recipe=copies[gate.row];auto& header=recipe.header;
         if(header[0]!=gate.enabled || header[0x10]!=gate.inputs || header[4]!=gate.op ||
@@ -127,6 +127,12 @@ bool TryQuestMatch(RuneMatch* result,Game* game,Unit* player,Input* inputs){
         }
         else {header[0]=0;header[0x10]=255;} // Debug-enabled recipes cannot bypass the journal.
     }
+    bool skippedMap=false;
+    for(auto& recipe:copies)if(UnrestrictedMapRecipe(recipe)){
+        recipe.header[0]=0;recipe.header[0x10]=255;skippedMap=true;
+    }
+    if(!journal&&!skippedMap)return false;
+    if(skippedMap)status.store("Skipped a map recipe with an empty compiled item requirement. Check the event's map item definition.");
     QuestNative::Invocation scanner;
     if(!scanner.Build(copies.data(),count))return refuse("Quest recipes unavailable: cannot prepare an isolated native matcher.");
     reinterpret_cast<RuneMatcher>(scanner.memory)(result,game,player,inputs);

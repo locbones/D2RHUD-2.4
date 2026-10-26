@@ -152,6 +152,10 @@ void MapRecipes(){
     Recipe recipe;recipe.header[0]=1;recipe.header[0x10]=1;char text[]="map=512";
     LinkerHook(text,&recipe,0,0,1,0);assert(CubeMap::Data::IsMap(recipe.outputs[0]) && recipe.outputs[0].base==512);
     Input inputs[3]{};mapPrepares=mapCreates=0;mapAllowed=false;
+    // The shipped event BIN lost its unresolved m01 input and consequently
+    // matches ANY single item. Refuse it before portal preparation/consumption.
+    mapAllowed=true;CreateHook(nullptr,&player,&recipe,inputs);assert(!mapPrepares && !mapCreates);
+    recipe.header[0x14]=1;mapAllowed=false;
     CreateHook(nullptr,&player,&recipe,inputs);assert(mapPrepares==1 && !mapCreates && !preparedMap);
     mapAllowed=true;CreateHook(nullptr,&player,&recipe,inputs);assert(mapCreates==1 && !preparedMap);
     assert(PortalActionHook(nullptr,&player,&recipe.outputs[0])==0); // No unprepared callback can succeed.
@@ -166,7 +170,7 @@ void MapRecipes(){
     recipe.outputs[1].type=252;recipe.outputs[1].base=2;recipe.outputs[2]=recipe.outputs[1];mapReuse=true;
     CreateHook(nullptr,&player,&recipe,inputs);assert(mapCreates==4 && recipe.outputs[0].base==512);
     mapAllowed=false;CreateHook(nullptr,&player,&recipe,inputs);assert(mapCreates==4);mapAllowed=true;mapReuse=false;
-    Reset();originalCreate=CreateMap;recipe={};recipe.header[0]=1;recipe.header[0x10]=1;
+    Reset();originalCreate=CreateMap;recipe={};recipe.header[0]=1;recipe.header[0x10]=1;recipe.header[0x14]=1;
     char randomText[]="map=zzz";LinkerHook(randomText,&recipe,0,0,1,0);
     assert(CubeMap::Data::IsMap(recipe.outputs[0]) && !recipe.outputs[0].base);
     for(int destination:{78,512}){mapResolved=destination;const auto before=mapCreates;CreateHook(nullptr,&player,&recipe,inputs);assert(mapCreates==before+1 && !recipe.outputs[0].base);}
@@ -300,6 +304,7 @@ void NativeSavedModifiers(uint8_t* image){
     std::cout<<"Real native serialization omits the old base-only selector and includes changed selectors from saved item modifiers.\n";
 }
 #include "cube-rune-bag-test.inl"
+std::filesystem::path eventTableFixture;
 #include "quest-cube-native-test.inl"
 #include "quest-property-native-test.inl"
 void Executable(const std::filesystem::path& path){
@@ -360,5 +365,6 @@ int main(int argc,char** argv){
     assert(!Parse("useitem,eth").present);
     for(const auto& text:{"useitem,vis=","useitem,vis=cap,visual=cap","usetype,vis=cap","useitem,vis=cap,qty=2","useitem,visual=\"bad"})assert(!Parse(text).valid);
     for(int kind=0;kind<3;++kind)for(int index:{0,4095}){Target target{kind,index};auto other=Target::Decode(target.Encode());assert(other.kind==kind && other.index==index);}
+    if(argc>3)eventTableFixture=argv[3];
     Bind();Reset();CompiledVisualNames();Adapters();MapRecipes();RuneBagTest::Run();if(argc>2)RuneBagTest::LoadedTables(argv[2]);if(argc>1)Executable(argv[1]);
 }

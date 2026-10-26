@@ -123,6 +123,12 @@ bool __fastcall MapUnitKind(Unit*,int* frame,int* category){*frame=6;*category=1
 AutomapEntry nativeTileCell{};
 void* __fastcall CaptureNativeTile(void*,uint64_t* hint,const uint8_t* key){nativeTileCell={Field<uint16_t>(key,2),Field<int>(key,4),Field<int>(key,8),0};hint[0]=hint[1]=0;return hint;}
 void NativeEventAutomap(uint8_t* image){
+    // Verify the server hash layout used to reveal monsters beyond the client's range.
+    Game lookupGame{};Unit firstMonster{},secondMonster{};
+    firstMonster.dwUnitType=secondMonster.dwUnitType=1;firstMonster.dwUnitId=321;secondMonster.dwUnitId=449;
+    firstMonster.pListNext=&secondMonster;lookupGame.pUnitList[1][321&127]=&firstMonster;
+    const auto nativeLookup=Native<Unit*(__fastcall*)(Game*,int,uint32_t)>(0x2c49c0);
+    assert(nativeLookup(&lookupGame,1,321)==&firstMonster && nativeLookup(&lookupGame,1,449)==&secondMonster && !nativeLookup(&lookupGame,1,577));
     auto stub=[&](uint32_t rva,auto fn){const uint8_t j[]{0xff,0x25,0,0,0,0};memcpy(image+rva,j,6);auto to=reinterpret_cast<uintptr_t>(fn);memcpy(image+rva+6,&to,8);};
     stub(0x573440,CaptureMapSprite);stub(0x96ea0,MapUnitKind);image[0x1434c50]=0xc3;
     Put(image,0x1d56130,68);Put(image,0x1d56134,36);Put(image,0x1d5613c,0);Put(image,0x1d5614c,0);

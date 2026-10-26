@@ -200,6 +200,8 @@
     <ClInclude Include="plugin\CubeMapRewards.inl" />
     <ClInclude Include="plugin\CubeMapRewardsData.h" />
     <ClInclude Include="plugin\CubeMapAutomapData.h" />
+    <ClInclude Include="plugin\CubeMapMonsterRevealData.h" />
+    <ClInclude Include="plugin\CubeMapMonsterReveal.inl" />
     <ClInclude Include="plugin\CubeMapAutomapServer.inl" />
     <ClInclude Include="plugin\CubeMapAutomapClient.inl" />
     <ClInclude Include="plugin\CubeMapNative.h" />

@@ -279,6 +279,13 @@ thread_local Context* current=nullptr;
 int GetStat(Unit* item,int stat) { return Native<int(__fastcall*)(Unit*,uint32_t,uint16_t)>(0x1e5620)(item,stat,0); }
 struct RuneMatch;
 bool TryQuestMatch(RuneMatch*,Game*,Unit*,Input*);
+bool UnrestrictedMapRecipe(const Recipe& recipe){
+    if(!std::any_of(recipe.outputs.begin(),recipe.outputs.end(),CubeMap::Data::IsMap))return false;
+    // An unresolved item code compiles to an empty native input descriptor.
+    // With numinputs=1 the matcher treats that as ANY single item.
+    for(size_t i=0;i<7;++i)if(recipe.header[0x14+i*8] || recipe.header[0x15+i*8])return false;
+    return true;
+}
 #include "CubeRuneBag.inl"
 #include "QuestCubeNative.inl"
 #include "QuestCubeRuntime.inl"
@@ -322,6 +329,9 @@ void __fastcall CreateHook(Game* game,Unit* player,Recipe* recipe,Input* inputs)
     int mapLevel=0,mapCount=0;
     for(const auto& output:recipe->outputs)if(CubeMap::Data::IsMap(output)){mapLevel=output.base;++mapCount;}
     if(mapCount) {
+        if(UnrestrictedMapRecipe(augmented)){
+            status.store("Map recipe refused: its compiled item requirement is empty. Check that the map item exists in this mod's item tables.");return;
+        }
         for(const auto& output:recipe->outputs)if(output.Visual()){
             status.store("Cube map rejected: use ordinary item outputs alongside a map, not visual-only outputs.");return;
         }
