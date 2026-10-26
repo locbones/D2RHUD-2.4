@@ -638,8 +638,12 @@ int64_t __fastcall CCMD_HandleSharedStashMessage(D2GameStrc* pGame, D2UnitStrc* 
         std::cout << "# of saves attached: " << pClient->nSaveHeaderSize << std::endl;
         //pClient->dwClientState = 1; //CLIENTSTATE_GAME_INIT_SENT needed for D2CLTSYS_OPENCHAR to attach save to D2ClientStrc
         //pClient->dwFlags &= ~8;
-        reinterpret_cast<void(__fastcall*)(D2GameStrc*, D2ClientStrc*, D2UnitStrc*)>(Pattern::Address(0x319b70))(pClient->pGame, pClient, pClient->pPlayer); // Parse shared stash save headers in D2ClientStrc
+        const int stashResult = reinterpret_cast<int(__fastcall*)(D2GameStrc*, D2ClientStrc*, D2UnitStrc*)>(Pattern::Address(0x319b70))(pClient->pGame, pClient, pClient->pPlayer); // Parse shared stash save headers in D2ClientStrc
         reinterpret_cast<void(__fastcall*)(D2ClientStrc*)>(Pattern::Address(0x2a08a0))(pClient); // CLIENTS_FreeSaveHeader
+        if (stashResult) {
+            std::cerr << "Shared stash page load failed: " << stashResult << std::endl;
+            return 1;
+        }
         SCMD_SendSharedStashMessage(pClient, NewSharedStashUnitsCreated, pData->nPage);
         //pClient->dwFlags |= 8;
         //pClient->dwClientState = 4; //CLIENTSTATE_INGAME

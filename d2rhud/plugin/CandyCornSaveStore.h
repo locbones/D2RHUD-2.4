@@ -21,12 +21,12 @@ inline std::wstring Hex(uint64_t value) {
 // CREATE_NEW and a byte-for-byte comparison make retries safe. An existing
 // backup is never replaced, even when a character has the same display name.
 inline bool Backup(const std::filesystem::path& directory,std::span<const uint8_t> bytes,
-    std::filesystem::path& path,std::string& error) {
+    std::filesystem::path& path,std::string& error,bool stash=false) {
     HANDLE file=INVALID_HANDLE_VALUE;bool created=false;
     try {
         if(directory.empty() || bytes.empty() || bytes.size()>16*1024*1024)throw std::runtime_error("The original character backup is empty or too large.");
         std::filesystem::create_directories(directory);
-        path=directory/(Hex(Hash(bytes))+L"-"+std::to_wstring(bytes.size())+L".before-candy-corn.d2s");
+        path=directory/(Hex(Hash(bytes))+L"-"+std::to_wstring(bytes.size())+(stash?L".before-candy-corn.d2i":L".before-candy-corn.d2s"));
         file=CreateFileW(path.c_str(),GENERIC_WRITE,0,nullptr,CREATE_NEW,FILE_ATTRIBUTE_NORMAL,nullptr);
         if(file==INVALID_HANDLE_VALUE) {
             const auto failure=GetLastError();

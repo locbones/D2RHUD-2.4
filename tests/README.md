@@ -21,13 +21,25 @@ tests\run-candy-corn-save.cmd "%TEMP%\d2rhud-candy-tests" "C:\path\to\D2R.exe"
 ```
 
 The Candy Corn suite optionally accepts a compiled Excel data folder and a
-character-save folder as its last two arguments. It reads those saves without
-writing them; conversions are tested in memory.
+save folder as its last two arguments. It reads `.d2s` characters and `.d2i`
+stash pages without writing them; conversions are tested in memory.
+Legacy characters are also run through the real installed preview and game-load
+detours against those compiled tables, with the native consumers checking the
+exact converted bytes and the original files/buffers remaining unchanged.
+The preview hook runs before last-selected-character inventory parsing, uses
+the native shared-lock buffer layout, and preserves all five reader arguments.
+Its tests cover native empty-buffer return, lock release, backup preservation,
+native rejection, exceptions and safe refusal of invalid data or missing tables.
 The installed native reader detour is exercised both with and without the
 optional outer load scope, including different reader buffers/output slots and
 another client's read. Failed backups return the native bad-save result without
 parsing incompatible bytes. Native reader rejection and later load failures retain
 their result codes in `last-conversion.txt`; original saves/backups stay intact.
+Shared-stash tests cover multiple tabs, mixed legacy/current stacks, nested
+items, gold/metadata preservation, tab lengths, complete `.d2i` page backups, and
+restoring native descriptor ownership after success, rejection and exceptions.
+The real native stash-loader body also validates the converted descriptor lengths
+and item-list arguments with world allocation/stat/network side effects stubbed.
 
 Loot filter tests can use this repository's engine:
 
@@ -81,3 +93,17 @@ The `generate-*.py` scripts regenerate native compatibility headers from a
 matching executable. These tools require Python with `pefile` and `capstone`.
 Keep the generated headers in source control: they are build inputs, unlike
 compiled test executables and captured test output.
+
+## Legacy Candy Corn client-preview replay
+
+```bat
+tests\run-candy-preview-replay.cmd "%TEMP%\candy-preview-replay" "C:\path\D2R.exe" "C:\path\data\global\excel" "C:\path\TryingAgain.d2s"
+```
+
+Replays a legacy character through the installed client-preview hook and the
+actual native preview header/stat parsing and item-list traversal. Appearance
+string/quest storage and the final item decoder are stubbed; every item byte
+reaching that decoder must match an independently converted character. The
+fixture verifies the original file, cache pointer/length, shared lock and exact
+backup, and never writes the source character. Test backups use a private
+`LOCALAPPDATA` under the output directory.

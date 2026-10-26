@@ -149,9 +149,10 @@ inline bool ItemSuffix(State& state,const Tables& t,const Prefix& p,bool legacy)
     if(legacy)state.edits.push_back({quantity,rawEnd,b.pos});
     if(p.sockets)state.tasks.push_back({Kind::Items,p.sockets,p.depth+1});return b.ok;
 }
-inline std::vector<State> Parse(std::span<const uint8_t> bytes,const Tables& t,bool alternatives,Budget& budget) {
-    State first;first.bits={bytes,0,&budget,true};if(!Header(first.bits,t))return {};
-    first.tasks={{Kind::End},{Kind::Golem},{Kind::Mercenary},{Kind::Corpses},{Kind::List}};
+inline std::vector<State> Parse(std::span<const uint8_t> bytes,const Tables& t,bool alternatives,Budget& budget,bool stash=false) {
+    State first;first.bits={bytes,0,&budget,true};
+    if(stash){first.bits.pos=64*8;first.tasks={{Kind::End},{Kind::List}};}
+    else {if(!Header(first.bits,t))return {};first.tasks={{Kind::End},{Kind::Golem},{Kind::Mercenary},{Kind::Corpses},{Kind::List}};}
     std::vector<State> pending;pending.push_back(std::move(first));std::vector<State> valid;
     while(!pending.empty()&&!budget.limit){State state=std::move(pending.back());pending.pop_back();bool alive=true;
         while(alive&&!state.tasks.empty()&&budget.Spend()){
@@ -174,19 +175,27 @@ inline std::vector<State> Parse(std::span<const uint8_t> bytes,const Tables& t,b
     }
     return valid;
 }
-inline std::vector<uint8_t> Splice(std::span<const uint8_t> bytes,const std::vector<Edit>& edits) {
+inline std::vector<uint8_t> Splice(std::span<const uint8_t> bytes,const std::vector<Edit>& edits,bool stash=false) {
     std::vector<uint8_t> out;out.reserve(bytes.size()+edits.size()*2);size_t write=0,read=0;
     auto bit=[&](unsigned value){if(write%8==0)out.push_back(0);out.back()|=uint8_t(value<<(write%8));++write;};
     auto copy=[&](size_t end){while(read<end){bit((bytes[read/8]>>(read%8))&1);++read;}};
     for(const auto& e:edits){copy(e.quantity);bit(1);for(unsigned n=1;n<9;++n)bit(0);copy(e.rawEnd);read=e.alignedEnd;while(write%8)bit(0);}
-    copy(bytes.size()*8);Store(out,8,uint32_t(out.size()));Store(out,12,Checksum(out));return out;
+    copy(bytes.size()*8);
+    if(stash)Store(out,16,uint32_t(out.size()));
+    else {Store(out,8,uint32_t(out.size()));Store(out,12,Checksum(out));}
+    return out;
 }
 }
-inline Result Convert(std::span<const uint8_t> bytes,const Tables& tables) {
+inline Result ConvertRecord(std::span<const uint8_t> bytes,const Tables& tables,bool stash) {
     Result result;
-    if(bytes.size()<16||bytes.size()>8*1024*1024||Detail::Word(bytes,0)!=0xaa55aa55){result.message="Invalid character save header.";return result;}
-    if(Detail::Word(bytes,4)!=98){result.status=Status::Unsupported;result.message="Candy Corn conversion supports save version 98 only.";return result;}
-    if(Detail::Word(bytes,8)!=bytes.size()||Detail::Word(bytes,12)!=Checksum(bytes)){result.message="Character save size or checksum is invalid.";return result;}
+    if(bytes.size()<16||bytes.size()>8*1024*1024||Detail::Word(bytes,0)!=0xaa55aa55){result.message="Invalid save record header.";return result;}
+    if(stash){
+        if(bytes.size()<68 || Detail::Word(bytes,4)>1 || Detail::Word(bytes,16)!=bytes.size() || Detail::Word(bytes,64,2)!=0x4d4a){result.message="Invalid shared stash tab header or size.";return result;}
+        if(Detail::Word(bytes,8)!=98){result.status=Status::Unsupported;result.message="Candy Corn conversion supports stash version 98 only.";return result;}
+    }else {
+        if(Detail::Word(bytes,4)!=98){result.status=Status::Unsupported;result.message="Candy Corn conversion supports save version 98 only.";return result;}
+        if(Detail::Word(bytes,8)!=bytes.size()||Detail::Word(bytes,12)!=Checksum(bytes)){result.message="Character save size or checksum is invalid.";return result;}
+    }
     // Keep item lookup bounded for large saves and mod tables. Conflicting
     // definitions for one code cannot be inferred safely from saved bytes.
     Tables prepared=tables;
@@ -197,15 +206,38 @@ inline Result Convert(std::span<const uint8_t> bytes,const Tables& tables) {
             result.status=Status::Unsupported;result.message="Conflicting compiled item definitions prevent safe conversion.";return result;
         }
     }
-    Detail::Budget budget;auto current=Detail::Parse(bytes,prepared,false,budget);
+    Detail::Budget budget;auto current=Detail::Parse(bytes,prepared,false,budget,stash);
     if(!current.empty()){result.status=Status::Unchanged;return result;}
-    if(budget.limit){result.status=Status::Limit;result.message="Character save exceeds conversion work limits.";return result;}
-    budget={};auto legacy=Detail::Parse(bytes,prepared,true,budget);
-    if(budget.limit){result.status=Status::Limit;result.message="Character save exceeds conversion work limits.";return result;}
-    if(legacy.size()>1){result.status=Status::Ambiguous;result.message="Character item layout is ambiguous; conversion was refused.";return result;}
-    if(legacy.empty()||legacy[0].edits.empty()){result.message="Character items could not be safely parsed for conversion.";return result;}
-    result.bytes=Detail::Splice(bytes,legacy[0].edits);Detail::Budget verify;
-    if(Detail::Parse(result.bytes,prepared,false,verify).empty()){result.bytes.clear();result.message="Converted character failed structural verification.";return result;}
+    if(budget.limit){result.status=Status::Limit;result.message="Saved items exceed conversion work limits.";return result;}
+    budget={};auto legacy=Detail::Parse(bytes,prepared,true,budget,stash);
+    if(budget.limit){result.status=Status::Limit;result.message="Saved items exceed conversion work limits.";return result;}
+    if(legacy.size()>1){result.status=Status::Ambiguous;result.message="Saved item layout is ambiguous; conversion was refused.";return result;}
+    if(legacy.empty()||legacy[0].edits.empty()){result.message="Saved items could not be safely parsed for conversion.";return result;}
+    result.bytes=Detail::Splice(bytes,legacy[0].edits,stash);Detail::Budget verify;
+    if(Detail::Parse(result.bytes,prepared,false,verify,stash).empty()){result.bytes.clear();result.message="Converted items failed structural verification.";return result;}
     result.status=Status::Converted;result.converted=legacy[0].edits.size();return result;
+}
+inline Result Convert(std::span<const uint8_t> bytes,const Tables& tables){return ConvertRecord(bytes,tables,false);}
+// A .d2i file is a sequence of independently sized tabs, each with a 64-byte
+// header and one item list. Do not scan for signatures inside item payloads.
+// Stash headers have gold at +12 and length at +16; there is no .d2s checksum.
+inline Result ConvertStash(std::span<const uint8_t> bytes,const Tables& tables){
+    Result result;
+    if(bytes.empty() || bytes.size()>8*1024*1024){result.message="Invalid shared stash file size.";return result;}
+    std::vector<uint8_t> converted;size_t tabs=0,count=0;
+    for(size_t at=0;at<bytes.size();){
+        if(++tabs>1024){result.status=Status::Limit;result.message="Shared stash exceeds conversion tab limits.";return result;}
+        if(bytes.size()-at<68){result.message="Truncated shared stash tab.";return result;}
+        const auto size=Detail::Word(bytes,at+16);
+        if(size<68 || size>bytes.size()-at){result.message="Invalid shared stash tab length.";return result;}
+        const auto tab=bytes.subspan(at,size);auto next=ConvertRecord(tab,tables,true);
+        if(next.status==Status::Converted){count+=next.converted;converted.insert(converted.end(),next.bytes.begin(),next.bytes.end());}
+        else if(next.status==Status::Unchanged)converted.insert(converted.end(),tab.begin(),tab.end());
+        else {next.bytes.clear();next.converted=0;return next;}
+        at+=size;
+    }
+    if(count){result.status=Status::Converted;result.converted=count;result.bytes=std::move(converted);}
+    else result.status=Status::Unchanged;
+    return result;
 }
 }

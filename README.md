@@ -20,7 +20,8 @@ on the host and clients.
 - Mod integrations for cube maps and events, quest tracking, rune storage,
   item visuals, and immunity sunder.
 - Temporary RMD-MP Candy Corn migration: legacy `Ev11` items gain quantity 1 on
-  character load, with an original-save backup and an on-screen notice.
+  character preview, game load or shared-stash page load, with original-save/page backups and an
+  on-screen notice. Both softcore and hardcore stash pages are supported.
 
 Some integrations are specific to RMD-MP. Experimental Workshop features default
 to off and need the corresponding mod content.
