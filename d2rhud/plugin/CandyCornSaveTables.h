@@ -22,6 +22,9 @@ inline bool DecodeTables(std::span<const uint8_t> items,std::span<const uint8_t>
         item.armor=family(50);item.weapon=family(45);item.stackable=row[0x13a]!=0;
         item.gold=family(4);item.tome=family(18)||family(22);item.bodyPart=family(40)&&!family(7);
         item.charm=family(13);item.questDifficulty=row[0x132]&&row[0x133];next.items.push_back(item);
+        // The migration is specific to RMD's Halloween automagic group. Use
+        // the loaded BIN definition, not a source TXT that may be inactive.
+        next.items.back().candyRandom=item.code==std::array<char,4>{'E','v','1','1'} && word.operator()<uint16_t>(row,0x100)==394;
     }
     for(size_t at=0;at<stats.size();at+=0x144) {
         const auto row=stats.data()+at;const auto param=word.operator()<int32_t>(row,0x20);

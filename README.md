@@ -22,6 +22,8 @@ on the host and clients.
 - Temporary RMD-MP Candy Corn migration: legacy `Ev11` items gain quantity 1 on
   character preview, game load or shared-stash page load, with original-save/page backups and an
   on-screen notice. Both softcore and hardcore stash pages are supported.
+  Dense legacy tabs reuse failed parsing continuations, and RMD's Halloween
+  automagic random property distinguishes old Candy Corn from existing stacks.
 
 Some integrations are specific to RMD-MP. Experimental Workshop features default
 to off and need the corresponding mod content.

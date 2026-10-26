@@ -26,6 +26,11 @@ stash pages without writing them; conversions are tested in memory.
 Legacy characters are also run through the real installed preview and game-load
 detours against those compiled tables, with the native consumers checking the
 exact converted bytes and the original files/buffers remaining unchanged.
+Legacy stash pages also run through the installed stash detour, checking every
+converted tab, the complete original backup, and restored native descriptors.
+Dense mixed old/new Candy Corn tests preserve all 549 Halloween random rolls
+and existing quantities, reuse failed continuations on malformed tails, and
+continue refusing genuinely ambiguous records.
 The preview hook runs before last-selected-character inventory parsing, uses
 the native shared-lock buffer layout, and preserves all five reader arguments.
 Its tests cover native empty-buffer return, lock release, backup preservation,

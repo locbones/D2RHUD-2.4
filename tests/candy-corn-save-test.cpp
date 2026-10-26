@@ -17,12 +17,12 @@ struct Writer {
     void Code(const char* code){for(unsigned i=0;i<4;++i)for(auto b:Detail::Codes[uint8_t(code[i])])Add(b-'0',1);}
     void Align(){while(pos%8)Add(0,1);}
 };
-std::vector<uint8_t> Item(bool legacy,unsigned quantity=1,unsigned seed=123,bool socketed=false,bool personalized=false,bool properties=false){
+std::vector<uint8_t> Item(bool legacy,unsigned quantity=1,unsigned seed=123,bool socketed=false,bool personalized=false,bool properties=false,int random=-1){
     Writer w;w.Add((1<<4)|(socketed?(1<<11):0)|(personalized?(1<<24):0),32);w.Add(0,3);w.Add(0,3);w.Add(0,4);w.Add(3,4);w.Add(2,4);w.Add(1,3);w.Code("Ev11");
     w.Add(socketed?1:0,3);w.Add(seed,32);w.Add(50,7);w.Add(2,4);w.Add(0,1);w.Add(0,1);
     if(personalized){for(auto c:std::string("Candy Tester"))w.Add(c,8);w.Add(0,8);}
     w.Add(0,1);if(!legacy)w.Add(quantity,9);if(socketed)w.Add(1,4);
-    if(properties){w.Add(0,9);w.Add(42,8);}w.Add(511,9);w.Align();return w.bytes;
+    if(properties){w.Add(0,9);w.Add(42,8);}if(random>=0){w.Add(398,9);w.Add(unsigned(random)+10,11);}w.Add(511,9);w.Align();return w.bytes;
 }
 std::vector<uint8_t> Compact(const char* code){Writer w;w.Add((1<<21)|(1<<4),32);w.Add(0,3);w.Add(6,3);w.Add(0,15);w.Code(code);w.Align();return w.bytes;}
 struct Save {
@@ -80,6 +80,35 @@ void StashTests(){
     bad=old;bad.insert(bad.end(),current.begin(),current.end()-1);result=ConvertStash(bad,tables);assert(result.status==Status::Corrupt && result.bytes.empty() && !result.converted);
     auto formatZero=old;Detail::Store(formatZero,4,0);assert(ConvertStash(formatZero,tables).status==Status::Converted);
     assert(Convert(Simple(true),tables).status==Status::Converted);
+    // RMD's rng_generator property used to be mistaken for quantity 398,
+    // followed by a different stat. Preserve every random value and existing
+    // stack quantity, including mixed old/new records in a densely filled tab.
+    auto rngTables=tables;rngTables.items[0].candyRandom=true;
+    rngTables.stats[398]={11,0,0,10,true};rngTables.stats[270]={2,0,0,0,true};
+    rngTables.stats[383]={2,0,0,1,true};rngTables.stats[402]={2,0,0,0,true};
+    auto dense=Stash(false,57,true),denseExpected=dense;unsigned count=0,legacyCount=0;
+    auto append=[](auto& bytes,const auto& item){bytes.insert(bytes.end(),item.begin(),item.end());};
+    for(unsigned roll=1;roll<=549;++roll){const bool legacy=roll%3!=0;const unsigned quantity=roll%2?398:511;
+        append(dense,Item(legacy,quantity,roll,false,false,false,int(roll)));
+        append(denseExpected,Item(false,legacy?1:quantity,roll,false,false,false,int(roll)));
+        ++count;legacyCount+=legacy;
+    }
+    for(auto* bytes:{&dense,&denseExpected}){Put(bytes->data(),66,uint16_t(count));Detail::Store(*bytes,16,uint32_t(bytes->size()));}
+    const auto denseBefore=dense;result=ConvertStash(dense,rngTables);
+    assert(result.status==Status::Converted && result.converted==legacyCount && result.bytes==denseExpected && dense==denseBefore);
+    assert(ConvertStash(denseExpected,rngTables).status==Status::Unchanged);
+    // Failure memoization must not suppress real ambiguity. Without an
+    // automagic discriminator these repeated old/current interpretations
+    // share the same continuation. A corrupt tail must finish without
+    // exponentially retrying it; a valid tail must still report ambiguity.
+    auto generic=rngTables;generic.items[0].candyRandom=false;
+    auto ambiguous=Stash(false,57,true);append(ambiguous,Item(true,1,1,false,false,false,219));
+    for(unsigned n=0;n<150;++n)append(ambiguous,Item(true,1,n+2,false,false,false,260));
+    Put(ambiguous.data(),66,uint16_t(151));Detail::Store(ambiguous,16,uint32_t(ambiguous.size()));
+    assert(ConvertStash(ambiguous,generic).status==Status::Ambiguous);
+    auto corrupt=ambiguous;corrupt.push_back(0x7f);Detail::Store(corrupt,16,uint32_t(corrupt.size()));
+    assert(ConvertStash(corrupt,generic).status==Status::Corrupt);
+    std::cout<<"Dense mixed Candy Corn random properties/quantities, failed-continuation reuse and ambiguity rejection passed.\n";
     std::cout<<"Single/multiple stash tabs, mixed old/new quantities, nested items, gold/metadata preservation, exact tab lengths, malformed/truncated records and retry idempotence passed.\n";
 }
 void ParseTests(){
@@ -165,6 +194,8 @@ bool __fastcall MockPreview(CandyCornSave::PreviewBuffer* buffer,void* second,vo
 }
 CandyCornSave::StashDescriptor* expectedDescriptors=nullptr;
 std::vector<uint8_t> expectedStash;unsigned stashCalls=0;int stashResult=0;bool throwStash=false;
+std::vector<std::vector<uint8_t>> expectedRealTabs;
+CandyCornSave::StashDescriptor* expectedRealDescriptors=nullptr;
 int __fastcall MockStash(D2GameStrc* game,D2ClientStrc* client,D2UnitStrc* player){
     using namespace CandyCornSave;
     assert(game==reinterpret_cast<D2GameStrc*>(2) && player==reinterpret_cast<D2UnitStrc*>(3));
@@ -213,6 +244,33 @@ void NativeRealSaves(const std::filesystem::path& excel,const std::filesystem::p
         ++characters;pieces+=converted.converted;
     }
     std::cout<<"Real save preview and game-load detours: "<<characters<<" legacy characters, "<<pieces<<" Candy Corn; expected converted bytes and original file ownership verified.\n";
+    size_t pages=0,stashPieces=0;
+    originalStashLoad=+[](D2GameStrc*,D2ClientStrc* client,D2UnitStrc*)->int{
+        assert(client->pSaveHeaders!=reinterpret_cast<D2SaveHeadersStrc*>(expectedRealDescriptors));
+        assert(client->nSaveHeaderSize==expectedRealTabs.size());
+        auto descriptors=reinterpret_cast<StashDescriptor*>(client->pSaveHeaders);
+        for(size_t n=0;n<expectedRealTabs.size();++n){const auto& expected=expectedRealTabs[n];
+            assert(descriptors[n].size==expected.size() && std::equal(expected.begin(),expected.end(),descriptors[n].bytes));}
+        return 0;
+    };
+    for(const auto& entry:std::filesystem::directory_iterator(saves))if(entry.path().extension()==L".d2i"){
+        auto source=Read(entry.path());const auto before=source;const auto converted=ConvertStash(source,tables);
+        if(converted.status!=Status::Converted)continue;
+        std::vector<StashDescriptor> descriptors;expectedRealTabs.clear();
+        for(size_t at=0;at<source.size();){const auto length=Detail::Word(source,at+16);const auto tab=std::span<const uint8_t>(source).subspan(at,length);
+            const auto next=ConvertRecord(tab,tables,true);assert(next.status==Status::Converted || next.status==Status::Unchanged);
+            expectedRealTabs.push_back(next.status==Status::Converted?next.bytes:std::vector<uint8_t>(tab.begin(),tab.end()));
+            descriptors.push_back({source.data()+at,length,length});at+=length;
+        }
+        const auto originals=descriptors;expectedRealDescriptors=descriptors.data();
+        client.pSaveHeaders=reinterpret_cast<D2SaveHeadersStrc*>(descriptors.data());client.nSaveHeaderSize=uint32_t(descriptors.size());
+        assert(Native<StashLoad>(0x319b70)(nullptr,&client,nullptr)==0);
+        assert(client.pSaveHeaders==reinterpret_cast<D2SaveHeadersStrc*>(descriptors.data()) && source==before && Read(entry.path())==before);
+        assert(!memcmp(descriptors.data(),originals.data(),descriptors.size()*sizeof(StashDescriptor)));
+        std::filesystem::path backup;std::string error;assert(Storage::Backup(directory,before,backup,error,true) && Read(backup)==before);
+        ++pages;stashPieces+=converted.converted;
+    }
+    std::cout<<"Real shared-stash detours: "<<pages<<" legacy pages, "<<stashPieces<<" Candy Corn; converted tab bytes, complete original page backup and native descriptor ownership verified.\n";
 }
 void NativeTests(const std::filesystem::path& exe,const std::filesystem::path& root,const std::filesystem::path& excel={},const std::filesystem::path& saves={}){
     using namespace CandyCornSave;

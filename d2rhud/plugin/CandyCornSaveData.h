@@ -5,6 +5,7 @@
 #include <array>
 #include <cstdint>
 #include <limits>
+#include <set>
 #include <span>
 #include <string>
 #include <string_view>
@@ -14,6 +15,7 @@ struct ItemDefinition {
     std::array<char,4> code{};
     bool armor=false,weapon=false,stackable=false;
     bool gold=false,tome=false,bodyPart=false,charm=false,questDifficulty=false;
+    bool candyRandom=false;
 };
 struct StatDefinition {uint8_t saveBits=0,paramBits=0,charBits=0;int32_t saveAdd=0;bool valid=false;};
 struct Tables {std::vector<ItemDefinition> items;std::vector<StatDefinition> stats;};
@@ -88,8 +90,9 @@ struct Bits {
 };
 inline const StatDefinition* Stat(const Tables& t,unsigned id){return id<t.stats.size()&&t.stats[id].valid?&t.stats[id]:nullptr;}
 inline bool StatValue(Bits& b,const Tables& t,unsigned id) {const auto d=Stat(t,id);if(!d||d->saveBits>32||d->paramBits>32){b.ok=false;return false;}b.Skip(size_t(d->saveBits)+d->paramBits);return b.ok;}
-inline bool Properties(Bits& b,const Tables& t) {
+inline bool Properties(Bits& b,const Tables& t,bool* candyRandom=nullptr) {
     for(unsigned n=0;n<4096&&b.ok;++n){const unsigned id=b.Read(9);if(id==511)return b.ok;if(!StatValue(b,t,id))return false;
+        if(candyRandom && id==398)*candyRandom=true;
         if(id==17||id==48||id==50||id==52){if(!StatValue(b,t,id+1))return false;}
         else if(id==54||id==57){if(!StatValue(b,t,id+1)||!StatValue(b,t,id+2))return false;}}
     b.ok=false;return false;
@@ -98,6 +101,14 @@ struct Edit {size_t quantity=0,rawEnd=0,alignedEnd=0;};
 enum class Kind {Items,List,Corpses,Corpse,Mercenary,Golem,End};
 struct Task {Kind kind;unsigned count=0,depth=0;};
 struct State {Bits bits;std::vector<Task> tasks;std::vector<Edit> edits;size_t items=0;};
+// A failed continuation is independent of the edits already collected. Cache
+// only failures: distinct successful edit histories must still be rejected as
+// ambiguous. Include the complete task stack and item count in the identity.
+inline std::vector<size_t> Continuation(const State& state) {
+    std::vector<size_t> key{state.bits.pos,state.items};key.reserve(2+state.tasks.size()*3);
+    for(const auto& task:state.tasks){key.push_back(size_t(task.kind));key.push_back(task.count);key.push_back(task.depth);}
+    return key;
+}
 struct Prefix {uint32_t flags=0;unsigned quality=0,sockets=0,depth=0;const ItemDefinition* definition=nullptr;};
 inline bool Header(Bits& b,const Tables& t) {
     const auto bytes=b.bytes;
@@ -142,7 +153,12 @@ inline bool ItemSuffix(State& state,const Tables& t,const Prefix& p,bool legacy)
     if(p.flags&(1u<<11)){auto sockets=Stat(t,194);if(!sockets)return false;const auto total=b.Read(sockets->saveBits);if(p.sockets>total)return false;}
     else if(p.sockets)return false;
     unsigned extra=0;if(p.quality==5){const auto mask=b.Read(5);for(unsigned n=0;n<5;++n)extra+=(mask>>n)&1;}
-    if(!Properties(b,t))return false;
+    bool candyRandom=false;if(!Properties(b,t,&candyRandom))return false;
+    // RMD's normal Candy Corn receive rng_generator from automagic group 394.
+    // Its old stat ID can look like quantity 398, with the random value then
+    // masquerading as an unrelated stat. That interpretation loses the
+    // configured automagic property even when its byte length looks correct.
+    if(p.definition->candyRandom && p.quality==2 && !candyRandom)return false;
     for(unsigned n=0;n<extra;++n)if(!Properties(b,t))return false;
     if((p.flags&(1u<<26))&&!Properties(b,t))return false;
     const auto rawEnd=b.pos;if(!b.Align())return false;
@@ -153,8 +169,16 @@ inline std::vector<State> Parse(std::span<const uint8_t> bytes,const Tables& t,b
     State first;first.bits={bytes,0,&budget,true};
     if(stash){first.bits.pos=64*8;first.tasks={{Kind::End},{Kind::List}};}
     else {if(!Header(first.bits,t))return {};first.tasks={{Kind::End},{Kind::Golem},{Kind::Mercenary},{Kind::Corpses},{Kind::List}};}
-    std::vector<State> pending;pending.push_back(std::move(first));std::vector<State> valid;
-    while(!pending.empty()&&!budget.limit){State state=std::move(pending.back());pending.pop_back();bool alive=true;
+    struct Frame {State state;std::vector<size_t> key;size_t validBefore=0;bool entered=false;};
+    std::vector<Frame> pending;pending.push_back({std::move(first)});std::vector<State> valid;
+    std::set<std::vector<size_t>> failed;
+    while(!pending.empty()&&!budget.limit){
+        auto& frame=pending.back();
+        if(frame.entered){if(valid.size()==frame.validBefore)failed.insert(std::move(frame.key));pending.pop_back();continue;}
+        frame.key=Continuation(frame.state);
+        if(failed.contains(frame.key)){pending.pop_back();continue;}
+        frame.entered=true;frame.validBefore=valid.size();
+        State state=std::move(frame.state);bool alive=true,split=false;
         while(alive&&!state.tasks.empty()&&budget.Spend()){
             const auto task=state.tasks.back();state.tasks.pop_back();auto& b=state.bits;
             switch(task.kind){
@@ -162,13 +186,22 @@ inline std::vector<State> Parse(std::span<const uint8_t> bytes,const Tables& t,b
             case Kind::List:if(!b.Mark(0x4d4a)){alive=false;break;}state.tasks.push_back({Kind::Items,b.Read(16),task.depth});break;
             case Kind::Items:{if(!task.count)break;state.tasks.push_back({Kind::Items,task.count-1,task.depth});Prefix p;if(!ItemPrefix(state,t,task.depth,p)){alive=false;break;}if(!p.definition||(p.flags&(1u<<21)))break;
                 const bool target=p.definition->stackable&&p.definition->code==std::array<char,4>{'E','v','1','1'};
-                if(alternatives&&target){if(++budget.branches>4096||pending.size()>128){budget.limit=true;alive=false;break;}State old=state;if(ItemSuffix(old,t,p,true))pending.push_back(std::move(old));}
+                if(alternatives&&target){
+                    if(++budget.branches>4096){budget.limit=true;alive=false;break;}
+                    State old=state;const bool oldValid=ItemSuffix(old,t,p,true);
+                    const bool currentValid=ItemSuffix(state,t,p,false);
+                    if(oldValid)pending.push_back({std::move(old)});
+                    if(currentValid)pending.push_back({std::move(state)});
+                    split=true;alive=false;break;
+                }
                 alive=ItemSuffix(state,t,p,false);break;}
             case Kind::Corpses:if(!b.Mark(0x4d4a)){alive=false;break;}{const auto count=b.Read(16);if(count>16){alive=false;break;}state.tasks.push_back({Kind::Corpse,count});}break;
             case Kind::Corpse:if(task.count){b.Skip(96);state.tasks.push_back({Kind::Corpse,task.count-1});state.tasks.push_back({Kind::List});}break;
             case Kind::Mercenary:if(!(bytes[0x24]&0x20))break;if(!b.Mark(0x666a)){alive=false;break;}if(Word(bytes,0xb3))state.tasks.push_back({Kind::List});break;
             case Kind::Golem:if(!(bytes[0x24]&0x20))break;if(!b.Mark(0x666b)){alive=false;break;}{auto present=b.Read(8);if(present>1){alive=false;break;}if(present)state.tasks.push_back({Kind::Items,1});}break;
             }
+            // A split moved state into child frames; do not read its cursor.
+            if(split)break;
             alive=alive&&b.ok;
         }
         if(alive&&state.tasks.empty()&&state.bits.ok){valid.push_back(std::move(state));if(!alternatives||valid.size()>1)return valid;}
@@ -202,7 +235,7 @@ inline Result ConvertRecord(std::span<const uint8_t> bytes,const Tables& tables,
     std::sort(prepared.items.begin(),prepared.items.end(),[](const auto& a,const auto& b){return a.code<b.code;});
     for(size_t n=1;n<prepared.items.size();++n){const auto& a=prepared.items[n-1];const auto& b=prepared.items[n];
         if(a.code==b.code && (a.armor!=b.armor || a.weapon!=b.weapon || a.stackable!=b.stackable || a.gold!=b.gold ||
-            a.tome!=b.tome || a.bodyPart!=b.bodyPart || a.charm!=b.charm || a.questDifficulty!=b.questDifficulty)){
+            a.tome!=b.tome || a.bodyPart!=b.bodyPart || a.charm!=b.charm || a.questDifficulty!=b.questDifficulty || a.candyRandom!=b.candyRandom)){
             result.status=Status::Unsupported;result.message="Conflicting compiled item definitions prevent safe conversion.";return result;
         }
     }
