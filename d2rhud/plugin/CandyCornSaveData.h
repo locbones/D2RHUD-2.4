@@ -147,18 +147,14 @@ inline bool ItemPrefix(State& state,const Tables& t,unsigned depth,Prefix& p) {
     if(def->gold&&!Gold(b))return false;
     return b.ok;
 }
-inline bool ItemSuffix(State& state,const Tables& t,const Prefix& p,bool legacy) {
+inline bool ItemSuffix(State& state,const Tables& t,const Prefix& p,bool legacy,bool* hasCandyRandom=nullptr) {
     auto& b=state.bits;const auto quantity=b.pos;
     if(p.definition->stackable&&!legacy)b.Skip(9);
     if(p.flags&(1u<<11)){auto sockets=Stat(t,194);if(!sockets)return false;const auto total=b.Read(sockets->saveBits);if(p.sockets>total)return false;}
     else if(p.sockets)return false;
     unsigned extra=0;if(p.quality==5){const auto mask=b.Read(5);for(unsigned n=0;n<5;++n)extra+=(mask>>n)&1;}
     bool candyRandom=false;if(!Properties(b,t,&candyRandom))return false;
-    // RMD's normal Candy Corn receive rng_generator from automagic group 394.
-    // Its old stat ID can look like quantity 398, with the random value then
-    // masquerading as an unrelated stat. That interpretation loses the
-    // configured automagic property even when its byte length looks correct.
-    if(p.definition->candyRandom && p.quality==2 && !candyRandom)return false;
+    if(hasCandyRandom)*hasCandyRandom=candyRandom;
     for(unsigned n=0;n<extra;++n)if(!Properties(b,t))return false;
     if((p.flags&(1u<<26))&&!Properties(b,t))return false;
     const auto rawEnd=b.pos;if(!b.Align())return false;
@@ -188,8 +184,17 @@ inline std::vector<State> Parse(std::span<const uint8_t> bytes,const Tables& t,b
                 const bool target=p.definition->stackable&&p.definition->code==std::array<char,4>{'E','v','1','1'};
                 if(alternatives&&target){
                     if(++budget.branches>4096){budget.limit=true;alive=false;break;}
-                    State old=state;const bool oldValid=ItemSuffix(old,t,p,true);
-                    const bool currentValid=ItemSuffix(state,t,p,false);
+                    State old=state;bool oldRandom=false,currentRandom=false;
+                    bool oldValid=ItemSuffix(old,t,p,true,&oldRandom);
+                    bool currentValid=ItemSuffix(state,t,p,false,&currentRandom);
+                    // Only after the whole current-format parse failed, use
+                    // Halloween automagic as a tie-break for equal-length
+                    // item interpretations. RNG is not required on valid
+                    // modern stacks, nor on unrelated items in a mixed save.
+                    if(oldValid && currentValid && old.bits.pos==state.bits.pos &&
+                        p.definition->candyRandom && p.quality==2 && oldRandom!=currentRandom){
+                        oldValid=oldRandom;currentValid=currentRandom;
+                    }
                     if(oldValid)pending.push_back({std::move(old)});
                     if(currentValid)pending.push_back({std::move(state)});
                     split=true;alive=false;break;

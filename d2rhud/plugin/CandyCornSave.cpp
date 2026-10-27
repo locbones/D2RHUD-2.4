@@ -29,8 +29,9 @@ std::string status="Candy Corn conversion is not initialized.";
 std::filesystem::path directory;
 std::deque<Notification> notices;
 struct Signature {uint32_t rva,size;uint64_t hash;};
-constexpr std::array<Signature,10> signatures{{
+constexpr std::array<Signature,11> signatures{{
     {0x41f570,32,0xf0f8f709a7df0717ULL}, // Locked save-buffer preview; copies bytes before parsing inventory.
+    {0x41f82a,18,0xd93f9ec7e3b4643dULL}, // Native preview skips inventory when the view ends at the fixed header.
     {0x31d540,32,0x9783e7dc39ce527eULL}, // Synchronous current-format reader, no buffer ownership.
     {0x2934ef,32,0x11ea0b69a437d299ULL}, // Caller loads first native descriptor pointer and length.
     {0x31a580,32,0xde2c95873e427480ULL},
@@ -116,11 +117,24 @@ bool Prepare(Context& c,D2ClientStrc* client,uint8_t* source,int32_t size,D2Unit
         ". Original save backup: "+DisplayPath(c.backup));
     return true;
 }
+bool HeaderPreview(std::span<uint8_t> bytes,void* second,void* third,void* fourth,uintptr_t fifth,const std::string& reason){
+    constexpr size_t headerBytes=0x2fd;
+    if(bytes.size()<headerBytes || Detail::Word(bytes,0)!=0xaa55aa55 || Detail::Word(bytes,4)!=98)return false;
+    // A migration failure is not evidence that the game's character header is
+    // invalid. A false preview result removes the character from the menu.
+    // Let the native reader populate its normal header/appearance defaults,
+    // but end this borrowed view before stats/inventory so no unsafe item
+    // decoder runs. This view is never saved or used for actual game loading.
+    PreviewBuffer header;header.bytes=bytes.data();header.size=headerBytes;
+    Report("Character remains available with a basic preview; inventory preview was skipped: "+reason);
+    try{return originalPreview(&header,second,third,fourth,fifth);}
+    catch(const std::exception& e){Report(std::string("Native basic character preview failed: ")+e.what());return false;}
+}
 bool __fastcall PreviewHook(PreviewBuffer* buffer,void* second,void* third,void* fourth,uintptr_t fifth){
     if(!installed.load() || !buffer)return originalPreview(buffer,second,third,fourth,fifth);
     Context context;
+    std::vector<uint8_t> snapshot;
     try {
-        std::vector<uint8_t> snapshot;
         {
             struct Lock {SRWLOCK* value;explicit Lock(SRWLOCK* p):value(p){AcquireSRWLockShared(value);}~Lock(){ReleaseSRWLockShared(value);}} lock(&buffer->lock);
             // Mirror the native preview's source layout and lock. Never replace
@@ -131,15 +145,15 @@ bool __fastcall PreviewHook(PreviewBuffer* buffer,void* second,void* third,void*
         }
         if(snapshot.empty())return originalPreview(buffer,second,third,fourth,fifth);
         const bool ready=Prepare(context,nullptr,snapshot.data(),int32_t(snapshot.size()),nullptr);
-        if(context.blocked)return false;
+        if(context.blocked)return HeaderPreview(snapshot,second,third,fourth,fifth,Status());
         if(!ready)return originalPreview(buffer,second,third,fourth,fifth);
         PreviewBuffer converted;converted.bytes=context.converted.data();converted.size=context.converted.size();
         const bool accepted=originalPreview(&converted,second,third,fourth,fifth);
         Report(context.character+(accepted?": prepared ":": native preview rejected ")+std::to_string(context.count)+
             " converted Candy Corn for character selection. Original save backup: "+DisplayPath(context.backup));
-        if(!accepted)Notice("Candy Corn conversion could not finish",context.character+": character preview could not be loaded. The original save and backup are intact.",true);
+        if(!accepted)return HeaderPreview(snapshot,second,third,fourth,fifth,"native preview rejected the converted item view");
         return accepted;
-    }catch(const std::exception& e){Report(std::string("Character preview conversion paused: ")+e.what());return false;}
+    }catch(const std::exception& e){return HeaderPreview(snapshot,second,third,fourth,fifth,e.what());}
 }
 int __fastcall LoadHook(D2GameStrc* game,D2ClientStrc* client,uint8_t* bytes,int32_t size,D2UnitStrc** output){
     if(!installed.load())return originalLoad(game,client,bytes,size,output);

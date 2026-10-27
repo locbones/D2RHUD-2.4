@@ -88,6 +88,21 @@ void StashTests(){
     rngTables.stats[383]={2,0,0,1,true};rngTables.stats[402]={2,0,0,0,true};
     auto dense=Stash(false,57,true),denseExpected=dense;unsigned count=0,legacyCount=0;
     auto append=[](auto& bytes,const auto& item){bytes.insert(bytes.end(),item.begin(),item.end());};
+    for(unsigned quantity:{0,1,92,296,398,500,511})for(bool properties:{false,true}){
+        const auto item=Item(false,quantity,10000+count,false,false,properties);
+        append(dense,item);append(denseExpected,item);++count;
+        const auto currentSave=Simple(false,quantity),currentBefore=currentSave;
+        assert(Convert(currentSave,rngTables).status==Status::Unchanged && currentSave==currentBefore);
+    }
+    // This valid modern quantity/stat pair also fits the old RNG layout.
+    // A complete current-format save wins without invoking that tie-break.
+    const auto prefixSource=Item(false,398);Detail::Budget prefixBudget;Detail::State prefixState;
+    prefixState.bits={prefixSource,0,&prefixBudget,true};Detail::Prefix prefix;
+    assert(Detail::ItemPrefix(prefixState,rngTables,0,prefix));Writer modern;
+    for(size_t bit=0;bit<prefixState.bits.pos;++bit)modern.Add((prefixSource[bit/8]>>(bit%8))&1,1);
+    modern.Add(398,9);modern.Add(270,9);modern.Add(0,2);modern.Add(511,9);modern.Align();
+    Save modernSave;modernSave.List(1);modernSave.ItemBytes(modern.bytes);modernSave.Corpse(0);modernSave.Merc();modernSave.Golem();
+    const auto modernBytes=modernSave.Done();assert(Convert(modernBytes,rngTables).status==Status::Unchanged);
     for(unsigned roll=1;roll<=549;++roll){const bool legacy=roll%3!=0;const unsigned quantity=roll%2?398:511;
         append(dense,Item(legacy,quantity,roll,false,false,false,int(roll)));
         append(denseExpected,Item(false,legacy?1:quantity,roll,false,false,false,int(roll)));
@@ -185,7 +200,15 @@ void BindDefinitions(){
 uint8_t* expectedSource=nullptr;size_t expectedSize=0;unsigned leafCalls=0;int leafResult=0;
 CandyCornSave::PreviewBuffer* expectedPreviewSource=nullptr;
 std::vector<uint8_t> expectedPreviewBytes;unsigned previewCalls=0;bool previewResult=true,throwPreview=false;
+unsigned basicPreviewCalls=0;bool basicPreviewResult=true;
+bool MockBasicPreview(CandyCornSave::PreviewBuffer* buffer){
+    assert(buffer && buffer!=expectedPreviewSource && buffer->size==0x2fd);
+    assert(expectedPreviewSource && !memcmp(buffer->bytes,expectedPreviewSource->bytes,0x2fd));
+    assert(TryAcquireSRWLockExclusive(&expectedPreviewSource->lock));ReleaseSRWLockExclusive(&expectedPreviewSource->lock);
+    ++basicPreviewCalls;return basicPreviewResult;
+}
 bool __fastcall MockPreview(CandyCornSave::PreviewBuffer* buffer,void* second,void* third,void* fourth,uintptr_t fifth){
+    if(buffer && buffer->size==0x2fd)return MockBasicPreview(buffer);
     assert(buffer && buffer!=expectedPreviewSource && second==reinterpret_cast<void*>(2) && third==reinterpret_cast<void*>(3) && fourth==reinterpret_cast<void*>(4) && fifth==0x11223344);
     assert(buffer->size==expectedPreviewBytes.size() && std::equal(expectedPreviewBytes.begin(),expectedPreviewBytes.end(),buffer->bytes));
     assert(TryAcquireSRWLockExclusive(&expectedPreviewSource->lock));ReleaseSRWLockExclusive(&expectedPreviewSource->lock);
@@ -231,11 +254,23 @@ void NativeRealSaves(const std::filesystem::path& excel,const std::filesystem::p
         for(unsigned offset:{4,6}){auto parent=int16_t(Detail::Word(types,4+size_t(type)*0xe4+offset,2));if(parent>0 && parent<int(count))pending.push_back(uint32_t(parent));}}}
     Put(image,0x1ca0390,itemRows.data());Put(image,0x1ca0398,uint32_t(itemRows.size()/0x1b4));Put(image,0x1c9fb78,statRows.data());Put(image,0x1c9fb80,uint32_t(statRows.size()/0x144));
     Put(image,0x1c9fc10,typeRows.data());Put(image,0x1c9fbf8,count);Put(image,0x1c9fc08,stride);
-    Tables tables;assert(ReadTables(tables));D2ClientStrc client{};D2UnitStrc* unit=nullptr;size_t characters=0,pieces=0;
-    originalPreview=MockPreview;originalLoad=+[](D2GameStrc*,D2ClientStrc*,uint8_t* bytes,int32_t size,D2UnitStrc**)->int{
-        assert(bytes!=expectedSource && size==int32_t(expectedPreviewBytes.size()) && std::equal(expectedPreviewBytes.begin(),expectedPreviewBytes.end(),bytes));return 0;};
+    Tables tables;assert(ReadTables(tables));D2ClientStrc client{};D2UnitStrc* unit=nullptr;size_t characters=0,currentCharacters=0,pieces=0;
     for(const auto& entry:std::filesystem::directory_iterator(saves))if(entry.path().extension()==L".d2s"){
-        auto source=Read(entry.path());const auto before=source;const auto converted=Convert(source,tables);if(converted.status!=Status::Converted)continue;
+        auto source=Read(entry.path());const auto before=source;const auto converted=Convert(source,tables);
+        if(converted.status==Status::Unchanged){
+            originalPreview=+[](PreviewBuffer* buffer,void*,void*,void*,uintptr_t)->bool{
+                assert(buffer==expectedPreviewSource && buffer->bytes==expectedSource && buffer->size==expectedSize);return true;};
+            originalLoad=+[](D2GameStrc*,D2ClientStrc*,uint8_t* bytes,int32_t size,D2UnitStrc**)->int{
+                assert(bytes==expectedSource && size==int32_t(expectedSize));return 0;};
+            PreviewBuffer buffer;buffer.bytes=source.data();buffer.size=source.size();expectedPreviewSource=&buffer;
+            expectedSource=source.data();expectedSize=source.size();
+            assert(Native<Preview>(0x41f570)(&buffer,nullptr,nullptr,nullptr,0));
+            assert(Native<Load>(0x31d540)(nullptr,&client,source.data(),int32_t(source.size()),&unit)==0);
+            assert(source==before && Read(entry.path())==before);++currentCharacters;continue;
+        }
+        if(converted.status!=Status::Converted)continue;
+        originalPreview=MockPreview;originalLoad=+[](D2GameStrc*,D2ClientStrc*,uint8_t* bytes,int32_t size,D2UnitStrc**)->int{
+            assert(bytes!=expectedSource && size==int32_t(expectedPreviewBytes.size()) && std::equal(expectedPreviewBytes.begin(),expectedPreviewBytes.end(),bytes));return 0;};
         const auto name=entry.path().stem().wstring();if(name==L"TryingAgain")assert(converted.converted==5);if(name==L"BoJenkins_a")assert(converted.converted==3);if(name==L"ToxicAF")assert(converted.converted==27);
         PreviewBuffer buffer;buffer.bytes=source.data();buffer.size=source.size();expectedPreviewSource=&buffer;expectedPreviewBytes=converted.bytes;
         assert(Native<Preview>(0x41f570)(&buffer,reinterpret_cast<void*>(2),reinterpret_cast<void*>(3),reinterpret_cast<void*>(4),0x11223344));
@@ -244,6 +279,7 @@ void NativeRealSaves(const std::filesystem::path& excel,const std::filesystem::p
         ++characters;pieces+=converted.converted;
     }
     std::cout<<"Real save preview and game-load detours: "<<characters<<" legacy characters, "<<pieces<<" Candy Corn; expected converted bytes and original file ownership verified.\n";
+    std::cout<<"Current-format save detours: "<<currentCharacters<<" characters passed unchanged to native preview and game loading.\n";
     size_t pages=0,stashPieces=0;
     originalStashLoad=+[](D2GameStrc*,D2ClientStrc* client,D2UnitStrc*)->int{
         assert(client->pSaveHeaders!=reinterpret_cast<D2SaveHeadersStrc*>(expectedRealDescriptors));
@@ -309,17 +345,23 @@ void NativeTests(const std::filesystem::path& exe,const std::filesystem::path& r
     assert(!active && hookedPreview(&sourcePreview,reinterpret_cast<void*>(2),reinterpret_cast<void*>(3),reinterpret_cast<void*>(4),0x11223344));
     assert(previewCalls==1 && previewSave==previewBefore && sourcePreview.bytes==previewSave.data() && sourcePreview.size==previewSave.size());
     assert(CandyCornSave::Status().find("prepared 1 converted Candy Corn for character selection")!=std::string::npos);
-    previewResult=false;assert(!hookedPreview(&sourcePreview,reinterpret_cast<void*>(2),reinterpret_cast<void*>(3),reinterpret_cast<void*>(4),0x11223344));
+    previewResult=false;assert(hookedPreview(&sourcePreview,reinterpret_cast<void*>(2),reinterpret_cast<void*>(3),reinterpret_cast<void*>(4),0x11223344));
     assert(CandyCornSave::Status().find("native preview rejected")!=std::string::npos);
-    previewResult=true;throwPreview=true;assert(!hookedPreview(&sourcePreview,reinterpret_cast<void*>(2),reinterpret_cast<void*>(3),reinterpret_cast<void*>(4),0x11223344));throwPreview=false;
+    basicPreviewResult=false;assert(!hookedPreview(&sourcePreview,reinterpret_cast<void*>(2),reinterpret_cast<void*>(3),reinterpret_cast<void*>(4),0x11223344));basicPreviewResult=true;
+    previewResult=true;throwPreview=true;assert(hookedPreview(&sourcePreview,reinterpret_cast<void*>(2),reinterpret_cast<void*>(3),reinterpret_cast<void*>(4),0x11223344));throwPreview=false;
     assert(TryAcquireSRWLockExclusive(&sourcePreview.lock));ReleaseSRWLockExclusive(&sourcePreview.lock);
-    // No unsafe native fallback for current-format records whose item layout
-    // or loaded metadata cannot be verified. Source data remains untouched.
+    // Converter failure must not remove a valid character header from the
+    // selection menu. Never expose the unverified inventory to native parsing.
     auto badPreview=previewSave;badPreview[50]^=1;sourcePreview.bytes=badPreview.data();const auto callsBefore=previewCalls;
-    assert(!hookedPreview(&sourcePreview,nullptr,nullptr,nullptr,0) && previewCalls==callsBefore);
+    assert(hookedPreview(&sourcePreview,nullptr,nullptr,nullptr,0) && previewCalls==callsBefore);
+    assert(CandyCornSave::Status().find("Character remains available with a basic preview")!=std::string::npos);
     sourcePreview.bytes=previewSave.data();Put(image,0x1ca0398,uint32_t(0));
-    assert(!hookedPreview(&sourcePreview,nullptr,nullptr,nullptr,0) && previewCalls==callsBefore);
+    assert(hookedPreview(&sourcePreview,nullptr,nullptr,nullptr,0) && previewCalls==callsBefore);
     assert(CandyCornSave::Status().find("tables are unavailable")!=std::string::npos);BindDefinitions();
+    auto unfamiliar=Simple(false);unfamiliar.push_back(0x7e);Detail::Store(unfamiliar,8,uint32_t(unfamiliar.size()));Detail::Store(unfamiliar,12,Checksum(unfamiliar));
+    PreviewBuffer unfamiliarBuffer;unfamiliarBuffer.bytes=unfamiliar.data();unfamiliarBuffer.size=unfamiliar.size();expectedPreviewSource=&unfamiliarBuffer;
+    const auto unfamiliarBefore=unfamiliar;assert(hookedPreview(&unfamiliarBuffer,nullptr,nullptr,nullptr,0) && previewCalls==callsBefore && unfamiliar==unfamiliarBefore);
+    expectedPreviewSource=&sourcePreview;
     // Already-current stacks and the old non-stackable mod definition retain
     // their exact native buffer/quantity rather than being converted again.
     originalPreview=+[](PreviewBuffer* buffer,void*,void*,void*,uintptr_t)->bool{assert(buffer==expectedPreviewSource);return true;};
@@ -436,8 +478,10 @@ void NativeTests(const std::filesystem::path& exe,const std::filesystem::path& r
     assert(original==Simple(true));
     originalPreview=MockPreview;expectedPreviewSource=&sourcePreview;expectedPreviewBytes=Simple(false);
     const auto previewsBeforeDenied=previewCalls;
-    assert(!hookedPreview(&sourcePreview,reinterpret_cast<void*>(2),reinterpret_cast<void*>(3),reinterpret_cast<void*>(4),0x11223344));
+    const auto basicBeforeDenied=basicPreviewCalls;
+    assert(hookedPreview(&sourcePreview,reinterpret_cast<void*>(2),reinterpret_cast<void*>(3),reinterpret_cast<void*>(4),0x11223344));
     assert(previewCalls==previewsBeforeDenied && previewSave==previewBefore && sourcePreview.bytes==previewSave.data());
+    assert(basicPreviewCalls==basicBeforeDenied+1);
     if(!excel.empty()){directory=normalDirectory;NativeRealSaves(excel,saves);}
     Uninstall();assert(!installed.load());
     testImage=0;VirtualFree(image,0,MEM_RELEASE);image=nullptr;

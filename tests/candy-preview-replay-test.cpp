@@ -80,8 +80,8 @@ int wmain(int argc,wchar_t** argv){
     for(unsigned n=0;n<nt->FileHeader.NumberOfSections;++n)memcpy(image+sections[n].VirtualAddress,file.data()+sections[n].PointerToRawData,sections[n].SizeOfRawData);
     Replay::Bind(argv[3]);
     const auto original=Read(argv[4]);const auto converted=Convert(original,Replay::tables);
-    assert(converted.status==CandyCornSaveData::Status::Converted && converted.converted>0);
-    Replay::Expect(converted.bytes);
+    assert(converted.status==CandyCornSaveData::Status::Converted || converted.status==CandyCornSaveData::Status::Unchanged);
+    Replay::Expect(converted.status==CandyCornSaveData::Status::Converted?converted.bytes:original);
     SetEnvironmentVariableW(L"LOCALAPPDATA",output.c_str());Initialize("RMD-MP");assert(installed.load());
     Put(image,0x149cb50,&AcquireSRWLockShared);Put(image,0x149cb58,&ReleaseSRWLockShared);
     image[0x1434c50]=0xc3;
@@ -99,8 +99,31 @@ int wmain(int argc,wchar_t** argv){
     assert(Replay::calls==Replay::expectedItems.size() && source==original && Read(argv[4])==original);
     assert(buffer.bytes==source.data() && buffer.size==original.size());
     assert(TryAcquireSRWLockExclusive(&buffer.lock));ReleaseSRWLockExclusive(&buffer.lock);
-    const auto backup=directory/(Storage::Hex(Storage::Hash(original))+L"-"+std::to_wstring(original.size())+L".before-candy-corn.d2s");
-    assert(Read(backup)==original);
+    if(converted.converted){
+        const auto backup=directory/(Storage::Hex(Storage::Hash(original))+L"-"+std::to_wstring(original.size())+L".before-candy-corn.d2s");
+        assert(Read(backup)==original);
+    }
+    const auto fullSummary=summary;const auto fullProgression=progression;const auto fullFlag=flag;
+    const auto itemCount=uint32_t(itemRows.size()/0x1b4);
+    Put(image,0x1ca0398,uint32_t(0));
+    assert(reader(&buffer,summary.data(),appearance.data(),progression.data(),reinterpret_cast<uintptr_t>(&flag)));
+    assert(Replay::calls==Replay::expectedItems.size() && summary==fullSummary && progression==fullProgression && flag==fullFlag);
+    assert(CandyCornSave::Status().find("Character remains available with a basic preview")!=std::string::npos);
+    Put(image,0x1ca0398,itemCount);
+    auto unfamiliar=original;unfamiliar.push_back(0x7e);
+    Detail::Store(unfamiliar,8,uint32_t(unfamiliar.size()));Detail::Store(unfamiliar,12,Checksum(unfamiliar));
+    const auto unfamiliarBefore=unfamiliar;PreviewBuffer unfamiliarCache;unfamiliarCache.bytes=unfamiliar.data();unfamiliarCache.size=unfamiliar.size();
+    assert(reader(&unfamiliarCache,summary.data(),appearance.data(),progression.data(),reinterpret_cast<uintptr_t>(&flag)));
+    assert(Replay::calls==Replay::expectedItems.size() && summary==fullSummary && unfamiliar==unfamiliarBefore);
+    assert(unfamiliarCache.bytes==unfamiliar.data() && unfamiliarCache.size==unfamiliar.size());
+    if(converted.converted){
+        directory=output/L"blocked-preview-backup";Write(directory,original);
+        assert(reader(&buffer,summary.data(),appearance.data(),progression.data(),reinterpret_cast<uintptr_t>(&flag)));
+        assert(Replay::calls==Replay::expectedItems.size() && summary==fullSummary);
+    }
+    PreviewBuffer truncated;truncated.bytes=source.data();truncated.size=100;
+    assert(!reader(&truncated,summary.data(),appearance.data(),progression.data(),reinterpret_cast<uintptr_t>(&flag)));
+    assert(source==original && Read(argv[4])==original && buffer.bytes==source.data() && buffer.size==source.size());
     Uninstall();testImage=0;VirtualFree(image,0,MEM_RELEASE);image=nullptr;
-    std::cout<<"Actual native client preview replay passed: "<<converted.converted<<" legacy Candy Corn converted before "<<Replay::calls<<" root item decodes; original save/cache/lock and backup verified.\n";
+    std::cout<<"Actual native client preview replay passed: "<<converted.converted<<" legacy Candy Corn converted before "<<Replay::calls<<" root item decodes; basic preview preserves summary/progression without item decoding when metadata/backup/body validation fails; original save/cache/lock verified.\n";
 }

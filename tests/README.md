@@ -31,10 +31,15 @@ converted tab, the complete original backup, and restored native descriptors.
 Dense mixed old/new Candy Corn tests preserve all 549 Halloween random rolls
 and existing quantities, reuse failed continuations on malformed tails, and
 continue refusing genuinely ambiguous records.
+Valid current-format stacks without RNG properties also pass unchanged, both
+alone and alongside legacy items. Current-format character fixtures run through
+the installed preview/game-load detours without replacing their native buffers.
 The preview hook runs before last-selected-character inventory parsing, uses
 the native shared-lock buffer layout, and preserves all five reader arguments.
 Its tests cover native empty-buffer return, lock release, backup preservation,
-native rejection, exceptions and safe refusal of invalid data or missing tables.
+native rejection and exceptions. Migration failures use a native basic preview
+that skips inventory decoding, keeping valid character headers in the selection
+list even when item metadata, detailed parsing or backups are unavailable.
 The installed native reader detour is exercised both with and without the
 optional outer load scope, including different reader buffers/output slots and
 another client's read. Failed backups return the native bad-save result without
@@ -105,10 +110,13 @@ compiled test executables and captured test output.
 tests\run-candy-preview-replay.cmd "%TEMP%\candy-preview-replay" "C:\path\D2R.exe" "C:\path\data\global\excel" "C:\path\TryingAgain.d2s"
 ```
 
-Replays a legacy character through the installed client-preview hook and the
+Replays a legacy or already-current character through the installed preview hook and the
 actual native preview header/stat parsing and item-list traversal. Appearance
 string/quest storage and the final item decoder are stubbed; every item byte
 reaching that decoder must match an independently converted character. The
 fixture verifies the original file, cache pointer/length, shared lock and exact
 backup, and never writes the source character. Test backups use a private
 `LOCALAPPDATA` under the output directory.
+The native basic-preview fallback must preserve summary/progression fields and
+skip every item decode on metadata, backup or body-validation failure; native
+rejection of a truncated header remains intact.
