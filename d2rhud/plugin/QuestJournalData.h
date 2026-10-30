@@ -156,51 +156,70 @@ inline bool Valid(const State& s,int count){return s.completed>=0&&s.completed<=
 inline bool Allows(const State& s,const RecipeGate& gate,int count){return !s.uncertain&&Valid(s,count)&&gate.quest==s.completed+1&&(gate.turnIn?s.objectiveReady:!s.objectiveReady);}
 inline bool Advance(State& s,const RecipeGate& gate,int count){if(!Allows(s,gate,count))return false;if(gate.turnIn){++s.completed;s.objectiveReady=false;}else s.objectiveReady=true;s.legacyClosed=true;return true;}
 inline bool Import(State& s,int completed,int count){if(s.uncertain||s.legacyClosed||s.completed||s.objectiveReady||completed<1||completed>count)return false;s.completed=completed;s.objectiveReady=false;s.legacyClosed=true;return true;}
+// Checksum fields exist only to read old journals. They never select progress.
 struct Checkpoint {uint32_t checksum=0,saveSize=0;State state;};
-struct History {Identity identity;uint64_t digest=0;std::vector<Checkpoint> checkpoints;};
+struct History {Identity identity;uint64_t digest=0,revision=0;std::vector<Checkpoint> checkpoints;};
+inline Identity Stable(Identity identity){
+    identity.created=0;identity.flags&=0x24;
+    for(auto& c:identity.name)if(c>='A'&&c<='Z')c=char(c+32);
+    return identity;
+}
+inline bool SameCharacter(const Identity& a,const Identity& b){return SummonPersistence::Data::SameIdentity(Stable(a),Stable(b));}
+inline std::string Key(const Identity& identity){return SummonPersistence::Data::Key(Stable(identity));}
 inline bool Header(const uint8_t* bytes,size_t size,Identity& identity,Checkpoint& point){
     auto get=[&]<class T>(size_t at){T value{};if(at+sizeof(T)<=size)memcpy(&value,bytes+at,sizeof(T));return value;};
     if(!bytes||size<0x14f||get.operator()<uint32_t>(0)!=0xaa55aa55||get.operator()<uint32_t>(4)!=98)return false;
-    point.saveSize=get.operator()<uint32_t>(8);point.checksum=get.operator()<uint32_t>(12);
-    if(point.saveSize<0x14f||point.saveSize>size||bytes[0x10b+60])return false;
+    if(bytes[0x10b+60])return false;
     identity.name.assign(reinterpret_cast<const char*>(bytes+0x10b),strnlen_s(reinterpret_cast<const char*>(bytes+0x10b),61));
-    // Native normal serialization clears the new-character timestamp at 0x2c.
-    // It is not an immutable character identifier. Keep the legacy JSON field
-    // at zero and bind checkpoints to the complete serialized save instead.
-    identity.created=0;identity.classId=bytes[0x28];identity.flags=get.operator()<uint32_t>(0x24)&0x64;
-    return SummonPersistence::Data::ValidIdentity(identity);
+    identity.created=0;identity.classId=bytes[0x28];identity.flags=get.operator()<uint32_t>(0x24)&0x24;
+    point={};return SummonPersistence::Data::ValidIdentity(identity);
 }
-inline void Append(History& history,Checkpoint point){
-    std::erase_if(history.checkpoints,[&](const Checkpoint& p){return p.checksum==point.checksum&&p.saveSize==point.saveSize;});
-    history.checkpoints.push_back(point);if(history.checkpoints.size()>MaxCheckpoints)history.checkpoints.erase(history.checkpoints.begin());
+inline State Merge(State a,const State& b){
+    const auto completed=(std::max)(a.completed,b.completed);
+    const bool ready=(a.completed==completed&&a.objectiveReady)||(b.completed==completed&&b.objectiveReady);
+    const bool uncertain=(a.completed==completed&&a.uncertain)||(b.completed==completed&&b.uncertain);
+    a.completed=completed;a.objectiveReady=ready;a.uncertain=uncertain;
+    a.legacyClosed=a.legacyClosed||b.legacyClosed||completed||ready;
+    a.kills=(std::max)(a.kills,b.kills);a.evidence|=b.evidence;a.menus|=b.menus;a.countess|=b.countess;a.thul|=b.thul;return a;
 }
-inline std::optional<State> Find(const History& h,uint32_t checksum,uint32_t size){for(auto it=h.checkpoints.rbegin();it!=h.checkpoints.rend();++it)if(it->checksum==checksum&&it->saveSize==size)return it->state;return {};}
-inline bool Pristine(const History& history){return std::all_of(history.checkpoints.begin(),history.checkpoints.end(),[](const auto& point){return point.state==State{};});}
-inline std::string Encode(const History& h){
-    nlohmann::json points=nlohmann::json::array();for(const auto& p:h.checkpoints){if(!Valid(p.state,MaxQuests)||p.saveSize<0x14f)throw std::runtime_error("Invalid quest checkpoint.");points.push_back({{"checksum",p.checksum},{"size",p.saveSize},{"completed",p.state.completed},{"ready",p.state.objectiveReady},{"legacyClosed",p.state.legacyClosed},{"uncertain",p.state.uncertain},{"kills",p.state.kills},{"evidence",p.state.evidence},{"countess",p.state.countess},{"thul",p.state.thul},{"menus",p.state.menus}});}
-    if(!SummonPersistence::Data::ValidIdentity(h.identity)||h.checkpoints.empty()||h.checkpoints.size()>MaxCheckpoints)throw std::runtime_error("Invalid quest history.");
-    return nlohmann::json{{"version",1},{"definition",Hex(h.digest)},{"identity",{{"name",h.identity.name},{"created",h.identity.created},{"classId",h.identity.classId},{"flags",h.identity.flags}}},{"checkpoints",std::move(points)}}.dump(2);
+inline State Current(const History& history){State state;for(const auto& point:history.checkpoints)state=Merge(state,point.state);return state;}
+inline void Append(History& history,Checkpoint point){point.checksum=point.saveSize=0;history.checkpoints.assign(1,point);}
+inline std::optional<State> Find(const History& history,uint32_t,uint32_t){return history.checkpoints.empty()?std::optional<State>{}:Current(history);}
+inline bool Pristine(const History& history){return Current(history)==State{};}
+inline nlohmann::json EncodeState(const State& state){
+    return {{"completed",state.completed},{"ready",state.objectiveReady},{"legacyClosed",state.legacyClosed},{"uncertain",state.uncertain},
+        {"kills",state.kills},{"evidence",state.evidence},{"countess",state.countess},{"thul",state.thul},{"menus",state.menus}};
 }
-inline std::optional<History> Decode(std::string_view text,int count){try{
+inline std::optional<State> DecodeState(const nlohmann::json& value){try{
+    using namespace SummonPersistence::Data;State state;uint32_t completed=0,kills=0,menus=0;
+    if(!UnsignedInteger(value,"completed",MaxQuests,completed)||!UnsignedInteger(value,"kills",UINT32_MAX,kills)||
+       !UnsignedInteger(value,"menus",127,menus)||!value.at("evidence").is_number_unsigned())return {};
+    state.completed=int(completed);state.kills=kills;state.menus=uint16_t(menus);state.evidence=value.at("evidence").get<uint64_t>();
+    state.objectiveReady=value.at("ready").get<bool>();state.legacyClosed=value.at("legacyClosed").get<bool>();state.uncertain=value.at("uncertain").get<bool>();
+    state.countess=value.value("countess",false);state.thul=value.value("thul",false);
+    if(!Valid(state,MaxQuests))return {};if(state.completed||state.objectiveReady)state.legacyClosed=true;return state;
+}catch(...){return {};}}
+inline std::string Encode(const History& history){
+    if(!SummonPersistence::Data::ValidIdentity(history.identity)||history.checkpoints.empty()||!Valid(Current(history),MaxQuests))throw std::runtime_error("Invalid quest progress.");
+    const auto identity=Stable(history.identity);
+    return nlohmann::json{{"version",2},{"revision",history.revision},{"identity",{{"name",history.identity.name},{"classId",identity.classId},{"flags",identity.flags}}},{"state",EncodeState(Current(history))}}.dump(2);
+}
+inline std::optional<History> Decode(std::string_view text,int){try{
     if(text.empty()||text.size()>MaxBytes)return {};
-    const auto j=nlohmann::json::parse(text);if(j.at("version")!=1)return {};
-    History h;const auto digest=j.at("definition").get<std::string>();auto parsed=std::from_chars(digest.data(),digest.data()+digest.size(),h.digest,16);if(parsed.ec!=std::errc{}||parsed.ptr!=digest.data()+digest.size())return {};
-    const auto& i=j.at("identity");h.identity.name=i.at("name").get<std::string>();
+    const auto document=nlohmann::json::parse(text);const int version=document.at("version");if(version!=1&&version!=2)return {};
+    History history;const auto& identity=document.at("identity");history.identity.name=identity.at("name").get<std::string>();
     using namespace SummonPersistence::Data;
-    if(!ValidIdentity(h.identity)||!UnsignedInteger(i,"created",UINT32_MAX,h.identity.created)||!UnsignedInteger(i,"classId",UINT32_MAX,h.identity.classId)||!UnsignedInteger(i,"flags",UINT32_MAX,h.identity.flags))return {};
-    const auto& points=j.at("checkpoints");if(!points.is_array()||points.empty()||points.size()>MaxCheckpoints)return {};
-    for(const auto& p:points){Checkpoint point;uint32_t completed=0;
-        if(!UnsignedInteger(p,"checksum",UINT32_MAX,point.checksum)||!UnsignedInteger(p,"size",32*1024*1024,point.saveSize)||point.saveSize<0x14f||!UnsignedInteger(p,"completed",count,completed)||!p.at("ready").is_boolean()||!p.at("legacyClosed").is_boolean()||!p.at("uncertain").is_boolean())return {};
-        auto unsignedField=[&](const char* key,uint64_t maximum,uint64_t& result){if(!p.contains(key)){result=0;return true;}const auto& value=p.at(key);if(!value.is_number_integer()||(value.is_number_integer()&&!value.is_number_unsigned()&&value.get<int64_t>()<0))return false;result=value.get<uint64_t>();return result<=maximum;};
-        uint64_t kills=0,evidence=0,menus=0;if(!unsignedField("kills",UINT32_MAX,kills)||!unsignedField("evidence",UINT64_MAX,evidence)||!unsignedField("menus",127,menus))return {};
-        point.state={int(completed),p.at("ready").get<bool>(),p.at("legacyClosed").get<bool>(),p.at("uncertain").get<bool>()};point.state.kills=uint32_t(kills);point.state.evidence=evidence;point.state.countess=p.value("countess",false);point.state.thul=p.value("thul",false);point.state.menus=uint16_t(menus);if(!Valid(point.state,count))return {};
-        // Completed/ready progress already rules out the fresh-journal setup
-        // choice. Hand-edited test checkpoints must not remain permanently
-        // paused behind an inconsistent "not started" flag. Observations on
-        // a genuinely fresh journal still wait for the explicit setup choice.
-        if(point.state.completed||point.state.objectiveReady)point.state.legacyClosed=true;
-        h.checkpoints.push_back(point);
-    }return h;
+    if(!ValidIdentity(history.identity)||!UnsignedInteger(identity,"classId",UINT32_MAX,history.identity.classId)||!UnsignedInteger(identity,"flags",UINT32_MAX,history.identity.flags))return {};
+    if(version==2){
+        if(!document.at("revision").is_number_unsigned())return {};history.revision=document.at("revision").get<uint64_t>();
+        auto state=DecodeState(document.at("state"));if(!state)return {};Append(history,{0,0,*state});
+    }else{
+        // Obsolete timestamps, hashes and checkpoint save metadata are ignored.
+        const auto& points=document.at("checkpoints");if(!points.is_array()||points.empty()||points.size()>4096)return {};
+        for(auto point:points){for(const char* field:{"kills","evidence","menus"})if(!point.contains(field))point[field]=uint64_t(0);
+            auto state=DecodeState(point);if(!state)continue;history.checkpoints.push_back({0,0,*state});}
+        if(history.checkpoints.empty())return {};
+    }return history;
 }catch(...){return {};}}
 inline bool AtomicWrite(const std::filesystem::path& path,const History& h,std::string& error){
     HANDLE file=INVALID_HANDLE_VALUE;std::filesystem::path temp;bool owns=false;
@@ -216,11 +235,23 @@ inline bool AtomicWrite(const std::filesystem::path& path,const History& h,std::
     }catch(const std::exception& e){error=e.what();if(file!=INVALID_HANDLE_VALUE)CloseHandle(file);if(owns)DeleteFileW(temp.c_str());return false;}
 }
 inline constexpr uint64_t Magic=0xDEADBEEFDEADBEEF;
-inline constexpr uint8_t Operation=7,Version=2;
+inline constexpr uint8_t Operation=7,Version=3;
 #pragma pack(push,1)
-struct Packet {uint8_t opcode=0x2b;uint64_t magic=Magic;uint8_t operation=Operation,version=Version;uint32_t recipient=0,session=0,sequence=0;uint64_t definition=0;uint8_t completed=0,count=0,ready=0,flags=0,legacyCompleted=0;uint32_t kills=0;uint64_t evidence=0;char character[61]{},message[97]{};};
+struct Packet {
+    uint8_t opcode=0x2b;uint64_t magic=Magic;uint8_t operation=Operation,version=Version;
+    uint32_t recipient=0,session=0,sequence=0;uint64_t definition=0;
+    uint8_t completed=0,count=0,ready=0,flags=0,legacyCompleted=0;uint32_t kills=0;uint64_t evidence=0;
+    uint64_t revision=0;uint16_t menus=0;uint8_t classId=0,characterFlags=0,events=0;
+    char character[61]{},message[84]{};
+};
 struct CommandPacket {uint8_t opcode=3;uint64_t magic=Magic;uint8_t operation=Operation,version=Version;uint32_t recipient=0,session=0,sequence=0;uint8_t action=0,proposal=0,detail=0;std::array<uint8_t,184> padding{};};
+struct Transfer {uint64_t revision=0;uint8_t completed=0,ready=0,legacyClosed=0,uncertain=0;uint32_t kills=0;uint64_t evidence=0;uint16_t menus=0;uint8_t countess=0,thul=0;};
 #pragma pack(pop)
-static_assert(sizeof(Packet)==0xce&&sizeof(CommandPacket)==0xd2);
-inline bool Valid(const Packet& p){return p.opcode==0x2b&&p.magic==Magic&&p.operation==Operation&&p.version==Version&&p.count&&p.count<=MaxQuests&&p.completed<=p.count&&p.ready<=1&&(!p.ready||p.completed<p.count)&&!(p.flags&~15)&&p.legacyCompleted<=p.count&&!p.character[60]&&!p.message[96];}
+static_assert(sizeof(Packet)==0xce&&sizeof(CommandPacket)==0xd2&&sizeof(Transfer)<=184);
+inline Transfer Pack(const State& s,uint64_t revision){return {revision,uint8_t(s.completed),uint8_t(s.objectiveReady),uint8_t(s.legacyClosed),uint8_t(s.uncertain),s.kills,s.evidence,s.menus,uint8_t(s.countess),uint8_t(s.thul)};}
+inline std::optional<State> Unpack(const Transfer& p){
+    State s{p.completed,p.ready!=0,p.legacyClosed!=0,p.uncertain!=0,p.kills,p.evidence,p.countess!=0,p.thul!=0,p.menus};
+    if(p.ready>1||p.legacyClosed>1||p.uncertain>1||p.countess>1||p.thul>1||p.menus>127||!Valid(s,MaxQuests))return {};return s;
+}
+inline bool Valid(const Packet& p){return p.opcode==0x2b&&p.magic==Magic&&p.operation==Operation&&p.version==Version&&p.count&&p.count<=MaxQuests&&p.completed<=p.count&&p.ready<=1&&(!p.ready||p.completed<p.count)&&!(p.flags&~31)&&p.legacyCompleted<=p.count&&p.menus<=127&&!(p.events&~7)&&!(p.characterFlags&~0x24)&&p.character[0]&&!p.character[60]&&!p.message[83];}
 }

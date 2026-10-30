@@ -58,7 +58,7 @@ int main(int argc,char** argv){
         view.eventPhase=phase;view.level=39;receivedAt=GetTickCount64();ImGui::NewFrame();DrawCelebration(1);ImGui::Render();assert(!ImGui::GetDrawData()->TotalVtxCount);
     }
     view.eventPhase=EventPhase::Cancelled;view.reward=0;view.eventElapsed=1000;
-    for(const auto display:{ImVec2{1280,720},ImVec2{3840,2160}})for(unsigned failure=0;failure<=unsigned(EventFailure::ChampionTreasureClass);++failure){
+    for(const auto display:{ImVec2{1280,720},ImVec2{3840,2160}})for(unsigned failure=0;failure<=unsigned(EventFailure::SoulTreasureClass);++failure){
         io.DisplaySize=display;view.failure=EventFailure(failure);receivedAt=GetTickCount64();ImGui::NewFrame();DrawCelebration(display.y/1080);ImGui::Render();auto data=ImGui::GetDrawData();assert(data->TotalVtxCount>0);
         for(int l=0;l<data->CmdListsCount;++l)for(const auto& v:data->CmdLists[l]->VtxBuffer)assert(v.pos.x>=-1 && v.pos.x<=display.x+1 && v.pos.y>=-1 && v.pos.y<=display.y+1);
     }

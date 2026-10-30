@@ -1,5 +1,7 @@
 #include "CubeVisual.h"
 #include "CubeVisualData.h"
+#include "CubeConditionNativeData.h"
+#include "CubeUseNativeData.h"
 #include "CubeMapData.h"
 #include "LegacyTransmogData.h"
 #include "GameAssets.h"
@@ -47,6 +49,8 @@ Create originalCreate=nullptr;
 Add originalAdd=nullptr;
 Notify originalNotify=nullptr;
 std::atomic<bool> installed{false};
+std::atomic<bool> extendedConditions{false};
+std::atomic<bool> multipleUseOutputs{false},multipleUseInputs{false};
 std::atomic<const char*> status{"Cube visual recipes are not installed."};
 struct Diagnostics {
     std::atomic<uint32_t> sourceMatches{0}, applied{0}, models{0};
@@ -120,6 +124,40 @@ std::optional<SourceRecipe> SourceOptions(Recipe* recipe) {
     }
     return result;
 }
+std::map<size_t,Conditions> ConditionSources(Recipe* table){
+    if(!extendedConditions.load())return {};
+    SourceOptions(table); // Shares the source refresh used by visual/map annotations.
+    std::lock_guard lock(sourceMutex);return sourceTable.conditions;
+}
+bool ExtendedRuneAllowed(Game*,Unit*,Recipe*,size_t,uint64_t,Unit*,Unit*);
+std::map<size_t,UseSource> UseSources(Recipe* table){
+    SourceOptions(table);std::lock_guard lock(sourceMutex);return sourceTable.useItems;
+}
+struct UsePlan {bool managed=false,valid=true;std::array<int,3> inputs{};};
+UsePlan PlanUseItems(const Recipe& recipe,const UseSource* source=nullptr){
+    UsePlan plan;bool indexed=false,secondary=false;
+    for(size_t i=0;i<3;++i){
+        const auto& output=recipe.outputs[i];int input=output.type==254?UseInput(output):0;
+        if(IndexedUse(output)){indexed=true;if(input<1||input>7)plan.valid=false;}
+        if(source && source->outputs[i].indexed){
+            indexed=true;
+            if(!source->outputs[i].valid || output.type!=254)plan.valid=false;
+            input=source->outputs[i].input;
+        }
+        if(input){plan.inputs[i]=input;secondary|=i!=0;
+            if(input<1 || input>7 || !(recipe.header[0x14+(input-1)*8]&3))plan.valid=false;
+        }
+    }
+    plan.managed=indexed || (secondary&&multipleUseOutputs.load());
+    if(indexed&&!multipleUseInputs.load())plan.valid=false;
+    if(indexed&&secondary&&!multipleUseOutputs.load())plan.valid=false;
+    if(source && (source->enabled!=recipe.header[0] || source->inputs!=recipe.header[0x10]))plan.valid=false;
+    return plan;
+}
+struct UseMatch {Game* game=nullptr;uint32_t player=0;int row=-1;std::array<Unit*,7> inputs{};std::array<uint32_t,7> ids{};};
+thread_local UseMatch useMatch;
+void DispatchCreate(Game*,Unit*,Recipe*,Input*);
+bool ExtendedUseActive();
 constexpr std::array<uint32_t,6> Hooks{0x2620a0,0x306c50,0x2d5e10,0x316b80,0x306a40,0x308840};
 constexpr std::array<LegacyTransmog::Data::Signature,18> Signatures{{
     {0x2620a0,0x29,0x6896e3b7223f1d7fULL},
@@ -218,8 +256,12 @@ void Reject(Recipe* recipe,const char* reason) {
 }
 void __fastcall LinkerHook(char* text,Recipe* recipe,int output,int position,int row,int column) {
     if(!installed.load() || !text || !recipe || output<0 || output>=3) {originalLinker(text,recipe,output,position,row,column);return;}
+    const auto use=ParseUseItem(text);
+    if(use.present && !use.valid){Reject(recipe,"Cube recipe disabled: use useitem or useitem1 through useitem7 as the first output token.");return;}
+    std::string nativeText;if(use.indexed){nativeText=use.native;text=nativeText.data();}
     const auto map=CubeMap::Data::Parse(text);
     if(map.present) {
+        if(use.indexed){Reject(recipe,"Cube map recipe disabled: indexed useitem outputs cannot share a map output token.");return;}
         if(!map.valid){Reject(recipe,"Cube map recipe disabled: use map=<positive level ID> or map=zzz, optionally with useitem.");return;}
         char portal[]="Red Portal";
         originalLinker(portal,recipe,output,position,row,column);
@@ -228,7 +270,8 @@ void __fastcall LinkerHook(char* text,Recipe* recipe,int output,int position,int
         return;
     }
     const auto option=Parse(text);
-    if(!option.present){originalLinker(text,recipe,output,position,row,column);return;}
+    if(!option.present){originalLinker(text,recipe,output,position,row,column);
+        if(use.indexed && recipe->outputs[output].type==254)recipe->outputs[output].special=UseInputMarker|use.input;return;}
     if(!option.valid){Reject(recipe,"Cube visual recipe disabled: use only useitem,vis=<code or set/unique name>.");return;}
     const auto target=Resolve(option.target,row,output);
     uint32_t base=0;
@@ -239,6 +282,7 @@ void __fastcall LinkerHook(char* text,Recipe* recipe,int output,int position,int
     auto& result=recipe->outputs[output];
     result.flags|=VisualFlag;
     result.base=static_cast<uint16_t>(-target.Encode());
+    if(use.indexed)result.special=UseInputMarker|use.input;
 }
 // Item serialization writes state-zero MAGIC lists, not the unit's base stats.
 // Keep the selector beside saved item modifiers so packets and saves retain it.
@@ -289,15 +333,16 @@ bool UnrestrictedMapRecipe(const Recipe& recipe){
 #include "CubeRuneBag.inl"
 #include "QuestCubeNative.inl"
 #include "QuestCubeRuntime.inl"
-void __fastcall CreateHook(Game* game,Unit* player,Recipe* recipe,Input* inputs) {
-    if(!installed.load() || !recipe || !inputs) {originalCreate(game,player,recipe,inputs);return;}
+void CreateBody(Game* game,Unit* player,Recipe* recipe,Input* inputs) {
+    if(!installed.load() || !recipe || !inputs) {DispatchCreate(game,player,recipe,inputs);return;}
     if(CreateQuest(game,player,recipe,inputs))return;
-    if(DepositRunes(game,player,recipe,inputs))return;
+    if(!ExtendedUseActive() && DepositRunes(game,player,recipe,inputs))return;
     size_t questRow=SIZE_MAX;
     const auto questTable=RuneField<Recipe*>(Native<void*>(0x1ca0b18));const auto questCount=RuneField<uint64_t>(Native<void*>(0x1ca0b20));
     const auto questAt=reinterpret_cast<uintptr_t>(recipe),questFirst=reinterpret_cast<uintptr_t>(questTable);
     if(questTable&&questAt>=questFirst&&(questAt-questFirst)%sizeof(Recipe)==0&&(questAt-questFirst)/sizeof(Recipe)<questCount)questRow=(questAt-questFirst)/sizeof(Recipe);
     Recipe augmented=*recipe;
+    for(auto& out:augmented.outputs)if(IndexedUse(out))out.special=0;
     if(const auto source=SourceOptions(recipe)) {
         for(size_t i=0;i<3;++i) {
             const auto map=CubeMap::Data::Parse(source->rawOutputs[i]);
@@ -356,7 +401,7 @@ void __fastcall CreateHook(Game* game,Unit* player,Recipe* recipe,Input* inputs)
         }
         PreparedMap context{game,player,mapLevel};
         struct Scope {PreparedMap* previous;Scope(PreparedMap* value):previous(preparedMap){preparedMap=value;}~Scope(){preparedMap=previous;}} scope(&context);
-        originalCreate(game,player,recipe,inputs);
+        DispatchCreate(game,player,recipe,inputs);
         return;
     }
     bool visual=false;
@@ -387,6 +432,7 @@ void __fastcall CreateHook(Game* game,Unit* player,Recipe* recipe,Input* inputs)
     struct Scope { Context* previous;Scope(Context* value):previous(current){current=value;}~Scope(){current=previous;} } scope(&context);
     ObserveCraft(game,player,&nativeRecipe,inputs,questRow);
 }
+#include "CubeUseItem.inl"
 bool __fastcall AddHook(Unit* player,const Location* locations,const uint32_t* ids,size_t count,bool special) {
     const auto caller=reinterpret_cast<uintptr_t>(_ReturnAddress());
     if(!current || current->player!=player || !ids || !count){
@@ -412,6 +458,10 @@ int __fastcall PortalActionHook(Game* game,Unit* player,Output* output) {
 }
 void __fastcall NotifyHook(Game* game,Unit* owner,Unit* item,uint32_t flags,uint32_t command,
     uint32_t mode,uint32_t page,uint32_t body,uint32_t xy) {
+    if(useTransaction && owner==useTransaction->player && item){
+        if(command==4 && (flags&0x20) && std::any_of(useTransaction->copies.begin(),useTransaction->copies.end(),[&](const auto& copy){return copy.unit==item;}))return;
+        if(command==2 && std::any_of(useTransaction->inputs.begin(),useTransaction->inputs.end(),[&](const auto& input){return input.item==item;}))flags|=1;
+    }
     if(current && owner==current->player && command==2) {
         for(const auto& change:current->changes)if(change.item==item) {
             // useitem reuses its GUID. A normal move packet does not republish
@@ -458,6 +508,7 @@ bool Install() {
     if(!Supported()){status.store("Cube visual recipes unavailable: executable signature mismatch.");return false;}
     LoadSource();
     InitQuestMatcher();
+    InitializeUseNative();
     QuestJournal::SetProofRecovery(RecoverQuestProof);QuestJournal::SetRewardClaim(ClaimQuestBonus);
     const auto initialized=MH_Initialize();
     if(initialized!=MH_OK && initialized!=MH_ERROR_ALREADY_INITIALIZED)return false;
@@ -480,6 +531,10 @@ bool Install() {
 bool QuestJournalSupported(){return installed.load()&&QuestNative::ready.load();}
 bool Installed(){return installed.load();}
 void SetMapPrepare(MapPrepare handler){mapPrepare.store(handler);}
+void SetExtendedConditions(bool enabled){extendedConditions.store(enabled);}
+bool ExtendedConditionsEnabled(){return extendedConditions.load();}
+void SetMultipleUseOutputs(bool enabled){multipleUseOutputs.store(enabled);}
+void SetMultipleUseInputs(bool enabled){multipleUseInputs.store(enabled);}
 const char* Status(){return status.load();}
 void Uninstall() {
     if(!installed.exchange(false))return;

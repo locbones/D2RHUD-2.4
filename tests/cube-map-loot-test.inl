@@ -4,14 +4,14 @@ std::vector<Unit*> treasureObserved;
 std::map<Unit*,int> treasureGold;
 int __fastcall TreasureStat(Unit* unit,uint32_t stat,uint16_t){return stat==14 ? treasureGold.at(unit) : 0;}
 void __fastcall TreasureSet(Unit* unit,int stat,int value,uint16_t){assert(stat==14);treasureGold[unit]=value;}
-int __fastcall TreasureName(void*,const char* name){if(std::string(name)=="Blank")return 4;assert(std::string(name)=="MapGroupA");return 1;}
+int __fastcall TreasureName(void*,const char* name){if(std::string(name)=="Blank")return 4;if(std::string(name)=="SoulSurprise")return 2;assert(std::string(name)=="MapGroupA");return 1;}
 void TreasureObserve(Unit* unit){assert(std::find(treasureObserved.begin(),treasureObserved.end(),unit)==treasureObserved.end());treasureObserved.push_back(unit);}
 Unit* __fastcall TreasureCreate(Game*,Unit*,int item,int quality,int,int){
     assert(treasureItems.size()<treasureCreated.size());
     auto result=&treasureCreated[treasureItems.size()];result->dwUnitType=4;result->dwClassId=item;treasureGold[result]=100;
     treasureItems.push_back(item);treasureQualities.push_back(quality);return result;
 }
-int __fastcall TreasureQuality(void*,Unit*,Unit*,int level,int item,void*){assert(level==90 && item>=7 && item<=9);return 2;}
+int __fastcall TreasureQuality(void*,Unit*,Unit*,int level,int item,void*){assert(level==90 && item>=7 && item<=10);return 2;}
 int __fastcall TreasureItemType(Unit*,int){return 0;}
 void __fastcall TreasureOwner(Unit*,Unit*){}
 void __fastcall TreasureCookie(uintptr_t){}
@@ -29,7 +29,7 @@ void NativeLoot(uint8_t* image){
     stub(0x2f8820,TreasureCreate);stub(0x2f8a60,TreasureQuality);stub(0x1fe680,TreasureItemType);stub(0x2f9060,TreasureOwner);stub(0x1434c50,TreasureCookie);stub(0x1e2e70,TreasureLevel);stub(0x2c64c0,TreasurePlayers);stub(0x6d0470,TreasureName);
     FlushInstructionCache(GetCurrentProcess(),image,0x2000000);
     std::array<Bytes<0x140>,5> records{};std::array<Bytes<0x1c>,2> entries{};Bytes<0x1c> child{};Bytes<0x1dc> monStats{};
-    std::array<Bytes<0x1b4>,10> itemRows{};global(0x1ca0390,reinterpret_cast<uintptr_t>(itemRows.data()));global(0x1ca0398,itemRows.size());
+    std::array<Bytes<0x1b4>,11> itemRows{};global(0x1ca0390,reinterpret_cast<uintptr_t>(itemRows.data()));global(0x1ca0398,itemRows.size());
     global(0x1c9f6a8,uintptr_t(1));
     global(0x1c9f6b0,reinterpret_cast<uintptr_t>(records.data()));global(0x1c9f6b8,records.size());
     global(0x1c9f878,reinterpret_cast<uintptr_t>(monStats.data()));global(0x1c9f880,1);
@@ -182,6 +182,32 @@ void NativeLoot(uint8_t* image){
     game->dwGameFrame=3100;assert(grottoDrop(&hero) && count==1 && treasureItems==std::vector<int>{7});
     assert(treasureGold.at(&treasureCreated[0])==600); // Golden Goose still lasts ten minutes.
     assert(records==goblinTables);grotto.reset();treasureRoom=nullptr;
+    // Soul Surprise must override the generic MapGroupA root with its own
+    // deterministic wrapper -> weighted chest -> S02/S03/S04/S05 chain.
+    treasureRoom=reinterpret_cast<Room*>(grottoRoom.data());Put(grottoLevel.data(),0x1f8,239);
+    grotto=std::make_unique<Run>();grotto->event=Event::SoulSurprise;grotto->eventPhase=EventPhase::Active;
+    grotto->phase=Phase::Running;grotto->level=239;grotto->eventTreasureClass=LookupName(0x1c9f6a8,"SoulSurprise");
+    assert(grotto->eventTreasureClass==2);
+    std::array<Bytes<0x1c>,4> soulEntries{};Bytes<0x1c> soulRoot{};
+    for(int i=0;i<4;++i){entry(soulEntries[i].data(),i,7+i);Put(itemRows[7+i].data(),0x80,uint32_t(0x00323053+(i<<16)));}
+    entry(soulRoot.data(),0,3,4);records[2]={};records[3]={};
+    record(2,-1,soulRoot.data(),1,1);record(3,1,soulEntries.data(),4,4);
+    const auto soulTables=records;const auto soulChild=soulEntries;
+    for(bool timed:{false,true}){
+        // Regrant Plentiful alongside Golden Goose and Treasure Trove; its
+        // additional root pick may add a fragment, but must keep this chain.
+        game->dwGameFrame=3200;
+        if(timed){GrantTimedReward(game,55,Event::PlentifulPirating);GrantTimedReward(game,55,Event::TreasureTrove);}
+        std::set<int> found;
+        for(uint32_t seed=1;seed<=128;++seed){
+            grotto->soulDropObserved=false;treasureItems.clear();Put(&monster,0x28,seed);Put(&monster,0x2c,uint32_t(0));
+            assert(Drop(game,&monster,timed?&hero:&other,1,0,90,0,nullptr,&count,0,Native<DropFunction>(LootNativeData::Source)));
+            assert(count==(timed?2:1) && grotto->soulDropObserved);
+            for(int id:treasureItems){assert(id>=7&&id<=10);found.insert(id);}
+        }
+        assert(found.size()==4 && records==soulTables && soulEntries==soulChild);
+    }
+    grotto.reset();treasureRoom=nullptr;
     game->dwGameFrame+=15000;assert(!hook(&monster));games.erase(game);installed.store(wasInstalled);
     assert(lootSelector.get()==selector);
     DWORD64 runtimeBase=0;assert(RtlLookupFunctionEntry(reinterpret_cast<DWORD64>(lootSelector->code+0x100),&runtimeBase,nullptr));
@@ -189,6 +215,7 @@ void NativeLoot(uint8_t* image){
     for(const auto& [rva,bytes]:savedCode)memcpy(image+rva,bytes.data(),bytes.size());
     for(const auto& [rva,value]:savedData)Put(image,rva,value);
     FlushInstructionCache(GetCurrentProcess(),image,0x2000000);
+    std::cout<<"Native Soul Surprise: exact root/chest chain reaches all four fragment items, including simultaneous timed loot bonuses; shared tables remain unchanged.\n";
     std::cout<<"Native Goblin Grotto: original root survives normal drops and simultaneous Plentiful/Golden bonuses.\n";
     std::cout<<"Native loot: TC upgrades, positive/negative extra picks, NoDrop RNG, nested TC counts, expanded 7-9 cap, immutable tables and bounded output arrays passed.\n";
     std::cout<<"Native Plentiful loot: NoDrop0/Blank removal at all depths, +1 root Pick only and preserved nested Picks; deterministic rows, objects, exact per-kill overrides, mixed bonuses, full creation observers and timed scope remain correct.\n";

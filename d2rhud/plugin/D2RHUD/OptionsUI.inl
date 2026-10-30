@@ -54,7 +54,7 @@ void ShowD2RHUDMenu()
             d2rHUDConfig.MinimalistQuantityPopup,d2rHUDConfig.PersistentSummons,d2rHUDConfig.D3StyleWhirlwind,
             d2rHUDConfig.ExtendedItemcodes,d2rHUDConfig.ChatSounds,d2rHUDConfig.ChatSoundPath,d2rHUDConfig.FloatingDamage,
             d2rHUDConfig.HPRolloverMods,d2rHUDConfig.HPRolloverDifficulty,d2rHUDConfig.HPRolloverPercent,
-            d2rHUDConfig.SurvivorArena,d2rHUDConfig.ActVI);};
+            d2rHUDConfig.SurvivorArena,d2rHUDConfig.ActVI,d2rHUDConfig.ExtendedCubeConditions,d2rHUDConfig.MultipleUseitemOutputs,d2rHUDConfig.MultipleUseitemInputs);};
         const auto before=values();
         auto applyAndSave=[&](){
             cachedSettings.HPRollover=d2rHUDConfig.HPRolloverMods;
@@ -335,6 +335,22 @@ void ShowD2RHUDMenu()
         if (!ItemCodes::Installed()) {
             drawCheckbox("Extended Itemcodes (legacy)", &d2rHUDConfig.ExtendedItemcodes, "Extended Itemcodes", "- Legacy visual fallback for four-character item codes\n- Uses transmog TXT/JSON mapping when native HD support is unavailable\n\n", "Used when native four-character HD support is unavailable", GetLockInfo(modName, &ModOverrideSettings::ExtendedItemcodes));
         }
+        }
+        if(optionFilter.Visible(HudOptions::Category::Items,"Useitem Multiple Outputs","cube cubemain output B C copies duplicate")){
+            if(drawCheckbox("Useitem Multiple Outputs", &d2rHUDConfig.MultipleUseitemOutputs, "Useitem Multiple Outputs",
+                "Allows useitem in output, output b and output c. Each output keeps the selected item's saved properties and applies its own modifiers. Repeated sources receive independent copies with separate item IDs.",
+                "Host setting. Applies immediately and saves automatically.",nullptr))CubeVisual::SetMultipleUseOutputs(d2rHUDConfig.MultipleUseitemOutputs);
+        }
+        if(optionFilter.Visible(HudOptions::Category::Items,"Useitem Multiple Inputs","cube cubemain useitem2 useitem3 useitem4 useitem5 useitem6 useitem7")){
+            if(drawCheckbox("Useitem Multiple Inputs", &d2rHUDConfig.MultipleUseitemInputs, "Useitem Multiple Inputs",
+                "Adds useitem2 through useitem7 to select the corresponding recipe input column. Plain useitem selects input 1. Enable Useitem Multiple Outputs as well to use these commands in output b or output c.",
+                "Host setting. Compile indexed commands with the updated HUD. Applies immediately and saves automatically.",nullptr))CubeVisual::SetMultipleUseInputs(d2rHUDConfig.MultipleUseitemInputs);
+        }
+        if (optionFilter.Visible(HudOptions::Category::Items,"Extended Cube Conditions","cubemain recipe op param value AND OR oplogic")) {
+            if(drawCheckbox("Extended Cube Conditions", &d2rHUDConfig.ExtendedCubeConditions, "Extended Cube Conditions",
+                "Allows two extra cube recipe conditions: op2/param2/value2 and op3/param3/value3. Set oplogic to AND to require every active condition, or OR to require any active condition. Blank logic defaults to AND. Unused op slots are ignored.",
+                "Applies immediately. The TCP/IP host controls this option. BIN releases need the exported cubemain source in data/D2RHUD/table-metadata.json.", nullptr))
+                CubeVisual::SetExtendedConditions(d2rHUDConfig.ExtendedCubeConditions);
         }
         if (optionFilter.Visible(HudOptions::Category::Sound,"Chat Sounds","Chat Sound notifications audio sound path")) {
         drawCheckbox("Chat Sounds", &d2rHUDConfig.ChatSounds, "Chat Sounds", "- Plays a notification sound when other players send chat\n- Does not play for your own messages\n- Controlled by D2RHUD options (not chat panel widget)\n\n", "Toggle this to enable or disable chat notification sounds", nullptr);

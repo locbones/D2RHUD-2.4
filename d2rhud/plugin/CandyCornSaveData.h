@@ -72,7 +72,11 @@ inline uint32_t Word(std::span<const uint8_t> b,size_t at,unsigned n=4) {
     uint32_t value=0;for(unsigned i=0;i<n;++i)value|=uint32_t(b[at+i])<<(8*i);return value;
 }
 inline void Store(std::vector<uint8_t>& b,size_t at,uint32_t v) {for(unsigned i=0;i<4;++i)b[at+i]=uint8_t(v>>(8*i));}
-struct Budget {size_t work=0,branches=0;bool limit=false;bool Spend(size_t n=1){work+=n;return !(limit=limit||work>4000000);}};
+struct Budget {
+    size_t work=0,branches=0;bool limit=false;
+    size_t stoppedAt=0,itemStart=0,itemNumber=0;std::array<char,4> itemCode{};
+    bool Spend(size_t n=1){work+=n;return !(limit=limit||work>4000000);}
+};
 struct Bits {
     std::span<const uint8_t> bytes;size_t pos=0;Budget* budget=nullptr;bool ok=true;
     uint32_t Read(unsigned n) {
@@ -100,7 +104,7 @@ inline bool Properties(Bits& b,const Tables& t,bool* candyRandom=nullptr) {
 struct Edit {size_t quantity=0,rawEnd=0,alignedEnd=0;};
 enum class Kind {Items,List,Corpses,Corpse,Mercenary,Golem,End};
 struct Task {Kind kind;unsigned count=0,depth=0;};
-struct State {Bits bits;std::vector<Task> tasks;std::vector<Edit> edits;size_t items=0;};
+struct State {Bits bits;std::vector<Task> tasks;std::vector<Edit> edits;size_t items=0,itemStart=0;std::array<char,4> itemCode{};};
 // A failed continuation is independent of the edits already collected. Cache
 // only failures: distinct successful edit histories must still be rejected as
 // ambiguous. Include the complete task stack and item count in the identity.
@@ -121,11 +125,11 @@ inline bool Header(Bits& b,const Tables& t) {
 }
 inline bool Gold(Bits& b){const bool large=b.Read(1)!=0;b.Skip(large?32:12);b.Skip(1);return b.ok;}
 inline bool ItemPrefix(State& state,const Tables& t,unsigned depth,Prefix& p) {
-    auto& b=state.bits;if(depth>16||++state.items>20000||b.pos%8)return false;p.depth=depth;p.flags=b.Read(32);b.Skip(3);
+    auto& b=state.bits;state.itemStart=b.pos;state.itemCode={};if(depth>16||++state.items>20000||b.pos%8)return false;p.depth=depth;p.flags=b.Read(32);b.Skip(3);
     const auto mode=b.Read(3);if(mode==3||mode==5)b.Skip(32);else{if(mode>6)return false;b.Skip(15);}
     const bool compact=(p.flags&(1u<<21))!=0,ear=(p.flags&(1u<<16))!=0;
     if(ear){if(!compact)return false;b.Skip(10);return b.Name()&&b.Align();}
-    std::array<char,4> code{};if(!b.Code(code))return false;
+    std::array<char,4> code{};if(!b.Code(code))return false;state.itemCode=code;
     auto def=std::lower_bound(t.items.begin(),t.items.end(),code,[](const ItemDefinition& d,const auto& c){return d.code<c;});if(def==t.items.end()||def->code!=code)return false;p.definition=&*def;
     if(compact){if(def->gold&&!Gold(b))return false;if(def->questDifficulty){auto s=Stat(t,356);if(!s)return false;b.Skip(s->saveBits);}if(b.Read(1))b.Skip(128);return b.Align();}
     p.sockets=b.Read(3);b.Skip(32);const auto level=b.Read(7);if(!level)return false;p.quality=b.Read(4);if(!p.quality||p.quality>9)return false;
@@ -150,7 +154,10 @@ inline bool ItemPrefix(State& state,const Tables& t,unsigned depth,Prefix& p) {
 inline bool ItemSuffix(State& state,const Tables& t,const Prefix& p,bool legacy,bool* hasCandyRandom=nullptr) {
     auto& b=state.bits;const auto quantity=b.pos;
     if(p.definition->stackable&&!legacy)b.Skip(9);
-    if(p.flags&(1u<<11)){auto sockets=Stat(t,194);if(!sockets)return false;const auto total=b.Read(sockets->saveBits);if(p.sockets>total)return false;}
+    // The serialized child count determines how many item records follow.
+    // A modded item may retain more children than its saved socket stat (for
+    // example after item-table changes). Do not reject or rewrite that gear.
+    if(p.flags&(1u<<11)){auto sockets=Stat(t,194);if(!sockets)return false;b.Skip(sockets->saveBits);}
     else if(p.sockets)return false;
     unsigned extra=0;if(p.quality==5){const auto mask=b.Read(5);for(unsigned n=0;n<5;++n)extra+=(mask>>n)&1;}
     bool candyRandom=false;if(!Properties(b,t,&candyRandom))return false;
@@ -209,6 +216,9 @@ inline std::vector<State> Parse(std::span<const uint8_t> bytes,const Tables& t,b
             if(split)break;
             alive=alive&&b.ok;
         }
+        if(!alive && !split && state.bits.pos>=budget.stoppedAt){
+            budget.stoppedAt=state.bits.pos;budget.itemStart=state.itemStart;budget.itemNumber=state.items;budget.itemCode=state.itemCode;
+        }
         if(alive&&state.tasks.empty()&&state.bits.ok){valid.push_back(std::move(state));if(!alternatives||valid.size()>1)return valid;}
     }
     return valid;
@@ -250,7 +260,16 @@ inline Result ConvertRecord(std::span<const uint8_t> bytes,const Tables& tables,
     budget={};auto legacy=Detail::Parse(bytes,prepared,true,budget,stash);
     if(budget.limit){result.status=Status::Limit;result.message="Saved items exceed conversion work limits.";return result;}
     if(legacy.size()>1){result.status=Status::Ambiguous;result.message="Saved item layout is ambiguous; conversion was refused.";return result;}
-    if(legacy.empty()||legacy[0].edits.empty()){result.message="Saved items could not be safely parsed for conversion.";return result;}
+    if(legacy.empty()||legacy[0].edits.empty()){
+        result.message="Saved items could not be safely parsed for conversion.";
+        if(budget.itemNumber){
+            result.message+=" Furthest item "+std::to_string(budget.itemNumber);
+            if(std::all_of(budget.itemCode.begin(),budget.itemCode.end(),[](char c){return c>=32 && c<=126;}))
+                result.message+=" ('"+std::string(budget.itemCode.data(),budget.itemCode.size())+"')";
+            result.message+=" starts at byte "+std::to_string(budget.itemStart/8)+"; reader stopped at bit "+std::to_string(budget.stoppedAt)+".";
+        }
+        return result;
+    }
     result.bytes=Detail::Splice(bytes,legacy[0].edits,stash);Detail::Budget verify;
     if(Detail::Parse(result.bytes,prepared,false,verify,stash).empty()){result.bytes.clear();result.message="Converted items failed structural verification.";return result;}
     result.status=Status::Converted;result.converted=legacy[0].edits.size();return result;
@@ -271,7 +290,7 @@ inline Result ConvertStash(std::span<const uint8_t> bytes,const Tables& tables){
         const auto tab=bytes.subspan(at,size);auto next=ConvertRecord(tab,tables,true);
         if(next.status==Status::Converted){count+=next.converted;converted.insert(converted.end(),next.bytes.begin(),next.bytes.end());}
         else if(next.status==Status::Unchanged)converted.insert(converted.end(),tab.begin(),tab.end());
-        else {next.bytes.clear();next.converted=0;return next;}
+        else {next.bytes.clear();next.converted=0;next.message="Shared stash tab "+std::to_string(tabs)+" (byte "+std::to_string(at)+"): "+next.message;return next;}
         at+=size;
     }
     if(count){result.status=Status::Converted;result.converted=count;result.bytes=std::move(converted);}

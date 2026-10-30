@@ -72,6 +72,11 @@ void Reset(size_t runeCount=5){
 }
 void Run(){
     const auto savedBindings=bindings;const auto savedCreate=originalCreate;const auto savedAdd=originalAdd;const auto savedNotify=originalNotify;const auto savedMatch=originalRuneMatch;const bool wasInstalled=installed;
+    Reset(1);const auto oldSource=sourceTable;const auto oldPath=sourcePath;const bool oldExtended=ExtendedConditionsEnabled();
+    sourcePath.clear();Conditions gate;gate.enabled=1;gate.inputs=2;gate.valid=false;sourceTable.conditions[0]=gate;
+    SetExtendedConditions(true);assert(!PlanRunes(&game,&owner).valid && !writes && !consumed);
+    SetExtendedConditions(false);assert(PlanRunes(&game,&owner).valid);
+    sourceTable=oldSource;sourcePath=oldPath;SetExtendedConditions(oldExtended);
     Reset();const auto bag=units[0];const auto metadata=data[0];RuneMatch match;Input inputs[3]{};
     assert(RuneMatchHook(&match,&game,&owner,inputs)==&match && match.matched && !nativeMatches && !writes);
     const auto beforeRecipes=recipes;

@@ -199,10 +199,12 @@ int __fastcall StashLoadHook(D2GameStrc* game,D2ClientStrc* client,D2UnitStrc* p
         if(!ReadTables(tables,&tableError)){Report("Shared stash conversion paused: "+tableError+".");return 27;}
         // Descriptor zero is normally the character. Recognize stash headers
         // rather than relying on an index, filename, page number or SC/HC mode.
+        size_t stashTab=0;
         for(size_t index=0;index<shadow.size();++index){
             const auto& entry=shadow[index];std::array<uint8_t,12> header{};
             if(!entry.bytes || entry.size<68 || !Read(entry.bytes,header.data(),header.size()) ||
                 Detail::Word(header,0)!=0xaa55aa55 || Detail::Word(header,4)>1)continue;
+            ++stashTab;
             if(entry.size>8*1024*1024-originalPage.size()){Report("Shared stash conversion refused: attached stash exceeds backup size limits.");return 27;}
             std::vector<uint8_t> bytes(size_t(entry.size),uint8_t(0));
             if(!Read(entry.bytes,bytes.data(),bytes.size())){Report("Shared stash conversion refused: an original tab could not be read for backup.");return 27;}
@@ -210,7 +212,7 @@ int __fastcall StashLoadHook(D2GameStrc* game,D2ClientStrc* client,D2UnitStrc* p
             if(Detail::Word(header,8)!=98)continue;
             auto result=ConvertStash(bytes,tables);
             if(result.status==CandyCornSaveData::Status::Unchanged)continue;
-            if(result.status!=CandyCornSaveData::Status::Converted){Report("Shared stash left unchanged; native item parsing was stopped: "+result.message);return 27;}
+            if(result.status!=CandyCornSaveData::Status::Converted){Report("Shared stash tab "+std::to_string(stashTab)+" left unchanged; native item parsing was stopped: "+result.message);return 27;}
             identified=true;total+=result.converted;
             tabs.push_back({index,std::move(result.bytes)});
         }

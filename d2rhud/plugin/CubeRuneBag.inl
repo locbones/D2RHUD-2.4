@@ -156,6 +156,7 @@ RunePlan PlanRunes(Game* game,Unit* player){
     std::array<int64_t,4> totals{};
     for(auto rune:runes){
         const auto found=values.find(uint16_t(rune->dwClassId));if(found==values.end() || found->second.ambiguous)return plan;
+        if(!ExtendedRuneAllowed(game,player,recipeTable,found->second.row,recipeCount,plan.bag,rune))return plan;
         const auto record=table+size_t(rune->dwClassId)*0x1b4;
         const int quantity=record[0x13a] ? GetStat(rune,70) : 1;
         if(quantity<=0 || quantity>1000000)return plan;
@@ -171,9 +172,13 @@ RunePlan PlanRunes(Game* game,Unit* player){
     plan.anchor=recipeTable+plan.row;plan.valid=true;return plan;
 }
 RuneMatch* __fastcall RuneMatchHook(RuneMatch* result,Game* game,Unit* player,Input* inputs){
+    useMatch={};
     if(!installed.load() || !result || !inputs)return originalRuneMatch(result,game,player,inputs);
     RuneMatch managed;std::array<Input,3> managedInputs{};
     const bool journal=TryQuestMatch(&managed,game,player,managedInputs.data());
+    if(journal&&managed.matched && useMatch.game==game && useMatch.player==player->dwUnitId && useMatch.row==managed.row){
+        *result=managed;std::copy(managedInputs.begin(),managedInputs.end(),inputs);return result;
+    }
     if(journal&&managed.matched){
         const auto rules=QuestJournal::Bindings();
         if(rules&&std::any_of(rules->gates.begin(),rules->gates.end(),[&](const auto& gate){return gate.row==size_t(managed.row);})){
@@ -205,7 +210,7 @@ bool DepositRunes(Game* game,Unit* player,Recipe* recipe,Input* inputs){
     }
     Recipe output{};output.header=recipe->header;output.outputs[0].type=254;
     struct Scope {RuneTransaction* previous;Scope(RuneTransaction* value):previous(runeTransaction){runeTransaction=value;}~Scope(){runeTransaction=previous;}} scope(&transaction);
-    originalCreate(game,player,&output,inputs);
+    DispatchCreate(game,player,&output,inputs);
     if(transaction.committed)for(auto code:plan.codes)QuestJournal::DepositedRune(game,player,code);
     status.store(transaction.committed ? "Runes deposited into the existing storage bag." : "Rune deposit refused: native useitem placement did not complete.");return true;
 }

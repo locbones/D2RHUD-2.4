@@ -9,11 +9,16 @@ std::array<std::array<uint8_t,0x144>,512> costs{};
 std::array<Unit,2> units{};std::array<D2ItemDataStrc,2> metadata{};
 D2InventoryStrc inventory{};Unit owner{};Game game{};
 int hidden=7,playerStat=0,itemSpecial=5,statReads=0,baseReads=0;
+std::map<void*,int> serverPlayerStats;
+int phaseCreates=0,phaseSends=0;Unit phaseCube{};Unit* phaseCubeHead=&phaseCube;
+bool splitItemStats=false;int firstHidden=7,secondHidden=8,firstSpecial=6,secondSpecial=5;
 template<class T>void Put(void* p,size_t offset,T value){memcpy(static_cast<uint8_t*>(p)+offset,&value,sizeof(value));}
 uint32_t __fastcall Code(Unit* item){return QuestNative::Field<uint32_t>((eventDefinitions.empty()?definitions[item->dwClassId]:eventDefinitions.at(item->dwClassId)).data(),0x80);}
-int __fastcall Stat(void*,uint32_t key,void*){
-    ++statReads;if(key==(398u<<16))return hidden;if(key==(474u<<16))return itemSpecial;
-    assert(key==(12u<<16) || key==(210u<<16));return playerStat;
+int __fastcall Stat(void* stats,uint32_t key,void*){
+    ++statReads;
+    if(splitItemStats && key==(398u<<16))return stats==reinterpret_cast<void*>(1)?firstHidden:secondHidden;
+    if(splitItemStats && key==(474u<<16))return stats==reinterpret_cast<void*>(1)?firstSpecial:secondSpecial;if(key==(398u<<16))return hidden;if(key==(474u<<16))return itemSpecial;
+    assert(key==(12u<<16) || key==(210u<<16));if(auto it=serverPlayerStats.find(stats);it!=serverPlayerStats.end())return it->second;return playerStat;
 }
 int __fastcall BaseStat(Unit*,uint32_t stat,uint16_t layer){assert(stat==12 && !layer);++baseReads;return playerStat;}
 int __fastcall PlayerStat(Unit*,uint32_t stat,uint16_t layer){assert(stat==12 && !layer);++baseReads;return playerStat;}
@@ -36,7 +41,7 @@ void Native(uint8_t* image){
     data(0x1ca0390,reinterpret_cast<uintptr_t>(definitions.data()));data(0x1ca0398,definitions.size());
     data(0x1c9fb78,reinterpret_cast<uintptr_t>(costs.data()));data(0x1c9fb80,costs.size());data(0x1bfa310,0);
     stub(0x1f9e70,Code);stub(0x1e2e70,Stat);stub(0x1e2e00,Stat);stub(0x1e56a0,PlayerStat);
-    stub(0x208330,+[](Unit*)->void*{return &inventory;});stub(0x1434c50,+[](){});stub(0x1438100,+[](void* dest,int value,size_t count)->void*{return memset(dest,value,count);});
+    stub(0x208330,+[](Unit* player)->void*{return player->pInventory;});stub(0x1434c50,+[](){});stub(0x1438100,+[](void* dest,int value,size_t count)->void*{return memset(dest,value,count);});
     stub(0xae3a10,+[]()->int{return 0;});stub(0xae4920,+[](void* time,void*,int)->void*{static int fields[8]{0,0,0,2026,10,19,0,0};memcpy(time,fields,sizeof(fields));return time;});
     data(0x1baa468,reinterpret_cast<uintptr_t>(+[](void* filetime){memset(filetime,0,8);}));
     std::vector<Recipe> recipes(3,Make());data(0x1ca0b18,reinterpret_cast<uintptr_t>(recipes.data()));data(0x1ca0b20,recipes.size());
@@ -45,6 +50,111 @@ void Native(uint8_t* image){
     auto run=[&](std::vector<Recipe>& table){QuestNative::Invocation scanner;assert(scanner.Build(table.data(),table.size()));
         DWORD64 unwindBase=0;const auto unwind=RtlLookupFunctionEntry(reinterpret_cast<DWORD64>(scanner.memory+0x100),&unwindBase,nullptr);assert(unwind && unwindBase==reinterpret_cast<DWORD64>(scanner.memory));
         memset(output,0,sizeof(output));match={};reinterpret_cast<RuneMatcher>(scanner.memory)(&match,&game,&owner,output);return match.matched;};
+    // Extended comparisons use the native op switch and preserve native
+    // ingredient matching and source row ordering. No live game is launched.
+    {
+        QuestNative::Invocation scanner;assert(scanner.Build(recipes.data(),recipes.size(),true));
+        const auto base=reinterpret_cast<DWORD64>(scanner.memory);DWORD64 found=0;
+        for(unsigned offset:{0x2005u,0x2035u,0x2060u,0x246eu,0x3024u})assert(RtlLookupFunctionEntry(base+offset,&found,nullptr)&&found==base);
+        // Unwind through the injected candidate callback and the complete
+        // chained native frame, including the callback's temporary GPR saves.
+        std::array<uint64_t,512> stack{};auto entry=reinterpret_cast<uint8_t*>(stack.data()+256);
+        Put(entry,0,uint64_t(0x12345678));Put(entry-8,0,uint64_t(0x13));Put(entry-16,0,uint64_t(0x15));
+        CONTEXT context{};context.Rip=base+0x3024;context.Rsp=reinterpret_cast<DWORD64>(entry-0x98-96);
+        auto function=RtlLookupFunctionEntry(context.Rip,&found,nullptr);void* handler=nullptr;DWORD64 establisher=0;
+        RtlVirtualUnwind(UNW_FLAG_NHANDLER,base,context.Rip,function,&context,&handler,&establisher,nullptr);
+        assert(context.Rip==0x12345678&&context.Rsp==reinterpret_cast<DWORD64>(entry+8)&&context.R13==0x13&&context.R15==0x15);
+    }
+    const auto oldSources=sourceTable;const auto oldSourcePath=sourcePath;
+    const bool oldExtended=ExtendedConditionsEnabled();sourcePath.clear();
+    auto setConditions=[&](const char* logic){
+        sourceTable=ParseSource(std::string("enabled\tnuminputs\top\tparam\tvalue\top2\tparam2\tvalue2\top3\tparam3\tvalue3\toplogic\toutput\n")+
+            "1\t2\t18\t398\t7\t3\t12\t10\t18\t474\t5\t"+logic+"\tcap\n1\t2\t0\t\t\t\t\t\t\t\t\t\tcap\n1\t2\t0\t\t\t\t\t\t\t\t\t\tcap\n");
+    };
+    const auto extraRules=::testQuestRules;::testQuestRules.reset();SetExtendedConditions(true);
+    recipes[1].header[4]=recipes[2].header[4]=0;
+    for(const char* logic:{"AND","OR",""})for(int mask=0;mask<8;++mask){
+        setConditions(logic);hidden=(mask&1)?7:8;playerStat=(mask&2)?10:9;itemSpecial=(mask&4)?5:6;
+        assert(TryQuestMatch(&match,&game,&owner,output) && match.matched);
+        assert(match.row==((!strcmp(logic,"OR")?mask!=0:mask==7)?0:1));
+    }
+    setConditions("OR");hidden=8;playerStat=10;itemSpecial=6;
+    const auto extendedOriginal=recipes;
+    assert(TryQuestMatch(&match,&game,&owner,output)&&match.matched&&match.row==0);
+    assert(!memcmp(extendedOriginal.data(),recipes.data(),recipes.size()*sizeof(Recipe)));
+    // Even when OR succeeds through an extra test, wrong ingredients and
+    // expansion/class/difficulty gates cannot be bypassed.
+    recipes[1].header[0x10]=recipes[2].header[0x10]=255;
+    units[1].dwClassId=2;assert(TryQuestMatch(&match,&game,&owner,output)&&!match.matched);units[1].dwClassId=1;
+    recipes[0].header[3]=2;assert(TryQuestMatch(&match,&game,&owner,output)&&!match.matched);recipes[0].header[3]=255;
+    recipes[0].header[2]=2;game.nDifficulty=1;assert(TryQuestMatch(&match,&game,&owner,output)&&!match.matched);recipes[0].header[2]=0;game.nDifficulty=0;
+    // Bad annotations or source/native drift skip only the affected row,
+    // including when the game's debug flag would allow disabled recipes.
+    recipes[1].header[0x10]=recipes[2].header[0x10]=2;
+    for(const char* logic:{"XOR","ALLL"}){setConditions(logic);assert(TryQuestMatch(&match,&game,&owner,output)&&match.row==1);}
+    setConditions("OR");sourceTable.conditions.at(0).tests[1].op=29;sourceTable.conditions.at(0).valid=false;
+    Put(image,0x1bfa310,uint64_t(1));assert(TryQuestMatch(&match,&game,&owner,output)&&match.row==1);Put(image,0x1bfa310,uint64_t(0));
+    setConditions("OR");Put(recipes[0].header.data(),8,int32_t(210));assert(TryQuestMatch(&match,&game,&owner,output)&&match.row==1);Put(recipes[0].header.data(),8,int32_t(398));
+    // Blank slots do not make OR automatically true; an extra condition can
+    // be used without the original op. Native source values remain intact.
+    sourceTable.conditions.at(0).tests[0]={};sourceTable.conditions.at(0).tests[2]={};recipes[0].header[4]=0;
+    playerStat=9;assert(TryQuestMatch(&match,&game,&owner,output)&&match.row==1);
+    playerStat=10;assert(TryQuestMatch(&match,&game,&owner,output)&&match.row==0);recipes[0].header[4]=18;
+    // Two interchangeable ingredients must not separately satisfy the two
+    // halves of AND. The native useitem slot must select the qualifying GUID.
+    const auto beforeCandidates=recipes;setConditions("AND");
+    sourceTable.conditions.at(0).tests[1]=sourceTable.conditions.at(0).tests[2];sourceTable.conditions.at(0).tests[2]={};
+    for(int slot=0;slot<2;++slot)Put(recipes[0].header.data(),0x16+8*slot,uint16_t(0xffff));
+    recipes[0].outputs[0].type=254;recipes[1].header[0x10]=recipes[2].header[0x10]=255;
+    units[1].pStatListEx=reinterpret_cast<D2StatListExStrc*>(uintptr_t(2));splitItemStats=true;
+    assert(TryQuestMatch(&match,&game,&owner,output)&&!match.matched);
+    secondHidden=7;assert(TryQuestMatch(&match,&game,&owner,output)&&match.matched&&output[0].item==&units[1]);
+    for(int slot=0;slot<2;++slot)Put(recipes[0].header.data(),0x16+8*slot,uint16_t(slot));
+    assert(ExtendedRuneAllowed(&game,&owner,recipes.data(),0,recipes.size(),&units[0],&units[1])==false);
+    firstSpecial=5;assert(ExtendedRuneAllowed(&game,&owner,recipes.data(),0,recipes.size(),&units[0],&units[1]));
+    splitItemStats=false;units[1].pStatListEx=reinterpret_cast<D2StatListExStrc*>(uintptr_t(1));recipes=beforeCandidates;
+    // Exercise the actual server inventory request routine in both native
+    // phases: prepare publishes the ingredient move; commit creates outputs.
+    // Remote players use this same server-side Unit, never local player stats.
+    const auto oldMatcher=originalRuneMatch;const bool oldInstalled=installed;
+    const auto oldOwner=owner;const auto oldRecipes=recipes;const auto oldUnitIds=std::array{units[0].dwUnitId,units[1].dwUnitId};
+    std::array<uint8_t,0xb58> ownerStats{};owner.pStatListEx=reinterpret_cast<D2StatListExStrc*>(ownerStats.data());owner.dwAnimMode=1;
+    units[0].dwUnitId=1;units[1].dwUnitId=2;phaseCube={};phaseCube.dwUnitType=4;phaseCube.dwUnitId=99;
+    std::array<uint8_t,18> request{};Put(request.data(),1,uint32_t(99));request[7]=1;Put(request.data(),8,uint32_t(1));Put(request.data(),13,uint32_t(2));request[17]=1;
+    stub(0x213a00,+[](void* location)->void*{memset(location,0,16);return location;});
+    stub(0x2dba00,+[]()->bool{return true;});stub(0x2c4950,+[](int,Game*)->Unit**{return &phaseCubeHead;});
+    stub(0x1f9e70,+[](Unit* item)->uint32_t{return item==&phaseCube?0x20786f62:Code(item);});
+    stub(0x28f510,+[](Game*){});data(0x149c3f0,reinterpret_cast<uintptr_t>(+[]()->DWORD{return 100;}));
+    stub(0x2d5e10,+[](Unit* player,const Location*,const uint32_t* ids,size_t count,bool)->bool{
+        assert(player==&owner && count==2 && ids[0]==1 && ids[1]==2);++phaseSends;return true;
+    });
+    stub(0x306c50,+[](Game* current,Unit* player,Recipe* recipe,Input*){
+        assert(current==&game && player==&owner);++phaseCreates;
+    });
+    originalRuneMatch=reinterpret_cast<RuneMatcher>(image+0x308840);
+    stub(0x308840,RuneMatchHook);installed=true;FlushInstructionCache(GetCurrentProcess(),image,0x2000000);
+    recipes.assign(3,Make());recipes[1].header[0x10]=recipes[2].header[0x10]=255;setConditions("OR");
+    auto requestPhase=[&](bool commit){return reinterpret_cast<int(__fastcall*)(Game*,Unit*,void*,bool)>(image+0x2b3a70)(&game,&owner,request.data(),commit);};
+    phaseCreates=phaseSends=0;hidden=8;playerStat=100;itemSpecial=6;serverPlayerStats[ownerStats.data()]=9;
+    assert(requestPhase(false)==1 && requestPhase(true)==1 && !phaseCreates && !phaseSends);
+    serverPlayerStats[ownerStats.data()]=10;playerStat=0;assert(requestPhase(false)==4 && phaseSends==1 && !phaseCreates);
+    assert(requestPhase(true)==0 && phaseCreates==1 && phaseSends==1);
+    serverPlayerStats[ownerStats.data()]=9;assert(requestPhase(true)==1 && phaseCreates==1); // Recheck on commit.
+    // Restore the entry detour now; the other fixture stubs are restored by
+    // the enclosing harness after all native scanner cases have completed.
+    memcpy(image+0x308840,QuestNative::original.data(),14);FlushInstructionCache(GetCurrentProcess(),image+0x308840,14);
+    oldCode.erase(0x308840);serverPlayerStats.clear();originalRuneMatch=oldMatcher;installed=oldInstalled;owner=oldOwner;recipes=oldRecipes;
+    units[0].dwUnitId=oldUnitIds[0];units[1].dwUnitId=oldUnitIds[1];
+    std::cout<<"Native server cube prepare/commit both enforce conditions; rejected requests publish/consume nothing, accepted requests use native inventory publication and creation, and commit rechecks changed stats.\n";
+    // Journal locks remain mandatory even with successful OR alternatives.
+    auto locked=std::make_shared<QuestJournal::Rules>();locked->gates={{0,1,false,1,2,18,398,7}};
+    ::testQuestRules=locked;::testQuestProgress={true,1,false};setConditions("OR");
+    assert(TryQuestMatch(&match,&game,&owner,output)&&match.row==1);
+    ::testQuestRules.reset();SetExtendedConditions(false);
+    assert(!TryQuestMatch(&match,&game,&owner,output));assert(run(recipes)&&match.row==1);
+    SetExtendedConditions(oldExtended);sourceTable=oldSources;sourcePath=oldSourcePath;::testQuestRules=extraRules;
+    recipes.assign(3,Make());
+    std::cout<<"Extended cube AND/OR truth tables, blank/default slots, disabled-option fallback, row ordering, native ingredients/class/difficulty, journal isolation and unchanged shared recipes passed.\n";
     // Original native op still rejects a transferred bag's unrelated stat.
     hidden=8;assert(!run(recipes));hidden=7;assert(run(recipes)&&match.row==0);
     recipes[0].header[4]=0;hidden=0;const int reads=statReads;
@@ -143,6 +253,13 @@ void Native(uint8_t* image){
     assert(managed()&&match.row==2);::testQuestProgress.objectiveReady=true;
     const auto milestoneSource=recipes;assert(managed()&&match.row==1);
     assert(!memcmp(milestoneSource.data(),recipes.data(),recipes.size()*sizeof(Recipe)));
+    // Indexed sources retain their authoring column after event mode privately
+    // removes the obsolete input-2 proof ingredient.
+    const bool previousIndexed=multipleUseInputs;SetMultipleUseInputs(true);
+    recipes[1].outputs[0].type=254;recipes[1].outputs[0].special=UseInputMarker|3;
+    assert(managed()&&match.row==1&&useMatch.inputs[2]==&units[1]);
+    recipes[1].outputs[0].special=UseInputMarker|2;assert(managed()&&match.row==2);
+    recipes[1].outputs[0]=milestoneSource[1].outputs[0];SetMultipleUseInputs(previousIndexed);
     rules->quests[0].milestone=false;assert(managed()&&match.row==2);
     // A declared recipe lesson enables only its objective row while current.
     recipes[0].header[0x10]=3;recipes[0].header[4]=0;rules->gates[0].inputs=3;rules->gates[0].op=0;

@@ -1,6 +1,7 @@
 ﻿#include "../HudText.h"
 #pragma region Includes
 
+#include "../ItemFilter/LootFilterLibrary.h"
 #include "D2RHUD.h"
 #include "../../Version.h"
 #include "OptionsLayout.h"
@@ -3571,6 +3572,9 @@ struct D2RHUDConfig
     int SunderValue = 99;
     bool MinionEquality = true;
     bool PersistentSummons = false;
+    bool MultipleUseitemOutputs = false;
+    bool MultipleUseitemInputs = false;
+    bool ExtendedCubeConditions = false;
     bool SurvivorArena = false;
     bool ActVI = false;
     bool D3StyleWhirlwind = false;
@@ -4403,20 +4407,10 @@ static std::string GetModFiltersDir()
     return (std::filesystem::path(appRoot) / "My Filters").string();
 }
 
-// Returns the mod's D2RLAN filters directory path (tries .mpq path then extracted /data path). May not exist.
-static std::string GetModD2RLANFiltersDir()
+// Keep discovery and application on the same modern/legacy search paths.
+static std::vector<std::filesystem::path> GetModFilterDirectories()
 {
-    std::string modName = GetModName();
-    if (modName.empty()) return "";
-    auto tryPath = [&](const std::string& subpath) -> std::string {
-        std::string p = GetExecutableDir() + "/Mods/" + modName + "/" + modName + ".mpq/data/" + subpath + "/filters";
-        if (std::filesystem::exists(p)) return p;
-        p = GetExecutableDir() + "/Mods/" + modName + "/data/" + subpath + "/filters";
-        return std::filesystem::exists(p) ? p : "";
-        };
-    std::string p = tryPath("D2RLAN");
-    if (!p.empty()) return p;
-    return tryPath("d2rlan");
+    return LootFilterLibrary::Directories(GetExecutableDir(), GetModName());
 }
 
 // Returns the first existing sounds directory under a mod data folder.
@@ -4473,33 +4467,10 @@ static std::string GetModD2RLANSoundsDir()
     return FindModSoundsDir("D2RLAN");
 }
 
-// Appends filter names from dir (dirs and .lua base names, excludes Sounds folder) into names set.
-static void AppendFilterNamesFromDir(const std::string& dir, std::set<std::string>& names)
-{
-    if (dir.empty() || !std::filesystem::exists(dir)) return;
-    namespace fs = std::filesystem;
-    for (const auto& entry : fs::directory_iterator(dir))
-    {
-        std::string name = entry.path().filename().string();
-        if (entry.is_directory())
-        {
-            std::string lower = name;
-            std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) { return (char)std::tolower(c); });
-            if (lower != "sounds")
-                names.insert(name);
-        }
-        else if (entry.path().extension() == ".lua")
-            names.insert(entry.path().stem().string());
-    }
-}
-
-// Lists filter names from both My Filters and mod's D2RLAN/filters (merged, deduped, sorted).
+// Merge user imports, Pandemonium packages and legacy D2RLAN packages.
 static std::vector<std::string> GetModFilterNames()
 {
-    std::set<std::string> names;
-    AppendFilterNamesFromDir(GetModFiltersDir(), names);
-    AppendFilterNamesFromDir(GetModD2RLANFiltersDir(), names);
-    return std::vector<std::string>(names.begin(), names.end());
+    return LootFilterLibrary::Names(GetModFilterDirectories());
 }
 
 // Returns the app-root "My Filters/sounds" directory. May not exist yet.
@@ -5210,30 +5181,13 @@ static void LootFilterUpdateThread()
     s_lootFilterUpdating = false;
 }
 
-// Copies a filter's config from My Filters or mod D2RLAN/filters to lootfilter_config.lua (tries My Filters first).
-// filterName is a directory name or .lua base name.
+// Resolve from the same library roots used by the dropdown, user imports first.
 static bool CopyModFilterToActive(const std::string& filterName)
 {
-    std::string destPath = GetLootFilterConfigPath();
-    namespace fs = std::filesystem;
-    fs::path dest(destPath);
-    auto tryDir = [&](const std::string& dir) -> bool {
-        if (dir.empty() || !fs::exists(dir)) return false;
-        fs::path base(dir);
-        auto copyIfExists = [&](const fs::path& src) {
-            if (fs::exists(src)) { fs::copy_file(src, dest, fs::copy_options::overwrite_existing); return true; }
-            return false;
-            };
-        fs::path sub = base / filterName;
-        fs::path subConfig = base / (filterName + "_config.lua");
-        fs::path subLua = base / (filterName + ".lua");
-        if (fs::is_directory(sub) && copyIfExists(sub / "lootfilter_config.lua")) return true;
-        if (copyIfExists(subConfig)) return true;
-        if (copyIfExists(subLua)) return true;
-        return false;
-        };
-    if (tryDir(GetModFiltersDir())) return true;
-    return tryDir(GetModD2RLANFiltersDir());
+    const auto source=LootFilterLibrary::Resolve(GetModFilterDirectories(),filterName);
+    if(source.empty())return false;
+    std::error_code error;
+    return std::filesystem::copy_file(source,GetLootFilterConfigPath(),std::filesystem::copy_options::overwrite_existing,error);
 }
 
 // Sanitize a string to a valid filter filename stem (alphanumeric + underscore).
@@ -5385,6 +5339,17 @@ static void EndFrameBgImageRegion();                    // implemented later
 
 void LoadD2RHUDConfig(const std::string& path)
 {
+    const bool defaultCubeRecipes = modName == "RMD-MP";
+    auto loadCubeOptions = [&](const nlohmann::json& options) {
+        d2rHUDConfig.MultipleUseitemOutputs = options.value("MultipleUseitemOutputs", defaultCubeRecipes);
+        d2rHUDConfig.MultipleUseitemInputs = options.value("MultipleUseitemInputs", defaultCubeRecipes);
+        d2rHUDConfig.ExtendedCubeConditions = options.value("ExtendedCubeConditions", defaultCubeRecipes);
+        CubeVisual::SetMultipleUseOutputs(d2rHUDConfig.MultipleUseitemOutputs);
+        CubeVisual::SetMultipleUseInputs(d2rHUDConfig.MultipleUseitemInputs);
+        CubeVisual::SetExtendedConditions(d2rHUDConfig.ExtendedCubeConditions);
+    };
+    // Apply mod defaults even when this player has no preferences file yet.
+    loadCubeOptions(nlohmann::json::object());
     std::string cleanedJson = CleanJsonFile(path);
     if (cleanedJson.empty())
     {
@@ -5411,6 +5376,7 @@ void LoadD2RHUDConfig(const std::string& path)
         d2rHUDConfig.MinionEquality = j.value("MinionEquality", d2rHUDConfig.MinionEquality);
         d2rHUDConfig.PersistentSummons = j.value("PersistentSummons", false);
         d2rHUDConfig.ActVI = j.value("ActVI", false);
+        loadCubeOptions(j);
         d2rHUDConfig.SurvivorArena = j.value("SurvivorArena", false);
         CubeMap::SetSurvivorsEnabled(d2rHUDConfig.SurvivorArena);
         ExtendedActs::SetRequested(d2rHUDConfig.ActVI);
@@ -5723,6 +5689,9 @@ bool SaveFullGrailConfig(const std::string& userPath, bool isAutoBackup)
         j["MinionEquality"] = d2rHUDConfig.MinionEquality;
         j["PersistentSummons"] = d2rHUDConfig.PersistentSummons;
         j["ActVI"] = d2rHUDConfig.ActVI;
+        j["MultipleUseitemOutputs"]=d2rHUDConfig.MultipleUseitemOutputs;
+        j["MultipleUseitemInputs"]=d2rHUDConfig.MultipleUseitemInputs;
+        j["ExtendedCubeConditions"] = d2rHUDConfig.ExtendedCubeConditions;
         j["SurvivorArena"] = d2rHUDConfig.SurvivorArena;
         j["D3StyleWhirlwind"] = d2rHUDConfig.D3StyleWhirlwind;
         j["NoWidescreenBars"] = d2rHUDConfig.NoWidescreenBars;
@@ -7887,8 +7856,16 @@ void ShowLootMenu()
         ImGui::AlignTextToFramePadding();HudText::TextUnformatted("Filter");ImGui::SameLine();
         ImGui::SetNextItemWidth((std::min)(360.f,ImGui::GetContentRegionAvail().x*.4f));
         const auto comboLabel=s_pendingFilter.empty()?currentDisplayName:GetFilterDisplayName(s_pendingFilter);
-        if(HudText::BeginCombo("##selected_filter",comboLabel.c_str())){
-            for(const auto& name:GetOrderedFilterList())if(HudText::Selectable(GetFilterDisplayName(name).c_str(),name==s_activeFilterInternalName))s_pendingFilter=name;
+        if(HudText::BeginCombo("##selected_filter",comboLabel.c_str(),ImGuiComboFlags_HeightLarge)){
+            const auto names=GetOrderedFilterList();
+            if(names.empty())HudText::TextDisabled("No installed filters found.");
+            for(const auto& name:names){
+                ImGui::PushID(name.c_str());
+                const bool selected=name==(s_pendingFilter.empty()?s_activeFilterInternalName:s_pendingFilter);
+                if(HudText::Selectable(GetFilterDisplayName(name).c_str(),selected))s_pendingFilter=name;
+                if(selected)ImGui::SetItemDefaultFocus();
+                ImGui::PopID();
+            }
             ImGui::EndCombo();
         }
         if(!s_pendingFilter.empty()){

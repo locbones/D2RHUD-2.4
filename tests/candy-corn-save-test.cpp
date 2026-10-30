@@ -58,6 +58,44 @@ std::vector<uint8_t> Stash(bool legacy,unsigned quantity=57,bool empty=false){
     }
     Detail::Store(w.bytes,16,uint32_t(w.bytes.size()));return w.bytes;
 }
+std::vector<uint8_t> SocketedBelt(unsigned children,unsigned total){
+    Writer w;w.Add((1<<4)|(1<<11)|(1<<26),32);w.Add(5,3);w.Add(0,3);w.Add(0,4);w.Add(1,4);w.Add(2,4);w.Add(5,3);w.Code("l07 ");
+    w.Add(children,3);w.Add(0xd9dcc933,32);w.Add(119,7);w.Add(3,4);w.Add(0,1);w.Add(0,1);w.Add(3,3);w.Add(0x5073,16);w.Add(0,1);
+    w.Add(86,11);w.Add(12,8);w.Add(11,9);w.Add(total,4);
+    for(unsigned list=0;list<2;++list){w.Add(0,9);w.Add(42+list,8);w.Add(511,9);}w.Align();
+    for(unsigned n=0;n<children;++n){auto child=Compact("r01 ");w.bytes.insert(w.bytes.end(),child.begin(),child.end());}
+    return w.bytes;
+}
+void SocketedGearTests(){
+    auto tables=Definitions();tables.items.push_back({{'l','0','7',' '},true});
+    tables.stats[31]={11,0,0,10,true};tables.stats[72]={9,0,0,0,true};tables.stats[73]={8,0,0,0,true};
+    for(unsigned children=0;children<8;++children)for(unsigned total=0;total<16;++total){
+        const auto belt=SocketedBelt(children,total);
+        Save oldSave,newSave;oldSave.List(2);newSave.List(2);
+        oldSave.ItemBytes(belt);newSave.ItemBytes(belt);oldSave.ItemBytes(Item(true));newSave.ItemBytes(Item(false));
+        for(auto* save:{&oldSave,&newSave}){save->Corpse(0);save->Merc();save->Golem();}
+        const auto old=oldSave.Done(),expected=newSave.Done();const auto character=Convert(old,tables);
+        assert(character.status==Status::Converted && character.converted==1 && character.bytes==expected);
+        assert(Convert(expected,tables).status==Status::Unchanged);
+        auto oldTab=Stash(false,57,true),newTab=oldTab;
+        for(auto* tab:{&oldTab,&newTab}){Put(tab->data(),66,uint16_t(2));tab->insert(tab->end(),belt.begin(),belt.end());}
+        auto before=Item(true),after=Item(false);oldTab.insert(oldTab.end(),before.begin(),before.end());newTab.insert(newTab.end(),after.begin(),after.end());
+        for(auto* tab:{&oldTab,&newTab})Detail::Store(*tab,16,uint32_t(tab->size()));
+        const auto original=oldTab;const auto stash=ConvertStash(oldTab,tables);
+        assert(stash.status==Status::Converted && stash.converted==1 && stash.bytes==newTab && oldTab==original);
+        assert(ConvertStash(newTab,tables).status==Status::Unchanged);
+        // Missing child records still fail structural validation.
+        if(children){auto truncated=oldTab;truncated.erase(truncated.begin()+68+belt.size()-Compact("r01 ").size(),truncated.begin()+68+belt.size());
+            Detail::Store(truncated,16,uint32_t(truncated.size()));assert(ConvertStash(truncated,tables).status!=Status::Converted);}
+    }
+    auto unknown=Stash(false,57,true);const auto unknownItem=Compact("bad!");
+    Put(unknown.data(),66,uint16_t(1));unknown.insert(unknown.end(),unknownItem.begin(),unknownItem.end());Detail::Store(unknown,16,uint32_t(unknown.size()));
+    auto diagnosticPage=Stash(false,57,true);diagnosticPage.insert(diagnosticPage.end(),unknown.begin(),unknown.end());
+    const auto failure=ConvertStash(diagnosticPage,tables);
+    assert(failure.status==Status::Corrupt && failure.bytes.empty() && !failure.converted);
+    assert(failure.message.find("Shared stash tab 2")!=std::string::npos && failure.message.find("'bad!'")!=std::string::npos);
+    std::cout<<"128 socket child/stat combinations: runeword gear and children preserved in character/stash migration; missing child records refused; tab/item failure diagnostics verified.\n";
+}
 void StashTests(){
     const auto tables=Definitions();const auto old=Stash(true),current=Stash(false),original=old;
     auto result=ConvertStash(old,tables);assert(result.status==Status::Converted && result.converted==2 && result.bytes==current && old==original);
@@ -292,6 +330,12 @@ void NativeRealSaves(const std::filesystem::path& excel,const std::filesystem::p
     for(const auto& entry:std::filesystem::directory_iterator(saves))if(entry.path().extension()==L".d2i"){
         auto source=Read(entry.path());const auto before=source;const auto converted=ConvertStash(source,tables);
         if(converted.status!=Status::Converted)continue;
+        if(entry.path().filename()==L"Stash_SC_Page16.d2i"){
+            assert(converted.converted==23 && converted.bytes.size()==source.size()+23);
+            const auto firstSize=Detail::Word(source,16),secondSize=Detail::Word(source,firstSize+16);
+            assert(firstSize==1066 && secondSize==2987);
+            assert(std::equal(source.begin(),source.begin()+firstSize+secondSize,converted.bytes.begin()));
+        }
         std::vector<StashDescriptor> descriptors;expectedRealTabs.clear();
         for(size_t at=0;at<source.size();){const auto length=Detail::Word(source,at+16);const auto tab=std::span<const uint8_t>(source).subspan(at,length);
             const auto next=ConvertRecord(tab,tables,true);assert(next.status==Status::Converted || next.status==Status::Unchanged);
@@ -488,4 +532,4 @@ void NativeTests(const std::filesystem::path& exe,const std::filesystem::path& r
     std::cout<<"Native signatures, Huffman/checksum checks, pre-selection preview detour/ABI/locks, character/stash detours, source ownership, backup refusal, malformed/unsupported data rejection and failure diagnostics passed.\n";
 }
 }
-int wmain(int argc,wchar_t** argv){assert(argc==3||argc==5);const auto root=std::filesystem::path(argv[1])/(L"run-"+std::to_wstring(GetCurrentProcessId())+L"-"+std::to_wstring(GetTickCount64()));std::filesystem::create_directories(root);Test::ParseTests();Test::StashTests();Test::StorageTests(root);Test::NativeTests(argv[2],root,argc==5?argv[3]:L"",argc==5?argv[4]:L"");if(argc==5)Test::ReadOnlySaves(argv[3],argv[4]);std::cout<<"Candy Corn save conversion tests passed.\n";return 0;}
+int wmain(int argc,wchar_t** argv){assert(argc==3||argc==5);const auto root=std::filesystem::path(argv[1])/(L"run-"+std::to_wstring(GetCurrentProcessId())+L"-"+std::to_wstring(GetTickCount64()));std::filesystem::create_directories(root);Test::ParseTests();Test::StashTests();Test::SocketedGearTests();Test::StorageTests(root);Test::NativeTests(argv[2],root,argc==5?argv[3]:L"",argc==5?argv[4]:L"");if(argc==5)Test::ReadOnlySaves(argv[3],argv[4]);std::cout<<"Candy Corn save conversion tests passed.\n";return 0;}

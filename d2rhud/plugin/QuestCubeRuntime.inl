@@ -68,7 +68,7 @@ bool CreateQuest(Game* game,Unit* player,Recipe* recipe,Input* inputs){
     for(auto& out:native.outputs)for(auto& mod:out.mods)if(mod.property==property)mod=Modifier{};
     QuestOutputScope transaction(game,player,*gate,native);
     struct Scope {QuestOutputScope* previous;Scope(QuestOutputScope* q):previous(questOutput){questOutput=q;}~Scope(){questOutput=previous;}} scope(&transaction);
-    originalCreate(game,player,&native,inputs);
+    DispatchCreate(game,player,&native,inputs);
     QuestJournal::Finish(game,player,*gate,transaction.Outcome());return true;
 }
 bool RecoverQuestProof(Game* game,Unit* player,int quest){
@@ -87,10 +87,10 @@ bool RecoverQuestProof(Game* game,Unit* player,int quest){
 
 void ObserveCraft(Game* game,Unit* player,Recipe* recipe,Input* inputs,size_t row){
     const auto rules=QuestJournal::Bindings();
-    if(!rules||!rules->events||!game||!player||!player->pInventory){originalCreate(game,player,recipe,inputs);return;}
+    if(!rules||!rules->events||!game||!player||!player->pInventory){DispatchCreate(game,player,recipe,inputs);return;}
     QuestJournal::RecipeGate gate;gate.row=row;QuestOutputScope transaction(game,player,gate,*recipe);
     struct Scope {QuestOutputScope* previous;Scope(QuestOutputScope* q):previous(questOutput){questOutput=q;}~Scope(){questOutput=previous;}} scope(&transaction);
-    originalCreate(game,player,recipe,inputs);
+    DispatchCreate(game,player,recipe,inputs);
     std::vector<Unit*> outputs;for(auto id:transaction.placed)outputs.push_back(Native<Unit*(__fastcall*)(Game*,int,uint32_t)>(0x2c49c0)(game,4,id));
     QuestJournal::Crafted(game,player,row,transaction.inputCodes,outputs,transaction.Outcome());
 }

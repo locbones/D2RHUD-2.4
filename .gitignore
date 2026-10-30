@@ -122,12 +122,11 @@ ui-layout.ini
 Thumbs.db
 Desktop.ini
 
-# Existing launcher downloads depend on these three published runtime files.
+# HUD releases publish only the DLL and loot-filter engine. Startup belongs to Pandemonium.
 # Keep every other root/nested build product excluded.
 !/x64/
 /x64/*
 !/x64/Release/
 /x64/Release/*
 !/x64/Release/d2rhud.dll
-!/x64/Release/Pandemonium.HudLoader.exe
 !/x64/Release/lootfilter.lua

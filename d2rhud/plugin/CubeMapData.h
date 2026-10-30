@@ -127,13 +127,18 @@ enum class Event : uint8_t { None, GoldenArmada, ForsakenFestival, FountainOfYou
 inline bool RegularEvent(Event event){return event>=Event::GoldenArmada && event<=Event::MidasMeddling;}
 inline bool TimedEvent(Event event){return event==Event::TreasureTrove || event==Event::GoldenGoose || event==Event::PlentifulPirating;}
 inline int EventLevel(Event event){return TimedEvent(event)?0:event==Event::ChampionClash?108:event==Event::SoulSurprise?239:39;}
-inline constexpr int MaxEventMonsterLevel=115;
+inline constexpr int MaxMapMonsterLevel=115;
+inline int MapMonsterLevel(int characterLevel,const std::vector<Roll>& rolls){
+    int64_t level=int64_t((std::max)(1,characterLevel))+3;
+    for(const auto roll:rolls)if(roll.effect==LevelEffect)level+=roll.value;
+    return int((std::clamp)(level,int64_t(1),int64_t(MaxMapMonsterLevel)));
+}
 inline int EventMonsterLevel(Event event,int characterLevel){
-    if(event==Event::Trial)return MaxEventMonsterLevel;
-    return (std::min)(MaxEventMonsterLevel,(std::clamp)(characterLevel,1,MaxEventMonsterLevel)+5);
+    if(event==Event::Trial)return MaxMapMonsterLevel;
+    return (std::min)(MaxMapMonsterLevel,(std::clamp)(characterLevel,1,MaxMapMonsterLevel)+5);
 }
 enum class EventPhase : uint8_t { None, WaitingTown, Ceremony, Briefing, Entering, Active, Returning, Finished, Cancelled };
-enum class EventFailure : uint8_t { None, Initializer, Roster, PlayerStats, Occupied, Reset, Placement, Arrival, Participant, Portal, TreasureClass, ChampionTreasureClass };
+enum class EventFailure : uint8_t { None, Initializer, Roster, PlayerStats, Occupied, Reset, Placement, Arrival, Participant, Portal, TreasureClass, ChampionTreasureClass, SoulTreasureClass };
 inline const char* FailureMessage(EventFailure failure){
     switch(failure){
     case EventFailure::Initializer:return "The event's monster initialization is unavailable.";
@@ -147,6 +152,7 @@ inline const char* FailureMessage(EventFailure failure){
     case EventFailure::Portal:return "There is no safe position for the event portals.";
     case EventFailure::TreasureClass:return "MapGroupA is missing from the loaded treasure classes. Restart after adding it.";
     case EventFailure::ChampionTreasureClass:return "ChampClash is missing from the loaded treasure classes. Restart after adding it.";
+    case EventFailure::SoulTreasureClass:return "SoulSurprise is missing from the loaded treasure classes. Restart after adding it.";
     default:return "The realm is currently unavailable.";
     }
 }
@@ -215,7 +221,7 @@ static_assert(sizeof(CommandPacket)==0xd2);
 inline bool Valid(const Packet& packet) {
     if(packet.opcode!=0x2b || packet.magic!=PacketMagic || packet.operation!=PacketOperation || packet.version!=5 || packet.elitePacks>13 ||
        packet.active>1 || packet.effects>MaxEffects || packet.remaining>1000000 || (packet.active && (!packet.run || !packet.level || Town(packet.level))))return false;
-    if(packet.completed>1 || packet.reward>2 || packet.die>6 || packet.success>1 || packet.event>Event::SoulSurprise || packet.eventPhase>EventPhase::Cancelled || packet.failure>EventFailure::ChampionTreasureClass)return false;
+    if(packet.completed>1 || packet.reward>2 || packet.die>6 || packet.success>1 || packet.event>Event::SoulSurprise || packet.eventPhase>EventPhase::Cancelled || packet.failure>EventFailure::SoulTreasureClass)return false;
     if(packet.completed && (!packet.run || packet.die<1 || packet.active))return false;
     if(packet.reward && (packet.event!=Event::Trial || packet.eventPhase!=EventPhase::Finished || !packet.success || packet.reward!=2))return false;
     if(packet.event!=Event::None && (!packet.run || (!packet.die && packet.event!=Event::Survivors) || packet.eventPhase==EventPhase::None || packet.eventSeconds>Info(packet.event).seconds || (packet.event!=Event::ChampionClash && packet.eventElapsed>86400000)))return false;

@@ -5,6 +5,10 @@ namespace CubeVisual::Data {struct Recipe;}
 namespace CubeVisual {
 using MapPrepare=bool(*)(D2GameStrc*,D2UnitStrc*,Data::Recipe&);
 void SetMapPrepare(MapPrepare handler);
+void SetMultipleUseOutputs(bool enabled);
+void SetMultipleUseInputs(bool enabled);
+void SetExtendedConditions(bool enabled);
+bool ExtendedConditionsEnabled();
 bool Install();
 void Uninstall();
 bool Installed();

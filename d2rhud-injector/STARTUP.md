@@ -4,20 +4,23 @@ prompt with:
 
     d2rhud-injector\build-startup.cmd x64\Release
 
-Run `Pandemonium.HudLoader.exe` with the D2R installation as its working directory
-and pass the usual game arguments, e.g. `-mod RMD-MP -txt`. Pandemonium launchers
-can use this helper in place of their bundled helper; the existing binary memory
-plan protocol and progress messages are retained. The source is shared with
-Pandemonium's `CrossPlatform/native` integration; keep its native source files
-and the shared `d2rhud/StartupDiagnostics.h` ABI synchronized when updating that
-launcher, preserving the header's relative include path.
+Pandemonium now starts D2R and loads the HUD directly on Windows. Linux embeds
+its Windows-side bridge in the app and manages extraction automatically. This
+helper is a development harness, not a separate HUD release artifact. For manual
+fixture/developer launches, run it with the D2R directory as its working directory
+and pass normal game arguments. Production startup code belongs to Pandemonium's
+CrossPlatform project. Its Wine bridge retains the binary memory-plan protocol.
+
+Normal HUD feature releases replace only d2rhud.dll. Readiness (0/1/2) and optional
+versioned diagnostics are discovered through stable export names. Game executable
+or startup ABI changes may require a Pandemonium update; feature changes do not.
 
 Updated helpers identify rejected startup features (extended states, extended
 classes/Warlock, or Act VI) and include their failure reason. Timeouts identify
 the last initialization stage. The HUD writes `feature-status.txt` before
 publishing readiness or rejection, and includes the class/Warlock status.
-Distribute both the updated DLL and helper to get these error messages; older
-helpers remain compatible but retain their generic startup errors.
+Pandemonium reads these diagnostics directly. Older standalone helpers remain
+compatible but may retain generic startup errors.
 
 With five acts loaded from BINs, missing, edited or malformed optional Act VI
 files do not block startup, even if a saved Act VI preference is on. That
@@ -36,11 +39,10 @@ workers, suspends the actual loading thread and restores the original
 instruction before loading HUD, so HUD's code signatures still verify exactly.
 Other game threads remain free to load the DLL and initialize its hooks. The
 helper resumes table loading only after HUD publishes readiness and the
-appropriate comparison is verified. Actual loaded counts of 1–255 rows use
-native compatibility mode; 256–512 rows require the extended hooks and a
+appropriate comparison is verified. Actual loaded counts of 1â€“255 rows use
+native compatibility mode; 256â€“512 rows require the extended hooks and a
 comparison of 513. The choice uses the game's loaded table, including BIN-only
-installs, rather than a possibly absent or outdated states.txt. Distribute the
-updated helper with the updated DLL for native compatibility mode. Failure or timeout stops
+installs, rather than a possibly absent or outdated states.txt. Pandemonium owns this startup protocol independently of HUD feature updates. Failure or timeout stops
 only the helper's new child. Unsupported code is rejected before execution.
 No executable file or mod table is patched on disk.
 

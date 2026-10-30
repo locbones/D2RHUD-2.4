@@ -34,6 +34,10 @@ continue refusing genuinely ambiguous records.
 Valid current-format stacks without RNG properties also pass unchanged, both
 alone and alongside legacy items. Current-format character fixtures run through
 the installed preview/game-load detours without replacing their native buffers.
+Socketed runeword gear is tested across all 0-7 serialized child counts and
+0-15 saved socket totals. Migration preserves the parent, children and item
+properties byte for byte even when the counts differ; missing child records
+still fail. Shared-stash failures report the tab and furthest parsed item/offset.
 The preview hook runs before last-selected-character inventory parsing, uses
 the native shared-lock buffer layout, and preserves all five reader arguments.
 Its tests cover native empty-buffer return, lock release, backup preservation,
@@ -63,6 +67,20 @@ an explicit dependency directory; others use the existing repository-local
 vcpkg installation layout.
 
 ## Coverage
+
+`run-cube-map.cmd <output> <D2R.exe> [compiled-excel-folder]` also checks
+terrain-independent random rosters, custom/inherited aquatic monster rows,
+spawn and secondary-minion dependencies, recursive families and safe flying
+monsters. Optional compiled tables are read into private copies to test actual
+BIN-only rosters and verify the original files remain unchanged.
+
+`run-quest-journal.cmd <output> <cubemain.txt> <quests.json> [existing-journal-folder]`
+simulates a host and independent client storage folders. It checks immediate
+client-owned writes, acknowledgements before another claim, host-held legacy
+guest recovery, old timestamp/checksum histories and definition drift, all 45
+reward gates, bounded file counts across repeated starts, writer conflicts,
+stale/forged commands and recovery after a failed write. Optional existing
+journals are replayed through isolated copies and verified unchanged.
 
 `run-hud-localization.cmd <output>` tests every bundled language pack, unsafe
 format rejection, English fallback, stable control IDs across languages,
@@ -120,3 +138,55 @@ backup, and never writes the source character. Test backups use a private
 The native basic-preview fallback must preserve summary/progression fields and
 skip every item decode on metadata, backup or body-validation failure; native
 rejection of a truncated header remains intact.
+
+## Extended cube comparisons
+
+The cube-visual native fixture checks every three-condition AND/OR truth-table
+combination, default AND and unused slots, malformed columns, option-off fallback,
+recipe ordering, native player/item comparisons, and journal isolation. Two
+interchangeable first-input candidates verify that separate items cannot satisfy
+opposite halves of AND and that `useitem` selects the qualifying item.
+Mixed-rune deposit probes preserve actual source item stats in private views.
+The actual native server inventory request routine is replayed in prepare and
+commit modes: rejected conditions send/move/create nothing, successful prepare
+uses the native inventory-publication path, and commit rechecks current stats.
+Existing native output/save/publication and rollback fixtures run afterwards.
+These are private native-image replays, not a launched live TCP/IP session.
+`generate-cube-condition-native.py` regenerates the additional ingredient
+matcher relocation and chained Windows unwind metadata from the supported EXE.
+
+## Indexed and multiple useitem outputs
+
+The cube-visual fixture executes the native linker for all seven input selectors
+in all three output slots, including BIN marker round trips. Native matcher and
+creation replays cover independent A/B/C copies, original GUID preservation,
+quantities, socket children, separate modifiers, selected-source metadata,
+option-off and missing/stale source rejection, and copy/preflight/placement
+cleanup. Quest event proof-slot removal retains original input numbering.
+Both phases of the actual native server inventory request are replayed, checking
+ingredient moves, commit consumption, fresh IDs and full new-item publication.
+Save/load, socket, inventory and packet dependencies use controlled fixture
+boundaries. These checks do not replace a live multiplayer gameplay test.
+`generate-cube-useitem-native.py` regenerates output-routine relocation,
+signature and Windows unwind metadata from the supported executable.
+
+Soul Surprise admission resolves its own named root and reports a missing
+`SoulSurprise` table before arena setup. Native loot replay follows the exact
+negative-pick root through its weighted chest to all four fragment outcomes,
+including simultaneous Treasure Trove, Golden Goose and Plentiful bonuses,
+and verifies that the shared treasure-class records remain unchanged.
+
+Soul Surprise return tests require a confirmed fragment drop, no living event
+monsters and no S02-S05 items on the event floor or in a drop animation. They
+cover all four codes, bonus duplicates, cursor/inventory exclusion, area scope,
+server units not yet linked into rooms, delayed/missing drops and late
+loot/revival cancelling queued returns. The two-second clear delay starts after
+pickup, while ordinary maps retain their existing completion behavior.
+
+## Installed loot-filter library
+
+`tests\run-lootfilter-library.cmd "%TEMP%\lootfilter-library-tests" [game-directory]`
+checks My Filters precedence, current Pandemonium and legacy D2RLAN packages,
+extracted mod data, packaged configs, Lua extension casing, fresh imports and
+exclusion of sound/update/archive entries. Every listed filter must resolve to
+an applicable file. The optional installed RMD-MP package check is read-only.

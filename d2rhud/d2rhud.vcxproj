@@ -179,6 +179,8 @@
     <ClInclude Include="plugin\LegacyTransmog.h" />
     <ClInclude Include="plugin\CubeVisual.h" />
     <ClInclude Include="plugin\CubeVisualData.h" />
+    <ClInclude Include="plugin\CubeConditionNativeData.h" />
+    <ClInclude Include="plugin\CubeUseNativeData.h" />
     <ClInclude Include="plugin\CubeRuneBag.inl" />
     <ClInclude Include="plugin\RestartGame.h" />
     <ClInclude Include="plugin\RestartGameData.h" />
@@ -187,6 +189,7 @@
     <ClInclude Include="plugin\QuestJournal.h" />
     <ClInclude Include="plugin\QuestJournalClient.h" />
     <ClInclude Include="plugin\QuestJournalData.h" />
+    <ClInclude Include="plugin\QuestJournalStorage.h" />
     <ClInclude Include="plugin\D3Whirlwind.h" />
     <ClInclude Include="plugin\SelectedAuras.h" />
     <ClInclude Include="plugin\WidescreenBars.h" />
@@ -269,6 +272,7 @@
     <ClInclude Include="plugin\ItemFilter\LuaConfigDocument.h" />
     <ClInclude Include="plugin\ItemFilter\LuaConfigIO.h" />
     <ClInclude Include="plugin\ItemFilter\LootFilterFields.h" />
+    <ClInclude Include="plugin\ItemFilter\LootFilterLibrary.h" />
     <ClInclude Include="plugin\ItemFilter\LootFilterEditorText.h" />
     <ClInclude Include="plugin\ItemFilter\LootFilterEditorIO.inl" />
     <ClInclude Include="plugin\ItemFilter\LootFilterEditorUI.inl" />

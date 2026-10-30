@@ -1,4 +1,4 @@
-﻿#include "HudText.h"
+#include "HudText.h"
 #include "CubeMap.h"
 #include "CubeMapData.h"
 #include "CubeMapAutomapData.h"
@@ -24,6 +24,7 @@
 #include "../Pattern.h"
 #include "../CrashDiagnostics.h"
 #include "../d2/Reclass.h"
+#include "../d2/D2Enums.h"
 #include <MinHook.h>
 #include <atomic>
 #include <memory>
@@ -204,6 +205,7 @@ struct Run {
     Census census;
     uint8_t targetPacks=0;uint16_t spawnedPacks=0;
     int eventTreasureClass=-1;
+    bool soulDropObserved=false;
 };
 struct GameState {
     int seed=0;uint32_t frame=0;
@@ -283,6 +285,16 @@ bool RunMonster(Unit* unit,const Run& run){
     // they still belong to the objective count when spawned for this event.
     const bool objective=unit && run.event!=Event::None && run.objectives.contains(unit->dwUnitId);
     return Monster(unit,!objective);
+}
+bool SoulFragment(Unit* item){
+    if(!item || item->dwUnitType!=4)return false;
+    const auto table=Field<uint8_t*>(Native<void*>(0x1ca0390),0);
+    const auto count=Field<uint64_t>(Native<void*>(0x1ca0398),0);
+    if(!table || count>1000000 || item->dwClassId>=count)return false;
+    const auto code=Field<uint32_t>(table+size_t(item->dwClassId)*0x1b4,0x80);
+    if((code>>24)!=0 && (code>>24)!=0x20)return false;
+    const auto shortCode=code&0xffffff;
+    return shortCode==0x323053 || shortCode==0x333053 || shortCode==0x343053 || shortCode==0x353053;
 }
 std::vector<Unit*> RoomUnits(Room* room){
     std::vector<Unit*> units;
@@ -436,20 +448,47 @@ bool Occupied(Room* room){
     return false;
 }
 #include "CubeMapLayouts.inl"
+bool TerrainIndependent(int id){
+    const auto count=Field<uint64_t>(Native<void*>(0x1c9f880),0);
+    const auto table=Field<uint8_t*>(Native<void*>(0x1c9f878),0);
+    if(!table||!count||count>100000||id<0||uint64_t(id)>=count)return false;
+    std::vector<int> pending{id};std::set<int> visited;
+    while(!pending.empty()){
+        const int current=pending.back();pending.pop_back();if(current<0)continue;
+        if(uint64_t(current)>=count)return false;
+        if(!visited.insert(current).second)continue;
+        if(visited.size()>64)return false;
+        const auto record=table+size_t(current)*0x1dc;
+        // Native MonAI IDs, not monster class IDs: FrogDemon, Tentacle and
+        // TentacleHead submerge/emerge in water. Random map floors cannot
+        // guarantee that terrain. Read the compiled AI so renamed/custom
+        // rows and BIN-only mods receive the same protection.
+        const auto ai=Field<uint16_t>(record,0x4e);
+        if(ai==52||ai==56||ai==57)return false;
+        // Base families retain native initialization behavior. Also follow
+        // spawn/minion links so an eligible leader cannot introduce an unsafe
+        // child. Self-links and recursive families are visited only once.
+        for(size_t offset:{size_t(0x32),size_t(0x50),size_t(0x56),size_t(0x58)}){
+            const int next=Field<int16_t>(record,offset);if(next>=0&&next!=current)pending.push_back(next);
+        }
+    }
+    return true;
+}
 bool RandomCandidate(int id){
     const auto count=Field<uint64_t>(Native<void*>(0x1c9f880),0);
     const auto table=Field<uint8_t*>(Native<void*>(0x1c9f878),0);
     if(id<0 || uint64_t(id)>=count || !table)return false;
     const auto record=table+size_t(id)*0x1dc;const auto flags=Field<uint32_t>(record,0x3c);
     return (flags&((1u<<25)|(1u<<15)|1u))==((1u<<25)|(1u<<15)|1u) &&
-        !(flags&(0x700|(1u<<4)|(1u<<5)|(1u<<6)|(1u<<7)|(1u<<18))) && record[0x80]==0;
+        !(flags&(0x700|(1u<<4)|(1u<<5)|(1u<<6)|(1u<<7)|(1u<<18))) && record[0x80]==0 && TerrainIndependent(id);
 }
 bool BuildRoster(Run& run){
     const auto levels=Field<uint8_t*>(Native<void*>(0x1c9fd08),0);
     const auto count=Field<uint32_t>(Native<void*>(0x1c9fd10),0);
     if(!levels || !count || count>1024)return false;
     // Only monsters a mod already uses for ordinary level population enter
-    // the pool. Quest actors, pets, traps and multipart-only monsters stay out.
+    // the pool. Quest actors, pets, traps, multipart-only and terrain-dependent
+    // monsters stay out, including their linked spawn/minion families.
     std::set<int> pool;
     for(size_t level=1;level<count;++level)for(size_t offset:{size_t(0x3a),size_t(0x6c)})for(size_t n=0;n<25;++n) {
         const int id=Field<int16_t>(levels+level*0x184,offset+n*2);
@@ -783,12 +822,17 @@ void Sync(Game* game,Run& run,bool force=false){
         }else run.automapSent.erase(client->dwClientId);
     }
 }
+void FinalizeMonsterLevel(Unit* unit,Run& run){
+    if(!run.levelsFinalized.insert(unit->dwUnitId).second)return;
+    if(run.event!=Event::None)UnitStat(unit,12,run.monsterLevel);
+    else if(Stat(unit,12)>MaxMapMonsterLevel)UnitStat(unit,12,MaxMapMonsterLevel);
+    if(run.event==Event::Survivors)UnitStat(unit,13,0);
+}
 void CensusAndBuffs(Game* game,Run& run,bool scanMonsters=true){
     if(scanMonsters)for(const auto pin:run.pins)for(auto unit:RoomUnits(Field<Room*>(pin.room,0x58))) {
         if(unit->dwUnitType!=1)continue;
-        if(run.event!=Event::None && RunMonster(unit,run) && !Dead(unit) && run.levelsFinalized.insert(unit->dwUnitId).second){
-            UnitStat(unit,12,run.monsterLevel);if(run.event==Event::Survivors)UnitStat(unit,13,0);
-        }
+        // Native champion/unique setup can add levels after initialization.
+        if(RunMonster(unit,run) && !Dead(unit))FinalizeMonsterLevel(unit,run);
         if(RunMonster(unit,run) && (run.event!=Event::Trial || run.objectives.contains(unit->dwUnitId)))run.census.Observe(unit->dwUnitId,Dead(unit));
         else if(run.census.dead.contains(unit->dwUnitId) && Dead(unit))run.census.Observe(unit->dwUnitId,true);
         if(RunMonster(unit,run) && !Dead(unit)) {
@@ -906,6 +950,52 @@ void PollDemoEvents(Game* game,GameState& state){
     const auto local=LocalPlayer();if(!local || local->dwUnitType!=0)return;
     auto player=Lookup(game,0,local->dwUnitId);if(player)StartDemoEvent(game,state,player,key);
 }
+bool SoulSurpriseReady(Game* game,Run& run){
+    bool ground=false,alive=false;std::set<Unit*> visited;
+    auto onFloor=[](Unit* unit){return unit->dwUnitType==4 && (unit->dwItemMode==IMODE_ONGROUND || unit->dwItemMode==IMODE_DROPPING);};
+    auto inspect=[&](Unit* unit){
+        if(!unit || !visited.insert(unit).second || Level(unit)!=run.level)return;
+        if(unit->dwUnitType==1 && Monster(unit,false) && !Dead(unit))alive=true;
+        if(onFloor(unit) && SoulFragment(unit))ground=true;
+    };
+    // Pinned rooms include the whole event area, beyond client activation range.
+    for(const auto pin:run.pins)for(auto unit:RoomUnits(Field<Room*>(pin.room,0x58)))
+        if(unit->dwUnitType==1 || onFloor(unit))inspect(unit);
+    // Also inspect registered server units while native room links settle.
+    for(int type:{1,4}){
+        size_t count=0;std::set<Unit*> linked;
+        for(auto head:game->pUnitList[type])for(auto unit=head;unit;unit=unit->pListNext){
+            if(++count>MaxUnits || !linked.insert(unit).second)return false;
+            if(type==1 || onFloor(unit))inspect(unit);
+        }
+    }
+    // A fragment can be picked up between ticks. The drop observer records it
+    // synchronously, and this floor scan covers drops already in the world.
+    if(ground)run.soulDropObserved=true;
+    return run.soulDropObserved && !ground && !alive;
+}
+void UpdateClearTransition(Game* game,Run& run,bool scanMonsters){
+    const bool soul=run.event==Event::SoulSurprise;
+    const bool complete=run.census.Complete() && (!soul || SoulSurpriseReady(game,run));
+    // Soul loot is checked every tick, including after a return was queued.
+    if((scanMonsters || soul) && !complete){
+        run.clearedAt.reset();
+        if(run.phase==Phase::Returning && (soul || !run.timedOut)){
+            run.phase=Phase::Running;run.returning.clear();
+            if(soul){run.eventPhase=EventPhase::Active;run.success=false;}
+        }
+    }
+    if(scanMonsters && complete && !run.clearedAt)run.clearedAt=game->dwGameFrame;
+    // Give delayed death spawns time to settle. Soul Surprise starts this
+    // delay only after its fragment has appeared and left the event floor.
+    if(run.event!=Event::Survivors && scanMonsters && complete && run.phase!=Phase::Returning && run.clearedAt && game->dwGameFrame-*run.clearedAt>=50){
+        run.phase=Phase::Returning;
+        if(run.event!=Event::None){run.success=true;run.eventPhase=EventPhase::Returning;run.eventFrame=game->dwGameFrame;for(const auto& [id,p]:run.returns)run.returning.insert(id);}
+        for(auto player:Players(game))if(Level(player)==run.level)run.returning.insert(player->dwUnitId);
+        status.store("Map cleared; returning players to town.");
+        D2RHUD_CubeMapDiagnostics.stage=8;
+    }
+}
 void Process(Game* game){
     std::lock_guard lock(serverMutex);auto& state=State(game);
     SendLayouts(game,state);
@@ -933,20 +1023,7 @@ void Process(Game* game){
     if(run.census.entered)CaptureMapParty(game,run);
     CloseMapEntry(game,run);
     D2RHUD_CubeMapDiagnostics.remaining=run.census.Remaining();
-    if(scanMonsters && !run.census.Complete()) {
-        run.clearedAt.reset();
-        if(run.phase==Phase::Returning && !run.timedOut){run.phase=Phase::Running;run.returning.clear();}
-    }
-    if(scanMonsters && run.census.Complete() && !run.clearedAt)run.clearedAt=game->dwGameFrame;
-    // Allow on-death spawns and resurrection events to settle before moving
-    // the party. Any new live monster cancels the clear transition.
-    if(run.event!=Event::Survivors && scanMonsters && run.census.Complete() && run.phase!=Phase::Returning && run.clearedAt && game->dwGameFrame-*run.clearedAt>=50){
-        run.phase=Phase::Returning;
-        if(run.event!=Event::None){run.success=true;run.eventPhase=EventPhase::Returning;run.eventFrame=game->dwGameFrame;for(const auto& [id,p]:run.returns)run.returning.insert(id);}
-        for(auto player:Players(game))if(Level(player)==run.level)run.returning.insert(player->dwUnitId);
-        status.store("Map cleared; returning players to town.");
-        D2RHUD_CubeMapDiagnostics.stage=8;
-    }
+    UpdateClearTransition(game,run,scanMonsters);
     if(run.phase==Phase::Returning) {
         if(run.event==Event::Survivors){
             // Restore even a dead arena avatar. Native Hardcore/death rules
@@ -1168,10 +1245,8 @@ bool Prepare(Game* game,Unit* player,CubeVisual::Data::Recipe& recipe){
     D2RHUD_CubeMapDiagnostics.level=destination;D2RHUD_CubeMapDiagnostics.run=run->id;D2RHUD_CubeMapDiagnostics.stage=1;
     auto sourceRoom=GetRoom(player);Position source=run->entrance;
     if(!sourceRoom || !FreePosition(sourceRoom,source) || !RollModifiers(*run,game)){status.store("Map recipe refused: no portal space or required modifier stats.");return false;}
-    run->monsterLevel=(std::max)(1,Stat(player,12))+3;
-    for(const auto roll:run->rolls)if(roll.effect==LevelEffect)run->monsterLevel+=roll.value;
-    // Level is sent in the native monster packet as a byte. Do not wrap it.
-    run->monsterLevel=(std::min)(255,run->monsterLevel);
+    // Apply the shared map/event cap after all additional-level modifiers.
+    run->monsterLevel=MapMonsterLevel(run->characterLevel,run->rolls);
     run->initializer=BuildInitializer(run->monsterLevel);
     if(!run->initializer || !BuildRoster(*run)){status.store("Map recipe refused: monster initialization or random roster unavailable.");return false;}
     if(!ReleaseMapForRecipe(game,destination)){status.store("Map recipe refused: the previous area is occupied or still awaiting restoration.");return false;}
@@ -1221,6 +1296,12 @@ void GoldSixfold(Unit* item){
     const auto value=(std::max)(int64_t(0),int64_t(Stat(item,14)))*6;
     UnitStat(item,14,int((std::min)(int64_t(INT_MAX),value)));item->dwFlags|=2;
 }
+struct MapDropObservation {Run* soul=nullptr;bool golden=false;};
+thread_local MapDropObservation mapDropObservation;
+void ObserveMapTreasure(Unit* item){
+    if(mapDropObservation.golden)GoldSixfold(item);
+    if(mapDropObservation.soul && SoulFragment(item))mapDropObservation.soul->soulDropObserved=true;
+}
 int EventTreasureClass(Game* game,const Run* run,Unit* source,bool timed){
     if(!source || source->dwUnitType!=1)return -1;
     // Grotto's goblin variants have specialized native treasure classes.
@@ -1253,8 +1334,12 @@ bool Drop(Game* game,Unit* monster,Unit* player,int tc,int quality,int level,int
     int bonus=0;
     if(run && run->event==Event::None && (run->phase==Phase::Open || run->phase==Phase::Running) && monster->dwUnitType==1 && Level(monster)==run->level)
         for(const auto roll:run->rolls)if(roll.effect==TreasureEffect)bonus=roll.value;
-    if(overrideTC>0 || bonus || plentiful || golden)
-        return DropWithTreasureRules(game,monster,player,tc,quality,level,a7,items,count,maximum,overrideTC,bonus,plentiful,golden ? GoldSixfold : nullptr);
+    if(overrideTC>0 || bonus || plentiful || golden){
+        const bool soul=run && run->event==Event::SoulSurprise && monster->dwUnitType==1 && Level(monster)==run->level;
+        struct Scope {MapDropObservation previous=mapDropObservation;~Scope(){mapDropObservation=previous;}} scope;
+        mapDropObservation={soul?run:nullptr,golden};
+        return DropWithTreasureRules(game,monster,player,tc,quality,level,a7,items,count,maximum,overrideTC,bonus,plentiful,(soul || golden)?ObserveMapTreasure:nullptr);
+    }
     if(!run || run->event!=Event::MidasMeddling || run->eventPhase!=EventPhase::Active || Level(monster)!=run->level)return false;
     const bool first=run->goldDropped.insert(monster->dwUnitId).second;
     std::array<Unit*,32> captured{};int capturedCount=0;

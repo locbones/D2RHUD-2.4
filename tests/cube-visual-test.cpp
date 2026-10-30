@@ -1,5 +1,6 @@
 #include "../d2rhud/plugin/CubeVisual.cpp"
 #include <cassert>
+#include "../d2rhud/json.hpp"
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -307,6 +308,7 @@ void NativeSavedModifiers(uint8_t* image){
 std::filesystem::path eventTableFixture;
 #include "quest-cube-native-test.inl"
 #include "quest-property-native-test.inl"
+#include "cube-useitem-test.inl"
 void Executable(const std::filesystem::path& path){
     std::ifstream input(path,std::ios::binary|std::ios::ate);assert(input);
     std::vector<uint8_t> file(size_t(input.tellg()));input.seekg(0);input.read(reinterpret_cast<char*>(file.data()),file.size());
@@ -320,6 +322,7 @@ void Executable(const std::filesystem::path& path){
     installed=false;assert(Install());Uninstall();assert(Supported());
     QuestCubeNativeTest::Native(image);
     QuestCubeOutputTest::Native(image);
+    CubeUseTest::Native(image);
     // Real output parser/linker, with only their table lookup/CRT dependencies replaced.
     auto stub=[&](uint32_t rva,auto function){const uint8_t jump[]{0xff,0x25,0,0,0,0};memcpy(image+rva,jump,6);auto target=reinterpret_cast<uintptr_t>(function);memcpy(image+rva+6,&target,8);};
     stub(0x1448c80,&strcspn);
@@ -329,6 +332,14 @@ void Executable(const std::filesystem::path& path){
     Recipe recipe{};char output[]="useitem";
     reinterpret_cast<Linker>(image+0x2620a0)(output,&recipe,2,0,1,0);
     assert(recipe.outputs[2].type==254 && recipe.outputs[0].type==0);
+    const auto compilerLinker=originalLinker;const bool compilerInstalled=installed;originalLinker=reinterpret_cast<Linker>(image+0x2620a0);installed=true;
+    for(int input=1;input<=7;++input)for(int slot=0;slot<3;++slot){
+        Recipe encoded{};encoded.header[0]=1;std::string text="useitem"+std::to_string(input);
+        LinkerHook(text.data(),&encoded,slot,0,1,0);assert(encoded.header[0]&&IndexedUse(encoded.outputs[slot])&&UseInput(encoded.outputs[slot])==input);
+        std::array<uint8_t,sizeof(Recipe)> bin{};memcpy(bin.data(),&encoded,sizeof(encoded));Recipe loaded{};memcpy(&loaded,bin.data(),sizeof(loaded));assert(UseInput(loaded.outputs[slot])==input);
+    }
+    originalLinker=compilerLinker;installed=compilerInstalled;
+
     Reset();
     auto pointer=[&](uint32_t rva,uintptr_t value){memcpy(image+rva,&value,8);};
     pointer(0x1ca0390,itemTable);pointer(0x1ca0398,itemCount);
@@ -358,6 +369,28 @@ void Executable(const std::filesystem::path& path){
     testImage=0;VirtualFree(image,0,MEM_RELEASE);
     std::cout<<"All native cube signatures, MinHook lifecycle and actual native useitem parser/linker offsets passed in a private image.\n";
 }
+void ConditionParsing(){
+    const std::string header="enabled\tnuminputs\top\tparam\tvalue\top2\tparam2\tvalue2\top3\tparam3\tvalue3\toplogic\toutput\n";
+    auto source=[&](const std::string& values){return ParseSource(header+values+"\n");};
+    assert(source("1\t2\t18\t398\t7\t\t\t\t\t\t\t\tcap").conditions.empty());
+    auto parsed=source("1\t2\t18\t398\t7\t3\t12\t10\t18\t474\t5\t or \tcap");
+    assert(parsed.conditions.size()==1 && parsed.visuals.empty() && parsed.conditions.at(0).valid && parsed.conditions.at(0).any);
+    for(const char* number:{"3x","-1","29","2147483648"})assert(!source(std::string("1\t2\t18\t398\t7\t")+number+"\t12\t10\t\t\t\tAND\tcap").conditions.at(0).valid);
+    assert(!source("1\t2\t18\t398\t7\t3\t12abc\t10\t\t\t\tAND\tcap").conditions.at(0).valid);
+    assert(!source("1\t2\t18\t398\t7\t3\t12\t2147483648\t\t\t\tAND\tcap").conditions.at(0).valid);
+    assert(source("1\t2\t18\t398\t7\t3\t12\t-2147483648\t\t\t\t\tcap").conditions.at(0).valid);
+    std::cout<<"Extended cube column parsing preserves ordinary rows and rejects invalid operators, numbers and logic.\n";
+}
+void ConditionMetadata(const std::filesystem::path& excel){
+    const auto path=excel.parent_path().parent_path()/"D2RHUD/table-metadata.json";
+    std::ifstream file(path,std::ios::binary);assert(file);const auto metadata=nlohmann::json::parse(file);
+    const auto text=metadata.at("tables").at("cubemain").at("source").get<std::string>();
+    const auto header=text.substr(0,text.find('\n'));
+    for(const char* column:{"op2","param2","value2","op3","param3","value3","oplogic"})assert(header.find(column)!=std::string::npos);
+    std::ifstream binary(excel/"cubemain.bin",std::ios::binary);uint32_t rows=0;binary.read(reinterpret_cast<char*>(&rows),4);
+    const auto source=ParseSource(text);assert(source.rows==rows&&source.conditions.empty());
+    std::cout<<"Installed BIN metadata preserves all "<<rows<<" recipes and exposes seven blank extended-condition columns without changing current recipe behavior.\n";
+}
 int main(int argc,char** argv){
     std::cout<<std::unitbuf;
     AddVectoredExceptionHandler(1,NativeFault);
@@ -366,5 +399,7 @@ int main(int argc,char** argv){
     for(const auto& text:{"useitem,vis=","useitem,vis=cap,visual=cap","usetype,vis=cap","useitem,vis=cap,qty=2","useitem,visual=\"bad"})assert(!Parse(text).valid);
     for(int kind=0;kind<3;++kind)for(int index:{0,4095}){Target target{kind,index};auto other=Target::Decode(target.Encode());assert(other.kind==kind && other.index==index);}
     if(argc>3)eventTableFixture=argv[3];
-    Bind();Reset();CompiledVisualNames();Adapters();MapRecipes();RuneBagTest::Run();if(argc>2)RuneBagTest::LoadedTables(argv[2]);if(argc>1)Executable(argv[1]);
+    for(int n=1;n<=7;++n){const auto token=ParseUseItem("useitem"+std::to_string(n)+",eth");assert(token.present&&token.valid&&token.input==n&&token.native=="useitem,eth");}
+    for(const char* token:{"useitem0","useitem8","useitem77","useitem2,useitem3"})assert(!ParseUseItem(token).valid);
+    ConditionParsing();Bind();Reset();CompiledVisualNames();Adapters();MapRecipes();RuneBagTest::Run();if(argc>2){RuneBagTest::LoadedTables(argv[2]);ConditionMetadata(argv[2]);}if(argc>1)Executable(argv[1]);
 }

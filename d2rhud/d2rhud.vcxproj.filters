@@ -128,6 +128,7 @@
     <ClInclude Include="plugin\ItemFilter\LuaConfigDocument.h" />
     <ClInclude Include="plugin\ItemFilter\LuaConfigIO.h" />
     <ClInclude Include="plugin\ItemFilter\LootFilterFields.h" />
+    <ClInclude Include="plugin\ItemFilter\LootFilterLibrary.h" />
     <ClInclude Include="plugin\ItemFilter\LootFilterEditorText.h" />
     <ClInclude Include="plugin\ItemFilter\LootFilterEditorIO.inl" />
     <ClInclude Include="plugin\ItemFilter\LootFilterEditorUI.inl" />

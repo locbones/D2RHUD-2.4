@@ -2,11 +2,16 @@
 bool BeginEvent(Game* game,Run& run){
     if(!State(game).restoreLevels.empty())return false;
     EventTrace(game,run,"event-begin");
-    run.eventTreasureClass=-1;
+    run.eventTreasureClass=-1;run.soulDropObserved=false;
     if(run.event!=Event::GoblinGrotto){
-        const auto treasureName=run.event==Event::ChampionClash ? "ChampClash" : "MapGroupA";
+        const auto treasureName=run.event==Event::ChampionClash ? "ChampClash" :
+            run.event==Event::SoulSurprise ? "SoulSurprise" : "MapGroupA";
         run.eventTreasureClass=LookupName(0x1c9f6a8,treasureName);
-        if(run.eventTreasureClass<=0){run.failure=run.event==Event::ChampionClash ? EventFailure::ChampionTreasureClass : EventFailure::TreasureClass;return false;}
+        if(run.eventTreasureClass<=0){
+            run.failure=run.event==Event::ChampionClash ? EventFailure::ChampionTreasureClass :
+                run.event==Event::SoulSurprise ? EventFailure::SoulTreasureClass : EventFailure::TreasureClass;
+            return false;
+        }
     }
     if(TimedEvent(run.event)){
         size_t granted=0;for(auto player:Players(game))if(run.returns.contains(player->dwUnitId) && !Dead(player) && Town(Level(player))){GrantTimedReward(game,player->dwUnitId,run.event);++granted;}
