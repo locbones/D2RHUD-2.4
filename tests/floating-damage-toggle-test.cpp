@@ -54,6 +54,68 @@ void Configuration() {
         ResetToDefaults();
         assert(IsEnabled()==enabled && GetConfig().enabled==enabled);
     }
+    for(bool numbers:{false,true}) for(bool dps:{false,true}) {
+        GetConfig().showDamageNumbers=numbers;
+        GetConfig().showDpsCounter=dps;
+        nlohmann::ordered_json saved;
+        SaveToJson(saved);
+        assert(saved["FloatingDamageSettings"]["ShowDamageNumbers"]==numbers);
+        assert(saved["FloatingDamageSettings"]["ShowDpsCounter"]==dps);
+        GetConfig().showDamageNumbers=!numbers;
+        GetConfig().showDpsCounter=!dps;
+        LoadFromJson(nlohmann::json::parse(saved.dump()));
+        assert(GetConfig().showDamageNumbers==numbers && GetConfig().showDpsCounter==dps);
+    }
+    GetConfig().showDamageNumbers=false;
+    LoadFromJson(nlohmann::json{{"FloatingDamage",true},{"FloatingDamageSettings",{{"ShowDpsCounter",false}}}});
+    assert(GetConfig().showDamageNumbers && !GetConfig().showDpsCounter);
+    GetConfig().showDamageNumbers=false;
+    LoadFromJson(nlohmann::json{{"FloatingDamage",false}});
+    assert(!IsEnabled() && GetConfig().showDamageNumbers);
+}
+
+void IndependentDisplays() {
+    Fresh(true);
+    GetConfig().showDamageNumbers=false;
+    GetConfig().dpsSampleTimeSeconds=1;
+    QueueGameDamage(100,500,500,1,42,Kind::Normal);
+    QueueGameDamage(200,500,500,1,42,Kind::Critical,Element::Fire);
+    QueueGameDamage(30,500,500,1,42,Kind::Normal,Element::Poison);
+    Update(0.016f);
+    assert(IsEnabled() && ActiveCount()==0 && !PendingCount());
+    assert(g_rollingDamage==330 && CurrentDps()==330 && RenderVertices()>0);
+    const auto dpsVertices=RenderVertices();
+    GetConfig().showDpsCounter=false;
+    assert(RenderVertices()==0);
+    QueueGameDamage(20,500,500,1,42,Kind::Normal);
+    Update(0.016f);
+    assert(ActiveCount()==0 && g_rollingDamage==350);
+    GetConfig().showDpsCounter=true;
+    assert(RenderVertices()==dpsVertices);
+    GetConfig().showDamageNumbers=true;
+    QueueGameDamage(50,500,500,1,42,Kind::Normal);
+    Update(0.016f);
+    assert(ActiveCount()==1 && g_rollingDamage==400 && RenderVertices()>dpsVertices);
+    const auto bothVertices=RenderVertices();
+    GetConfig().showDpsCounter=false;
+    assert(RenderVertices()>0 && RenderVertices()<bothVertices);
+    GetConfig().showDpsCounter=true;
+    // Hide existing animated numbers immediately, preserving their DPS contribution.
+    GetConfig().showDamageNumbers=false;
+    assert(RenderVertices()==dpsVertices);
+    Update(0.016f);
+    assert(ActiveCount()==0 && g_rollingDamage==400);
+    // Explicit previews remain available and never enter the DPS calculation.
+    QueuePreviewAt(500,500,Kind::Critical);
+    Update(0.016f);
+    assert(ActiveCount()==1 && g_numbers[0].preview && g_rollingDamage==400);
+    assert(RenderVertices()>dpsVertices);
+    Update(2.0f);
+    assert(ActiveCount()==0 && g_rollingDamage==0 && CurrentDps()==0);
+    SetEnabled(false);
+    assert(RenderVertices()==0);
+    SetEnabled(true);
+    assert(!GetConfig().showDamageNumbers && GetConfig().showDpsCounter && RenderVertices()>0);
 }
 
 void LiveDamage() {
@@ -141,9 +203,20 @@ int main() {
     assert(io.Fonts->Build());
     Configuration();
     LiveDamage();
+    IndependentDisplays();
     Preview();
     RepeatedTogglesWithProducer();
+    Fresh(true);
+    const auto first=HudSession::Observe(true,123,false,111);SetSession(first);
+    QueuePreviewAt(400,400,Kind::Normal);QueueGameDamage(123,400,400,1,42,Kind::Normal);Update(0.01f);
+    assert(ActiveCount()==2 && g_rollingDamage==123);
+    const auto second=HudSession::Observe(true,123,false,222);SetSession(second);
+    assert(ActiveCount()==1 && g_numbers[0].preview && !g_rollingDamage && !PendingCount());
+    QueueGameDamage(50,400,400,1,42,Kind::Normal,Element::Physical,first);assert(!PendingCount());
+    QueueGameDamage(50,400,400,1,42,Kind::Normal,Element::Physical,second);assert(PendingCount()==1);
+    HudSession::Observe(false,0);SetSession(0);assert(!PendingCount() && ActiveCount()==1);
+    QueueGameDamage(50,400,400,1,42,Kind::Normal);assert(!PendingCount());
     ExerciseSettingsTabs("Damage settings tabs","DamageSettingsSections",6,[]{DrawSettingsPanel(1);});
     ImGui::DestroyContext();
-    std::cout<<"Floating Damage: config precedence/round-trips, live on/off rendering, pending/active cleanup, preview isolation, DPS reset and 100 concurrent toggles passed.\n";
+    std::cout<<"Floating Damage: independent DPS-only/numbers-only/both displays, live hiding, legacy defaults/config round-trips, pending/active cleanup, preview isolation, DPS aging/reset and 100 concurrent toggles passed.\n";
 }

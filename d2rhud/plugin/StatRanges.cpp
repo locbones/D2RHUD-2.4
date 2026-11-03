@@ -1,9 +1,11 @@
+﻿#include "../RuntimeTelemetry.h"
 #include "HudText.h"
 #include "StatRanges.h"
 #include "SettingsUI.h"
 #include "StatRangesData.h"
 #include "TooltipText.h"
 #include "GameAssets.h"
+#include "../DeferredAssets.h"
 #include "ItemFilter/ItemFilter.h"
 #include "../d2/D2Ptrs.h"
 #include <windows.h>
@@ -15,7 +17,6 @@
 #include <chrono>
 #include <cmath>
 #include <deque>
-#include <future>
 #include <fstream>
 #include <memory>
 #include <mutex>
@@ -75,8 +76,13 @@ void PublishMetrics(float resolution) {
     metrics->fallback = font->FallbackAdvanceX * scale;
     rangeMetrics.store(std::move(metrics));
 }
-std::future<Database> loading;
-bool loadStarted = false, installed = false, attempted = false;
+bool installed = false, attempted = false;
+auto& PropertyAssets() {
+    static auto* value = new HudAssets::Deferred<Database>({
+        [](const std::string& mod){GameAssets assets(GameAssets::ExecutableDirectory(),mod);return LoadDatabase(assets);},
+        []{return uint64_t(GetTickCount64());}});
+    return *value;
+}
 std::string status = "Property tables load when this panel is opened.";
 template<class T> bool Read(uintptr_t address, T& value) {
     SIZE_T count = 0;
@@ -371,6 +377,28 @@ bool UpdateActivation(bool inGame, bool foreground, bool menusOpen, bool textInp
 }
 
 bool UsesHotkey() { return config.hotkey; }
+std::string NativeItemText(D2UnitStrc* viewer, D2UnitStrc* owner, D2UnitStrc* item) {
+    if (!originalBuild || !viewer || !owner || !item) return {};
+    struct String {
+        char* text = inlineBuffer;
+        uint64_t length = 0, capacity = 0x800000000000000full;
+        char inlineBuffer[16]{};
+        ~String() {
+            if (!(capacity >> 63) && text) {
+                auto allocator = reinterpret_cast<void*(__fastcall*)()>(Pattern::Address(0xacdd80))();
+                auto release = reinterpret_cast<void(__fastcall*)(void*, void*)>(
+                    (*reinterpret_cast<uintptr_t**>(allocator))[4]);
+                release(allocator, text);
+            }
+        }
+    } output;
+    // Inventory callers pass true for socket details. False is the item-link
+    // fallback and unconditionally appends the localized BrokenSocketInfo
+    // warning, even for items without sockets. Inspect has the actual item.
+    originalBuild(&output, viewer, owner, item, 1, true);
+    if (!output.text || !output.length || output.length > 65535) return {};
+    return TooltipText::Expand(item->dwUnitId, std::string(output.text, size_t(output.length)));
+}
 void Install() {
     if (attempted) return;
     attempted = true;
@@ -481,30 +509,33 @@ void SaveDiagnosticReport() {
 }
 
 void Update(const std::string& mod, bool inGame, bool menusOpen, bool bindingDown, bool previewOpen) {
+    HudTelemetry::Scope measured(HudTelemetry::Feature::StatRanges);
     const auto& io = ImGui::GetIO();
     const float resolution = io.DisplaySize.x >= 3840 || io.DisplaySize.y >= 2160 ? 2.0f : 1.0f;
     TooltipText::SetViewport(io.DisplaySize.x, io.DisplaySize.y, resolution);
-    PublishMetrics(resolution);
-    if (!loadStarted) {
-        loadStarted = true;
-        loadedMod=mod;
-        wchar_t path[MAX_PATH]{}; GetModuleFileNameW(nullptr, path, MAX_PATH);
-        loading = std::async(std::launch::async, [install = std::filesystem::path(path).parent_path(), mod]() { GameAssets assets(install, mod); return LoadDatabase(assets); });
-        status = "Loading item properties and localized stat descriptions...";
+    const bool wanted=config.enabled || config.hotkey || previewOpen;
+    if(wanted)PublishMetrics(resolution);
+    auto& assets=PropertyAssets();static uint64_t revision=~uint64_t(0);
+    assets.Tick(mod,wanted);
+    if(revision!=assets.Revision()){
+        revision=assets.Revision();loadedMod=mod;
+        const auto result=assets.Value();
+        database.store(result);
+        if(result){
+            if (installed) status = result->error.empty() ? "Item property tables loaded ("+std::to_string(result->stats.size())+" stats, "+std::to_string(result->strings.size())+" localized keys)." : result->error;
+            SaveDiagnosticReport();
+        }
     }
-    if (loading.valid() && loading.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
-        auto result = std::make_shared<const Database>(loading.get());
-        if (installed) status = result->error.empty() ? "Item property tables loaded ("+std::to_string(result->stats.size())+" stats, "+std::to_string(result->strings.size())+" localized keys)." : result->error;
-        database.store(std::move(result));
-        SaveDiagnosticReport();
-    }
-    DWORD foreground = 0; GetWindowThreadProcessId(GetForegroundWindow(), &foreground);
+    if(assets.Failed())status="Item properties could not be loaded. Retrying...";
+    else if(assets.Busy())status="Loading item properties and localized stat descriptions...";
+    bool foreground=false;
+    if(wanted){DWORD owner=0;GetWindowThreadProcessId(GetForegroundWindow(),&owner);foreground=owner==GetCurrentProcessId();}
     if (!inGame) {
         activation.latched = false;
         std::lock_guard<std::mutex> lock(builtMutex); builtItems.clear(); builtOrder.clear();
     }
     showFixed.store(config.fixed, std::memory_order_relaxed);
-    active.store(installed && UpdateActivation(inGame, foreground == GetCurrentProcessId(), menusOpen, io.WantTextInput, bindingDown, previewOpen));
+    active.store(installed && UpdateActivation(inGame, foreground, menusOpen, io.WantTextInput, bindingDown, previewOpen));
 }
 
 void Render(float resolutionScale) {

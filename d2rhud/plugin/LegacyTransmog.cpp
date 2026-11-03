@@ -394,7 +394,7 @@ void SetQuantityRightClicks(bool enabled){
 }
 const char* StackSplitStatus(){
     if(!splitReady.load())return "Stack splitting unavailable: native saved-item signatures did not match or hooks are unavailable.";
-    return quantityRightClicks.load() ? "Stack splitting: available for the local game host; right-click a non-transmog stack." : "Quantity Right-Clicks is disabled in D2RHUD Options.";
+    return quantityRightClicks.load() ? "Stack splitting: available for the local game host; right-click a non-equippable, non-transmog stack." : "Quantity Right-Clicks is disabled in D2RHUD Options.";
 }
 const char* SocketStackStatus(){return socketStackStatus.load();}
 void Uninstall() {

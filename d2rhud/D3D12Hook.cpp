@@ -1,5 +1,7 @@
-﻿#include "plugin/HUDControls.h"
+#include "plugin/HUDControls.h"
 #include "D3D12Hook.h"
+#include "plugin/D2RHUD/HudCommands.h"
+#include "plugin/MarketplacePanel.h"
 #include "plugin/HudLocalization.h"
 #include "WineQueue.h"
 #include "plugin/QuestJournalClient.h"
@@ -10,11 +12,15 @@
 #include "plugin/D3Whirlwind.h"
 #include "plugin/LegacyTransmog.h"
 #include "plugin/StackSplitSkin.h"
+#include "plugin/Inspect.h"
+#include "plugin/SpectateVideo.h"
 #include "plugin/MapEventFonts.h"
 #include <map>
 #include <mutex>
 #include <atomic>
 #include "resource.h"
+#include "ProcessLifetime.h"
+#include "ThemeImageRequests.h"
 #include <d3d12.h>
 #include <dxgi1_4.h>
 #include <imgui.h>
@@ -36,6 +42,7 @@
 #include "stb_image.h"
 #include <algorithm>
 #include <vector>
+#include <memory>
 #include <cctype>
 
 
@@ -73,12 +80,30 @@ namespace D3D12 {
 	};
 
 	// Data
-	static std::vector<FrameContext> g_FrameContext;
+    static constexpr int kWindowBgSlots=8,kFrameBgSlots=3,kCheckboxSlots=3,kButtonSlots=3;
+    static constexpr UINT kBuffAtlasSlots=32,kInspectSlots=UINT(Inspect::Data::MaxItems+3);
+    struct BuffAtlasTexture {CComPtr<ID3D12Resource> resource;D3D12_GPU_DESCRIPTOR_HANDLE handle{};};
+    struct GraphicsResources {
+        std::vector<FrameContext> frames;
+        CComPtr<ID3D12DescriptorHeap> rtv,srv;
+        CComPtr<ID3D12CommandQueue> queue;
+        CComPtr<ID3D12GraphicsCommandList> commands;
+        CComPtr<ID3D12Resource> gear,camera;
+        CComPtr<ID3D12Resource> window[kWindowBgSlots],frame[kFrameBgSlots],checkbox[kCheckboxSlots],button[kButtonSlots];
+        std::map<std::string,BuffAtlasTexture> atlases;
+        BuffAtlasTexture quantity;
+        std::shared_ptr<const LegacyTransmog::Skin::Sprite> quantitySprite;
+        std::shared_ptr<const Inspect::Assets> inspectAssets;
+        std::vector<BuffAtlasTexture> inspectTextures;
+        CComPtr<ID3D12Fence> inspectRetirement;
+        int inspectFrame=-1,inspectUploads=0;
+    };
+    // ResetState releases these during resize/explicit unload. At process exit,
+    // keep native COM releases out of CRT destruction under the loader lock:
+    // the graphics driver or its worker threads may already be torn down.
+    static GraphicsResources& Graphics(){return HudLifetime::State<GraphicsResources>();}
 	static UINT						g_FrameBufferCount = 0;
 
-	static CComPtr<ID3D12DescriptorHeap> g_pD3DRtvDescHeap = NULL;
-	static CComPtr<ID3D12DescriptorHeap> g_pD3DSrvDescHeap = NULL;
-	static CComPtr<ID3D12CommandQueue> g_pD3DCommandQueue = NULL;
     static std::mutex g_QueueMutex;
     static std::recursive_mutex g_RenderMutex;
     static std::atomic<bool> g_HooksReady{false};
@@ -88,51 +113,24 @@ namespace D3D12 {
     static WineQueue::Layout g_WineQueueLayout;
     static IDXGISwapChain3* g_RenderSwapchain = nullptr; // identity only; owned by the game
     static std::array<uintptr_t, 18> g_SwapchainMethods{};
-	static CComPtr<ID3D12GraphicsCommandList> g_pD3DCommandList = NULL;
 
 	static HMODULE g_DllModule = NULL;
-	static CComPtr<ID3D12Resource> g_GearTexture = NULL;
 	static D3D12_GPU_DESCRIPTOR_HANDLE g_GearTextureGPUHandle = {};
 	static int g_GearTextureWidth = 0;
 	static int g_GearTextureHeight = 0;
 	static std::string s_PendingGearFilename;  // non-empty = reload this file next frame
 
-	static const int kWindowBgSlots = 8;
-	static CComPtr<ID3D12Resource> g_WindowBgTexture[kWindowBgSlots] = {};
 	static D3D12_GPU_DESCRIPTOR_HANDLE g_WindowBgTextureGPUHandle[kWindowBgSlots] = {};
-	static std::string s_PendingWindowBgFilename[kWindowBgSlots];
-	static bool s_ClearWindowBg[kWindowBgSlots] = {};
 
-	static const int kFrameBgSlots = 3;
-	static const int kCheckboxSlots = 3;
-	static const int kButtonSlots = 3;
-	static CComPtr<ID3D12Resource> g_FrameBgTexture[kFrameBgSlots] = {};
 	static D3D12_GPU_DESCRIPTOR_HANDLE g_FrameBgTextureGPUHandle[kFrameBgSlots] = {};
-	static std::string s_PendingFrameBgFilename[kFrameBgSlots];
-	static bool s_ClearFrameBg[kFrameBgSlots] = {};
 
-	static CComPtr<ID3D12Resource> g_CheckboxTexture[kCheckboxSlots] = {};
 	static D3D12_GPU_DESCRIPTOR_HANDLE g_CheckboxTextureGPUHandle[kCheckboxSlots] = {};
-	static std::string s_PendingCheckboxFilename[kCheckboxSlots];
-	static bool s_ClearCheckbox[kCheckboxSlots] = {};
 
-	static CComPtr<ID3D12Resource> g_ButtonTexture[kButtonSlots] = {};
 	static D3D12_GPU_DESCRIPTOR_HANDLE g_ButtonTextureGPUHandle[kButtonSlots] = {};
-	static std::string s_PendingButtonFilename[kButtonSlots];
-	static bool s_ClearButton[kButtonSlots] = {};
 
-	static CComPtr<ID3D12Resource> g_CameraButtonTexture = NULL;
 	static D3D12_GPU_DESCRIPTOR_HANDLE g_CameraButtonTextureGPUHandle = {};
 	static int g_CameraButtonTextureWidth = 0;
 	static int g_CameraButtonTextureHeight = 0;
-    static constexpr UINT kBuffAtlasSlots = 32;
-    struct BuffAtlasTexture {
-        CComPtr<ID3D12Resource> resource;
-        D3D12_GPU_DESCRIPTOR_HANDLE handle{};
-    };
-    static std::map<std::string, BuffAtlasTexture> g_BuffAtlases;
-    static BuffAtlasTexture g_QuantityItemTexture;
-    static std::shared_ptr<const LegacyTransmog::Skin::Sprite> g_QuantityItemSprite;
 
 	static std::string GetD2RHUDImagesDir()
 	{
@@ -288,7 +286,7 @@ namespace D3D12 {
 		int texW = 0, texH = 0, texCh = 0;
 		unsigned char* pixels = stbi_load(fullPath.c_str(), &texW, &texH, &texCh, 4);
 		if (!pixels || texW <= 0 || texH <= 0) return false;
-		g_GearTexture = NULL;
+		Graphics().gear = NULL;
 		D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint = {};
 		UINT64 totalBytes = 0;
 		D3D12_RESOURCE_DESC texDesc = {};
@@ -328,7 +326,7 @@ namespace D3D12 {
 			return false;
 		}
 		heapProps.Type = D3D12_HEAP_TYPE_DEFAULT;
-		if (FAILED(pD3DDevice->CreateCommittedResource(&heapProps, D3D12_HEAP_FLAG_NONE, &texDesc, D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&g_GearTexture)))) {
+		if (FAILED(pD3DDevice->CreateCommittedResource(&heapProps, D3D12_HEAP_FLAG_NONE, &texDesc, D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&Graphics().gear)))) {
 			stbi_image_free(pixels);
 			return false;
 		}
@@ -352,14 +350,14 @@ namespace D3D12 {
 		srcLoc.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
 		srcLoc.PlacedFootprint = footprint;
 		D3D12_TEXTURE_COPY_LOCATION dstLoc = {};
-		dstLoc.pResource = g_GearTexture;
+		dstLoc.pResource = Graphics().gear;
 		dstLoc.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
 		dstLoc.SubresourceIndex = 0;
 		uploadList->CopyTextureRegion(&dstLoc, 0, 0, 0, &srcLoc, nullptr);
 		D3D12_RESOURCE_BARRIER barrier = {};
 		barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
 		barrier.Flags = D3D12_RESOURCE_BARRIER_FLAG_NONE;
-		barrier.Transition.pResource = g_GearTexture;
+		barrier.Transition.pResource = Graphics().gear;
 		barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
 		barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
 		barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
@@ -378,8 +376,8 @@ namespace D3D12 {
 			if (evt) CloseHandle(evt);
 		}
 		const UINT srvDescSize = pD3DDevice->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
-		D3D12_CPU_DESCRIPTOR_HANDLE srvCpu = g_pD3DSrvDescHeap->GetCPUDescriptorHandleForHeapStart();
-		D3D12_GPU_DESCRIPTOR_HANDLE srvGpu = g_pD3DSrvDescHeap->GetGPUDescriptorHandleForHeapStart();
+		D3D12_CPU_DESCRIPTOR_HANDLE srvCpu = Graphics().srv->GetCPUDescriptorHandleForHeapStart();
+		D3D12_GPU_DESCRIPTOR_HANDLE srvGpu = Graphics().srv->GetGPUDescriptorHandleForHeapStart();
 		srvCpu.ptr += (SIZE_T)srvDescSize * (SIZE_T)g_FrameBufferCount;
 		srvGpu.ptr += (SIZE_T)srvDescSize * (SIZE_T)g_FrameBufferCount;
 		D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
@@ -387,7 +385,7 @@ namespace D3D12 {
 		srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
 		srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
 		srvDesc.Texture2D.MipLevels = 1;
-		pD3DDevice->CreateShaderResourceView(g_GearTexture, &srvDesc, srvCpu);
+		pD3DDevice->CreateShaderResourceView(Graphics().gear, &srvDesc, srvCpu);
 		g_GearTextureGPUHandle = srvGpu;
 		g_GearTextureWidth = texW;
 		g_GearTextureHeight = texH;
@@ -397,8 +395,11 @@ namespace D3D12 {
 	static bool LoadTexturePixels(ID3D12Device* pD3DDevice, const unsigned char* pixels, int texW, int texH, DXGI_FORMAT format,
 		CComPtr<ID3D12Resource>& outTex, D3D12_GPU_DESCRIPTOR_HANDLE& outGpuHandle, UINT descriptorOffset)
 	{
-		if (!pD3DDevice || !pixels || texW <= 0 || texH <= 0) return false;
-		outTex = NULL;
+		if (!pD3DDevice || !pixels || !Graphics().srv || texW <= 0 || texH <= 0 ||
+            texW > D3D12_REQ_TEXTURE2D_U_OR_V_DIMENSION || texH > D3D12_REQ_TEXTURE2D_U_OR_V_DIMENSION ||
+            (format != DXGI_FORMAT_R8G8B8A8_UNORM && format != DXGI_FORMAT_BC3_UNORM) ||
+            descriptorOffset >= Graphics().srv->GetDesc().NumDescriptors) return false;
+		CComPtr<ID3D12Resource> texture;
 		D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint = {};
 		UINT64 totalBytes = 0;
 		D3D12_RESOURCE_DESC texDesc = {};
@@ -437,7 +438,7 @@ namespace D3D12 {
 			return false;
 		}
 		heapProps.Type = D3D12_HEAP_TYPE_DEFAULT;
-		if (FAILED(pD3DDevice->CreateCommittedResource(&heapProps, D3D12_HEAP_FLAG_NONE, &texDesc, D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&outTex)))) {
+		if (FAILED(pD3DDevice->CreateCommittedResource(&heapProps, D3D12_HEAP_FLAG_NONE, &texDesc, D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&texture)))) {
 			return false;
 		}
 		void* mapped = nullptr;
@@ -462,19 +463,19 @@ namespace D3D12 {
 		srcLoc.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
 		srcLoc.PlacedFootprint = footprint;
 		D3D12_TEXTURE_COPY_LOCATION dstLoc = {};
-		dstLoc.pResource = outTex;
+		dstLoc.pResource = texture;
 		dstLoc.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
 		dstLoc.SubresourceIndex = 0;
 		uploadList->CopyTextureRegion(&dstLoc, 0, 0, 0, &srcLoc, nullptr);
 		D3D12_RESOURCE_BARRIER barrier = {};
 		barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
 		barrier.Flags = D3D12_RESOURCE_BARRIER_FLAG_NONE;
-		barrier.Transition.pResource = outTex;
+		barrier.Transition.pResource = texture;
 		barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
 		barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
 		barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
 		uploadList->ResourceBarrier(1, &barrier);
-		uploadList->Close();
+        if (FAILED(uploadList->Close())) return false;
         CComPtr<ID3D12Fence> fence;
         if (FAILED(pD3DDevice->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&fence)))) return false;
         HANDLE completed = CreateEventW(nullptr, FALSE, FALSE, nullptr);
@@ -489,8 +490,8 @@ namespace D3D12 {
         if (FAILED(signaled) || fence->GetCompletedValue() == UINT64_MAX) return false;
 
 		const UINT srvDescSize = pD3DDevice->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
-		D3D12_CPU_DESCRIPTOR_HANDLE srvCpu = g_pD3DSrvDescHeap->GetCPUDescriptorHandleForHeapStart();
-		D3D12_GPU_DESCRIPTOR_HANDLE srvGpu = g_pD3DSrvDescHeap->GetGPUDescriptorHandleForHeapStart();
+		D3D12_CPU_DESCRIPTOR_HANDLE srvCpu = Graphics().srv->GetCPUDescriptorHandleForHeapStart();
+		D3D12_GPU_DESCRIPTOR_HANDLE srvGpu = Graphics().srv->GetGPUDescriptorHandleForHeapStart();
 		srvCpu.ptr += (SIZE_T)srvDescSize * (SIZE_T)descriptorOffset;
 		srvGpu.ptr += (SIZE_T)srvDescSize * (SIZE_T)descriptorOffset;
 		D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
@@ -498,7 +499,8 @@ namespace D3D12 {
 		srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
 		srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
 		srvDesc.Texture2D.MipLevels = 1;
-		pD3DDevice->CreateShaderResourceView(outTex, &srvDesc, srvCpu);
+		pD3DDevice->CreateShaderResourceView(texture, &srvDesc, srvCpu);
+		outTex = texture;
 		outGpuHandle = srvGpu;
 		return true;
 	}
@@ -514,45 +516,118 @@ namespace D3D12 {
         return ok;
     }
 
+    struct ThemeTextureSlot {
+        CComPtr<ID3D12Resource>* resource;
+        D3D12_GPU_DESCRIPTOR_HANDLE* handle;
+        UINT offset;
+    };
+    static_assert(kWindowBgSlots == 8 && kFrameBgSlots == 3 && kCheckboxSlots == 3 && kButtonSlots == 3 &&
+        ThemeImages::SlotCount == kWindowBgSlots + kFrameBgSlots + kCheckboxSlots + kButtonSlots);
+    static ThemeTextureSlot ThemeTexture(size_t slot)
+    {
+        if (slot < 8) return { std::addressof(Graphics().window[slot]), &g_WindowBgTextureGPUHandle[slot], g_FrameBufferCount + 1 + UINT(slot) };
+        if (slot < 11) return { std::addressof(Graphics().frame[slot - 8]), &g_FrameBgTextureGPUHandle[slot - 8], g_FrameBufferCount + 11 + UINT(slot - 8) };
+        if (slot < 14) return { std::addressof(Graphics().checkbox[slot - 11]), &g_CheckboxTextureGPUHandle[slot - 11], g_FrameBufferCount + 14 + UINT(slot - 11) };
+        return { std::addressof(Graphics().button[slot - 14]), &g_ButtonTextureGPUHandle[slot - 14], g_FrameBufferCount + 17 + UINT(slot - 14) };
+    }
+    // The template permits a test device source while production passes its
+    // native swapchain. All texture and device references still use real COM.
+    template<class SwapChain> static void ProcessThemeImageRequests(SwapChain* swapchain)
+    {
+        const auto requests = ThemeImages::Runtime().TakeDue(GetTickCount64());
+        CComPtr<ID3D12Device> device;
+        bool deviceAttempted = false, directoryRead = false;
+        std::string directory;
+        for (const auto& request : requests) {
+            auto slot = ThemeTexture(request.slot);
+            bool success = false;
+            if (request.filename.empty()) {
+                slot.resource->Release();
+                *slot.handle = {};
+                success = true;
+            }
+            else try {
+                if (!deviceAttempted) {
+                    deviceAttempted = true;
+                    if (FAILED(swapchain->GetDevice(IID_PPV_ARGS(&device)))) device.Release();
+                }
+                if (device) {
+                    if (!directoryRead) { directory = GetD2RHUDImagesDir(); directoryRead = true; }
+                    const auto path = (std::filesystem::path(directory) / request.filename).string();
+                    success = LoadThemeTextureFromPath(device, path, *slot.resource, *slot.handle, slot.offset);
+                }
+            }
+            catch (...) { /* Keep the request, and retry after the normal backoff. */ }
+            ThemeImages::Runtime().Complete(request, success, GetTickCount64());
+        }
+    }
+
     uint64_t GetBuffIconAtlas(const std::string& key, const BuffIcons::SpriteAtlas& atlas)
     {
-        auto found = g_BuffAtlases.find(key);
-        if (found != g_BuffAtlases.end()) return found->second.handle.ptr;
-        if (!g_pD3DSrvDescHeap || !g_pD3DCommandQueue || g_BuffAtlases.size() >= kBuffAtlasSlots || atlas.pixels.empty()) return 0;
+        auto found = Graphics().atlases.find(key);
+        if (found != Graphics().atlases.end()) return found->second.handle.ptr;
+        if (!Graphics().srv || !Graphics().queue || Graphics().atlases.size() >= kBuffAtlasSlots || atlas.pixels.empty()) return 0;
         CComPtr<ID3D12Device> device;
-        if (FAILED(g_pD3DCommandQueue->GetDevice(IID_PPV_ARGS(&device)))) return 0;
+        if (FAILED(Graphics().queue->GetDevice(IID_PPV_ARGS(&device)))) return 0;
         BuffAtlasTexture texture;
-        const UINT slot = g_FrameBufferCount + 20 + static_cast<UINT>(g_BuffAtlases.size());
+        const UINT slot = g_FrameBufferCount + 20 + static_cast<UINT>(Graphics().atlases.size());
         if (!LoadTexturePixels(device, atlas.pixels.data(), atlas.width, atlas.height,
             atlas.bc3 ? DXGI_FORMAT_BC3_UNORM : DXGI_FORMAT_R8G8B8A8_UNORM, texture.resource, texture.handle, slot)) return 0;
         const uint64_t id = texture.handle.ptr;
-        g_BuffAtlases.emplace(key, std::move(texture));
+        Graphics().atlases.emplace(key, std::move(texture));
         return id;
+    }
+
+    static LegacyTransmog::Skin::Image GetInspectArtwork(const std::shared_ptr<const Inspect::Assets>& assets,size_t index){
+        if(!assets || index>=assets->sprites.size() || assets->sprites.size()>kInspectSlots || !Graphics().srv || !Graphics().queue)return {};
+        auto& g=Graphics();CComPtr<ID3D12Device> device;if(FAILED(g.queue->GetDevice(IID_PPV_ARGS(&device))))return {};
+        if(g.inspectAssets!=assets){
+            if(g.inspectAssets && !g.inspectTextures.empty()){
+                // Never replace a descriptor still referenced by a submitted
+                // HUD frame. Poll a queue fence without blocking the render loop.
+                if(!g.inspectRetirement){
+                    if(FAILED(device->CreateFence(0,D3D12_FENCE_FLAG_NONE,IID_PPV_ARGS(&g.inspectRetirement))))return {};
+                    if(FAILED(g.queue->Signal(g.inspectRetirement,1))){g.inspectRetirement.Release();return {};}
+                    return {};
+                }
+                const auto completed=g.inspectRetirement->GetCompletedValue();if(completed<1 || completed==UINT64_MAX)return {};
+            }
+            g.inspectTextures.clear();g.inspectRetirement.Release();g.inspectAssets=assets;g.inspectTextures.resize(assets->sprites.size());
+        }
+        const auto sprite=assets->sprites[index];if(!sprite)return {};
+        auto& texture=g.inspectTextures[index];const auto& a=sprite->atlas;
+        if(!texture.resource){
+            if(g.inspectFrame!=ImGui::GetFrameCount()){g.inspectFrame=ImGui::GetFrameCount();g.inspectUploads=0;}
+            if(g.inspectUploads>=2)return {}; ++g.inspectUploads;
+            if(!LoadTexturePixels(device,a.pixels.data(),a.width,a.height,a.bc3?DXGI_FORMAT_BC3_UNORM:DXGI_FORMAT_R8G8B8A8_UNORM,
+                texture.resource,texture.handle,g_FrameBufferCount+20+kBuffAtlasSlots+1+UINT(index)))return {};
+        }
+        return {texture.handle.ptr,a.width,a.height,a.frameWidth,a.frames,sprite->pitch};
     }
 
     static LegacyTransmog::Skin::Image GetQuantityItemArtwork(const std::string& code){
         const auto sprite=LegacyTransmog::Skin::ItemSprite(code);
-        if(!sprite || !g_pD3DSrvDescHeap || !g_pD3DCommandQueue)return {};
-        if(sprite!=g_QuantityItemSprite){
+        if(!sprite || !Graphics().srv || !Graphics().queue)return {};
+        if(sprite!=Graphics().quantitySprite){
             CComPtr<ID3D12Device> device;
-            if(FAILED(g_pD3DCommandQueue->GetDevice(IID_PPV_ARGS(&device))))return {};
+            if(FAILED(Graphics().queue->GetDevice(IID_PPV_ARGS(&device))))return {};
             // One reusable descriptor, independent of the buff atlas cache. Finish
             // earlier HUD draws before replacing its descriptor or old resource.
-            if(g_QuantityItemTexture.resource){
+            if(Graphics().quantity.resource){
                 CComPtr<ID3D12Fence> fence;
                 if(FAILED(device->CreateFence(0,D3D12_FENCE_FLAG_NONE,IID_PPV_ARGS(&fence))))return {};
                 HANDLE event=CreateEventW(nullptr,FALSE,FALSE,nullptr);if(!event)return {};
-                const bool queued=SUCCEEDED(fence->SetEventOnCompletion(1,event)) && SUCCEEDED(g_pD3DCommandQueue->Signal(fence,1));
+                const bool queued=SUCCEEDED(fence->SetEventOnCompletion(1,event)) && SUCCEEDED(Graphics().queue->Signal(fence,1));
                 const bool complete=queued && WaitForSingleObject(event,5000)==WAIT_OBJECT_0 && fence->GetCompletedValue()!=UINT64_MAX;
                 CloseHandle(event);if(!complete)return {};
             }
             const auto& atlas=sprite->atlas;BuffAtlasTexture texture;
             if(!LoadTexturePixels(device,atlas.pixels.data(),atlas.width,atlas.height,atlas.bc3?DXGI_FORMAT_BC3_UNORM:DXGI_FORMAT_R8G8B8A8_UNORM,
                 texture.resource,texture.handle,g_FrameBufferCount+20+kBuffAtlasSlots))return {};
-            g_QuantityItemTexture=std::move(texture);g_QuantityItemSprite=sprite;
+            Graphics().quantity=std::move(texture);Graphics().quantitySprite=sprite;
         }
         const auto& a=sprite->atlas;
-        return {g_QuantityItemTexture.handle.ptr,a.width,a.height,a.frameWidth,a.frames,sprite->pitch};
+        return {Graphics().quantity.handle.ptr,a.width,a.height,a.frameWidth,a.frames,sprite->pitch};
     }
 
 	static bool LoadCameraButtonTextureFromPath(ID3D12Device* pD3DDevice, const std::string& fullPath)
@@ -561,7 +636,7 @@ namespace D3D12 {
 		int texW = 0, texH = 0, texCh = 0;
 		unsigned char* pixels = stbi_load(fullPath.c_str(), &texW, &texH, &texCh, 4);
 		if (!pixels || texW <= 0 || texH <= 0) return false;
-		g_CameraButtonTexture = NULL;
+		Graphics().camera = NULL;
 		D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint = {};
 		UINT64 totalBytes = 0;
 		D3D12_RESOURCE_DESC texDesc = {};
@@ -601,7 +676,7 @@ namespace D3D12 {
 			return false;
 		}
 		heapProps.Type = D3D12_HEAP_TYPE_DEFAULT;
-		if (FAILED(pD3DDevice->CreateCommittedResource(&heapProps, D3D12_HEAP_FLAG_NONE, &texDesc, D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&g_CameraButtonTexture)))) {
+		if (FAILED(pD3DDevice->CreateCommittedResource(&heapProps, D3D12_HEAP_FLAG_NONE, &texDesc, D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&Graphics().camera)))) {
 			stbi_image_free(pixels);
 			return false;
 		}
@@ -625,14 +700,14 @@ namespace D3D12 {
 		srcLoc.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
 		srcLoc.PlacedFootprint = footprint;
 		D3D12_TEXTURE_COPY_LOCATION dstLoc = {};
-		dstLoc.pResource = g_CameraButtonTexture;
+		dstLoc.pResource = Graphics().camera;
 		dstLoc.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
 		dstLoc.SubresourceIndex = 0;
 		uploadList->CopyTextureRegion(&dstLoc, 0, 0, 0, &srcLoc, nullptr);
 		D3D12_RESOURCE_BARRIER barrier = {};
 		barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
 		barrier.Flags = D3D12_RESOURCE_BARRIER_FLAG_NONE;
-		barrier.Transition.pResource = g_CameraButtonTexture;
+		barrier.Transition.pResource = Graphics().camera;
 		barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
 		barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
 		barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
@@ -651,8 +726,8 @@ namespace D3D12 {
 			if (evt) CloseHandle(evt);
 		}
 		const UINT srvDescSize = pD3DDevice->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
-		D3D12_CPU_DESCRIPTOR_HANDLE srvCpu = g_pD3DSrvDescHeap->GetCPUDescriptorHandleForHeapStart();
-		D3D12_GPU_DESCRIPTOR_HANDLE srvGpu = g_pD3DSrvDescHeap->GetGPUDescriptorHandleForHeapStart();
+		D3D12_CPU_DESCRIPTOR_HANDLE srvCpu = Graphics().srv->GetCPUDescriptorHandleForHeapStart();
+		D3D12_GPU_DESCRIPTOR_HANDLE srvGpu = Graphics().srv->GetGPUDescriptorHandleForHeapStart();
 		srvCpu.ptr += (SIZE_T)srvDescSize * (SIZE_T)(g_FrameBufferCount + 10);
 		srvGpu.ptr += (SIZE_T)srvDescSize * (SIZE_T)(g_FrameBufferCount + 10);
 		D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
@@ -660,7 +735,7 @@ namespace D3D12 {
 		srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
 		srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
 		srvDesc.Texture2D.MipLevels = 1;
-		pD3DDevice->CreateShaderResourceView(g_CameraButtonTexture, &srvDesc, srvCpu);
+		pD3DDevice->CreateShaderResourceView(Graphics().camera, &srvDesc, srvCpu);
 		g_CameraButtonTextureGPUHandle = srvGpu;
 		g_CameraButtonTextureWidth = texW;
 		g_CameraButtonTextureHeight = texH;
@@ -704,17 +779,17 @@ namespace D3D12 {
 					OriginalWndProc = (WNDPROC)SetWindowLongPtr(Window, GWLP_WNDPROC, (__int3264)(LONG_PTR)WndProc);
 				}
 				g_FrameBufferCount = desc.BufferCount;
-				g_FrameContext.clear();
-				g_FrameContext.resize(g_FrameBufferCount);
+				Graphics().frames.clear();
+				Graphics().frames.resize(g_FrameBufferCount);
 			}
 
 			{
 				D3D12_DESCRIPTOR_HEAP_DESC desc = {};
 				desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
-				desc.NumDescriptors = g_FrameBufferCount + 20 + kBuffAtlasSlots + 1; // font, themes, buff atlases, quantity item
+				desc.NumDescriptors = g_FrameBufferCount + 20 + kBuffAtlasSlots + 1 + kInspectSlots + Spectate::Video::TextureSlots;
 				desc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
 
-				if (pD3DDevice->CreateDescriptorHeap(&desc, IID_PPV_ARGS(&g_pD3DSrvDescHeap)) != S_OK) {
+				if (pD3DDevice->CreateDescriptorHeap(&desc, IID_PPV_ARGS(&Graphics().srv)) != S_OK) {
 					return;
 				}
 			}
@@ -726,18 +801,18 @@ namespace D3D12 {
 				desc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
 				desc.NodeMask = 1;
 
-				if (pD3DDevice->CreateDescriptorHeap(&desc, IID_PPV_ARGS(&g_pD3DRtvDescHeap)) != S_OK) {
+				if (pD3DDevice->CreateDescriptorHeap(&desc, IID_PPV_ARGS(&Graphics().rtv)) != S_OK) {
 					return;
 				}
 
 				const auto rtvDescriptorSize = pD3DDevice->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
-				D3D12_CPU_DESCRIPTOR_HANDLE rtvHandle = g_pD3DRtvDescHeap->GetCPUDescriptorHandleForHeapStart();
+				D3D12_CPU_DESCRIPTOR_HANDLE rtvHandle = Graphics().rtv->GetCPUDescriptorHandleForHeapStart();
 
 				for (UINT i = 0; i < g_FrameBufferCount; i++) {
 
-					g_FrameContext[i].main_render_target_descriptor = rtvHandle;
-					pSwapChain->GetBuffer(i, IID_PPV_ARGS(&g_FrameContext[i].main_render_target_resource));
-					pD3DDevice->CreateRenderTargetView(g_FrameContext[i].main_render_target_resource, nullptr, rtvHandle);
+					Graphics().frames[i].main_render_target_descriptor = rtvHandle;
+					pSwapChain->GetBuffer(i, IID_PPV_ARGS(&Graphics().frames[i].main_render_target_resource));
+					pD3DDevice->CreateRenderTargetView(Graphics().frames[i].main_render_target_resource, nullptr, rtvHandle);
 					rtvHandle.ptr += rtvDescriptorSize;
 				}
 
@@ -750,12 +825,12 @@ namespace D3D12 {
 				}
 
 				for (size_t i = 0; i < g_FrameBufferCount; i++) {
-					if (pD3DDevice->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&g_FrameContext[i].command_allocator)) != S_OK) {
+					if (pD3DDevice->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&Graphics().frames[i].command_allocator)) != S_OK) {
 						return;
 					}
 				}
 
-				if (pD3DDevice->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, g_FrameContext[0].command_allocator, NULL, IID_PPV_ARGS(&g_pD3DCommandList)) != S_OK || g_pD3DCommandList->Close() != S_OK) {
+				if (pD3DDevice->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, Graphics().frames[0].command_allocator, NULL, IID_PPV_ARGS(&Graphics().commands)) != S_OK || Graphics().commands->Close() != S_OK) {
 					return;
 				}
 			}
@@ -781,9 +856,9 @@ namespace D3D12 {
 				// Setup Platform/Renderer backends
 			ImGui_ImplWin32_Init(Window);
 			ImGui_ImplDX12_Init(pD3DDevice, g_FrameBufferCount,
-				DXGI_FORMAT_R8G8B8A8_UNORM, g_pD3DSrvDescHeap,
-				g_pD3DSrvDescHeap->GetCPUDescriptorHandleForHeapStart(),
-				g_pD3DSrvDescHeap->GetGPUDescriptorHandleForHeapStart());
+				DXGI_FORMAT_R8G8B8A8_UNORM, Graphics().srv,
+				Graphics().srv->GetCPUDescriptorHandleForHeapStart(),
+				Graphics().srv->GetGPUDescriptorHandleForHeapStart());
 
 			// Retain UI/damage font indices; append map fonts before one atlas upload.
             std::string eventFontPath;
@@ -860,68 +935,18 @@ namespace D3D12 {
 				s_PendingGearFilename.clear();
 			}
 		}
-		// Clear or reload window background images (per-window slots)
-		for (int wi = 0; wi < kWindowBgSlots; ++wi) {
-			if (g_Initialized && s_ClearWindowBg[wi]) {
-				g_WindowBgTexture[wi] = nullptr;
-				g_WindowBgTextureGPUHandle[wi] = {};
-				s_ClearWindowBg[wi] = false;
-			}
-			if (g_Initialized && !s_PendingWindowBgFilename[wi].empty()) {
-				ID3D12Device* pDev = nullptr;
-				if (SUCCEEDED(pSwapChain->GetDevice(__uuidof(ID3D12Device), (void**)&pDev))) {
-					std::string path = (std::filesystem::path(GetD2RHUDImagesDir()) / s_PendingWindowBgFilename[wi]).string();
-					if (LoadThemeTextureFromPath(pDev, path, g_WindowBgTexture[wi], g_WindowBgTextureGPUHandle[wi], g_FrameBufferCount + 1 + wi))
-						s_PendingWindowBgFilename[wi].clear();
-					pDev->Release();
-				}
-			}
-		}
-		for (int fi = 0; fi < kFrameBgSlots; ++fi) {
-			if (g_Initialized && s_ClearFrameBg[fi]) {
-				g_FrameBgTexture[fi] = nullptr;
-				g_FrameBgTextureGPUHandle[fi] = {};
-				s_ClearFrameBg[fi] = false;
-			}
-			if (g_Initialized && !s_PendingFrameBgFilename[fi].empty()) {
-				ID3D12Device* pDev = nullptr;
-				if (SUCCEEDED(pSwapChain->GetDevice(__uuidof(ID3D12Device), (void**)&pDev))) {
-					std::string path = (std::filesystem::path(GetD2RHUDImagesDir()) / s_PendingFrameBgFilename[fi]).string();
-					if (LoadThemeTextureFromPath(pDev, path, g_FrameBgTexture[fi], g_FrameBgTextureGPUHandle[fi], g_FrameBufferCount + 11 + fi))
-						s_PendingFrameBgFilename[fi].clear();
-				}
-			}
-		}
-		for (int ci = 0; ci < kCheckboxSlots; ++ci) {
-			if (g_Initialized && s_ClearCheckbox[ci]) {
-				g_CheckboxTexture[ci] = nullptr;
-				g_CheckboxTextureGPUHandle[ci] = {};
-				s_ClearCheckbox[ci] = false;
-			}
-			if (g_Initialized && !s_PendingCheckboxFilename[ci].empty()) {
-				ID3D12Device* pDev = nullptr;
-				if (SUCCEEDED(pSwapChain->GetDevice(__uuidof(ID3D12Device), (void**)&pDev))) {
-					std::string path = (std::filesystem::path(GetD2RHUDImagesDir()) / s_PendingCheckboxFilename[ci]).string();
-					if (LoadThemeTextureFromPath(pDev, path, g_CheckboxTexture[ci], g_CheckboxTextureGPUHandle[ci], g_FrameBufferCount + 14 + ci))
-						s_PendingCheckboxFilename[ci].clear();
-				}
-			}
-		}
-		for (int bi = 0; bi < kButtonSlots; ++bi) {
-			if (g_Initialized && s_ClearButton[bi]) {
-				g_ButtonTexture[bi] = nullptr;
-				g_ButtonTextureGPUHandle[bi] = {};
-				s_ClearButton[bi] = false;
-			}
-			if (g_Initialized && !s_PendingButtonFilename[bi].empty()) {
-				ID3D12Device* pDev = nullptr;
-				if (SUCCEEDED(pSwapChain->GetDevice(__uuidof(ID3D12Device), (void**)&pDev))) {
-					std::string path = (std::filesystem::path(GetD2RHUDImagesDir()) / s_PendingButtonFilename[bi]).string();
-					if (LoadThemeTextureFromPath(pDev, path, g_ButtonTexture[bi], g_ButtonTextureGPUHandle[bi], g_FrameBufferCount + 17 + bi))
-						s_PendingButtonFilename[bi].clear();
-				}
-			}
-		}
+		if (g_Initialized) ProcessThemeImageRequests(pSwapChain);
+
+        if(g_Initialized && Graphics().srv && Spectate::Video::NeedsRender()){
+            CComPtr<ID3D12Device> device;
+            if(SUCCEEDED(pSwapChain->GetDevice(IID_PPV_ARGS(&device)))){
+                const auto stride=device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+                const auto index=g_FrameBufferCount+20+kBuffAtlasSlots+1+kInspectSlots;
+                auto cpu=Graphics().srv->GetCPUDescriptorHandleForHeapStart();cpu.ptr+=size_t(index)*stride;
+                auto gpu=Graphics().srv->GetGPUDescriptorHandleForHeapStart();gpu.ptr+=uint64_t(index)*stride;
+                Spectate::Video::Render(device,queue,Graphics().frames[pSwapChain->GetCurrentBackBufferIndex()].main_render_target_resource,cpu,gpu,stride);
+            }
+        }
 
 		ImGui_ImplWin32_NewFrame();
 		ImGui_ImplDX12_NewFrame();
@@ -930,7 +955,7 @@ namespace D3D12 {
 		g_PluginManager->Present();
 		LegacyTransmog::DrawStackSplit();
 
-		FrameContext& currentFrameContext = g_FrameContext[pSwapChain->GetCurrentBackBufferIndex()];
+		FrameContext& currentFrameContext = Graphics().frames[pSwapChain->GetCurrentBackBufferIndex()];
 		currentFrameContext.command_allocator->Reset();
 
 		D3D12_RESOURCE_BARRIER barrier;
@@ -940,19 +965,20 @@ namespace D3D12 {
 		barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
 		barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_PRESENT;
 		barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;
-		g_pD3DCommandList->Reset(currentFrameContext.command_allocator, nullptr);
-		g_pD3DCommandList->ResourceBarrier(1, &barrier);
-		g_pD3DCommandList->OMSetRenderTargets(1, &currentFrameContext.main_render_target_descriptor, FALSE, nullptr);
-		g_pD3DCommandList->SetDescriptorHeaps(1, &g_pD3DSrvDescHeap);
+		Graphics().commands->Reset(currentFrameContext.command_allocator, nullptr);
+		Graphics().commands->ResourceBarrier(1, &barrier);
+		Graphics().commands->OMSetRenderTargets(1, &currentFrameContext.main_render_target_descriptor, FALSE, nullptr);
+		Graphics().commands->SetDescriptorHeaps(1, &Graphics().srv);
 		ImGui::Render();
 		HudWindowLayout::Tick();
-		ImGui_ImplDX12_RenderDrawData(ImGui::GetDrawData(), g_pD3DCommandList);
+		ImGui_ImplDX12_RenderDrawData(ImGui::GetDrawData(), Graphics().commands);
 		barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
 		barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PRESENT;
-		g_pD3DCommandList->ResourceBarrier(1, &barrier);
-		g_pD3DCommandList->Close();
+		Graphics().commands->ResourceBarrier(1, &barrier);
+		Graphics().commands->Close();
 
-		queue->ExecuteCommandLists(1, (ID3D12CommandList**)&g_pD3DCommandList);
+		queue->ExecuteCommandLists(1, (ID3D12CommandList**)&Graphics().commands);
+        Spectate::Video::Presented(queue);
 		return;
 	}
 
@@ -978,7 +1004,7 @@ namespace D3D12 {
                 }
             } else {
                 std::lock_guard<std::mutex> queueLock(g_QueueMutex);
-                queue = g_pD3DCommandQueue;
+                queue = Graphics().queue;
             }
             if (queue) DrawPresent(pSwapChain, queue);
         }
@@ -989,8 +1015,8 @@ namespace D3D12 {
 	void HookExecuteCommandLists(ID3D12CommandQueue* queue, UINT NumCommandLists, ID3D12CommandList* const* ppCommandLists) {
         {
             std::lock_guard<std::mutex> queueLock(g_QueueMutex);
-		if (!g_pD3DCommandQueue && queue->GetDesc().Type == D3D12_COMMAND_LIST_TYPE_DIRECT) {
-			g_pD3DCommandQueue = queue;
+		if (!Graphics().queue && queue->GetDesc().Type == D3D12_COMMAND_LIST_TYPE_DIRECT) {
+			Graphics().queue = queue;
             }
 		}
 
@@ -998,6 +1024,8 @@ namespace D3D12 {
 	}
 
 	void ResetState() {
+        Spectate::Video::Reset();
+        ThemeImages::Runtime().ResetResources();
 		if (g_Initialized) {
 			g_Initialized = false;
 			HudWindowLayout::Shutdown();
@@ -1006,36 +1034,37 @@ namespace D3D12 {
 		}
         {
             std::lock_guard<std::mutex> queueLock(g_QueueMutex);
-            g_pD3DCommandQueue.Release();
+            Graphics().queue.Release();
         }
         g_RenderSwapchain = nullptr;
-		g_FrameContext.clear();
-		g_pD3DCommandList = nullptr;
-		g_pD3DRtvDescHeap = nullptr;
-		g_pD3DSrvDescHeap = nullptr;
-        g_BuffAtlases.clear();
-        g_QuantityItemTexture={};g_QuantityItemSprite.reset();
-		g_GearTexture = nullptr;
+		Graphics().frames.clear();
+		Graphics().commands = nullptr;
+		Graphics().rtv = nullptr;
+		Graphics().srv = nullptr;
+        Graphics().atlases.clear();
+        Graphics().quantity={};Graphics().quantitySprite.reset();
+        Graphics().inspectTextures.clear();Graphics().inspectAssets.reset();Graphics().inspectRetirement.Release();Graphics().inspectFrame=-1;Graphics().inspectUploads=0;
+		Graphics().gear = nullptr;
 		g_GearTextureGPUHandle = {};
 		g_GearTextureWidth = 0;
 		g_GearTextureHeight = 0;
 		for (int wi = 0; wi < kWindowBgSlots; ++wi) {
-			g_WindowBgTexture[wi] = nullptr;
+			Graphics().window[wi] = nullptr;
 			g_WindowBgTextureGPUHandle[wi] = {};
 		}
 		for (int fi = 0; fi < kFrameBgSlots; ++fi) {
-			g_FrameBgTexture[fi] = nullptr;
+			Graphics().frame[fi] = nullptr;
 			g_FrameBgTextureGPUHandle[fi] = {};
 		}
 		for (int ci = 0; ci < kCheckboxSlots; ++ci) {
-			g_CheckboxTexture[ci] = nullptr;
+			Graphics().checkbox[ci] = nullptr;
 			g_CheckboxTextureGPUHandle[ci] = {};
 		}
 		for (int bi = 0; bi < kButtonSlots; ++bi) {
-			g_ButtonTexture[bi] = nullptr;
+			Graphics().button[bi] = nullptr;
 			g_ButtonTextureGPUHandle[bi] = {};
 		}
-		g_CameraButtonTexture = nullptr;
+		Graphics().camera = nullptr;
 		g_CameraButtonTextureGPUHandle = {};
 		g_CameraButtonTextureWidth = 0;
 		g_CameraButtonTextureHeight = 0;
@@ -1262,6 +1291,12 @@ namespace D3D12 {
 	}
 
 	LRESULT APIENTRY WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+        if(g_Initialized && Spectate::WindowInput(hWnd,msg,wParam,lParam)){
+            ImGui_ImplWin32_WndProcHandler(hWnd,msg,wParam,lParam);
+            return msg==WM_INPUT?DefWindowProcW(hWnd,msg,wParam,lParam):0;
+        }
+        if(HudCommands::HandleMessage(hWnd,msg,wParam,lParam))return 0;
+        if(Marketplace::Panel::NativeWindowInput(msg,wParam,lParam))return msg==WM_INPUT?DefWindowProcW(hWnd,msg,wParam,lParam):0;
 		bool splitOutsideClick=false;
 		if(LegacyTransmog::SplitWindowMessage(hWnd,msg,wParam,lParam,&splitOutsideClick))return 0;
 		if (g_Initialized && g_PluginManager)
@@ -1348,6 +1383,7 @@ namespace D3D12 {
 	}
 
 	Status RemoveHooks() {
+        HudCommands::Shutdown();
         g_HooksReady.store(false, std::memory_order_release);
         if (g_QueueHookInstalled) Unhook(54, (void**)&OriginalExecuteCommandLists, HookExecuteCommandLists);
         if (g_PresentHookInstalled) Unhook(140, (void**)&OriginalPresent, HookPresent);
@@ -1387,6 +1423,8 @@ namespace D3D12 {
 	void SetDllModule(HMODULE hModule) {
 		g_DllModule = hModule;
         CubeMap::SetArtworkProvider(GetMapEventArtwork);
+        Inspect::SetArtwork(GetInspectArtwork);
+        Inspect::SetFont(GetMapEventFont);
         LegacyTransmog::Skin::SetProviders([](LegacyTransmog::Skin::Part part){
             LegacyTransmog::Skin::Image image;auto assets=LegacyTransmog::Skin::Assets();if(!assets)return image;
             const auto& sprite=(*assets)[part];const auto& atlas=sprite.atlas;
@@ -1418,11 +1456,9 @@ namespace D3D12 {
 	}
 
 	void RequestWindowBgImageReload(int slot, const std::string& filename) {
-		if (slot < 0 || slot >= kWindowBgSlots) return;
-		if (filename.empty())
-			s_ClearWindowBg[slot] = true;
-		else
-			s_PendingWindowBgFilename[slot] = filename;
+        if (slot < 0 || slot >= kWindowBgSlots) return;
+        std::lock_guard<std::recursive_mutex> renderLock(g_RenderMutex);
+        ThemeImages::Runtime().Set(0 + size_t(slot), filename);
 	}
 
 	uint64_t GetFrameBgTextureId(int slot) {
@@ -1431,11 +1467,9 @@ namespace D3D12 {
 	}
 
 	void RequestFrameBgImageReload(int slot, const std::string& filename) {
-		if (slot < 0 || slot >= kFrameBgSlots) return;
-		if (filename.empty())
-			s_ClearFrameBg[slot] = true;
-		else
-			s_PendingFrameBgFilename[slot] = filename;
+        if (slot < 0 || slot >= kFrameBgSlots) return;
+        std::lock_guard<std::recursive_mutex> renderLock(g_RenderMutex);
+        ThemeImages::Runtime().Set(8 + size_t(slot), filename);
 	}
 
 	uint64_t GetCheckboxTextureId(int slot) {
@@ -1444,11 +1478,9 @@ namespace D3D12 {
 	}
 
 	void RequestCheckboxImageReload(int slot, const std::string& filename) {
-		if (slot < 0 || slot >= kCheckboxSlots) return;
-		if (filename.empty())
-			s_ClearCheckbox[slot] = true;
-		else
-			s_PendingCheckboxFilename[slot] = filename;
+        if (slot < 0 || slot >= kCheckboxSlots) return;
+        std::lock_guard<std::recursive_mutex> renderLock(g_RenderMutex);
+        ThemeImages::Runtime().Set(11 + size_t(slot), filename);
 	}
 
 	uint64_t GetButtonTextureId(int slot) {
@@ -1457,11 +1489,9 @@ namespace D3D12 {
 	}
 
 	void RequestButtonImageReload(int slot, const std::string& filename) {
-		if (slot < 0 || slot >= kButtonSlots) return;
-		if (filename.empty())
-			s_ClearButton[slot] = true;
-		else
-			s_PendingButtonFilename[slot] = filename;
+        if (slot < 0 || slot >= kButtonSlots) return;
+        std::lock_guard<std::recursive_mutex> renderLock(g_RenderMutex);
+        ThemeImages::Runtime().Set(14 + size_t(slot), filename);
 	}
 
 	uint64_t GetCameraButtonTextureId() {

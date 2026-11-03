@@ -30,7 +30,7 @@ int main(int argc,char** argv){
             Check(session.Build(engine,rule,{},catalog,{}),session.error);
             int matches=0,misses=0;
             for(size_t i=0;i<session.results.size();++i){const auto& result=session.results[i];const auto& sample=session.samples[i];
-                if(sample.code=="rin"&&sample.quality==7){++matches;Check(result.matched&&!result.hidden,"Unique ring did not match");Check(Plain(result.name).find("Keep")!=std::string::npos,"Name action missing");Check(result.background[3]>0.5f&&result.background[3]<0.51f&&result.thickness==3,"Color/border action missing");Check(result.messages.find("Found")!=std::string::npos&&result.audio,"Notification preview missing");}
+                if(sample.code=="rin"&&sample.quality==7){++matches;Check(result.matched&&!result.hidden,"Unique ring did not match");Check(Plain(result.name).find("Keep")!=std::string::npos,"Name action missing");Check(result.name.find("\xc3\xbf" "c1Keep")!=std::string::npos,"Game color marker was corrupted instead of emitting UTF-8 U+00FF c1");Check(result.background[3]>0.5f&&result.background[3]<0.51f&&result.thickness==3,"Color/border action missing");Check(result.messages.find("Found")!=std::string::npos&&result.audio,"Notification preview missing");}
                 else{++misses;Check(!result.matched&&!result.hidden&&result.name==sample.name,"Nonmatch was changed");}
             }
             Check(matches>0&&misses>0,"Preview did not include contrasting samples");
@@ -54,6 +54,7 @@ int main(int argc,char** argv){
             for(const char* key:{"name_style","background_style"})for(const auto& option:Builder::Options(key,catalog)){
                 Check(session.Build(engine,"{codes='rin',"+std::string(key)+"="+Quote(option.value)+"}",{},catalog,{}),session.error);
                 Check(session.Animate(12345),session.error);Check(session.Animate(12999),session.error);
+                for(const auto& result:session.results)Check(result.name.find("\xc3\x83")==std::string::npos,"Animated style emitted a recoded color marker");
             }
             const std::string safeEngine="assert(io.open('unwanted-preview-file','w')==nil);assert(os.execute==nil and require==nil and debug==nil and dofile==nil and load==nil);\n"+engine;
             Check(session.Build(safeEngine,"{codes='allitems'}",{},catalog,{}),session.error);

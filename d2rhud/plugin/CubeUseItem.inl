@@ -12,7 +12,7 @@ bool InitializeUseNative(){
 }
 struct UseCopy {Unit* unit=nullptr;uint32_t id=0;Unit* source=nullptr;};
 struct UseTransaction {
-    Game* game;Unit* player;std::array<Input,3> inputs{};std::vector<UseCopy> copies;
+    Game* game;Unit* player;std::array<Input,7> inputs{};std::vector<UseCopy> copies;
     ~UseTransaction(){
         // A failed preflight leaves detached copies to reclaim. A successful
         // native placement owns its copy; a failed placement already destroyed it.
@@ -24,6 +24,15 @@ struct UseTransaction {
     }
 };
 thread_local UseTransaction* useTransaction=nullptr;
+thread_local uintptr_t nativeCreateBase=0;
+thread_local std::array<Unit*,7>* bulkStageOutputs=nullptr;
+thread_local bool nativeSevenActive=false;
+thread_local bool bulkPlacementActive=false;
+uintptr_t NativeCreateCaller(uintptr_t address){return nativeCreateBase&&address>=nativeCreateBase&&address<nativeCreateBase+UseNativeData::Size?Pattern::Address(UseNativeData::Begin)+address-nativeCreateBase:address;}
+bool __fastcall BulkStagePreflight(){return true;}
+void __fastcall CaptureBulkStage(Unit** items){if(bulkStageOutputs)std::copy_n(items,nativeSevenActive?7:3,bulkStageOutputs->begin());}
+int __fastcall BulkPlacement(void*,Unit*,int,int*,int*,uint8_t);
+bool TryBulkCreate(Game*,Unit*,Recipe*,Input*);
 bool ExtendedUseActive(){return useTransaction!=nullptr;}
 struct UseScope {UseTransaction* previous;UseScope(UseTransaction& next):previous(useTransaction){useTransaction=&next;}~UseScope(){useTransaction=previous;}};
 struct UseItemBits {uint8_t* data;uint64_t bits,bytes=0,bit=0;uint32_t error=0,padding=0;};
@@ -64,6 +73,7 @@ Unit* CopyUseItem(Game* game,Unit* source){
     return copy;
 }
 uint64_t __fastcall AppendUseCopies(uint32_t* ids,Location* locations,uint64_t count){
+    if(nativeSevenActive)memset(reinterpret_cast<uint8_t*>(ids)-0x210+UseNativeData::WideStates,0,7*sizeof(int));
     if(!useTransaction || count+useTransaction->copies.size()>256)return count;
     // Only the private invocation's keep/consume bookkeeping is extended. The
     // real player inventory and its input descriptors retain their original form.
@@ -73,9 +83,9 @@ uint64_t __fastcall AppendUseCopies(uint32_t* ids,Location* locations,uint64_t c
     return count;
 }
 struct UseCreateInvocation {
-    uint8_t* memory=nullptr;std::array<RUNTIME_FUNCTION,2> unwind{};bool registered=false;
+    uint8_t* memory=nullptr;std::array<RUNTIME_FUNCTION,3> unwind{};bool registered=false;
     ~UseCreateInvocation(){if(registered)RtlDeleteFunctionTable(unwind.data());if(memory)VirtualFree(memory,0,MEM_RELEASE);}
-    bool Build(){
+    bool Build(bool stage=false,bool wide=false){
         if(!useCreateReady.load())return false;
         SYSTEM_INFO system{};GetSystemInfo(&system);const auto gran=uintptr_t(system.dwAllocationGranularity),native=Pattern::Address(UseNativeData::Begin);
         const auto low=(std::max)(uintptr_t(system.lpMinimumApplicationAddress),native>0x20000000?native-0x20000000:uintptr_t(0));
@@ -88,12 +98,22 @@ struct UseCreateInvocation {
         }
         if(!memory)return false;memcpy(memory,useCreateSource.data(),useCreateSource.size());
         for(const auto fix:UseNativeData::Fixups){
-            const auto target=fix.target==0xffffffffu?reinterpret_cast<uintptr_t>(memory)-UseNativeData::Begin:
+            const auto target=fix.target==0x2dba00&&stage?reinterpret_cast<uintptr_t>(memory)+0x3400:
+                fix.target==0x210200&&bulkPlacementActive?reinterpret_cast<uintptr_t>(memory)+0x3300:
+                fix.target==0xffffffffu?reinterpret_cast<uintptr_t>(memory)-UseNativeData::Begin:
                 fix.target>=UseNativeData::Begin&&fix.target<UseNativeData::Begin+UseNativeData::Size?reinterpret_cast<uintptr_t>(memory)+fix.target-UseNativeData::Begin:Pattern::Address(fix.target);
             const auto delta=int64_t(target)-int64_t(reinterpret_cast<uintptr_t>(memory)+fix.instruction+fix.length);
             if(delta<INT32_MIN||delta>INT32_MAX)return false;const int32_t relative=int32_t(delta);memcpy(memory+fix.instruction+fix.displacement,&relative,4);
         }
         memcpy(memory+0x2000,UseNativeData::Unwind.data(),UseNativeData::Unwind.size());
+        if(wide){
+            for(const auto patch:UseNativeData::WidePatches)memcpy(memory+patch.offset,&patch.value,4);
+            for(const auto offset:UseNativeData::WideCounts)memory[offset]=7;
+            memory[UseNativeData::WideSocketCount]=42;
+            // The enlarged frame preserves RBP/RSP-relative locals. Only saved
+            // registers move relative to RSP; the GS cookie stays at RSP+0x1710.
+            const uint16_t allocation=0x1928/8;memcpy(memory+0x2006,&allocation,2);
+        }
         const uint8_t jump[]{0xff,0x25,0,0,0,0};memcpy(memory+0x3100,jump,6);auto handler=Pattern::Address(UseNativeData::Handler);memcpy(memory+0x3106,&handler,8);
         // This callback follows a normal native call, so no SIMD values are
         // live across it. Preserve all volatile GPRs and the aligned shadow space.
@@ -107,18 +127,33 @@ struct UseCreateInvocation {
         memory[UseNativeData::Append]=0xe9;delta=0x3000-(UseNativeData::Append+5);memcpy(memory+UseNativeData::Append+1,&delta,4);
         const uint8_t chain[]{0x21,15,1,0,15,0xb2,0,0};memcpy(memory+0x2080,chain,sizeof(chain));
         const RUNTIME_FUNCTION parent{0,UseNativeData::Size,0x2000};memcpy(memory+0x2088,&parent,sizeof(parent));
-        unwind={parent,RUNTIME_FUNCTION{0x3000,uint32_t(at),0x2080}};
-        if(!RtlAddFunctionTable(unwind.data(),DWORD(unwind.size()),reinterpret_cast<DWORD64>(memory)))return false;registered=true;
+        size_t entries=2;unwind={parent,RUNTIME_FUNCTION{0x3000,uint32_t(at),0x2080},{}};
+        if(stage){
+            // All native generation/modifiers have completed here. Capture the
+            // detached items and return before any consumption or publication.
+            constexpr size_t site=0x307f0b-UseNativeData::Begin;memory[site]=0xe9;delta=int32_t(0x3200-site-5);memcpy(memory+site+1,&delta,4);
+            const uint8_t capture[]{0x48,0x8d,0x8d,0x50,1,0,0,0x48,0xb8};
+            at=0x3200;memcpy(memory+at,capture,sizeof(capture));at+=sizeof(capture);if(wide){const int32_t offset=UseNativeData::WideOutputs;memcpy(memory+0x3203,&offset,4);}callback=reinterpret_cast<uintptr_t>(CaptureBulkStage);memcpy(memory+at,&callback,8);at+=8;
+            memory[at++]=0xff;memory[at++]=0xd0;memory[at++]=0xe9;delta=int32_t(0x3085d6-UseNativeData::Begin-at-4);memcpy(memory+at,&delta,4);at+=4;
+            const uint8_t chainOnly[]{0x21,0,0,0};memcpy(memory+0x20a0,chainOnly,4);memcpy(memory+0x20a4,&parent,sizeof(parent));
+            unwind[2]={0x3200,uint32_t(at),0x20a0};entries=3;
+        }
+        if(stage){memcpy(memory+0x3400,jump,6);callback=reinterpret_cast<uintptr_t>(BulkStagePreflight);memcpy(memory+0x3406,&callback,8);}
+        if(bulkPlacementActive){memcpy(memory+0x3300,jump,6);callback=reinterpret_cast<uintptr_t>(BulkPlacement);memcpy(memory+0x3306,&callback,8);}
+        if(!RtlAddFunctionTable(unwind.data(),DWORD(entries),reinterpret_cast<DWORD64>(memory)))return false;registered=true;
         DWORD old=0;if(!VirtualProtect(memory,0x4000,PAGE_EXECUTE_READ,&old))return false;FlushInstructionCache(GetCurrentProcess(),memory,0x4000);return true;
     }
 };
-void DispatchCreate(Game* game,Unit* player,Recipe* recipe,Input* inputs){
+void DispatchNativeCreate(Game* game,Unit* player,Recipe* recipe,Input* inputs){
     if(!useTransaction || useTransaction->game!=game || useTransaction->player!=player){originalCreate(game,player,recipe,inputs);return;}
-    Recipe clean=*recipe;for(auto& out:clean.outputs)if(IndexedUse(out))out.special=0;
-    UseCreateInvocation invocation;if(!invocation.Build()){status.store("Cube useitem recipe refused: isolated native output processing is unavailable.");return;}
-    reinterpret_cast<Create>(invocation.memory)(game,player,&clean,inputs);
+    auto wide=RuntimeRecipe(*recipe);for(auto& out:wide.outputs)if(IndexedUse(out))out.special=0;
+    auto clean=wide.Native();const bool seven=activeWideRecipe!=nullptr;
+    UseCreateInvocation invocation;if(!invocation.Build(false,seven)){status.store("Cube useitem recipe refused: isolated native output processing is unavailable.");return;}
+    struct Scope {uintptr_t old=nativeCreateBase;bool previous=nativeSevenActive;Scope(uintptr_t value,bool seven){nativeCreateBase=value;nativeSevenActive=seven;}~Scope(){nativeCreateBase=old;nativeSevenActive=previous;}} scope(reinterpret_cast<uintptr_t>(invocation.memory),seven);
+    reinterpret_cast<Create>(invocation.memory)(game,player,seven?reinterpret_cast<Recipe*>(&wide):&clean,inputs);
 }
-std::optional<Input> ResolveUseInput(Game* game,Unit* player,const Recipe& recipe,size_t output,int input,Unit* source){
+void DispatchCreate(Game* game,Unit* player,Recipe* recipe,Input* inputs){if(!TryBulkCreate(game,player,recipe,inputs))DispatchNativeCreate(game,player,recipe,inputs);}
+std::optional<Input> ResolveUseInput(Game* game,Unit* player,const Recipe& recipe,const Output& output,int input,Unit* source){
     // Reuse the native source-record calculation too (upgrade base and item
     // level), rather than treating every selected input as a plain base=-1.
     Unit owner=*player,item=*source;D2ItemDataStrc data=*source->pItemData;D2InventoryStrc inventory=*player->pInventory;
@@ -126,12 +161,17 @@ std::optional<Input> ResolveUseInput(Game* game,Unit* player,const Recipe& recip
     data.pExtraData.pParentInv=&inventory;data.pExtraData.pNextItem=nullptr;
     Recipe probe=recipe;probe.header[4]=0;probe.header[0x10]=1;
     memcpy(probe.header.data()+0x14,recipe.header.data()+0x14+(input-1)*8,8);probe.header[0x1b]=1;
-    memset(probe.header.data()+0x1c,0,6*8);probe.outputs={};probe.outputs[0]=recipe.outputs[output];
+    memset(probe.header.data()+0x1c,0,6*8);probe.outputs={};probe.outputs[0]=output;
+    if(output.Visual()||(CubeMap::Data::IsMap(output)&&(output.flags&CubeMap::Data::PreserveInput))){probe.outputs[0]={};probe.outputs[0].type=254;}
     if(IndexedUse(probe.outputs[0]))probe.outputs[0].special=0;
     QuestNative::Invocation scanner;if(!scanner.Build(&probe,1))return {};
     RuneMatch result;Input selected[3]{};reinterpret_cast<RuneMatcher>(scanner.memory)(&result,game,&owner,selected);
-    if(!result.matched||selected[0].item!=&item)return {};
+    if(!result.matched||(selected[0].item&&selected[0].item!=&item))return {};
+    if(!selected[0].item&&(output.type==254||output.type==255||(output.flags&1)))return {};
     selected[0].item=source;return selected[0];
+}
+std::optional<Input> ResolveUseInput(Game* game,Unit* player,const Recipe& recipe,size_t output,int input,Unit* source){
+    return ResolveUseInput(game,player,recipe,recipe.outputs[output],input,source);
 }
 void __fastcall CreateHook(Game* game,Unit* player,Recipe* recipe,Input* inputs){
     if(!installed.load()||!recipe||!inputs){originalCreate(game,player,recipe,inputs);return;}
@@ -143,24 +183,29 @@ void __fastcall CreateHook(Game* game,Unit* player,Recipe* recipe,Input* inputs)
     if(!game||!player||!plan.valid||!useCreateReady.load()||!QuestNative::SafeInventory(player)||useMatch.game!=game||useMatch.player!=player->dwUnitId||useMatch.row!=row){
         status.store("Cube useitem recipe refused: enable the required useitem options and match valid native input slots.");return;
     }
+    WideRecipe wide(*recipe);
+    if(plan.extended&&!CompileExtraRecipe(*recipe,row,wide)){status.store("Extended cube outputs refused: invalid D-G output columns or missing table symbols. No ingredients were consumed.");return;}
     UseTransaction transaction{game,player};std::copy_n(inputs,3,transaction.inputs.begin());std::set<uint32_t> used;
-    for(size_t i=0;i<3;++i){
-        Unit* item=plan.inputs[i]?useMatch.inputs[plan.inputs[i]-1]:inputs[i].item;
-        const bool preserving=plan.inputs[i] || (recipe->outputs[i].flags&1);
-        if(!preserving)continue;
+    for(size_t i=0;i<(plan.extended?7:3);++i){
+        const auto& output=wide.outputs[i];if(!output.type)continue;
+        const int sourceInput=plan.inputs[i]?plan.inputs[i]:1;
+        Unit* item=plan.inputs[i]||i>=3?useMatch.inputs[sourceInput-1]:inputs[i].item;
+        const bool preserving=plan.inputs[i] || (output.flags&1);
+        if(!preserving&&i<3)continue;
         const auto id=plan.inputs[i]?useMatch.ids[plan.inputs[i]-1]:(item?item->dwUnitId:0);
         auto real=Native<Unit*(__fastcall*)(Game*,int,uint32_t)>(0x2c49c0)(game,4,id);
         if(!item||real!=item||!item->pItemData||item->pItemData->pExtraData.pParentInv!=player->pInventory||item->pItemData->nPage!=3){status.store("Cube useitem recipe refused: a selected ingredient changed before commit.");return;}
-        Input selected=inputs[i];
-        if(plan.inputs[i] && (plan.inputs[i]!=1||selected.item!=item)){
-            const auto resolved=ResolveUseInput(game,player,*recipe,i,plan.inputs[i],item);
+        Input selected=i<3?inputs[i]:Input{};
+        if(i>=3 || (plan.inputs[i] && (plan.inputs[i]!=1||selected.item!=item))){
+            const auto resolved=ResolveUseInput(game,player,*recipe,output,sourceInput,item);
             if(!resolved){status.store("Cube useitem recipe refused: its native source metadata could not be resolved.");return;}selected=*resolved;
         }
-        if(!used.insert(id).second){
+        if(preserving&&!used.insert(id).second){
             auto copy=CopyUseItem(game,item);if(!copy){status.store("Cube useitem recipe refused: an independent saved-item copy could not be prepared. No inputs were consumed.");return;}
             transaction.copies.push_back({copy,copy->dwUnitId,item});item=copy;
         }
         selected.item=item;transaction.inputs[i]=selected;
     }
+    struct WideScope {WideRecipe* old=activeWideRecipe;WideScope(WideRecipe* next){activeWideRecipe=next;}~WideScope(){activeWideRecipe=old;}} wideScope(plan.extended?&wide:nullptr);
     UseScope scope(transaction);CreateBody(game,player,recipe,transaction.inputs.data());
 }

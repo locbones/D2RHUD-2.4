@@ -34,5 +34,27 @@ for address in (0x207610,0x204dc0,0x2f5770,0x2d7480,0x209c60,0x2f8660,0x2f8740):
  for byte in data[address:address+32]:value=((value^byte)*1099511628211)&0xffffffffffffffff
  lines += [f'    {{0x{address:x},0x{value:016x}ULL}},']
 lines += ['};',f'inline constexpr uint32_t Handler=0x{handler:x};',f'inline constexpr std::array<uint8_t,{len(unwind)}> Unwind{{'+','.join(f'0x{b:02x}'for b in unwind)+'};','}']
+# Grow RSP and RBP together by 0x200: all existing locals, call arguments,
+# cookie offset and instruction lengths remain unchanged. Put the widened
+# primary/state arrays in the new space below the saved registers.
+wide=[]
+for i in ins:
+ for operand in i.operands:
+  if operand.type==capstone.CS_OP_MEM and operand.mem.base==capstone.x86.X86_REG_RBP and 0x150<=operand.mem.disp<=0x180:
+   old=operand.mem.disp
+   value=0x1640+old-0x150 if old<0x168 else (0x1680+old-0x168 if old<0x180 else 0x16a0)
+   assert i.disp_size==4;wide.append((i.address-begin+i.disp_offset,value))
+for address,offset,value in ((0x306c5d,4,-0x1828),(0x306c65,1,0x1928),(0x3085e7,3,0x1928)):
+ wide.append((address-begin+offset,value))
+assert data[0x307ef9:0x307efc]==bytes.fromhex('83f903')
+assert data[0x3083bb:0x3083bf]==bytes.fromhex('4183fe03')
+assert data[0x307a52:0x307a55]==bytes.fromhex('83f912')
+lines.pop()
+lines+=['// Seven-output invocation only. Original BIN records and native functions stay unchanged.',
+ 'struct WidePatch {uint16_t offset;int32_t value;};','inline constexpr WidePatch WidePatches[]{']
+lines += [f'    {{0x{offset:x},{value}}},'for offset,value in wide]
+lines += ['};','inline constexpr uint16_t WideCounts[]{0x12ab,0x176e};',
+ 'inline constexpr uint32_t WideOutputs=0x1640,WideStates=0x1680;',
+ 'inline constexpr uint16_t WideSocketCount=0xe04;','}']
 Path('d2rhud/plugin/CubeUseNativeData.h').write_text('\n'.join(lines)+'\n',encoding='utf-8')
 print('Generated',len(fixups),'native output fixups and exact GS/unwind data')

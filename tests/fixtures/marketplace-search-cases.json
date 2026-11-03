@@ -1,0 +1,87 @@
+[
+  [
+    "The Stone of Jordan Ring rin",
+    "stone",
+    true
+  ],
+  [
+    "The Stone of Jordan Ring",
+    "jordan stone",
+    true
+  ],
+  [
+    "The Stone of Jordan Ring",
+    "stone jordan rings",
+    true
+  ],
+  [
+    "Mara’s Kaleidoscope Amulet",
+    "maras amulet",
+    true
+  ],
+  [
+    "Griffon's Eye Diadem",
+    "griffons-eye",
+    true
+  ],
+  [
+    "Zod Rune r33",
+    "zod runes",
+    true
+  ],
+  [
+    "The Stone of Jordan Ring",
+    "stone zod",
+    false
+  ],
+  [
+    "The Stone of Jordan Ring",
+    "stone sapphire",
+    false
+  ],
+  [
+    "Stone​ of Jordan",
+    "stone",
+    true
+  ],
+  [
+    "The Stone of Jordan Ring",
+    "  STONE  JORDAN  ",
+    true
+  ],
+  [
+    "The Stone of Jordan Ring",
+    "stone-of-jordan",
+    true
+  ],
+  [
+    "Perfect Ruby Gem",
+    "perfect gems ruby",
+    true
+  ],
+  [
+    "Gold",
+    "gold",
+    true
+  ],
+  [
+    "The Grandfather Colossus Blade",
+    "colossus grandfather",
+    true
+  ],
+  [
+    "The Stone of Jordan",
+    "the",
+    true
+  ],
+  [
+    "Gold",
+    "the",
+    false
+  ],
+  [
+    "Ring",
+    "",
+    true
+  ]
+]

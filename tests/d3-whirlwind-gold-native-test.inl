@@ -56,6 +56,36 @@ void NativeAutoGold(const std::filesystem::path& path){
         assert(!NativeData::Read<Unit*>(manager,0x18));
         assert(client.active && NativeData::Active(f.skill.data()));
     }
+    // Execute the real server 0x16 handler with customized range instructions.
+    // Its room, coordinates, distance and final pickup range remain authoritative.
+    static int nativePickups=0,passedRange=0;
+    stub(0x209530,+[](Unit*)->void*{return fixture.room.data();});
+    stub(Pickup::DistanceRva,GoldDistance);
+    stub(0x20dbd0,+[](Unit*,Unit*,int){return 0;});
+    stub(Pickup::NativePickupRva,+[](Unit* player,uint32_t item,bool autoPlace,int range,bool collision)->bool{
+        assert(player==&fixture.owner && item==fixture.gold.dwUnitId && autoPlace && collision);
+        ++nativePickups;passedRange=range;return true;
+    });
+    BeginHeldClient(2);auto& serverFixture=fixture;
+    std::array<void*,1> neighbors{serverFixture.room.data()};
+    Put(serverFixture.room.data(),0,neighbors.data());Put(serverFixture.room.data(),0x40,uint32_t(1));
+    Put(serverFixture.room.data(),0xa8,&serverFixture.gold);
+    Bind(0x2aee79,image+0x2aee79);Bind(0x2aee97,image+0x2aee97);
+    Pickup::Command request{0x16,serverFixture.gold.dwUnitId,100,200,1};
+    auto handler=reinterpret_cast<Pickup::Dispatcher>(image+Pickup::HandlerRva);
+    for(uint8_t radius:{4,10,20,50}){
+        image[0x2aee7b]=radius;image[0x2aee9a]=radius;
+        FlushInstructionCache(GetCurrentProcess(),image+0x2aed60,0x180);
+        assert(Pickup::GoldPickupRange()==radius);serverFixture.goldDistance=radius;
+        const auto before=nativePickups;
+        assert(handler(&serverFixture.game,&serverFixture.owner,&request,sizeof(request))==0);
+        assert(nativePickups==before+1 && passedRange==radius);
+        ++serverFixture.goldDistance;
+        assert(handler(&serverFixture.game,&serverFixture.owner,&request,sizeof(request))!=0 && nativePickups==before+1);
+        serverFixture.goldDistance=radius;++request.x;
+        assert(handler(&serverFixture.game,&serverFixture.owner,&request,sizeof(request))!=0 && nativePickups==before+1);--request.x;
+    }
+    std::cout<<"Actual server pickup handler honors live 4/10/20/50 limits, rejects outside range and mismatched coordinates, and forwards the customized final pickup distance.\n";
     // Replay the actual native hover accessor, including its per-local-player
     // 16-byte records and unit-table lookup, rather than a second HUD hover map.
     fixture.Reset();auto& f=fixture;

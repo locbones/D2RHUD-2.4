@@ -1,9 +1,11 @@
+﻿#include "../RuntimeTelemetry.h"
 #include "HudText.h"
 #include "BuffIcons.h"
 #include "SettingsUI.h"
 #include "BuffIconsData.h"
 #include "BuffIconsTables.h"
 #include "GameAssets.h"
+#include "../DeferredAssets.h"
 #include "../d2/D2Ptrs.h"
 #include "../D3D12Hook.h"
 #include <imgui.h>
@@ -13,7 +15,6 @@
 #include <cfloat>
 #include <cstddef>
 #include <chrono>
-#include <future>
 #include <map>
 #include <set>
 #include <sstream>
@@ -50,9 +51,9 @@ struct Database {
     std::string error;
 };
 struct LiveSkill { int id, level; float seconds = -1; bool active = false; };
-Database database;
-std::future<Database> loading;
-bool loadStarted = false, loaded = false, previewEnabled = true;
+std::shared_ptr<const Database> database;
+const Database& CurrentDatabase(){static const Database empty;return database?*database:empty;}
+bool loaded = false, previewEnabled = true;
 std::vector<LiveSkill> available, selectedStates;
 std::string character;
 std::string runtimeStatus;
@@ -112,7 +113,7 @@ std::vector<LiveSkill> ReadAvailableSkills(uintptr_t player, StatusFor&& statusF
     while (node && visited.size() < 1024 && visited.insert(node).second) {
         SkillMemory skill{}; int16_t skillId = -1;
         if (!Read(node, skill)) break;
-        if (Read(skill.txt, skillId) && database.skills.count(skillId)) {
+        if (Read(skill.txt, skillId) && CurrentDatabase().skills.count(skillId)) {
             const int level = SkillLevel(player, node, skill.level, skill.bonus);
             if (level > 0 && (skill.owner == -1 || skill.charges > 0)) {
                 auto live = statusFor(skillId, level);
@@ -124,7 +125,7 @@ std::vector<LiveSkill> ReadAvailableSkills(uintptr_t player, StatusFor&& statusF
     }
     std::vector<LiveSkill> result;
     for (const auto& entry : unique) result.push_back(entry.second);
-    std::sort(result.begin(), result.end(), [](const auto& a, const auto& b) { return database.skills.at(a.id).name < database.skills.at(b.id).name; });
+    std::sort(result.begin(), result.end(), [](const auto& a, const auto& b) { return CurrentDatabase().skills.at(a.id).name < CurrentDatabase().skills.at(b.id).name; });
     return result;
 }
 
@@ -285,6 +286,12 @@ Database LoadDatabase(const std::filesystem::path& install, const std::string& m
 }
 
 struct ActiveState { float timeout; bool timed; };
+auto& SkillAssets() {
+    static auto* value = new HudAssets::Deferred<Database>({
+        [](const std::string& mod){return LoadDatabase(GameAssets::ExecutableDirectory(),mod);},
+        []{return uint64_t(GetTickCount64());}});
+    return *value;
+}
 std::map<int, ActiveState> ReadStates(uintptr_t player, bool server, uint32_t frame) {
     std::map<int, ActiveState> result;
     uintptr_t root = 0;
@@ -346,9 +353,9 @@ void DrawTimer(ImDrawList* draw, ImVec2 pos, float size, float seconds) {
 
 void DrawIcon(ImDrawList* draw, const Skill& skill, ImVec2 pos, float size, float seconds, bool active, bool showTimer = true) {
     const ImVec2 end(pos.x + size, pos.y + size);
-    auto atlas = database.atlases.find(skill.sprite);
+    auto atlas = CurrentDatabase().atlases.find(skill.sprite);
     uint64_t texture = 0;
-    if (atlas != database.atlases.end() && skill.frame >= 0 && skill.frame < atlas->second.frames)
+    if (atlas != CurrentDatabase().atlases.end() && skill.frame >= 0 && skill.frame < atlas->second.frames)
         texture = D3D12::GetBuffIconAtlas(skill.sprite, atlas->second);
     if (texture) {
         const auto& data = atlas->second;
@@ -484,15 +491,11 @@ void SaveToJson(nlohmann::ordered_json& root) {
 }
 
 void Update(D2Client* client, const std::string& mod, bool settingsOpen) {
-    if (!config.enabled && !settingsOpen) { available.clear(); selectedStates.clear(); return; }
-    if (!loadStarted) {
-        wchar_t path[MAX_PATH]{}; GetModuleFileNameW(nullptr, path, MAX_PATH);
-        loading = std::async(std::launch::async, LoadDatabase, std::filesystem::path(path).parent_path(), mod);
-        loadStarted = true;
-    }
-    if (!loaded && loading.valid() && loading.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
-        database = loading.get(); loaded = true;
-    }
+    HudTelemetry::Scope measured(HudTelemetry::Feature::Buffs);
+    const bool wanted=config.enabled || settingsOpen;
+    auto& assets=SkillAssets();assets.Tick(mod,wanted);
+    database=assets.Value();loaded=bool(database);
+    if (!wanted) { available.clear(); selectedStates.clear(); return; }
     available.clear(); selectedStates.clear(); character.clear(); runtimeStatus.clear();
     uintptr_t player = LocalPlayer();
     uint32_t type = 6, id = 0, cls = 0;
@@ -523,7 +526,7 @@ void Update(D2Client* client, const std::string& mod, bool settingsOpen) {
     const auto states = ReadStates(player, server, frame);
     auto statusFor = [&](int skillId, int level) {
         LiveSkill live{skillId, level};
-        for (int state : database.skills.at(skillId).states) {
+        for (int state : CurrentDatabase().skills.at(skillId).states) {
             auto active = states.find(state);
             if (active == states.end()) continue;
             const float seconds = RemainingSeconds(active->second.timeout, active->second.timed, server, frame);
@@ -536,7 +539,7 @@ void Update(D2Client* client, const std::string& mod, bool settingsOpen) {
     // (for example Battle Orders granted by Call to Arms).
     auto selection = config.characters.find(character);
     if (selection != config.characters.end()) for (int skillId : selection->second)
-        if (database.skills.count(skillId)) selectedStates.push_back(statusFor(skillId, 0));
+        if (CurrentDatabase().skills.count(skillId)) selectedStates.push_back(statusFor(skillId, 0));
 
     available = ReadAvailableSkills(player, statusFor);
     runtimeStatus = server ? "Reading server state expiration frames" : "Reading client state durations";
@@ -564,7 +567,7 @@ void Render(bool preview, float resolutionScale) {
         for (size_t i = 0; i < shown.size(); ++i) {
             const ImVec2 at(origin.x + layout.icons[i].x, origin.y + layout.icons[i].y);
             const auto& skill = shown[i];
-            const auto& data = database.skills.at(skill.id);
+            const auto& data = CurrentDatabase().skills.at(skill.id);
             DrawIcon(draw, data, at, size, skill.seconds, skill.active, false);
             DrawLabel(draw, data, at, size, skill.seconds);
             DrawTimer(draw, at, size, skill.seconds);

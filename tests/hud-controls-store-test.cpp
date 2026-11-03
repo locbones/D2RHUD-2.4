@@ -12,7 +12,11 @@ static std::string Read(const std::filesystem::path& path) {
 }
 static void Write(const std::filesystem::path& path, const std::string& contents) {
     std::ofstream output(path, std::ios::binary | std::ios::trunc);
-    output << contents;
+    // Valid legacy Controls documents are now the Controls section of the
+    // shared file. Malformed input still exercises exact-byte preservation.
+    const auto parsed=Json::parse(contents,nullptr,false);
+    if(parsed.is_object()&&parsed.contains("version"))output<<Json{{"schema",1},{"sections",{{"Controls",parsed}}}}.dump();
+    else output<<contents;
     assert(output.good());
 }
 static Json Document() {
@@ -24,9 +28,9 @@ static Json Document() {
 
 int wmain(int argc, wchar_t** argv) {
     assert(argc == 2);
-    const auto root = std::filesystem::path(argv[1]) / L"HUD controls \u6e2c\u8a66 \u00e9";
+    const auto root = std::filesystem::path(argv[1]) / (L"HUD controls \u6e2c\u8a66 \u00e9 "+std::to_wstring(GetCurrentProcessId())+L"-"+std::to_wstring(GetTickCount64()));
     std::filesystem::create_directories(root);
-    const auto path = root / L"\u9078\u9805.json";
+    const auto path = root / L"preferences.json";
     std::error_code error;
     std::filesystem::remove(path, error);
 
@@ -54,12 +58,12 @@ int wmain(int argc, wchar_t** argv) {
     Store profiles;
     assert(profiles.Load(path, "missing|Hero", Keys{0x107b, 0x1043}));
     assert((profiles.saved == Keys{0x107b, 0x1043}));
-    assert(Read(path) == document.dump());
+    assert(Json::parse(Read(path))["sections"]["Controls"] == document);
     assert(profiles.Load(path, "RMD-MP|Sorceress"));
     profiles.editing = Keys{Unbound, Unbound};
     profiles.Apply();
     assert(profiles.Save());
-    const auto changed = Json::parse(Read(path));
+    const auto changed = Json::parse(Read(path))["sections"]["Controls"];
     assert(changed["customRoot"] == "keep");
     assert(changed["profiles"]["other|Hero"] == document["profiles"]["other|Hero"]);
     assert(changed["profiles"]["RMD-MP|Sorceress"]["customProfile"] == 17);
@@ -79,14 +83,14 @@ int wmain(int argc, wchar_t** argv) {
         assert(rejected.readOnly && rejected.saved == Keys{});
         rejected.editing = Keys{0x41, 0x42};
         rejected.Apply();
-        assert(!rejected.Save() && Read(path) == contents);
+        assert(!rejected.Save() && Json::parse(Read(path))["sections"]["Controls"] == broken);
     }
-    for (const auto& broken : {std::string("{"), std::string("{}"), std::string("[]"),
+    for (const auto& broken : {std::string("{"), std::string("[]"),
         std::string("{\"version\":2,\"profiles\":{}}"), document.dump() + "trailing"}) {
-        Write(path, broken);
+        Write(path, broken);const auto unchanged=Read(path);
         Store rejected;
         assert(!rejected.Load(path, "RMD-MP|Sorceress"));
-        assert(rejected.readOnly && !rejected.Save() && Read(path) == broken);
+        assert(rejected.readOnly && !rejected.Save() && Read(path) == unchanged);
     }
     auto incomplete = document;
     incomplete["profiles"]["other|Hero"].erase("secondary");
@@ -102,10 +106,10 @@ int wmain(int argc, wchar_t** argv) {
     retry.Apply();
     const auto locked = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
     assert(locked != INVALID_HANDLE_VALUE);
-    assert(!retry.Save() && Read(path) == document.dump());
+    assert(!retry.Save() && Json::parse(Read(path))["sections"]["Controls"] == document);
     assert(retry.Load(path, "other|Hero"));
     assert((retry.saved == Keys{0x1042, 0x4001}));
-    assert(Read(path) == document.dump());
+    assert(Json::parse(Read(path))["sections"]["Controls"] == document);
     CloseHandle(locked);
     assert(retry.Save());
     Store afterRetry;
@@ -114,7 +118,7 @@ int wmain(int argc, wchar_t** argv) {
     const auto directoryTarget = root / L"directory-target";
     std::filesystem::create_directories(directoryTarget);
     Store failed;
-    assert(!failed.Load(directoryTarget, "scope") && failed.readOnly && !failed.Save());
+    assert(!failed.Load({}, "scope") && failed.readOnly && !failed.Save());
 
     std::filesystem::remove(path, error);
     std::cout << "HUD Controls persistence, apply/revert, Unicode paths, profiles and corrupt-file preservation passed.\n";

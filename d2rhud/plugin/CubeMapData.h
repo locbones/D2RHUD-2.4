@@ -194,6 +194,7 @@ inline constexpr std::array RegularEvents{Event::GoblinGrotto,Event::TreasureTro
 inline Event SelectEvent(uint8_t die,unsigned secretRoll,bool forceSecret){return forceSecret || secretRoll<5 ? Event::Trial : die>=1 && die<=6 ? RegularEvents[die-1] : Event::None;}
 inline constexpr uint32_t CeremonyFadeMs=750, DiceRevealMs=3750, SecretRevealMs=2900;
 inline constexpr uint32_t CeremonyFrames=(DiceRevealMs+2000+39)/40, BriefingFrames=250;
+inline constexpr uint32_t ClearReturnFrames=10*25;
 #pragma pack(push,1)
 struct Packet {
     uint8_t opcode=0x2b; uint64_t magic=PacketMagic; uint8_t operation=PacketOperation;
@@ -208,7 +209,8 @@ struct Packet {
     uint32_t eventElapsed=0,eventSeconds=0;
     uint8_t success=0;EventFailure failure=EventFailure::None;
     uint8_t elitePacks=0;
-    std::array<uint8_t,0xce-63-MaxEffects*sizeof(Roll)> padding{};
+    uint8_t returnSeconds=0; // Previously reserved padding; older peers ignore it.
+    std::array<uint8_t,0xce-64-MaxEffects*sizeof(Roll)> padding{};
 };
 struct CommandPacket {
     uint8_t opcode=3;uint64_t magic=PacketMagic;uint8_t operation=PacketOperation,version=5;
@@ -219,7 +221,7 @@ struct CommandPacket {
 static_assert(sizeof(Packet)==0xce);
 static_assert(sizeof(CommandPacket)==0xd2);
 inline bool Valid(const Packet& packet) {
-    if(packet.opcode!=0x2b || packet.magic!=PacketMagic || packet.operation!=PacketOperation || packet.version!=5 || packet.elitePacks>13 ||
+    if(packet.opcode!=0x2b || packet.magic!=PacketMagic || packet.operation!=PacketOperation || packet.version!=5 || packet.elitePacks>13 || packet.returnSeconds>10 ||
        packet.active>1 || packet.effects>MaxEffects || packet.remaining>1000000 || (packet.active && (!packet.run || !packet.level || Town(packet.level))))return false;
     if(packet.completed>1 || packet.reward>2 || packet.die>6 || packet.success>1 || packet.event>Event::SoulSurprise || packet.eventPhase>EventPhase::Cancelled || packet.failure>EventFailure::SoulTreasureClass)return false;
     if(packet.completed && (!packet.run || packet.die<1 || packet.active))return false;

@@ -113,6 +113,20 @@ CODEX_NOTES*
 *.key
 *.keyo
 HUDConfig_*.json
+Marketplace_2.4_*.json
+Marketplace_2.4_*.json.lock
+MarketplaceFeed_2.4_*.json
+MarketplacePublish_2.4_*.json
+MarketplacePublish_2.4_*.json.lock
+MarketplaceTestPublish_2.4_*.json
+MarketplaceTestPublish_2.4_*.json.lock
+MarketplaceActivity_2.4_*.json
+MarketplaceActivityLocal_2.4_*.json
+MarketplaceActivityLocal_2.4_*.json.lock
+MarketplaceSyncState_2.4_*.json
+/tools/marketplace/server/config.php
+/tools/marketplace/server/sessions/
+/tools/marketplace/sync-config.json
 lootfilter_config.lua
 imgui.ini
 ui-layout.ini
@@ -130,3 +144,7 @@ Desktop.ini
 /x64/Release/*
 !/x64/Release/d2rhud.dll
 !/x64/Release/lootfilter.lua
+
+# Ephemeral player linking capabilities are never source assets.
+Marketplace_Web_Link.json
+.market-link-*.tmp

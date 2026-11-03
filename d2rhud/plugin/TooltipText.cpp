@@ -1,4 +1,5 @@
 #include "TooltipText.h"
+#include "../SessionEpoch.h"
 #include "../Pattern.h"
 #include <windows.h>
 #include <tlhelp32.h>
@@ -147,7 +148,12 @@ bool InstallLimits() {
     extended.store(true); return true;
 }
 bool LimitsExtended() { return extended.load(); }
-void Remember(uint32_t unitId, const std::string& full) {
+void ResetSession(uint64_t session){
+    static uint64_t previous=UINT64_MAX;
+    std::lock_guard lock(textMutex);if(session==previous)return;
+    previous=session;descriptions.clear();order.clear();current={};
+}
+void Remember(uint32_t unitId, const std::string& full,uint64_t session) {
     if (full.size() < LegacyCapacity) {
         if (full.size() == LegacyCapacity - 1) {
             std::lock_guard<std::mutex> lock(textMutex);
@@ -158,6 +164,7 @@ void Remember(uint32_t unitId, const std::string& full) {
     }
     const std::string prefix = full.substr(0, LegacyCapacity - 1);
     std::lock_guard<std::mutex> lock(textMutex);
+    if(session!=UINT64_MAX && session!=HudSession::Current())return;
     if (!descriptions.count(unitId)) {
         if (order.size() >= 64) { descriptions.erase(order.front()); order.pop_front(); }
         order.push_back(unitId);

@@ -1,0 +1,413 @@
+# Unattended marketplace — D2R 2.4
+
+The JSON-native stash marketplace connects to the authenticated PHP/MySQL API
+at `https://market.d2rmodding.com/index.php`. It supports manually chosen AND
+barter prices, gold and RMD-MP bag resources, private offers/messages, exact-price
+automatic approval, atomic escrow settlement and guarded delivery claims.
+
+The save agent deposits the enabled trade page after closing the stash, using
+the native page-save/unload handshake. Closed-game sync remains a fallback. Priced
+items become escrow listings; eligible unpriced items, gold and supported bag
+contents fund offers. Listed items cannot fund another purchase. Both parties'
+assets must already be in escrow for settlement. An accepted unfunded offer waits
+for its buyer's next deposit. Development Trader offers never settle.
+
+Requested returns, purchases and physical item proceeds are collected into the
+delivery page when the stash closes; reopen it to load the updated inventory.
+Unspent wallet resources remain available for trades. Listed goods remain on sale while the player sleeps
+or their PC is off. The site needs no resident server process: authenticated
+commands and deposits trigger bounded settlement sweeps. Networking and save
+writes run outside the HUD; the DLL coordinates native page unloading and short
+file leases without network calls.
+
+My Items includes physical and escrow goods. Escrow items can be repriced or
+returned to delivery. Escrow wallet shows gold and bag balances. Affordability
+includes unpriced physical deposit contents and available server-held funds.
+The service distinguishes agreements, completed escrow ownership exchanges and
+subsequent physical delivery acknowledgements.
+
+See [custody, enrollment and recovery](CUSTODY.md),
+[server administration and API](server/README.md), and the tests below.
+
+## In-game workspace
+
+Click the native shop button at the bottom-right of the stash footer. It is
+centered vertically in the bottom strip with matching right/bottom inset. The
+button reuses RMD's existing Shop_Button sprite and its normal/pressed/hovered
+states. Escape or the native close button dismisses the marketplace.
+
+The entire marketplace is now a native widget subtree in the stash JSON:
+TabBarWidget, ButtonWidget, DropdownListWidget, ImageWidget, TextBoxWithLinksWidget,
+TextBoxWidget, InputTextBoxWidget and RectangleWidget,
+with native focus/hit testing and Escape/tooltips. Browse, My Items, Offers & Logs
+and Setup use the same native tab control and RMD tab art as the stash/vendor
+panels. Collections use six larger cards per page in a three-column grid.
+Selecting a card opens a full-width item or conversation page; the collection
+and its filters are hidden until Back. Item artwork and chat-style inspection
+remain available. Quality, sorting and shared-tab
+filters use native dropdowns instead of cycling buttons. Payment selection and price editing use four
+rows per page. Native short input fields accept 15 bytes.
+The conversation message field uses the game's owned-string setter for up to
+512 characters. Item history, comparable sales, currency-specific time charts,
+full terms and conversation receipts are native widgets too. Conversations
+show current payment with an icon and grouped digits, a separate status, direct
+Accept/Decline/Counter-offer/Withdraw actions as applicable, and a separate
+message composer. Each log row separates actor/action, date, and a bounded
+excerpt. Clicking a row opens the complete UTF-8 message in a paginated reader;
+both line length and line count are bounded, and authored text styles preserve
+newlines. Reader navigation does not discard the unsent message. Comparable item
+rolls may differ. Acceptance is shown separately from a completed sale.
+There are no marketplace ImGui windows, buttons, glyphs, texture uploads or
+mouse interception. The HUD supplies value snapshots and handles native
+BankPanelMessage commands; the game performs all marketplace drawing/input.
+
+The 2.4 JSON resolver loads unknown `Market*` action names as zero even when
+the message domain is valid, which makes a native button ignore clicks. The
+stash paint hook binds the declared marketplace buttons to their custom action
+hashes, including the shop button while the workspace is closed. Bindings verify
+the supported native ButtonWidget click routine and message domain, and never
+replace a different nonzero action. Geometry and interaction remain JSON-native.
+
+The visual layout uses RMD's existing stone/crimson panel and divider sprites,
+with native RectangleWidget frames, gold selection borders, recessed image wells
+and a centered, enlarged native tab bar. The redundant routing/approval/status
+strip is removed. Item cards separate the linked name,
+quality and seller/payment status. The selected-item and payment areas have
+distinct section headings; Setup uses two compact routing cards and separate
+trading/approval rows, short captions, inline validation and a dedicated save
+area above the footer. Its Refresh control is hidden; Undo changes appears only
+while edits are pending. Payment
+search results and price rows show nominal item thumbnails too. These are native
+JSON controls and existing installed sprites, without new overlay rendering.
+
+Every input has an explicit native gold border, recessed fill and underline;
+the InputTextBox background alone is not sufficiently visible in-game. Payment
+search uses a full-width labelled field and a helpful no-match state. Contextual step headings guide payment
+selection, quantities and review. Empty prices explain how to start; quantity rows
+are labelled. The main views use short captions rather than instruction banners;
+setup instructions remain inline, with no forced
+wizard or repeat onboarding; saved settings/prices keep their existing behavior.
+
+The four native tab messages are bound separately and their selected state is
+kept in sync with the controller. The close button uses stock `BankPanelMessage:Close`;
+while the workspace is open the bridge consumes it as `MarketClose`. It gets
+native input priority over text fields, and close requests take priority over
+queued actions. Outside the workspace the stash retains its normal close action.
+Native input is dispatched to the open workspace before BankPanel hotkeys. Only
+the bank's hit margins expand while it is open, so the full-screen child remains
+clickable outside the normal stash area; the original margins are restored on close.
+Visibility transitions call native OnOpen/OnClose so text focus and button states
+are released. Hidden input fields are excluded from input snapshots and resynced
+when shown, including switching between price quantities and payment search.
+
+Click an item image or bracketed name to open the same native linked-item
+properties viewer used by chat links. Its input is the complete serialized
+item, including socket children; the game computes the actual property text.
+No chat message is posted. Native inventory artwork comes from the installed
+base/unique/set HD mappings, with saved ring/charm graphic variations. Missing
+artwork leaves a text card; items exceeding the native 1,024-byte link limit
+keep their summary but cannot open the linked-item viewer.
+
+While open, the marketplace consumes keyboard and raw-keyboard messages before
+HUD shortcuts, stash search and the game's global hotkey mapper. Value-only
+keyboard events are replayed exclusively into the native workspace on its paint
+thread, with captured Ctrl/Shift state restored temporarily for native editing.
+Escape closes the marketplace; captured key releases remain consumed after close.
+Mouse input keeps the native path and Alt+F4/window close remains available.
+
+Item name, quality/level and socket notes have separate fixed text rows outside
+the price-editor group. Payment terms have up to sixteen separate rows in two
+columns on the focused page. Visible
+text and control rectangles are checked for bounds and overlap across tab,
+selection, price-editor and payment-picker states. Pagination is hidden when
+there is no corresponding page. These are fixture/layout checks; the native
+renderer still needs an in-game appearance and interaction check after changes.
+
+Authoring sources are layouts/stash-shop-button.json and
+layouts/marketplace-workspace.json. The latter is directly editable JSON.
+build-native-layout.py regenerates the defaults. Install into the active
+RMD-MP layout and its remodded theme template with:
+
+    python tools\marketplace\install-native-layout.py "C:\game\Mods\RMD-MP\RMD-MP.mpq\data"
+
+The installer backs up changed files, preserves unrelated bytes and duplicate
+JSON fields, applies atomically and is idempotent. Restart D2R after installing
+the layouts and updated HUD DLL. The expanded/controller theme layouts are
+not modified. The native widget bindings still require live in-game testing.
+
+- **Browse:** your freshly priced deposit items appear immediately as **You (local draft)**
+  alongside cached player and simulated-seller offers. Your own cards have no purchase
+  action and are hidden by **Show things I can afford**, which filters buyable offers.
+  Item cards open a full-width item/payment page; search by
+  item, seller or requested payment; filter quality or affordability; sort by
+  name, quality, seller or number of payment types. Test offers from the development
+  seller also support a native counter-offer editor. Different barter bundles
+  are not treated as a single currency.
+- **My Items:** your deposit inventory across all seven shared tabs,
+  tab and priced-only filters, and an
+  inline asking-price editor. Select a card, then **Set asking price**. Search
+  for specific uniques, sets, normal bases or runes and enter quantities.
+- **Agreements:** reviewed terms tied to seller, listing ID, revision, complete
+  item bytes and exact payment bundle. Changed, missing or expired offers need
+  review again. These local drafts reserve nothing.
+- **Setup:** separate deposit/delivery pages, a trading enable switch and an
+  approval preference. Save changes applies edits. The pages must differ.
+  Changing deposit explicitly clears old prices; changing withdrawal or
+  approval policy preserves them.
+
+## Retired local seller and service test trader
+
+Setup no longer exposes a third seller page, and My Items no longer has an
+inventory selector. Loading old settings disables the local simulator through
+the existing compare-and-replace JSON writer, while preserving its legacy price
+data and conversations. Subsequent disabled publication withdraws old test-page
+listings. No `.d2i` or `.d2s` file is written.
+
+The separate **Development Trader** service account and `test-trader.py` remain
+available for testing messages, counter-offers and decisions against player
+listings. These are negotiation tests only; test trades cannot create completed
+sale records. Real player escrow supports automatic approval and settlement.
+
+Deposit holds goods and potential payment. Priced goods are excluded from
+spendable funds. Withdrawal is the delivery destination for purchases and sale proceeds; it
+is excluded from payment inventory.
+
+Opening or refreshing requests a native snapshot if the deposit page is
+currently loaded. It verifies all seven shared containers, bounds enumeration
+and serialization, and passes only value copies to the UI. Newly placed items
+can appear without saving. When native capture cannot be verified, it falls
+back to the last complete saved page. The panel labels live versus saved data.
+It does not automatically navigate the stash. Switch to the deposit page and
+reopen or Refresh for another live capture. A snapshot is not a custody receipt.
+
+**Show things I can afford** requires every price line to match unpriced items
+in the deposit snapshot. Socket children stay attached and never count as loose
+payment. Stack quantities count units, not slots. Offers are checked separately;
+several drafts can compete for the same payment and need service arbitration.
+
+A price can require one Stone of Jordan, one Bul-Kathos' Wedding Band **and**
+40 Zod runes. All lines are required. Two copies of the same unique should use
+quantity 2 on one line. Unique/set payment requires the exact compiled identity
+and identification; rolls can vary. Each line can require ethereal,
+non-ethereal or either. Base/rune lines require Normal quality.
+
+The payment picker has **Items / runes**, **Bag contents**, and **Gold** categories.
+RMD-MP bag currencies use the installed mod's checksum-bound stat symbols: gems,
+the four rune-point tiers, magic/rare jewels, full rejuvenation potions, keys,
+organs and Set/Unique cores. Amounts are the bag's displayed units; there is no
+automatic conversion to loose runes or gems. Affordability counts saved base
+balances on identified, unpriced deposit bags. Listing a bag reserves its contents,
+and a single price cannot combine a whole bag and bag contents.
+
+Gold means gold stored across the designated deposit page's seven shared tabs,
+not the character's carried/personal gold. Saved snapshots read tab-header gold;
+loaded snapshots read each verified shared container's GoldBank stat. An
+unavailable live gold balance is excluded rather than guessed. Gold and bag
+amounts support 1..2,000,000,000; loose item quantities remain 1..1,000,000.
+Resource prices persist a `kind` (`gold` / `bag`) and stable bag `stat` symbol;
+ordinary item prices keep their previous representation. Pricing alone does
+not debit a save. The guarded custody agent transfers funded resources
+through the journaled escrow protocol before settlement can spend them.
+
+Roll thresholds, OR bundles and multi-step barter chains are not implemented.
+The selected-item pane shows identity and price alongside its image; clicking
+the item opens native computed properties. Payment selectors describe a requested
+item type rather than inventing rolled properties for that request.
+
+Auto-trade defaults off, including migration from older settings. It approves
+buyer-originated offers matching every asking term when both sides' exact
+assets are available in escrow. Ownership and payment move atomically; delivery
+runs in the background while the game is closed, with physical capacity checks.
+
+Settings live beside mod saves in Marketplace_2.4_SC.json or
+Marketplace_2.4_HC.json, partitioned by mod and character mode. Older trade-page
+sidecars remain compatible. Prices bind tab and exact parent/socket bytes;
+moving or changing an item invalidates its old price. Writer leases and
+compare-and-replace reject conflicting saves. Use **Setup > Reload settings**
+after a conflict.
+
+## Read-only companion and cached player offers
+
+Build from an x64 Visual Studio developer prompt:
+
+    tools\marketplace\build.cmd "%TEMP%\d2rhud-marketplace-tools"
+    "%TEMP%\d2rhud-marketplace-tools\stash-catalogue.exe" "C:\game\Mods\RMD-MP\RMD-MP.mpq\data\global\excel" "C:\saves\Stash_SC_Page17.d2i" "C:\saves\Marketplace_2.4_SC.json" > "%TEMP%\alice-catalogue.json"
+
+The scanner uses matching compiled weapons/armor/misc/itemtypes/itemstatcost
+tables. It requires version 98, all seven tabs, enabled settings and a filename
+matching the deposit page/mode. It groups socket children, rejects unsupported
+or partial layouts and rechecks inputs after parsing. Failure returns nonzero
+without JSON. Source files open read-only.
+
+The envelope contains schema 1, game mode, mod, hardcore, page, capture time,
+custody local_save and **purchasable: false**. Items include private serialized
+bytes, location, saved stats and a price or null. Unmatched prices are counted.
+Unchanged saved bytes do not prove the current in-memory state has been saved.
+
+For a local integration preview, assemble other players' private exports:
+
+    python tools\marketplace\cache-offers.py --seller "Alice" "%TEMP%\alice-catalogue.json" --seller "Bob" "%TEMP%\bob-catalogue.json" --output "C:\saves\MarketplaceFeed_2.4_SC.json"
+
+Put the output in the receiving player's mod save directory and Refresh.
+Hardcore uses MarketplaceFeed_2.4_HC.json. No demo offers are injected into
+production. Only priced items become cards. Seller names must be distinct.
+Catalogues over one hour old, mixed mods/modes and duplicate item records are
+rejected. Merging does not renew source expiry.
+
+The cache contract is schema/game_mode/mod/hardcore/expires_at plus listings
+with seller/id/revision/item_hex/price. The HUD validates bounded input, expiry,
+IDs and prices, and reparses serialized items using the installed mod's tables.
+Agreement drafts become stale when revision, item or price changes. Imported
+discovery data never authorizes an inventory debit.
+
+Keep native exports/caches private: their companion contract includes exact
+serialized items. Public website responses omit those bytes. The installed
+Windows scheduled task starts companions at login and checks for a missing
+worker every five minutes. Running workers poll every 15 seconds. DLL updates
+remain explicit verified installations.
+
+## Website exchange
+
+**https://market.d2rmodding.com/** shares the game account and all trade records.
+Browse without signing in. To connect your game player, use **Link player** and
+enter a code from **Pandemonium → Settings → Marketplace → Get link code**.
+There is no username or password to create. The browser can
+price escrow or queued physical stash goods, submit/respond to offers, send
+messages, read item history and comparable sales, inspect wallet funds and
+change setup. Physical prices/routes apply through the guarded save agent.
+See [website access, security and deployment](WEB.md).
+
+## Installation and unattended operation
+
+Build the HUD, `custody-save.exe`, native JSON layouts and the current Pandemonium
+launcher. The launcher integration lives in the companion repository's
+`CrossPlatform/src/Pandemonium.Core/MarketplaceCustodyGuard.cs` and `GameLauncher.cs`.
+The HUD requires `MarketplaceLaunchGuard.h`. Install both halves before enrolling.
+
+An operator creates a player with `php cli.php user NAME player` and pairs its
+save agent with `php cli.php pair-agent PLAYER_ID CATALOG_SHA256`. Keep both
+returned tokens private. Supply the player's `pairing.json` and sync config in
+`%USERPROFILE%/.d2r-marketplace`, then run `install-custody.ps1` with the verified
+HUD/launcher hashes, game/launcher paths, helper and private agent-pairing file.
+Enrollment takes an untouched save backup and pins the helper and table catalog.
+Python 3.10+ and Windows are required for the live save agent.
+
+Use the installed runtime's `start-marketplace.ps1 -InstallStartup` to start the
+companions and add a current-user Windows Windows scheduled task. Start/stop sync tools
+validate PID identity before changing an existing worker. A pending custody
+journal is recovered by the background companion when trade pages unload or the game closes; never
+delete it or restore a `.before` file by hand. Marketplace failures never prevent
+game startup. Updating the parser or compiled item/stat tables
+requires revalidation against outstanding custody, not a silent hash override.
+
+The default delivery gold ceiling is a conservative 2,500,000 per shared tab.
+Bag credits require an existing supported normal Storage Bag in the delivery
+page. Deliveries take only available resource capacity and try smaller item
+batches when necessary. Remaining goods/funds stay in escrow. Character `.d2s`
+files are never edited. Existing malformed/incomplete stash pages are refused.
+
+TCP/IP players still own their saves and can deliberately edit or roll them back.
+Custody receipts prevent accidental retries/crash duplication in the supported
+flow; they are not an authoritative anti-cheat system for client-owned saves.
+
+## Verification
+
+    tests\run-marketplace.cmd "%TEMP%\d2rhud-marketplace-tests"
+    tests\run-marketplace.cmd "%TEMP%\d2rhud-marketplace-tests" "C:\game\Mods\RMD-MP\RMD-MP.mpq\data\global\excel" "C:\saves"
+    tests\run-marketplace-ui.cmd "%TEMP%\d2rhud-marketplace-ui-tests" "C:\game\Mods\RMD-MP\RMD-MP.mpq\data"
+    tests\run-marketplace-native.cmd "%TEMP%\d2rhud-marketplace-native-tests"
+    python tests\marketplace-bridge-test.py "%TEMP%\d2rhud-marketplace-tools\stash-catalogue.exe" "C:\game\Mods\RMD-MP\RMD-MP.mpq\data\global\excel" "C:\saves\Stash_SC_Page17.d2i"
+
+Fixtures cover exact barter/stack matching, socket exclusion, feed/settings
+validation, expiry, changed terms, routing migration, conflicts and read-only
+preservation. UI checks run the native command/input protocol for navigation,
+live/saved snapshots, searchable combined prices, agreements and setup. Every
+published binding must exist in the authored JSON, and the marketplace must
+emit zero ImGui draw vertices. Native adapter checks verify text/visibility
+updates, bounded inline inputs, no per-frame typing clobber and message routing,
+alongside seven-container snapshots. These do not replace an in-game test.
+
+Browse searches offered items and requested payment by default. The scope
+dropdown selects Offered + wanted, Offered items, or Wanted payment. Browse
+quality filters (and website category filters) apply to the matching side of
+the trade, so a unique ring asking for Zod Runes is found by a wanted-rune
+search. Payment names resolve from the item catalog, including gold and bags.
+
+Windows startup/recovery uses pythonw.exe and a console-free PowerShell child.
+The save helper also uses CREATE_NO_WINDOW. Startup diagnostics remain in
+`~/.d2r-marketplace/startup.log`; existing sync and worker logs are retained.
+
+Player controls are shared by the HUD and website: edit the public name in
+Setup, search by seller, save individual trades or sellers, filter favorites,
+hide your own trades, or exclude trades with active offers from other bidders.
+Names use 3–15 letters, numbers, spaces, dots, underscores or hyphens and must
+be available. Renaming preserves the player ID, custody, favorites and history.
+Favorites are private and separate for Softcore and Hardcore.
+
+Each hosted trade has a paginated offer board with exact barter bundles and
+status. Anonymous bidder labels remain stable within that trade. Visitors
+receive no bidder IDs, real names, conversation IDs or message bodies. Only
+the two participants can open their private conversation. The website seller
+can accept, decline or counter directly from the comparison cards; the HUD's
+Review offer control opens the native conversation with the same actions.
+Public offers include closed proposals with their status; only pending or
+accepted offers from another bidder affect the browse exclusion filter.
+
+
+## Player reports and moderation
+
+The website exposes **Report seller** on a trade and **Report player** on public
+profiles. A code-linked player chooses a reason and writes an explanation. The
+service captures the exact listing revision or character snapshot, including a
+selected equipment/inventory/mercenary item when relevant. Reports never mutate
+trades, item ownership, balances, or save files. Evidence excludes raw save bytes.
+
+The private Moderation tab supports an active/all/status queue, player/reference
+search, frozen evidence, identity matches and recorded sales, status changes and
+append-only private review notes. Pending reports are deduplicated; submission
+quotas and revision checks protect retries and concurrent reviews. Guest and
+ordinary-player APIs cannot read cases or notes.
+
+Moderator access is an independent community capability on a stable player ID;
+the actor remains a player and keeps existing linking/trading sessions. The
+operator-only command is `php cli.php moderator PLAYER_ID`. There is no remote
+assignment command or assignment UI. Production Bonesy was granted this
+capability after verifying the enrolled stable ID; profile names never grant it.
+
+The in-game interface prioritizes core trading: six wider cards per page, a
+separate Filters page, bounded summaries, four payment rows per page with icons,
+and a paginated full-price/message reader. Seller favorites and seller discovery
+remain available on the website. All marketplace controls are native JSON
+widgets. The layout generator preserves legacy command names in hidden groups
+where needed; install matching HUD and layout files together.
+
+Run `marketplace-moderation-test.php` and `marketplace-moderation-http-test.py`
+for permission, evidence, idempotency and session/CSRF coverage. The isolated
+MySQL validation harness includes a `moderation` suite and rewrites all three
+report tables to disposable namespaces. Native UI checks capture presentation
+states for `marketplace-layout-text-test.py GAME_DATA PREVIEW_DIRECTORY`, which
+measures captions using the installed Exocet font. Rendered layout previews are
+illustrations and do not replace in-game visual verification.
+
+
+## Owner demonstrations, resets and market statistics
+
+The website now has a public **Trade stats** page: the ten latest completed
+trades, popular item identities and seller rankings, with 7-day, 30-day and
+all-time views. Each view follows the selected mod and SC/HC mode. Item images
+open the usual property tooltip, and each recent sale shows its original price.
+
+Bonesy's stable linked player ID alone has **Owner tools**, beside the mod
+selectors. Generate a private Trading party, Busy market or Trade festival,
+then choose **Enter demo**. The fake traders negotiate and reply inside this
+website-only workspace; its items, balances, messages, profiles and sales remain
+separate from the live site and game saves. A reload returns to the live market.
+The demo includes 24–100 fake players, 100–600 listings and 80–480 completed sales.
+
+**Clear demo** removes only that generated workspace. **Clear marketplace**
+first pauses trading and returns real escrow through the normal companion.
+After all holdings and save operations clear, type the final confirmation.
+Real player links, names and permissions remain. A private recovery snapshot
+and technical exactly-once delivery receipts are retained. The updated HUD and
+companion clear stale local trade drafts after reset, preventing old listings
+from reappearing automatically. The reset has not been run on the live market.

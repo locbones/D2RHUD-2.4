@@ -17,6 +17,7 @@
 #include <cstdint>
 #include <cstring>
 #include "../../Pattern.h"
+#include "../MarketplacePanel.h"
 
 bool  IsSearchWidgetActive();
 void* GetSearchWidget();
@@ -146,6 +147,10 @@ namespace {
     }
 
     LRESULT CALLBACK HookedWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+        if(Marketplace::Panel::WithdrawalWindowInput(hWnd,msg,wParam,lParam))return msg==WM_INPUT?DefWindowProcW(hWnd,msg,wParam,lParam):0;
+        if(Marketplace::Panel::NativeWindowInput(msg,wParam,lParam))return msg==WM_INPUT?DefWindowProcW(hWnd,msg,wParam,lParam):0;
+        // Marketplace pointer input continues through the native widget path.
+        if(Marketplace::Panel::KeyboardActive())return CallWindowProcW(g_origWndProc,hWnd,msg,wParam,lParam);
         void* pWidget = GetSearchWidget();           // user clicked search
         void* pVisible = GetSearchWidgetIfExists();  // search widget exists
 

@@ -9,7 +9,7 @@
 #include <string_view>
 
 namespace HudMenu {
-enum class Page { Home,Options,Damage,Buffs,Ranges,Camera,Loot,Grail,Journal,Hotkeys,Appearance,Count };
+enum class Page { Home,Options,Damage,Buffs,Ranges,Camera,Loot,Grail,Journal,Hotkeys,Appearance,Diagnostics,Runs,Count };
 struct Entry { Page page;const char* group;const char* title;const char* description; };
 inline constexpr Entry Entries[]{
     {Page::Home,"","Overview","Your interface, your adventure. Choose a section to get started."},
@@ -20,11 +20,13 @@ inline constexpr Entry Entries[]{
     {Page::Camera,"ON SCREEN","Camera","Camera angles, zoom and saved presets."},
     {Page::Loot,"YOUR ADVENTURE","Loot Filter","Manage your filter, build rules and preview their results."},
     {Page::Grail,"YOUR ADVENTURE","Grail Tracker","Browse and track your set and unique collection."},
+    {Page::Runs,"YOUR ADVENTURE","Run Tracker","Run history, retained items and comparisons."},
     {Page::Journal,"YOUR ADVENTURE","Quest Journal","Your objectives, progress and rewards."},
     {Page::Hotkeys,"SETUP","Hotkeys & Commands","Key bindings, custom commands and startup actions."},
-    {Page::Appearance,"SETUP","Appearance","Themes, colors and panel artwork."}
+    {Page::Appearance,"SETUP","Appearance","Themes, colors and panel artwork."},
+    {Page::Diagnostics,"SETUP","Diagnostics","Local support reports and optional performance counters."}
 };
-inline const Entry& Info(Page page){return Entries[(std::clamp)(int(page),0,int(Page::Count)-1)];}
+inline const Entry& Info(Page page){for(const auto& entry:Entries)if(entry.page==page)return entry;return Entries[0];}
 inline Page ValidPage(int page){return page>=0&&page<int(Page::Count)?Page(page):Page::Home;}
 inline void RouteJournal(Page& page,bool& open,bool visible,bool previousVisible){
     if(visible&&!previousVisible){page=Page::Journal;open=true;}

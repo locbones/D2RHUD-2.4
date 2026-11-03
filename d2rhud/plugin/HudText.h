@@ -92,21 +92,49 @@ inline ImVec2 CalcTextSize(const char* text,const char* end=nullptr,bool hide=fa
     if(end){const auto translated=HudLocale::Translate(std::string_view(text,size_t(end-text)));return ImGui::CalcTextSize(translated.c_str(),nullptr,hide,wrap);}
     return ImGui::CalcTextSize(HudLocale::Tr(text),nullptr,hide,wrap);
 }
+namespace ComboSource {
+struct Array { const char* const* values; };
+inline const char* ArrayItem(void* data,int index){
+    const auto values=static_cast<Array*>(data)->values;
+    return values?HudLocale::Tr(values[index]):nullptr;
+}
+struct Modern { const char* (*get)(void*,int); void* data; };
+inline const char* ModernItem(void* data,int index){
+    const auto& source=*static_cast<Modern*>(data);
+    return source.get?HudLocale::Tr(source.get(source.data,index)):nullptr;
+}
+struct Legacy { bool (*get)(void*,int,const char**); void* data; };
+inline const char* LegacyItem(void* data,int index){
+    const auto& source=*static_cast<Legacy*>(data);const char* text=nullptr;
+    return source.get && source.get(source.data,index,&text)?HudLocale::Tr(text):nullptr;
+}
+struct Zeros { const char* start; const char* cursor; int index=0; };
+inline const char* ZeroItem(void* data,int index){
+    auto& source=*static_cast<Zeros*>(data);
+    if(!source.start)return nullptr;
+    if(index<source.index){source.cursor=source.start;source.index=0;}
+    while(source.index<index){source.cursor+=strlen(source.cursor)+1;++source.index;}
+    return HudLocale::Tr(source.cursor);
+}
+}
+// ImGui requests the current preview and visible rows synchronously. Translate
+// those entries on demand; callbacks may reuse their own temporary text buffer.
 inline bool Combo(const char* label,int* selected,const char* const values[],int count,int height=-1){
-    std::vector<const char*> translated;for(int i=0;i<count;++i)translated.push_back(HudLocale::Tr(values[i]));
-    return ImGui::Combo(HudLocale::Label(label).c_str(),selected,translated.data(),count,height);
+    ComboSource::Array source{values};
+    return ImGui::Combo(HudLocale::Label(label).c_str(),selected,ComboSource::ArrayItem,&source,(std::max)(count,0),height);
 }
 inline bool Combo(const char* label,int* selected,const char* values,int height=-1){
-    std::vector<const char*> translated;for(auto p=values;p&&*p;p+=strlen(p)+1)translated.push_back(HudLocale::Tr(p));
-    return ImGui::Combo(HudLocale::Label(label).c_str(),selected,translated.data(),int(translated.size()),height);
+    int count=0;for(auto p=values;p&&*p;p+=strlen(p)+1)++count;
+    ComboSource::Zeros source{values,values};
+    return ImGui::Combo(HudLocale::Label(label).c_str(),selected,ComboSource::ZeroItem,&source,count,height);
 }
 inline bool Combo(const char* label,int* selected,const char* (*getter)(void*,int),void* data,int count,int height=-1){
-    std::vector<const char*> translated;for(int i=0;i<count;++i)translated.push_back(HudLocale::Tr(getter(data,i)));
-    return ImGui::Combo(HudLocale::Label(label).c_str(),selected,translated.data(),count,height);
+    ComboSource::Modern source{getter,data};
+    return ImGui::Combo(HudLocale::Label(label).c_str(),selected,ComboSource::ModernItem,&source,(std::max)(count,0),height);
 }
 inline bool Combo(const char* label,int* selected,bool (*getter)(void*,int,const char**),void* data,int count,int height=-1){
-    std::vector<const char*> translated;for(int i=0;i<count;++i){const char* value="";getter(data,i,&value);translated.push_back(HudLocale::Tr(value));}
-    return ImGui::Combo(HudLocale::Label(label).c_str(),selected,translated.data(),count,height);
+    ComboSource::Legacy source{getter,data};
+    return ImGui::Combo(HudLocale::Label(label).c_str(),selected,ComboSource::LegacyItem,&source,(std::max)(count,0),height);
 }
 inline void ProgressBar(float fraction,const ImVec2& size=ImVec2(-FLT_MIN,0),const char* overlay=nullptr){ImGui::ProgressBar(fraction,size,overlay?HudLocale::Tr(overlay):nullptr);}
 inline void AddText(ImDrawList* draw,const ImVec2& pos,ImU32 color,const char* text,const char* end=nullptr){

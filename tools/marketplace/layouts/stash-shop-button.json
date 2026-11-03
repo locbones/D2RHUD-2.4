@@ -1,0 +1,17 @@
+{
+    "type": "ButtonWidget",
+    "name": "MarketplaceShop",
+    "fields": {
+        "rect": {
+            "x": 1475,
+            "y": 1326,
+            "width": 117,
+            "height": 116
+        },
+        "filename": "..\\..\\..\\ReMoDDeD\\Panels\\Shop\\Shop_Button",
+        "pressedFrame": 1,
+        "hoveredFrame": 2,
+        "tooltipString": "Marketplace",
+        "onClickMessage": "BankPanelMessage:MarketOpen"
+    }
+}

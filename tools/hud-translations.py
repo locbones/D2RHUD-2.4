@@ -34,7 +34,7 @@ def sources():
     files.update(plugin.glob('ItemFilter/*UI*'))
     for name in ['SettingsUI.h', 'JournalSkin.h', 'GrailTracker.cpp', 'FloatingDamage.cpp',
                  'BuffIcons.cpp', 'StatRanges.cpp', 'QuestJournal.cpp', 'QuestJournalEvents.inl', 'HUDControls.cpp',
-                 'CubeMapData.h', 'CubeMap.cpp', 'CubeMapRewardsData.h', 'CandyCornSaveUI.cpp',
+                 'CubeMapData.h', 'CubeMap.cpp', 'CubeMapRewardsData.h', 'CandyCornSaveUI.cpp', 'SpectateData.h', 'Spectate.cpp',
                  'ItemFilter/LootFilterFields.h', 'ItemFilter/LootFilterPreview.h']:
         files.add(plugin / name)
     return sorted(p for p in files if p.suffix in ['.cpp', '.h', '.inl'] and p.exists())

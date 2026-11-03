@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="description" content="The D2R Modding marketplace. Discover equipment, negotiate barter offers, and trade with the same inventory you use in game.">
+  <meta name="theme-color" content="#0c0909"><title>Marketplace · D2R Modding</title>
+  <link rel="icon" href="assets/forge-sigil.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="market.css?v=4"><link rel="stylesheet" href="market-items.css?v=12"><link rel="stylesheet" href="market-players.css?v=2"><script src="market-players.js?v=7" defer></script><script src="market-tooltip.js?v=3" defer></script><script src="market-transfers.js?v=2" defer></script><script src="market-scopes.js?v=2" defer></script><link rel="stylesheet" href="market-moderation.css?v=1"><script src="market-moderation.js?v=1" defer></script><link rel="stylesheet" href="market-owner.css?v=1"><script src="market-owner.js?v=3" defer></script><link rel="stylesheet" href="market-stats.css?v=1"><script src="market-stats.js?v=1" defer></script><script src="market-live.js?v=1" defer></script><link rel="stylesheet" href="market-experience.css?v=2"><script src="market-experience.js?v=3" defer></script><script src="market.js?v=34" defer></script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to marketplace</a>
+<svg class="icon-library" aria-hidden="true"><defs>
+<symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 2 3 6v6c0 5 9 10 9 10s9-5 9-10V6zM12 7v6M12 17h.01"/></symbol>
+<symbol id="i-player" viewBox="0 0 24 24"><circle cx="12" cy="7" r="4"/><path d="M4 21v-2a8 8 0 0 1 16 0v2"/></symbol>
+<symbol id="i-shop" viewBox="0 0 24 24"><path d="M3 10V7l2-4h14l2 4v3M3 10c0 3 4 3 4 0 0 3 5 3 5 0 0 3 5 3 5 0 0 3 4 3 4 0M4 13v8h16v-8M9 21v-6h6v6"/></symbol>
+<symbol id="i-gift" viewBox="0 0 24 24"><path d="M3 8h18v4H3zM5 12v9h14v-9M12 8v13M12 8H8a3 3 0 1 1 3-3l1 3zm0 0h4a3 3 0 1 0-3-3l-1 3z"/></symbol>
+<symbol id="i-grid" viewBox="0 0 24 24"><path d="M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3zM14 14h7v7h-7z"/></symbol>
+<symbol id="i-list" viewBox="0 0 24 24"><path d="M9 5h12M9 12h12M9 19h12M3 5h1M3 12h1M3 19h1"/></symbol>
+<symbol id="i-search" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></symbol>
+<symbol id="i-box" viewBox="0 0 24 24"><path d="m3 7 9-4 9 4v11l-9 4-9-4ZM3 7l9 4 9-4M12 11v11M8 5l9 4"/></symbol>
+<symbol id="i-talk" viewBox="0 0 24 24"><path d="M21 11a8 8 0 0 1-8 8H8l-5 3V11a9 9 0 0 1 18 0Z"/><path d="M7 10h10M7 14h6"/></symbol>
+<symbol id="i-settings" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16M8 3v6M16 9v6M10 15v6"/></symbol>
+<symbol id="i-arrow" viewBox="0 0 24 24"><path d="M4 12h16m-6-6 6 6-6 6"/></symbol>
+<symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 4 4L20 5"/></symbol>
+<symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 6v6l4 2"/></symbol>
+<symbol id="i-wallet" viewBox="0 0 24 24"><path d="M20 7H5a2 2 0 0 1 0-4h13v4M3 5v14a2 2 0 0 0 2 2h15V7M20 11h-6v6h6M16 14h1"/></symbol>
+<symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></symbol>
+<symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 9a8 8 0 1 0 0 7M20 3v6h-6"/></symbol>
+<symbol id="i-history" viewBox="0 0 24 24"><path d="M3 10a9 9 0 1 1 1 8M3 4v6h6M12 7v6l4 2"/></symbol>
+<symbol id="i-gold" viewBox="0 0 24 24"><ellipse cx="12" cy="6" rx="8" ry="3"/><path d="M4 6v12c0 4 16 4 16 0V6M4 12c0 4 16 4 16 0"/></symbol>
+</defs></svg>
+<header class="site-header"><a class="brand" href="https://d2rmodding.com"><img src="assets/forge-sigil.svg" alt=""><span>D2R <i>|</i> MODDING<small>Sanctuary Workshop</small></span></a><nav aria-label="Community"><a href="https://d2rmodding.com">Community</a><a href="https://locbones.github.io/RMD-Wiki/#ReMoDDeD%20Overview">RMD Wiki</a><a href="#browse" class="selected">Marketplace</a></nav><div id="account-control"><button data-action="link">Link player</button></div></header>
+<section class="hero"><div class="hero-content"><p class="eyebrow">D2R Modding · Player exchange</p><h1>The Marketplace<span>.</span></h1><p class="hero-copy">Find your next upgrade. Name your price.<br>Keep trading, even when you leave Sanctuary.</p><div class="hero-tags"><span><span class="live-dot"></span> Shared with your game</span><span id="hero-scope">RMD-MP 2.4</span><span id="hero-mode">Softcore</span></div></div><div class="hero-mark" aria-hidden="true"><svg><use href="#i-shop"/></svg></div></section>
+<div class="workspace"><div id="reset-banner" role="status" hidden></div><div id="environment-banner" hidden><strong>DEMO ENVIRONMENT</strong><span>Private simulated players, trades and assets · RMD-MP 2.4</span><button class="secondary" data-owner="leave">Return to live marketplace</button></div><div class="market-scope-bar"><label><span>Mod</span><select id="market-mod" aria-label="Marketplace mod"><option>RMD-MP</option></select></label><label><span>Game mode</span><select id="market-version" aria-label="Marketplace game mode"><option value="2.4">2.4</option><option value="3.x">3.x · Coming soon</option></select></label><a id="moderation-nav" href="#moderation" data-tab="moderation" hidden><svg><use href="#i-shield"/></svg>Moderation <span id="report-count"></span></a><a id="owner-nav" href="#owner" data-tab="owner" hidden><svg><use href="#i-settings"/></svg>Owner tools</a><span id="scope-label">Trading available</span></div><nav class="market-nav" aria-label="Marketplace"><div class="tabs"><a href="#browse" data-tab="browse"><svg><use href="#i-shop"/></svg>Browse</a><a href="#items" data-tab="items"><svg><use href="#i-box"/></svg>My items</a><a href="#offers" data-tab="offers"><svg><use href="#i-talk"/></svg>Offers &amp; logs <span id="offer-count"></span></a><a href="#players" data-tab="players"><svg><use href="#i-player"/></svg>Players</a><a href="#messages" data-tab="messages"><svg><use href="#i-talk"/></svg>Messages <span id="message-count"></span></a><a href="#activity" data-tab="activity"><svg aria-hidden="true"><use href="#i-clock"/></svg>Activity</a><a href="#stats" data-tab="stats"><svg><use href="#i-history"/></svg>Trade stats</a><a href="#setup" data-tab="setup"><svg><use href="#i-settings"/></svg>Setup</a></div><label class="mode-label"><span class="sr-only">Character mode</span><select id="game-mode"><option value="0">Softcore</option><option value="1">Hardcore</option></select></label></nav>
+<div id="notice" role="status" aria-live="polite" hidden></div>
+<main id="main" tabindex="-1"><div class="loading">Opening the marketplace…</div></main>
+<section class="trade-guide" aria-label="How trading works"><article><span class="step">01</span><div><h3>Choose your goods</h3><p>Put items and payment in your deposit page.</p></div></article><article><span class="step">02</span><div><h3>Agree on a trade</h3><p>Buy at the asking price or make a counter-offer.</p></div></article><article><span class="step">03</span><div><h3>Collect in game</h3><p>Purchases and proceeds arrive on your delivery page.</p></div></article></section>
+<footer><span>D2R Modding <i>/</i> Player Marketplace</span><span id="sync-label">Connected to the community exchange</span><a href="https://d2rmodding.com">Back to the community ↗</a></footer>
+</div>
+<dialog id="modal" aria-labelledby="modal-title"><div id="modal-content"></div></dialog>
+<noscript><p class="noscript">Enable JavaScript to browse and use the marketplace.</p></noscript>
+</body></html>

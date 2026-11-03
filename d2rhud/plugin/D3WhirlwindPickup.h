@@ -3,6 +3,7 @@
 #include "../Pattern.h"
 #include "../d2/Reclass.h"
 #include <array>
+#include <algorithm>
 #include <cstdint>
 #include <cstring>
 
@@ -97,7 +98,17 @@ namespace D3Whirlwind::Pickup {
     // Bypass the ordinary client interaction helper: that helper sends a walk
     // command before its pickup packet and can replace Whirlwind's movement.
     // The server remains authoritative for ownership, inventory and collision.
-    inline bool ClientRequest(Unit* player, uint32_t itemId, bool autoPlace = true) {
+    inline uint32_t GoldPickupRange() {
+        // Live server limits customized by memory_overrides: cmp eax,imm8 and
+        // lea r9d,[rax+imm8]. The preceding packet distance limit is 50.
+        std::array<uint8_t,3> compare{};
+        std::array<uint8_t,4> range{};
+        if (!Read(Native<void*>(0x2aee79),compare) || !Read(Native<void*>(0x2aee97),range)
+            || compare[0]!=0x83 || compare[1]!=0xf8 || range[0]!=0x44 || range[1]!=0x8d || range[2]!=0x48
+            || compare[2]>127 || range[3]>127) return 4;
+        return (std::min)(50u,(std::min)(uint32_t(compare[2]),uint32_t(range[3])));
+    }
+    inline bool ClientRequest(Unit* player, uint32_t itemId, bool autoPlace = true, bool automaticGold = false) {
         if (!player || player->dwUnitType != 0 || player->dwAnimMode == 0 || player->dwAnimMode == 17) return false;
         const auto lookup = Native<Lookup>(LookupRva);
         const auto distance = Native<Distance>(DistanceRva);
@@ -106,7 +117,8 @@ namespace D3Whirlwind::Pickup {
         if (!lookup || !distance || !send || !table) return false;
         auto item = lookup(table, int(itemId & 0x7f), itemId, 4);
         if (!item || item->dwUnitType != 4 || item->dwUnitId != itemId || item->dwAnimMode != 3
-            || !(item->dwFlags & 2) || !item->pStaticPath || distance(player, item) > 4) return false;
+            || !(item->dwFlags & 2) || !item->pStaticPath
+            || distance(player, item) > (automaticGold && GoldItem(item) ? GoldPickupRange() : 4)) return false;
         std::array<int32_t, 2> coordinates{};
         if (!Read(reinterpret_cast<const uint8_t*>(item->pStaticPath) + 0x10, coordinates)) return false;
         const Command command{0x16, itemId, coordinates[0], coordinates[1], autoPlace ? 1u : 0u};

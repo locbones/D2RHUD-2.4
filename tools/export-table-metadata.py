@@ -21,6 +21,26 @@ def table(path):
 def rows(cells):
     return [row for row in cells[1:] if row and row[0] and row[0].lower() != "expansion"]
 
+def validate_cube(cells, raw):
+    """Catch shifted columns or stale native rows before publishing annotations."""
+    count = struct.unpack_from("<I", raw)[0]
+    if len(cells)-1 != count or len(raw) != 4+count*0x148:
+        raise ValueError("cubemain TXT/BIN row counts differ; compile before exporting")
+    header = [value.lower() for value in cells[0]]
+    for index, row in enumerate(cells[1:]):
+        values = dict(zip(header, row))
+        if not values.get("enabled") and not any(values.get(key) for key in ("op2", "op3")):
+            continue
+        fields = ("enabled", "op", "param", "value", "numinputs")
+        try:
+            expected = tuple(int(values.get(key) or 0) for key in fields)
+        except ValueError as error:
+            raise ValueError(f"cubemain row {index+2} ({row[0]}): invalid numeric columns; check column alignment") from error
+        record = 4+index*0x148
+        actual = (raw[record], raw[record+4], *struct.unpack_from("<ii", raw, record+8), raw[record+0x10])
+        if actual != expected:
+            raise ValueError(f"cubemain row {index+2} ({row[0]}): TXT/BIN matching fields differ; compile before exporting")
+
 def export(data):
     excel = data / "global/excel"
     columns = {"itemstatcost":"stat", "properties":"code", "itemtypes":"code",
@@ -59,11 +79,12 @@ def export(data):
             entry["labels"]=[row[index] if index<len(row) else "" for row in records[:count]]
         if name == "cubemain":
             # Exact original rows keep quest-history definition digests stable.
-            if len(cells)-1 != count:
-                raise ValueError("cubemain TXT/BIN row counts differ; compile before exporting")
+            validate_cube(cells, raw)
             entry["source"] = source.read_bytes().decode("utf-8")
-        if name in ("monstats", "superuniques"):
-            wanted = [i for i, key in enumerate(header) if key in ("id", "hcidx", "superunique") or "treasureclass" in key or key.startswith("tc")]
+        if name in ("monstats", "superuniques", "skilldesc"):
+            wanted = ([i for i, key in enumerate(header) if key in ("skilldesc", "hireableiconcel")]
+                      if name == "skilldesc" else
+                      [i for i, key in enumerate(header) if key in ("id", "hcidx", "superunique") or "treasureclass" in key or key.startswith("tc")])
             lines = ["\t".join(cells[0][i] for i in wanted)]
             lines += ["\t".join(row[i] if i < len(row) else "" for i in wanted) for row in records[:count]]
             entry["overlay"] = "\n".join(lines) + "\n"

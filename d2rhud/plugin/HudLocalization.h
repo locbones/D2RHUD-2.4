@@ -1,5 +1,8 @@
 #pragma once
 #include "../d2/json.hpp"
+#include "TranslationFormats.h"
+#include "TranslationStore.h"
+#include "../ProcessLifetime.h"
 #include <atomic>
 #include <algorithm>
 #include <cctype>
@@ -46,10 +49,6 @@ inline std::string Fold(std::string_view text){
         else {result+=char(0xf0|(cp>>18));result+=char(0x80|((cp>>12)&63));result+=char(0x80|((cp>>6)&63));result+=char(0x80|(cp&63));}
     }return result;
 }
-inline std::vector<std::string> Placeholders(const std::string& text){
-    static const std::regex pattern(R"(%[-+ #0]*(?:\d+|\*)?(?:\.(?:\d+|\*))?(?:hh|ll|I64|I32|[hljztL])?[diuoxXfFeEgGaAcsnp%])");
-    std::vector<std::string> result;for(auto i=std::sregex_iterator(text.begin(),text.end(),pattern);i!=std::sregex_iterator();++i)result.push_back(i->str());return result;
-}
 struct Catalog {
     std::map<std::string,std::string,std::less<>> strings;
     size_t rejected=0;
@@ -60,23 +59,24 @@ struct Catalog {
             if(!value.is_string()){++rejected;continue;}
             const auto text=value.get<std::string>();
             if(text.empty() || text.find('\0')!=text.npos || text.find("##")!=text.npos ||
-               std::count(key.begin(),key.end(),'%')!=std::count(text.begin(),text.end(),'%') || Placeholders(key)!=Placeholders(text)){++rejected;continue;}
+               !Formats::Match(key,text)){++rejected;continue;}
             strings[key]=text;
         }
     }
 };
-inline std::atomic<std::shared_ptr<const Catalog>> active;
-inline std::mutex publicationMutex;
-inline std::vector<std::shared_ptr<const Catalog>> retained;
+inline CatalogStore<Catalog>& Store(){return HudLifetime::State<CatalogStore<Catalog>>();}
 inline void Publish(std::shared_ptr<const Catalog> next){
-    // Retain old catalogs so widget labels/arguments remain valid during a reload.
-    std::lock_guard lock(publicationMutex);retained.push_back(next);active.store(std::move(next));
+    Store().Publish(next);
 }
 inline const char* Tr(const char* text){
-    if(!text)return nullptr;const auto table=active.load();if(!table)return text;
+    if(!text)return nullptr;const auto table=Store().Read();if(!table)return text;
     const auto found=table->strings.find(text);return found==table->strings.end()?text:found->second.c_str();
 }
-inline std::string Translate(std::string_view text){const std::string key(text);return Tr(key.c_str());}
+inline std::string Translate(std::string_view text){
+    text=text.substr(0,text.find('\0')); // Match the existing C-string fallback semantics.
+    const auto table=Store().Read();if(!table)return std::string(text);
+    const auto found=table->strings.find(text);return found==table->strings.end()?std::string(text):found->second;
+}
 inline std::string Visible(std::string_view text){return Translate(text.substr(0,text.find("##")));}
 inline std::string Label(const char* source){
     if(!source)return {};const std::string text(source);const auto split=text.find("##");

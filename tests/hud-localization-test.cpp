@@ -50,7 +50,7 @@ int main(int argc,char** argv){
     }
     // Exercise actual embedded-resource loading, file overrides, fallback and persistence
     // with a private LOCALAPPDATA. No real player's language preference is touched.
-    const auto local=std::filesystem::absolute(output/L"AppData");assert(_wputenv_s(L"LOCALAPPDATA",local.c_str())==0);
+    const auto local=std::filesystem::absolute(output/(L"AppData-"+std::to_wstring(GetCurrentProcessId())));assert(_wputenv_s(L"LOCALAPPDATA",local.c_str())==0);
     Write(local/L"D2RHUD/language.json",R"({"language":"frFR"})");
     Initialize();assert(LanguageCode()=="frFR" && Preference()=="frFR");
     assert(Translate("Quest Journal")!="Quest Journal" && UnicodeFont());
@@ -62,7 +62,7 @@ int main(int argc,char** argv){
     assert(std::filesystem::exists(Directory()/L"editor.html") && std::filesystem::exists(Directory()/L"jaJP.json"));
     Write(edited,"{invalid JSON");assert(!Reload() && Translate("Quest Journal")!="Quest Journal");
     assert(SetPreference("jaJP") && Preference()=="jaJP" && LanguageCode()=="frFR"); // Font/language switch waits for restart.
-    assert(!SetPreference("../untrusted") && Read(local/L"D2RHUD/language.json").find("jaJP")!=std::string::npos);
+    assert(!SetPreference("../untrusted") && Read(local/L"D2RHUD/preferences.json").find("jaJP")!=std::string::npos);
     // The bundled fallback rasterizes accented Latin, Cyrillic, Kana, Han and Hangul.
     ImGui::CreateContext();auto& atlas=*ImGui::GetIO().Fonts;ImFontGlyphRangesBuilder ranges;ImVector<ImWchar> glyphs;
     ranges.AddText("Français Polski Русский 日本語 한국어 简体中文 繁體中文");ranges.BuildRanges(&glyphs);

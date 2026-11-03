@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup Label="ProjectConfigurations">
     <ProjectConfiguration Include="Debug|x64">
@@ -66,6 +66,8 @@
       <AdditionalOptions>/d1trimfile:"$(SolutionDir)\" /utf-8 %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
     <Link>
+      <!-- Emit release machine code from all current objects for native layout validation. -->
+      <LinkTimeCodeGeneration>UseLinkTimeCodeGeneration</LinkTimeCodeGeneration>
       <SubSystem>Windows</SubSystem>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
@@ -88,10 +90,43 @@
     <ClCompile Include="dllmain.cpp" />
     <ClCompile Include="WineQueue.cpp" />
     <ClCompile Include="Pattern.cpp" />
+    <ClCompile Include="ProcessPatternScan.cpp" />
     <ClCompile Include="plugin\ItemFilter\ItemFilter.cpp" />
     <ClCompile Include="plugin\KeyMappings.cpp" />
     <ClCompile Include="plugin\PluginManager.cpp" />
     <ClCompile Include="plugin\D2RHUD\D2RHUD.cpp" />
+    <ClCompile Include="plugin\D2RHUD\CombatFeedback.cpp" />
+    <ClCompile Include="plugin\D2RHUD\ChatNotifications.cpp" />
+    <ClCompile Include="plugin\D2RHUD\HudSoundLibrary.cpp" />
+    <ClCompile Include="plugin\D2RHUD\HudCommands.cpp" />
+    <ClCompile Include="plugin\D2RHUD\HudHookSetup.cpp" />
+    <ClCompile Include="plugin\D2RHUD\CameraController.cpp" />
+    <ClCompile Include="plugin\D2RHUD\LootFilterUpdater.cpp" />
+    <ClCompile Include="plugin\D2RHUD\LootFilterCatalog.cpp" />
+    <ClCompile Include="plugin/D2RHUD/LootFilterBuilderCatalog.cpp" />
+    <ClCompile Include="plugin/ItemSpriteCache.cpp" />
+    <ClCompile Include="plugin/D2RHUD/CameraEditor.cpp" />
+    <ClCompile Include="plugin/D2RHUD/HudPresentation.cpp" />
+    <ClCompile Include="RuntimeDiagnostics.cpp" />
+    <ClCompile Include="plugin\RunTracker.cpp" />
+    <ClCompile Include="plugin\Inspect.cpp" />
+    <ClCompile Include="plugin\Spectate.cpp" />
+    <ClCompile Include="plugin\SpectateNative.cpp" />
+    <ClCompile Include="plugin\SpectateH264.cpp" />
+    <ClCompile Include="plugin\SpectateTransport.cpp" />
+    <ClCompile Include="plugin\SpectateVideo.cpp" />
+    <ClCompile Include="plugin\SpectateUI.cpp" />
+    <ClCompile Include="plugin\InspectNative.cpp" />
+    <ClCompile Include="plugin\InspectWorld.cpp" />
+    <ClCompile Include="plugin\InspectSelection.cpp" />
+    <ClCompile Include="plugin\InspectAssets.cpp" />
+    <ClCompile Include="plugin\InspectUI.cpp" />
+    <ClCompile Include="plugin\RunTrackerNative.cpp" />
+    <ClCompile Include="plugin\RunTrackerAnalysis.cpp" />
+    <ClCompile Include="ThemeImageRequests.cpp" />
+    <ClCompile Include="plugin\D2RHUD\HudConfigStore.cpp" />
+    <ClCompile Include="plugin\D2RHUD\HudPreferences.cpp" />
+    <ClCompile Include="plugin\D2RHUD\MonsterStatsOverlay.cpp" />
     <ClCompile Include="plugin\FloatingDamage.cpp" />
     <ClCompile Include="plugin\HudLocalization.cpp" />
     <ClCompile Include="plugin\BuffIcons.cpp" />
@@ -102,6 +137,9 @@
     <ClCompile Include="plugin\HellSpindle.cpp" />
     <ClCompile Include="plugin\ImmunityLabels.cpp" />
     <ClCompile Include="plugin\AutomapLayers.cpp" />
+    <ClCompile Include="plugin\DynamicAutomap.cpp" />
+    <ClCompile Include="plugin\MercSeller.cpp" />
+    <ClCompile Include="plugin\MercIcons.cpp" />
     <ClCompile Include="plugin\ItemCodes.cpp" />
     <ClCompile Include="plugin\LegacyTransmog.cpp" />
     <ClCompile Include="plugin\StackSplitUI.cpp" />
@@ -116,6 +154,7 @@
     <ClCompile Include="plugin\D3Whirlwind.cpp" />
     <ClCompile Include="plugin\SelectedAuras.cpp" />
     <ClCompile Include="plugin\WidescreenBars.cpp" />
+    <ClCompile Include="plugin\LoadingPerformance.cpp" />
     <ClCompile Include="plugin\WindowLayout.cpp" />
     <ClCompile Include="plugin\HUDControls.cpp" />
     <ClCompile Include="plugin\CandyCornSave.cpp" />
@@ -161,6 +200,8 @@
     <ClInclude Include="CrashDiagnostics.h" />
     <ClInclude Include="WineQueue.h" />
     <ClInclude Include="Pattern.h" />
+    <ClInclude Include="PatternScan.h" />
+    <ClInclude Include="ProcessPatternScan.h" />
     <ClInclude Include="resource.h" />
     <ClInclude Include="Version.h" />
     <ClInclude Include="StartupDiagnostics.h" />
@@ -175,13 +216,25 @@
     <ClInclude Include="plugin\ExtendedActsStrings.h" />
     <ClInclude Include="plugin\ImmunityLabels.h" />
     <ClInclude Include="plugin\AutomapLayers.h" />
+    <ClInclude Include="plugin\DynamicAutomap.h" />
+    <ClInclude Include="plugin\MercSeller.h" />
+    <ClInclude Include="plugin\MercIcons.h" />
+    <ClInclude Include="plugin\MercIconsData.h" />
+    <ClInclude Include="plugin\MercIconsNative.h" />
+    <ClInclude Include="plugin\MercSellerData.h" />
+    <ClInclude Include="plugin\MercSellerNative.h" />
+    <ClInclude Include="plugin\DynamicAutomapData.h" />
     <ClInclude Include="plugin\ItemCodes.h" />
     <ClInclude Include="plugin\LegacyTransmog.h" />
     <ClInclude Include="plugin\CubeVisual.h" />
     <ClInclude Include="plugin\CubeVisualData.h" />
     <ClInclude Include="plugin\CubeConditionNativeData.h" />
     <ClInclude Include="plugin\CubeUseNativeData.h" />
+    <ClInclude Include="plugin\CubeBulkData.h" />
+    <ClInclude Include="plugin\CubeBulk.inl" />
+    <ClInclude Include="plugin\CubeExtended.inl" />
     <ClInclude Include="plugin\CubeRuneBag.inl" />
+    <ClInclude Include="plugin\CubeBagMerge.inl" />
     <ClInclude Include="plugin\RestartGame.h" />
     <ClInclude Include="plugin\RestartGameData.h" />
     <ClInclude Include="plugin\CubeMap.h" />
@@ -194,6 +247,8 @@
     <ClInclude Include="plugin\SelectedAuras.h" />
     <ClInclude Include="plugin\WidescreenBars.h" />
     <ClInclude Include="plugin\WidescreenBarsNative.h" />
+    <ClInclude Include="plugin\LoadingPerformance.h" />
+    <ClInclude Include="plugin\LoadingPerformanceNative.h" />
     <ClInclude Include="plugin\SelectedAurasData.h" />
     <ClInclude Include="plugin\SelectedAurasNative.h" />
     <ClInclude Include="plugin\D3WhirlwindData.h" />
@@ -253,6 +308,22 @@
     <ClInclude Include="plugin\SocketStack.inl" />
     <ClInclude Include="plugin\StackSplitData.h" />
     <ClInclude Include="plugin\StackSplitSkin.h" />
+    <ClInclude Include="plugin\Inspect.h" />
+    <ClInclude Include="plugin\Spectate.h" />
+    <ClInclude Include="plugin\SpectateData.h" />
+    <ClInclude Include="plugin\SpectateDiagnostics.h" />
+    <ClInclude Include="plugin\SpectateVideo.h" />
+    <ClInclude Include="plugin\SpectateH264.h" />
+    <ClInclude Include="plugin\SpectateRelay.h" />
+    <ClInclude Include="plugin\SpectatePartyLayout.h" />
+    <ClInclude Include="plugin\SpectateTransport.h" />
+    <ClInclude Include="plugin\InspectData.h" />
+    <ClInclude Include="plugin\InspectEquipment.h" />
+    <ClInclude Include="plugin\InspectNative.h" />
+    <ClInclude Include="plugin\InspectPresentation.h" />
+    <ClInclude Include="plugin\InspectWorldData.h" />
+    <ClInclude Include="plugin\NativePanels.h" />
+    <ClInclude Include="plugin\D2RHUD\HotkeyNames.h" />
     <ClInclude Include="plugin\StackSplit.inl" />
     <ClInclude Include="plugin\ItemCodesData.h" />
     <ClInclude Include="plugin\AutomapLayersData.h" />
@@ -280,11 +351,38 @@
     <ClInclude Include="plugin\ItemFilter\LootFilterRuleBuilderUI.inl" />
     <ClInclude Include="plugin\ItemFilter\LootFilterPreview.h" />
     <ClInclude Include="plugin\ItemFilter\LootFilterPreviewUI.inl" />
+    <ClInclude Include="plugin\ItemFilter\LootFilterSimulator.h" />
+    <ClInclude Include="plugin\ItemFilter\LootFilterSimulatorUI.inl" />
     <ClInclude Include="plugin\ItemFilter\LootFilterRuntime.inl" />
     <ClInclude Include="plugin\KeyMappings.h" />
     <ClInclude Include="plugin\Plugin.h" />
     <ClInclude Include="plugin\PluginManager.h" />
     <ClInclude Include="plugin\D2RHUD\D2RHUD.h" />
+    <ClInclude Include="plugin\D2RHUD\CombatFeedback.h" />
+    <ClInclude Include="plugin\D2RHUD\ChatNotifications.h" />
+    <ClInclude Include="plugin\D2RHUD\HudSoundLibrary.h" />
+    <ClInclude Include="plugin\D2RHUD\HudCommands.h" />
+    <ClInclude Include="plugin\D2RHUD\CommandSession.h" />
+    <ClInclude Include="plugin\D2RHUD\HudConfigStore.h" />
+    <ClInclude Include="plugin\D2RHUD\HudPreferences.h" />
+    <ClInclude Include="plugin\D2RHUD\StartupSchedule.h" />
+    <ClInclude Include="plugin\D2RHUD\MonsterStatsOverlay.h" />
+    <ClInclude Include="plugin\D2RHUD\MonsterStatsData.h" />
+    <ClInclude Include="plugin\D2RHUD\HookTransaction.h" />
+    <ClInclude Include="plugin\D2RHUD\HudHookSetup.h" />
+    <ClInclude Include="plugin\D2RHUD\CameraController.h" />
+    <ClInclude Include="plugin\D2RHUD\LootFilterUpdater.h" />
+    <ClInclude Include="plugin\D2RHUD\LootFilterCatalog.h" />
+    <ClInclude Include="plugin/D2RHUD/LootFilterBuilderCatalog.h" />
+    <ClInclude Include="plugin/ItemSpriteCache.h" />
+    <ClInclude Include="BackgroundJob.h" />
+    <ClInclude Include="DeferredAssets.h" />
+    <ClInclude Include="plugin/D2RHUD/FrameContext.h" />
+    <ClInclude Include="plugin/D2RHUD/CameraEditor.h" />
+    <ClInclude Include="plugin/D2RHUD/HudPresentation.h" />
+    <ClInclude Include="ThemeImageRequests.h" />
+    <ClInclude Include="plugin\TranslationFormats.h" />
+    <ClInclude Include="plugin\TranslationStore.h" />
     <ClInclude Include="plugin\D2RHUD\OptionsLayout.h" />
     <ClInclude Include="plugin\D2RHUD\MenuWorkspace.h" />
     <ClInclude Include="plugin\D2RHUD\OptionsCatalog.h" />
@@ -301,6 +399,26 @@
     <ClInclude Include="plugin\CandyCornSaveTables.h" />
     <ClInclude Include="plugin\CandyCornSaveStore.h" />
     <ClInclude Include="plugin\CandyCornSaveUI.h" />
+    <ClInclude Include="plugin\MarketplaceData.h" />
+    <ClInclude Include="plugin\MarketplaceStash.h" />
+    <ClInclude Include="plugin\MarketplaceStore.h" />
+    <ClInclude Include="plugin\MarketplaceWorkspace.h" />
+    <ClInclude Include="plugin\MarketplaceUI.inl" />
+    <ClInclude Include="plugin\MarketplacePanel.h" />
+    <ClInclude Include="plugin\MarketplaceLiveCustody.h" />
+    <ClInclude Include="plugin\MarketplacePagePackets.h" />
+    <ClInclude Include="plugin\MarketplaceWithdrawalUI.inl" />
+    <ClInclude Include="plugin\MarketplaceLiveCustodyRuntime.inl" />
+    <ClInclude Include="plugin\MarketplaceNative.inl" />
+    <ClInclude Include="plugin\MarketplaceNativeMenu.inl" />
+    <ClInclude Include="plugin\MarketplaceWalletUI.inl" />
+    <ClInclude Include="plugin\MarketplaceChat.h" />
+    <ClInclude Include="plugin\MarketplaceNativeImages.inl" />
+    <ClInclude Include="plugin\MarketplaceNativeLinks.inl" />
+    <ClInclude Include="plugin\MarketplaceNativeText.inl" />
+    <ClInclude Include="ProcessLifetime.h" />
+    <ClInclude Include="plugin\MarketplaceNativeDropdowns.inl" />
+    <ClInclude Include="plugin\MarketplaceItemVisuals.h" />
     <ClInclude Include="plugin\D2RHUD\TerrorZoneRotation.h" />
     <ClInclude Include="plugin\D2RHUD\TerrorZonePaths.h" />
     <ClInclude Include="stb_image.h" />

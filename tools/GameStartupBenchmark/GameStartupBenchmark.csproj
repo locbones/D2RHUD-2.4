@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <AssemblyName>Pandemonium.Core.Tests</AssemblyName>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <CoreProject Condition="'$(CoreProject)' == ''">$(MSBuildThisFileDirectory)../../../D2RLAN-CrossPlatform/CrossPlatform/src/Pandemonium.Core/Pandemonium.Core.csproj</CoreProject>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="$(CoreProject)" />
+  </ItemGroup>
+</Project>

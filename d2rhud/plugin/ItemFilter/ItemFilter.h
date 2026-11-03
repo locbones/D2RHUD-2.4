@@ -12,6 +12,7 @@ public:
 	void ReloadGameFilterForGrail();
 	void CycleFilter();
 	void ClearInvOverrideCache();
+    static void SetSession(uint64_t session);
 
 	static const std::string& GetDiagnosticsText();
 	static bool GetShowFilteredItems();

@@ -1,15 +1,28 @@
-// The vcpkg CascLib ABI uses ANSI paths. Keep this translation unit in ANSI mode.
+﻿// The vcpkg CascLib ABI uses ANSI paths. Keep this translation unit in ANSI mode.
 #undef UNICODE
 #undef _UNICODE
 #include "GameAssets.h"
 #define CASCLIB_NO_AUTO_LINK_LIBRARY
 #include <CascLib.h>
+#include "../RuntimeTelemetry.h"
 #include <fstream>
 #include <algorithm>
 #include <cstring>
+#include <stdexcept>
 #include "TableMetadata.h"
 
 struct GameAssets::MetadataCache { std::map<std::filesystem::path,nlohmann::json> layers; };
+std::filesystem::path GameAssets::ExecutableDirectory() {
+    std::wstring buffer(260,L'\0');
+    while(buffer.size()<=32768){
+        const auto length=GetModuleFileNameW(nullptr,buffer.data(),DWORD(buffer.size()));
+        if(!length)throw std::runtime_error("Could not locate game assets");
+        if(length<buffer.size()){buffer.resize(length);return std::filesystem::path(buffer).parent_path();}
+        buffer.resize((std::min)(size_t(32768),buffer.size()*2));
+        if(length==32768)break;
+    }
+    throw std::runtime_error("Game path is too long");
+}
 
 GameAssets::GameAssets(const std::filesystem::path& install, const std::string& mod) : install_(install) {
     if (!mod.empty()) mod_ = install / "Mods" / mod / (mod + ".mpq");
@@ -108,7 +121,36 @@ std::string GameAssets::ReadAuxiliaryTable(const std::string& name) {
     return {};
 }
 
+namespace {
+std::string StoragePath(const std::filesystem::path& path) {
+    // The linked CascLib uses CreateFileA. Avoid lossy/best-fit replacements in
+    // user/install paths, and use an existing short path when necessary.
+    auto convert = [](const std::wstring& text) {
+        const auto page = GetACP();
+        BOOL replaced = FALSE;
+        const auto flags = page == CP_UTF8 ? WC_ERR_INVALID_CHARS : WC_NO_BEST_FIT_CHARS;
+        auto used = page == CP_UTF8 ? nullptr : &replaced;
+        const auto size = WideCharToMultiByte(page, flags, text.c_str(), int(text.size()), nullptr, 0, nullptr, used);
+        if (!size || replaced)
+            return std::string{};
+        std::string result(size, '\0');
+        if (!WideCharToMultiByte(page, flags, text.c_str(), int(text.size()), result.data(), size, nullptr, used) || replaced)
+            return std::string{};
+        return result;
+    };
+    if (auto normal = convert(path.wstring()); !normal.empty())
+        return normal;
+    std::wstring shortPath(32768, '\0');
+    const auto length = GetShortPathNameW(path.c_str(), shortPath.data(), DWORD(shortPath.size()));
+    if (!length || length >= shortPath.size())
+        return {};
+    shortPath.resize(length);
+    return convert(shortPath);
+}
+}
 std::vector<uint8_t> GameAssets::Read(const std::string& relative) {
+    HudTelemetry::Scope measured(HudTelemetry::Feature::AssetRead);
+    readError_.clear();
     std::string path = relative;
     std::replace(path.begin(), path.end(), '/', '\\');
     if (path.empty() || path.front() == '\\' || path.find(':') != std::string::npos) return {};
@@ -126,10 +168,31 @@ std::vector<uint8_t> GameAssets::Read(const std::string& relative) {
     }
     if (!triedStorage_) {
         triedStorage_ = true;
-        // vcpkg builds CascLib in ANSI mode, independently of the HUD's UNICODE setting.
-        CascOpenStorage(install_.string().c_str(), CASC_LOCALE_ALL, &storage_);
+        std::error_code ec;
+        const auto resolved = std::filesystem::weakly_canonical(install_, ec);
+        std::vector<std::filesystem::path> roots{install_};
+        if (!ec && resolved != install_)
+            roots.push_back(resolved);
+        roots.push_back(install_ / "Data");
+        DWORD error = ERROR_PATH_NOT_FOUND;
+        for (const auto& root : roots) {
+            const auto ansi = StoragePath(root);
+            if (ansi.empty()) {
+                error = ERROR_NO_UNICODE_TRANSLATION;
+                continue;
+            }
+            if (CascOpenStorage(ansi.c_str(), CASC_LOCALE_ALL, &storage_))
+                break;
+            error = GetLastError();
+        }
+        if (!storage_)
+            readError_ = "Packed game storage could not be opened (Windows error " + std::to_string(error) + ").";
     }
-    if (!storage_) return {};
+    if (!storage_) {
+        if (readError_.empty())
+            readError_ = "Packed game storage is unavailable in this asset reader.";
+        return {};
+    }
     for (const char* prefix : { "data:data\\", "data:data:", "data:", "data\\", "" }) {
         HANDLE file = nullptr;
         if (!CascOpenFile(storage_, (prefix + path).c_str(), CASC_LOCALE_ALL, CASC_OPEN_BY_NAME | CASC_STRICT_DATA_CHECK, &file)) continue;
@@ -139,8 +202,13 @@ std::vector<uint8_t> GameAssets::Read(const std::string& relative) {
             bytes.resize(size);
             if (!CascReadFile(file, bytes.data(), size, &read) || read != size) bytes.clear();
         }
+        const auto error = GetLastError();
         CascCloseFile(file);
-        return bytes;
+        if (!bytes.empty())
+            return bytes;
+        readError_ = "Packed asset could not be read (Windows error " + std::to_string(error) + ").";
     }
+    if (readError_.empty())
+        readError_ = "Asset not found in loose mod files or packed game storage.";
     return {};
 }

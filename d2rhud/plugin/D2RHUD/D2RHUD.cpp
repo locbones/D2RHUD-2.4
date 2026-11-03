@@ -1,10 +1,33 @@
-﻿#include "../HudText.h"
+﻿#include "../../RuntimeDiagnostics.h"
+#include "../../RuntimeTelemetry.h"
+#include "../TooltipText.h"
+#include "../RunTracker.h"
+#include "../Inspect.h"
+#include "../Spectate.h"
+#include "HotkeyNames.h"
+#include "../HudText.h"
 #pragma region Includes
 
 #include "../ItemFilter/LootFilterLibrary.h"
 #include "D2RHUD.h"
 #include "../../Version.h"
 #include "OptionsLayout.h"
+#include "CombatFeedback.h"
+#include "ChatNotifications.h"
+#include "HudSoundLibrary.h"
+#include "HookTransaction.h"
+#include "HudHookSetup.h"
+#include "HudCommands.h"
+#include "CameraController.h"
+#include "CameraEditor.h"
+#include "HudPresentation.h"
+#include "LootFilterUpdater.h"
+#include "LootFilterCatalog.h"
+#include "LootFilterBuilderCatalog.h"
+#include "HudConfigStore.h"
+#include "HudPreferences.h"
+#include "../../ProcessLifetime.h"
+#include "MonsterStatsOverlay.h"
 #include "MenuWorkspace.h"
 #include "OptionsCatalog.h"
 #include "TerrorZoneRotation.h"
@@ -31,14 +54,20 @@
 #include "../States512.h"
 #include "../SunderSystem.h"
 #include "../WidescreenBars.h"
+#include "../DynamicAutomap.h"
+#include "../MercSeller.h"
+#include "../MercIcons.h"
 #include "../HUDControls.h"
 #include "../CandyCornSaveUI.h"
+#include "../MarketplacePanel.h"
+#include "../MarketplaceLiveCustody.h"
 #include <imgui.h>
 #include "../ItemFilter/LootFilterEditorText.h"
 #include "../ItemFilter/LuaConfigIO.h"
 #include "../ItemFilter/LootFilterFields.h"
 #include "../ItemFilter/LootFilterRuleBuilder.h"
 #include "../ItemFilter/LootFilterPreview.h"
+#include "../ItemFilter/LootFilterSimulator.h"
 #include "../GameAssets.h"
 #include "../../D2/D2Ptrs.h"
 #include <sstream>
@@ -56,10 +85,8 @@
 #include <algorithm>
 #include <cstring>
 #include <cmath>
-#include <thread>
 #include <atomic>
 #include <chrono>
-#include <future>
 #include <cstdint>
 #include <filesystem>
 #include "../../D3D12Hook.h"
@@ -71,10 +98,8 @@
 #include <unordered_set>
 #include <mutex>
 #include <set>
-#include <urlmon.h>
 #include <shellapi.h>
 #include <mmsystem.h>
-#pragma comment(lib, "urlmon.lib")
 #pragma comment(lib, "shell32.lib")
 #pragma comment(lib, "winmm.lib")
 
@@ -136,134 +161,12 @@ static bool IsHardcore()
 }
 bool isHardcore = false;
 std::atomic<uint32_t> g_GrailRevision{ 1 };
-static int TerrorStat = 0;
-
-#pragma endregion
-
-#pragma region *Currently Unused*
-
-// UMod Offsets
-constexpr uint32_t umod8a_Offsets[] = { 0x2FC7E4, 0xAF13F }; // Cold
-constexpr uint32_t umod8b_Offsets[] = { 0x2FC8AD, 0xAF20B }; // Fire
-constexpr uint32_t umod8c_Offsets[] = { 0x2FC967, 0xAF2CF }; // Light
-constexpr uint32_t umod9_Offsets[] = { 0x2FC9EB, 0xAF35C }; // Fire
-constexpr uint32_t umod18_Offsets[] = { 0x2FCA64, 0xAF3E9 }; // Cold
-constexpr uint32_t umod17_Offsets[] = { 0x2FCADD, 0xAF479 }; // Lightning
-constexpr uint32_t umod23_Offsets[] = { 0x2FCB56, 0xAF495 }; // Poison
-constexpr uint32_t umod25_Offsets[] = { 0x2FCBCF, 0xAF522 }; // Magic
-constexpr uint32_t umod27a_Offsets[] = { 0x2FCC56, 0xAF5B9 }; // Cold
-constexpr uint32_t umod27b_Offsets[] = { 0x2FCD22, 0xAF698 }; // Fire
-constexpr uint32_t umod27c_Offsets[] = { 0x2FCDDB, 0xAF75C }; // Light
-constexpr uint32_t umod28_Offsets[] = { 0x2FCDEE, 0xAF778 }; // Physical
-
-struct OriginalUMods {
-    // Each element is a vector of original bytes for a single offsets-group.
-    // Example: coldGroups[0] corresponds to umod8a_Offsets,
-    //          coldGroups[1] -> umod18_Offsets, etc.
-    std::vector<std::vector<uint8_t>> coldGroups;
-    std::vector<std::vector<uint8_t>> fireGroups;
-    std::vector<std::vector<uint8_t>> lightGroups;
-    std::vector<std::vector<uint8_t>> poisonGroups;
-    std::vector<std::vector<uint8_t>> damageGroups;
-    std::vector<std::vector<uint8_t>> magicGroups;
-};
-
-OriginalUMods g_originalUModValues = {
-    // coldGroups: each group displays original values for umodxx offsets
-    {
-        { 40, 40 },   // umod8a
-        { 75, 75 },   // umod18
-        { 20, 20 }    // umod27a
-    },
-    // fireGroups
-    {
-        { 40, 40 },   // umod8b
-        { 75, 75 },   // umod9
-        { 20, 20 }    // umod27b
-    },
-    // lightGroups
-    {
-        { 40, 40 },   // umod8c
-        { 75, 75 },   // umod17
-        { 20, 20 }    // umod27c
-    },
-    // poisonGroups
-    {
-        { 75, 75 }    // umod23
-    },
-    // damageGroups
-    {
-        { 50, 50 }    // umod28
-    },
-    // magicGroups
-    {
-        { 20, 20 }    // umod25
-    }
-};
-
-void ApplyUModArray(const uint32_t* offsets, size_t count, uint32_t remainder, const std::vector<uint8_t>& groupOriginalValues, const std::string& statName)
-{
-    //LogSunder("ApplyUModArray count=" + std::to_string(count) + " remainder=" + std::to_string(remainder));
-
-    for (size_t i = 0; i < count; ++i)
-    {
-        uint64_t addr = Pattern::Address(offsets[i]);
-        if (!addr || addr < 0x10000)
-            continue;
-
-        uint8_t* pValue = reinterpret_cast<uint8_t*>(addr);
-        uint8_t currentValue = *pValue;
-
-        // Safely get original for this index (fallback to currentValue)
-        uint8_t originalValue = (i < groupOriginalValues.size()) ? groupOriginalValues[i] : currentValue;
-
-        // If memory doesn't match original, restore it first
-        if (currentValue != originalValue)
-        {
-            //LogSunder(statName + " Restoring original UMod at 0x" + std::to_string(addr) + " index=" + std::to_string(i) + " current=" + std::to_string(currentValue) + " -> original=" + std::to_string(originalValue));
-
-            DWORD oldProtect;
-            if (VirtualProtect(pValue, 1, PAGE_EXECUTE_READWRITE, &oldProtect))
-            {
-                *pValue = originalValue;
-                VirtualProtect(pValue, 1, oldProtect, &oldProtect);
-                currentValue = originalValue;
-            }
-            else
-            {
-                MessageBoxA(nullptr, "Failed to change memory protection (restore)!", "Error", MB_OK | MB_ICONERROR);
-                continue;
-            }
-        }
-
-        // Compute expected value from ORIGINAL minus remainder
-        int expectedValue = static_cast<int>(originalValue) - static_cast<int>(remainder);
-        if (expectedValue < 0) expectedValue = 0;
-
-        if (static_cast<uint8_t>(expectedValue) == currentValue)
-        {
-            //LogSunder(statName + " UMod already at expected value at 0x" + std::to_string(addr) + " index=" + std::to_string(i) + " value=" + std::to_string(currentValue));
-            continue;
-        }
-        
-        //LogSunder(statName + " Applying remainder to UModAddr[" + std::to_string(i) + "] @0x" + std::to_string(addr) + " original=" + std::to_string(originalValue) + " old=" + std::to_string(currentValue) + " new=" + std::to_string(expectedValue));
-
-        DWORD oldProtect;
-        if (VirtualProtect(pValue, 1, PAGE_EXECUTE_READWRITE, &oldProtect))
-        {
-            *pValue = static_cast<uint8_t>(expectedValue);
-            VirtualProtect(pValue, 1, oldProtect, &oldProtect);
-        }
-        else
-            MessageBoxA(nullptr, "Failed to change memory protection (apply)!", "Error", MB_OK | MB_ICONERROR);
-    }
-}
+static std::atomic<int> TerrorStat{0};
 
 #pragma endregion
 
 #pragma region Monster & Command Constants
 const char* ResistanceNames[6] = { "   ", "   ", "   ", "   ", "   ", "   " };
-constexpr  uint32_t ResistanceStats[6] = { 39, 41, 43, 45, 36, 37 };
 constexpr  uint32_t Alignment = { 172 };
 constexpr  uint32_t ImmunityCold = { 187 };
 constexpr  uint32_t ImmunityFire = { 189 };
@@ -271,15 +174,8 @@ constexpr  uint32_t ImmunityLight = { 190 };
 constexpr  uint32_t ImmunityPoison = { 191 };
 constexpr  uint32_t ImmunityPhysical = { 192 };
 constexpr  uint32_t ImmunityMagic = { 193 };
-constexpr  ImU32 ResistanceColors[6] = { IM_COL32(170,50,50,255) ,IM_COL32(170,170,50,255) ,IM_COL32(50,90,170,255) ,IM_COL32(50,170,50,255),IM_COL32(255,255,255,255), IM_COL32(255,175,0,255) };
-constexpr  const char* Seperator = "  ";
 constexpr uint32_t Experience = { 21 };
-std::string automaticCommand1;
-std::string automaticCommand2;
-std::string automaticCommand3;
-std::string automaticCommand4;
-std::string automaticCommand5;
-std::string automaticCommand6;
+static HudCommands::StartupSchedule::Commands s_AutomaticCommands{};
 std::time_t lastLogTimestamp = 0;
 #pragma endregion
 
@@ -321,14 +217,12 @@ const uint32_t gameClientsOffset = 0x1D637F0;
 const uint32_t sendPacketToServerOffset = 0x010EBF0;
 const uint32_t executeDebugCheatOffset = 0x076BC0;
 const uint32_t unitDataOffset = 0x1D442E0;
-const uint32_t getUnitPtrFuncOffset = 0x066510;
 const uint32_t gameChatMsgTypeOffset = 0x184ABE8;
 const uint32_t CCMD_DEBUGCHEAT_HandlerOffset = 0x02AD6F0;
 const uint32_t Process_SCMD_CHATSTARTOffset = 0x0107CA0;
 const uint32_t GetChatManagerOffset = 0x056E440;
 const uint32_t ChatManager_PushChatEntryOffset = 0x056E9A0;
 const uint32_t GetUnitNameOffset = 0x027A920;
-const uint32_t BroadcastChatMessageOffset = 0x02ADA90;
 const uint32_t Send_SCMD_CHATSTARTOffset = 0x02CD280;
 const uint32_t cheatsArrayOffset = 0x18026F0;
 const uint8_t CCMD_DEBUGCHEAT = 0x15;
@@ -365,9 +259,7 @@ typedef bool(__fastcall* DebugCheatHandler)(uint64_t pGame, uint64_t pPlayer, co
 typedef const char* (__fastcall* GetUnitNameFptr)(uint64_t pUnit, char* szName);
 typedef bool(__fastcall* CCMD_HANDLER_Fptr)(uint64_t pGame, uint64_t pPlayer, CMD_PACKET_BASE* pPacket, uint32_t dwPacketLen);
 typedef bool(__fastcall* Process_SCMD_CHATSTART_Fptr)(SCMD_CHATSTART_PACKET* pPacket);
-typedef void(__fastcall* BroadcastChatMessageFptr)(uint64_t pGame, const char* szMsg, uint8_t color);
 typedef void(__fastcall* GameMenuOnClickHandler)(uint64_t a1, Widget* pWidget);
-typedef D2UnitStrc* (__fastcall* GetClientUnitByIdAndTypeNew)(uint64_t pTable, uint32_t id1, uint32_t id2, uint32_t dwType);
 typedef void(__fastcall* SendPacketToServer)(void* pPacket);
 typedef void(__fastcall* ExecuteDebugCheat)(const char* szCheat);
 bool menuClickHookInstalled = false;
@@ -376,7 +268,6 @@ static CCMD_HANDLER_Fptr CCMD_DEBUGCHEAT_Handler_Orig = nullptr;
 static Process_SCMD_CHATSTART_Fptr Process_SCMD_CHATSTART_Orig = nullptr;
 static SendPacketToServer SendPacketFunc = reinterpret_cast<SendPacketToServer>(Pattern::Address(sendPacketToServerOffset));
 static ExecuteDebugCheat ExecuteDebugCheatFunc = reinterpret_cast<ExecuteDebugCheat>(Pattern::Address(executeDebugCheatOffset));
-static GetClientUnitByIdAndTypeNew GetClientUnitPtrFunc = reinterpret_cast<GetClientUnitByIdAndTypeNew>(Pattern::Address(getUnitPtrFuncOffset));
 struct D2ChatManager;
 static std::queue<QueuedAction> queuedActions;
 
@@ -537,6 +428,19 @@ static D2Widget** gpPanelManager = reinterpret_cast<D2Widget**>(Pattern::Address
 
 
 static uint32_t gSelectedPage = 0;
+static std::atomic<bool> gMarketplacePageSwitching{false};
+static std::atomic<int> gMarketplacePagePhase{-1};
+using MarketplaceBankLifecycle=void(__fastcall*)(void*);
+static MarketplaceBankLifecycle oMarketplaceBankOpen=nullptr,oMarketplaceBankClose=nullptr;
+static bool MarketplaceLiveAllowPage(uint32_t);
+static bool MarketplaceLivePreparePage(uint32_t);
+static int MarketplaceLiveSendFreshPage(uint32_t);
+static void MarketplaceLiveLoaded(uint32_t);
+static void MarketplaceLivePaint(void*);
+static void CaptureMarketplacePanel(void*,bool);
+static void UpdateMarketplaceWidgets(void*);
+static bool DispatchMarketplaceInput(void*,uint64_t,void*);
+static bool InspectMarketplaceItem(void*,uint64_t,uint64_t);
 
 const uint64_t CMD_MAGIC = 0xDEADBEEFDEADBEEF;
 const std::string STASH_NAME = "Stash";
@@ -591,18 +495,29 @@ void __fastcall SCMD_SendSharedStashMessage(D2ClientStrc* pClient, SharedStashPh
 }
 
 void __fastcall SCMD_HandleSharedStashMessage(SCMD_STASH_PAGE_CHANGE* pData) {
+    // Only the acknowledged, currently requested page may open a live window.
+    // A delayed/duplicate packet from an earlier switch must not release it.
+    if(!pData||pData->nPage>=64||!gMarketplacePageSwitching.load()||pData->nPage!=gSelectedPage||int(pData->nPhase)!=gMarketplacePagePhase.load())return;
     switch (pData->nPhase) {
     case SaveStarted:
         std::cout << "Client saved" << std::endl;
         CCMD_SendSharedStashMessage(SaveCompleted, pData->nPage);
         break;
     case OldSharedStashFreed:
+        gMarketplacePagePhase=NewSharedStashUnitsCreated;
         std::cout << "Sending new shared stash to server" << std::endl;
         UpdateStashFileName(pData->nPage);
-        reinterpret_cast<void(__fastcall*)()>(Pattern::Address(0x10e080))(); // CLIENT_ReadSaveAndSend_D2CLTSYS_OPENCHAR()
+        {
+            const auto fresh=MarketplaceLiveSendFreshPage(pData->nPage);
+            if(fresh<0)return;
+            if(!fresh)reinterpret_cast<void(__fastcall*)()>(Pattern::Address(0x10e080))(); // CLIENT_ReadSaveAndSend_D2CLTSYS_OPENCHAR()
+        }
         CCMD_SendSharedStashMessage(NewSharedStashLoadedAndAttachMessagesSent, pData->nPage);
         break;
     case NewSharedStashUnitsCreated:
+        gMarketplacePagePhase=-1;
+        gMarketplacePageSwitching=false;
+        MarketplaceLiveLoaded(pData->nPage);
         std::cout << "New shared stash units created" << std::endl;
         auto pBankPanel = WidgetFindChild(*gpPanelManager, "BankExpansionLayout");
         if (pBankPanel) {
@@ -660,6 +575,12 @@ void __fastcall SCMDHANDLER_Custom(uint8_t* pPacket) {
         if (pData->opcode2 == SCMD_SHARED_STASH_OP2) {
             SCMD_HandleSharedStashMessage((SCMD_STASH_PAGE_CHANGE*)pPacket);
         }
+        else if (pData->opcode2 == 9) {
+            Inspect::Receive(pPacket, 0xCE);
+        }
+        else if (pData->opcode2 == Spectate::Data::Operation) {
+            Spectate::Receive(pPacket, 0xCE);
+        }
         else if (pData->opcode2 == 7) {
             QuestJournal::Receive(pPacket, 0xCE);
         }
@@ -674,6 +595,8 @@ void __fastcall SCMDHANDLER_Custom(uint8_t* pPacket) {
 
 int64_t __fastcall CCMDHANDLER_Custom(D2GameStrc* pGame, D2UnitStrc* pUnit, uint8_t* pPacket, int nPacketSize) {
     if (!pPacket || nPacketSize < 10) return 1;
+    if (Spectate::Command(pGame,pUnit,pPacket,size_t(nPacketSize))) return 1;
+    if (Inspect::Command(pGame,pUnit,pPacket,size_t(nPacketSize))) return 1;
     if (QuestJournal::Command(pGame,pUnit,pPacket,size_t(nPacketSize))) return 1;
     if (CubeMap::Command(pGame,pUnit,pPacket,size_t(nPacketSize))) return 1;
     uint64_t magic = *(uint64_t*)(pPacket + 1);
@@ -714,27 +637,27 @@ void __fastcall GenerateSharedStash() {
 }
 
 void OnStashPageChanged(uint32_t nSelectedPage) {
+    if(nSelectedPage>=64||gMarketplacePageSwitching.load()||!MarketplaceLiveAllowPage(nSelectedPage)||!MarketplaceLivePreparePage(nSelectedPage))return;
+    gMarketplacePageSwitching=true;
+    gMarketplacePagePhase=OldSharedStashFreed;
     std::cout << "Sending CCMD_STASH_PAGE_CHANGE" << std::endl;
     gSelectedPage = nSelectedPage;
     CCMD_SendSharedStashMessage(PageChanged, nSelectedPage);
 }
 
-// Might be better than global vars
-/*
-void __fastcall HookedBankPanelMessage(D2BankPanelWidget* pBankPanel, int64_t* pMessages) {
-    oBankPanelMessage(pBankPanel, pMessages);
-    if (pMessages[0] == "DropdownListWidgetMessage"_hash64
-        && pMessages[1] == "OptionSelected"_hash64) {
-        auto pBankPages = WidgetFindChild(pBankPanel, "BankPages");
-        if (pBankPages) {
-            auto nSelectedPage = *(uint32_t*)((int64_t)pBankPages + 0x178C);
-            OnStashPageChanged(nSelectedPage);
-        }
+static void* __fastcall HookedMarketplaceBankMessage(void* widget,Message& message){
+    static_assert(Marketplace::Panel::MessageHash("BankPanelMessage")=="BankPanelMessage"_hash64);
+    if(WidgetFindChild(widget,"MarketplaceWorkspace")){
+        if(gMarketplacePageSwitching.load()&&message.o1==0x4ae067c6248b6042ULL)return widget;
+        if(InspectMarketplaceItem(widget,message.o1,message.o2)||Marketplace::Panel::NativeMessage(message.o1,message.o2)||DispatchMarketplaceInput(widget,message.o1,&message))return widget;
     }
+    return BankPanelMessage(widget,message);
 }
-*/
 
 void __fastcall HookedBankPanelDraw(D2BankPanelWidget* pBankPanel) {
+    RunTracker::StashVisible();
+    MarketplaceLivePaint(pBankPanel);
+    UpdateMarketplaceWidgets(pBankPanel);
     oBankPanelDraw(pBankPanel);
     //todo hook OnSelectionChange for widget?
     auto pBankPages = WidgetFindChild(pBankPanel, "BankPages");
@@ -742,8 +665,10 @@ void __fastcall HookedBankPanelDraw(D2BankPanelWidget* pBankPanel) {
         auto nSelectedPage = *(uint32_t*)((int64_t)pBankPages + 0x178C);
         if (nSelectedPage != gSelectedPage) {
             OnStashPageChanged(nSelectedPage);
+            if(nSelectedPage!=gSelectedPage){SIZE_T count=0;WriteProcessMemory(GetCurrentProcess(),static_cast<uint8_t*>(pBankPages)+0x178C,&gSelectedPage,sizeof(gSelectedPage),&count);}
         }
     }
+    CaptureMarketplacePanel(pBankPanel,gMarketplacePageSwitching.load());
 }
 
 #pragma endregion
@@ -803,105 +728,11 @@ VOID CALLBACK DelayedActionsTimerProc(
 #pragma endregion
 
 #pragma region Helper Functions
-std::string TrimWhitespace(const std::string& str) {
-    size_t first = str.find_first_not_of(" \n\r\t");
-    size_t last = str.find_last_not_of(" \n\r\t");
-    return str.substr(first, (last - first + 1));
-}
-
-std::string ReadCommandFromFile(const std::string& filename, const std::string& searchString) {
-    if (!std::filesystem::exists(filename)) {
-        return {};
-    }
-    return TrimWhitespace(readTextFollowingString(filename, searchString));
-}
-
-void ReadCommandWithValuesFromFile(const std::string& filename, const std::string& searchString, std::string& commandKey, std::string& commandValue) {
-    std::string commandLine = ReadCommandFromFile(filename, searchString);
-
-    size_t commaPos = commandLine.find(',');
-    if (commaPos != std::string::npos) {
-        commandKey = TrimWhitespace(commandLine.substr(0, commaPos));
-        std::string valuePart = TrimWhitespace(commandLine.substr(commaPos + 1));
-        size_t startQuote = valuePart.find('\"');
-        size_t endQuote = valuePart.find('\"', startQuote + 1);
-
-        if (startQuote != std::string::npos && endQuote != std::string::npos) {
-            commandValue = TrimWhitespace(valuePart.substr(startQuote + 1, endQuote - startQuote - 1));
-        }
-        else {
-            commandValue.clear();
-        }
-    }
-    else {
-        commandKey.clear();
-        commandValue.clear();
-    }
-}
-
 std::string Trim(const std::string& str)
 {
     size_t first = str.find_first_not_of(" \t\n\r");
     size_t last = str.find_last_not_of(" \t\n\r");
     return (first == std::string::npos || last == std::string::npos) ? "" : str.substr(first, last - first + 1);
-}
-
-std::vector<std::string> ReadAutomaticCommandsFromFile(const std::string& filename)
-{
-    std::vector<std::string> automaticCommands;
-    std::ifstream file(filename);
-
-    if (!file.is_open()) {
-        std::cerr << "Error: Failed to open file " << filename << std::endl;
-        return automaticCommands;
-    }
-
-    std::string line;
-
-    while (std::getline(file, line)) {
-        if (line.find("Startup Commands:") != std::string::npos) {
-            size_t pos = line.find("Startup Commands:") + std::string("Startup Commands:").length();
-            std::string commands = line.substr(pos);
-
-            while (std::getline(file, line) && !line.empty()) {
-                commands += line;
-            }
-
-            size_t commaPos = 0;
-            while ((commaPos = commands.find(",")) != std::string::npos) {
-                std::string command = Trim(commands.substr(0, commaPos));
-                if (!command.empty()) {
-                    automaticCommands.push_back(command);
-                }
-                commands.erase(0, commaPos + 1);
-            }
-
-            std::string command = Trim(commands);
-            if (!command.empty()) {
-                automaticCommands.push_back(command);
-            }
-
-            break;
-        }
-    }
-
-    while (automaticCommands.size() < 6) {
-        automaticCommands.push_back("");
-    }
-
-    if (automaticCommands.size() >= 6) {
-        automaticCommand1 = automaticCommands[0];
-        automaticCommand2 = automaticCommands[1];
-        automaticCommand3 = automaticCommands[2];
-        automaticCommand4 = automaticCommands[3];
-        automaticCommand5 = automaticCommands[4];
-        automaticCommand6 = automaticCommands[5];
-    }
-    else {
-        std::cerr << "Error: Not enough automatic commands in the config file!" << std::endl;
-    }
-
-    return automaticCommands;
 }
 
 void WriteToDebugLog(const std::string& message) {
@@ -937,122 +768,8 @@ static int GetClientStatus() {
     return (pClients != NULL) ? static_cast<int>(*(uint8_t*)pClients) : -1;
 }
 
-static std::string TrimCommandToken(const std::string& s)
-{
-    const char* ws = " \t\r\n";
-    size_t start = s.find_first_not_of(ws);
-    if (start == std::string::npos)
-        return "";
-    size_t end = s.find_last_not_of(ws);
-    return s.substr(start, end - start + 1);
-}
-
-static std::queue<std::function<void()>> g_keySimQueue;
-static constexpr UINT_PTR kKeySimTimerId = 1235;
-
-static VOID CALLBACK KeySimTimerProc(HWND hwnd, UINT message, UINT_PTR idTimer, DWORD dwTime)
-{
-    (void)message;
-    (void)dwTime;
-    if (idTimer != kKeySimTimerId)
-        return;
-
-    if (g_keySimQueue.empty())
-    {
-        KillTimer(hwnd, kKeySimTimerId);
-        return;
-    }
-
-    std::function<void()> action = std::move(g_keySimQueue.front());
-    g_keySimQueue.pop();
-    if (action)
-        action();
-
-    if (!g_keySimQueue.empty())
-        SetTimer(hwnd, kKeySimTimerId, 16, KeySimTimerProc);
-    else
-        KillTimer(hwnd, kKeySimTimerId);
-}
-
-static void QueueOnGameMainThread(std::function<void()> action)
-{
-    HWND hwnd = find_main_window(GetCurrentProcessId());
-    if (!hwnd || !action)
-        return;
-
-    g_keySimQueue.push(std::move(action));
-    SetTimer(hwnd, kKeySimTimerId, 16, KeySimTimerProc);
-}
-
-static void PostSyntheticKeyTap(HWND hwnd, WORD vk, bool useSysKeyMessages)
-{
-    if (!hwnd)
-        return;
-
-    const UINT scan = MapVirtualKeyW(vk, MAPVK_VK_TO_VSC);
-    const LPARAM keyDownLParam = 1 | (static_cast<LPARAM>(scan) << 16);
-    const LPARAM keyUpLParam = keyDownLParam | (static_cast<LPARAM>(1) << 30) | (static_cast<LPARAM>(1) << 31);
-
-    if (useSysKeyMessages)
-    {
-        PostMessageW(hwnd, WM_SYSKEYDOWN, vk, keyDownLParam);
-        PostMessageW(hwnd, WM_SYSKEYUP, vk, keyUpLParam);
-    }
-    else
-    {
-        PostMessageW(hwnd, WM_KEYDOWN, vk, keyDownLParam);
-        PostMessageW(hwnd, WM_KEYUP, vk, keyUpLParam);
-    }
-}
-
-static void SimulateStartupKeypress(WORD vk, bool useSysKeyMessages)
-{
-    QueueOnGameMainThread([vk, useSysKeyMessages]() {
-        HWND hwnd = find_main_window(GetCurrentProcessId());
-        if (!hwnd)
-            return;
-        SetForegroundWindow(hwnd);
-        PostSyntheticKeyTap(hwnd, vk, useSysKeyMessages);
-    });
-}
-
-static bool TryExecuteKeypressStartupCommand(const std::string& command)
-{
-    std::string token = TrimCommandToken(command);
-    if (token.size() >= 2 && token.front() == '[' && token.back() == ']')
-        token = TrimCommandToken(token.substr(1, token.size() - 2));
-
-    std::string lower = token;
-    std::transform(lower.begin(), lower.end(), lower.begin(),
-        [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-
-    if (lower == "tab")
-    {
-        SimulateStartupKeypress(VK_TAB, false);
-        return true;
-    }
-    if (lower == "alt")
-    {
-        SimulateStartupKeypress(VK_MENU, true);
-        return true;
-    }
-    return false;
-}
-
-void ExecuteCommand(const std::string& command) {
-    if (command == "disabled" || command.empty()) return;
-
-    if (TryExecuteKeypressStartupCommand(command))
-        return;
-
-    bool isPlayerCommand = (command.find("/") != std::string::npos);
-    if (isPlayerCommand) {
-        CLIENT_playerCommand(command, command);
-    }
-    else {
-        ExecuteDebugCheatFunc(command.c_str());
-    }
-}
+static std::string TrimCommandToken(const std::string& value){return HudCommands::TrimToken(value);}
+void ExecuteCommand(const std::string& command){HudCommands::Queue(command);}
 
 int GetPlayerDifficulty(D2UnitStrc* pPlayer) {
     if (!pPlayer || !pPlayer->pDynamicPath) return -1;
@@ -1063,69 +780,6 @@ int GetPlayerDifficulty(D2UnitStrc* pPlayer) {
     return pLevel->pDrlg->nDifficulty;
 }
 
-static std::atomic<uint64_t> s_startupCommandRunId{ 0 };
-
-static void QueueStartupCommandExecution(float initialDelaySeconds)
-{
-    const uint64_t runId = ++s_startupCommandRunId;
-    std::thread([runId, initialDelaySeconds]() {
-        if (initialDelaySeconds > 0.0f)
-            std::this_thread::sleep_for(std::chrono::milliseconds(static_cast<int>(initialDelaySeconds * 1000.0f)));
-
-        if (runId != s_startupCommandRunId.load())
-            return;
-        if (GetClientStatus() != 1)
-            return;
-
-        const std::vector<std::string> commands = {
-            automaticCommand1, automaticCommand2, automaticCommand3,
-            automaticCommand4, automaticCommand5, automaticCommand6
-        };
-        for (const auto& command : commands)
-        {
-            if (runId != s_startupCommandRunId.load())
-                return;
-            if (!command.empty() && command != "disabled")
-            ExecuteCommand(command);
-        std::this_thread::sleep_for(std::chrono::seconds(1));
-    }
-    }).detach();
-}
-
-void OnClientStatusChange()
-{
-    QueueStartupCommandExecution(3.0f);
-}
-
-int CheckClientStatusChange() {
-    static int previousValue = -1;
-    int currentValue = GetClientStatus();
-
-    if (previousValue != 1 && currentValue == 1) {
-        std::thread(OnClientStatusChange).detach();
-    }
-
-    previousValue = currentValue;
-    return currentValue;
-}
-
-std::atomic<bool> keepPolling{ true };
-
-void PollClientStatus() {
-    while (keepPolling) {
-        auto result = CheckClientStatusChange();
-        //std::cout << "Current Status: " << result << std::endl;
-        std::this_thread::sleep_for(std::chrono::seconds(1));
-    }
-}
-
-void StartPolling() {
-    std::thread(PollClientStatus).detach();
-}
-
-void StopPolling() {
-    keepPolling = false;
-}
 #pragma endregion
 
 #pragma region Monster Stats Structure
@@ -1169,7 +823,6 @@ MonsterStatsDisplaySettings getMonsterStatsDisplaySetting(const std::string& con
         return cachedSettings;
     }
 
-    StartPolling();
 
     using ordered_json = nlohmann::ordered_json;
     ordered_json j;
@@ -1185,18 +838,15 @@ MonsterStatsDisplaySettings getMonsterStatsDisplaySetting(const std::string& con
         // ---- First-time use detection ----
         if (!fs::exists(targetPath) && fs::exists(templatePath))
         {
-            fs::rename(templatePath, targetPath);
-            std::cerr << "[INFO] First-time setup: renamed HUDConfig_Template.json -> " << targetPath << std::endl;
+            fs::copy_file(templatePath, targetPath);
+            std::cerr << "[INFO] First-time setup: copied HUDConfig_Template.json -> " << targetPath << std::endl;
         }
 
-        std::ifstream file(targetPath);
-        if (!file.is_open())
-        {
-            std::cerr << "[ERROR] Could not open config file: " << targetPath << std::endl;
+        const auto result = HudConfig::Read(targetPath, j);
+        if (!result) {
+            std::cerr << "[ERROR] HUD configuration: " << result.error << std::endl;
             return {};
         }
-
-        file >> j;
     }
     catch (const std::exception& e)
     {
@@ -1212,62 +862,21 @@ MonsterStatsDisplaySettings getMonsterStatsDisplaySetting(const std::string& con
 
     std::cerr << "[DEBUG] JSON config loaded successfully" << std::endl;
 
-    // ---------------- Helper functions ----------------
-    auto getBool = [&](std::initializer_list<std::string> path, bool def) -> bool
-        {
-            const ordered_json* cur = &j;
-            for (const auto& p : path)
-            {
-                if (!cur->contains(p))
-                    return def;
-                cur = &(*cur)[p];
-            }
-            return cur->is_boolean() ? cur->get<bool>() : def;
-        };
-
-    auto getInt = [&](std::initializer_list<std::string> path, int def) -> int
-        {
-            const ordered_json* cur = &j;
-            for (const auto& p : path)
-            {
-                if (!cur->contains(p))
-                    return def;
-                cur = &(*cur)[p];
-            }
-            return cur->is_number_integer() ? cur->get<int>() : def;
-        };
-
-    auto getString = [&](std::initializer_list<std::string> path,
-        const std::string& def) -> std::string
-        {
-            const ordered_json* cur = &j;
-            for (const auto& p : path)
-            {
-                if (!cur->contains(p))
-                    return def;
-                cur = &(*cur)[p];
-            }
-            return cur->is_string() ? cur->get<std::string>() : def;
-        };
-
-    // ---------------- Populate settings ----------------
-    cachedSettings.monsterStatsDisplay = getBool({ "MonsterStatsDisplay" }, true);
-    cachedSettings.channelColor = getString({ "Channel Color" }, "");
-    cachedSettings.playerNameColor = getString({ "Player Name Color" }, "");
-    cachedSettings.messageColor = getString({ "Message Color" }, "");
-
-    cachedSettings.HPRollover = getBool({ "HPRolloverMods" }, true);
-    cachedSettings.HPRolloverAmt = getInt({ "HPRollover%" }, 0);
-    cachedSettings.HPRolloverDiff = getInt({ "HPRolloverDifficulty" }, 0);
-
-    cachedSettings.sunderedMonUMods = getBool({ "SunderedMonUMods" }, true);
-    cachedSettings.minionEquality = getBool({ "MinionEquality" }, true);
-    cachedSettings.gambleForce = getBool({ "GambleCostControl" }, true);
-    cachedSettings.SunderValue = 99;
-    cachedSettings.CombatLog = getBool({ "CombatLog" }, true);
-    cachedSettings.TransmogVisuals = getBool({ "TransmogVisuals" }, true);
-    cachedSettings.ExtendedItemcodes = getBool({ "ExtendedItemcodes" }, true);
-    cachedSettings.FloatingDamage = getBool({ "FloatingDamage" }, true);
+    HudPreferences::Config preferences;
+    // Preserve the original native-hook defaults for missing optional fields.
+    preferences.ChannelColor.clear();
+    preferences.PlayerNameColor.clear();
+    preferences.MessageColor.clear();
+    preferences.HPRolloverPercent = 0;
+    preferences.HPRolloverDifficulty = 0;
+    HudPreferences::Load(preferences, j, false);
+    cachedSettings = {
+        preferences.MonsterStatsDisplay, preferences.ChannelColor, preferences.PlayerNameColor,
+        preferences.MessageColor, preferences.HPRolloverMods, preferences.HPRolloverPercent,
+        preferences.HPRolloverDifficulty, preferences.SunderedMonUMods, preferences.MinionEquality,
+        preferences.GambleCostControl, 99, preferences.CombatLog, preferences.TransmogVisuals,
+        preferences.ExtendedItemcodes, preferences.FloatingDamage
+    };
 
     // ---------------- Finalize cache ----------------
     isCached = true;
@@ -1289,9 +898,7 @@ void SendDebugCheat(const char* cheat) {
 
 typedef void(__fastcall* Send_SCMD_CHATSTART_Fptr)(uint64_t pPlayer, SCMD_CHATSTART_PACKET* pChatStart);
 static GetUnitNameFptr GetUnitName = reinterpret_cast<GetUnitNameFptr>(Pattern::Address(GetUnitNameOffset));
-static BroadcastChatMessageFptr oBroadcastChatMessage = reinterpret_cast<BroadcastChatMessageFptr>(Pattern::Address(BroadcastChatMessageOffset));
 static Send_SCMD_CHATSTART_Fptr Send_SCMD_CHATSTART = reinterpret_cast<Send_SCMD_CHATSTART_Fptr>(Pattern::Address(Send_SCMD_CHATSTARTOffset));
-static std::vector<std::string> g_automaticCommands;
 typedef void(__fastcall* MONSTER_InitializeStatsAndSkills_t)(D2GameStrc* pGame, D2ActiveRoomStrc* pRoom, D2UnitStrc* pMonster, int64_t* pMonRegData);
 static MONSTER_InitializeStatsAndSkills_t oMONSTER_InitializeStatsAndSkills = nullptr;
 static std::unordered_set<DWORD> g_unitsEdited;
@@ -1348,222 +955,42 @@ bool __fastcall CCMD_DEBUGCHEAT_Hook(uint64_t pGame, uint64_t pPlayer, CCMD_DEBU
     return CCMD_DEBUGCHEAT_Handler_Orig(pGame, pPlayer, pCheat, dwDataLen);
 }
 
-static bool IsFloatingDamageActive();
-static void TryQueuePoisonCombatMessage(const char* text, D2UnitStrc* targetOverride = nullptr);
-static void TryQueuePoisonDamageFromStatTable(D2DamageInfoStrc* pDamageInfo, D2DamageStatTableStrc* pDamageStatTableRecord);
+static bool IsFloatingDamageActive(){return FloatingDamage::IsEnabled();}
 static void EnsureSunitdmHook();
-static void QueuePoisonDamageEvent(int amount, float screenX, float screenY, uint32_t unitType, uint32_t unitId, FloatingDamage::Element element);
-static void UpdatePoisonDoTWatch();
-static void SyncPoisonWatchHp(uint32_t unitType, uint32_t unitId);
-static bool IsChatSoundsEnabled();
-static void PlayChatNotificationSound();
-static void QueueChatNotificationForSender(const char* sender, const char* message, uint32_t unitType, uint32_t unitId, bool hasUnit);
-static void ProcessPendingChatNotificationSound();
-static void RefreshLocalChatFilterNameCache();
-
-static char g_cachedLocalChatFilterName[64] = {};
-static uint32_t g_cachedLocalUnitId = UINT32_MAX;
-static uint32_t g_cachedLocalUnitType = UINT32_MAX;
-
-// C-only helper: client-slot character name (host slot 0 is not always local).
-static bool SafeGetLocalChatName_Read(char* out, size_t outSize)
-{
-    static int32_t* gpClientPlayerListIndex = reinterpret_cast<int32_t*>(Pattern::Address(0x1d442d8));
-    if (!out || outSize == 0 || !gpClientList || !gpClientPlayerListIndex)
-        return false;
-
-    const int32_t idx = *gpClientPlayerListIndex;
-    if (idx < 0 || idx >= 8)
-        return false;
-
-    D2ClientStrc* pClient = gpClientList[idx];
-    if (!pClient || !pClient->szName[0])
-        return false;
-
-    strncpy_s(out, outSize, pClient->szName, _TRUNCATE);
-    return out[0] != '\0';
-}
-
-static void RefreshLocalChatFilterNameCache()
-{
-    if (!IsPlayerInGame())
-    {
-        g_cachedLocalChatFilterName[0] = '\0';
-        g_cachedLocalUnitId = UINT32_MAX;
-        g_cachedLocalUnitType = UINT32_MAX;
-        return;
-    }
-
-    static auto s_lastRefresh = std::chrono::steady_clock::time_point{};
-    const auto now = std::chrono::steady_clock::now();
-    if (g_cachedLocalChatFilterName[0] && now - s_lastRefresh < std::chrono::milliseconds(500))
-        return;
-    s_lastRefresh = now;
-
-    g_cachedLocalChatFilterName[0] = '\0';
-    g_cachedLocalUnitId = UINT32_MAX;
-    g_cachedLocalUnitType = UINT32_MAX;
-
-    if (D2UnitStrc* pLocal = GetClientPlayerUnit())
-    {
-        g_cachedLocalUnitId = pLocal->dwUnitId;
-        g_cachedLocalUnitType = pLocal->dwUnitType;
-        D2PlayerDataStrc* pData = pLocal->pPlayerData;
-        if (pData && pData->szName[0])
-            strncpy_s(g_cachedLocalChatFilterName, pData->szName, _TRUNCATE);
-    }
-
-    if (!g_cachedLocalChatFilterName[0])
-        SafeGetLocalChatName_Read(g_cachedLocalChatFilterName, sizeof(g_cachedLocalChatFilterName));
-}
-
-static bool IsPendingChatFromLocalUnit(uint32_t unitType, uint32_t unitId)
-{
-    if (g_cachedLocalUnitId == UINT32_MAX)
-        return false;
-    return g_cachedLocalUnitType == unitType && g_cachedLocalUnitId == unitId;
-}
-
-static bool IsChatSenderOtherPlayer(const char* sender)
-{
-    if (!sender || !sender[0])
-        return false;
-    if (!g_cachedLocalChatFilterName[0])
-        return false;
-
-    return _stricmp(sender, g_cachedLocalChatFilterName) != 0;
-}
-
-static const char* SkipD2ColorCodesForChat(const char* p)
-{
-    while (p && (unsigned char)p[0] == 0xFF && p[1] == 'c' && p[2])
-        p += 3;
-    return p;
-}
-
-static bool StartsWithIgnoreCase(const char* text, const char* prefix)
-{
-    if (!text || !prefix || !prefix[0])
-        return false;
-    return _strnicmp(text, prefix, strlen(prefix)) == 0;
-}
-
-static bool StartsWithPhraseIgnoreCase(const char* text, const char* phrase)
-{
-    if (!StartsWithIgnoreCase(text, phrase))
-        return false;
-
-    const size_t len = strlen(phrase);
-    const char next = text[len];
-    return next == '\0' || next == ' ' || next == '.' || next == '!' || next == '?';
-}
-
-static bool IsLikelySystemFeedbackMessage(const char* text)
-{
-    if (!text || !text[0])
-        return true;
-
-    const char* p = SkipD2ColorCodesForChat(text);
-    if (!p[0])
-        return true;
-
-    static const char* kPhrases[] = {
-        "Out of mana",
-        "Not enough mana",
-        "Not enough gold",
-        "Not here",
-        "Not in town",
-        "I can't carry",
-        "I can't get there",
-        "I can't do that",
-        "I cannot carry",
-        "I cannot get there",
-        "I cannot do that",
-        "You can't carry",
-        "You can't do that",
-        "You cannot carry",
-        "You cannot do that",
-        "Cannot carry",
-        "Cannot equip",
-        "Need more gold",
-        "Need more mana",
-        "Requires level",
-        "Locked",
-        "No room",
-        "No space",
-        "Inventory is full",
-        "Imbued unbalanced",
-        "That is not yours",
-        "That is owned",
-        "This is not yours",
-        "Must identify",
-        nullptr
-    };
-
-    for (const char** it = kPhrases; *it; ++it)
-    {
-        if (StartsWithPhraseIgnoreCase(p, *it))
-            return true;
-    }
-
-    return false;
-}
-
 static bool IsGameSystemChatEntry(const ChatMsg& typeMsg)
 {
     const ChatMsg* pGameMsgType = reinterpret_cast<const ChatMsg*>(Pattern::Address(gameChatMsgTypeOffset));
     return pGameMsgType && typeMsg.type == pGameMsgType->type;
 }
 
-static char g_pendingChatSoundSender[64] = {};
-static char g_pendingChatSoundMessage[256] = {};
-static uint32_t g_pendingChatSoundUnitType = 0;
-static uint32_t g_pendingChatSoundUnitId = 0;
-static volatile LONG g_hasPendingChatSound = 0;
-static volatile LONG g_pendingChatSoundHasUnit = 0;
-
-static void QueueChatNotificationForSender(const char* sender, const char* message, uint32_t unitType, uint32_t unitId, bool hasUnit)
-{
-    if (!sender || !sender[0] || !message || !message[0])
-        return;
-    if (IsLikelySystemFeedbackMessage(message))
-        return;
-
-    strncpy_s(g_pendingChatSoundSender, sender, _TRUNCATE);
-    strncpy_s(g_pendingChatSoundMessage, message, _TRUNCATE);
-    if (hasUnit)
-    {
-        g_pendingChatSoundUnitType = unitType;
-        g_pendingChatSoundUnitId = unitId;
-        InterlockedExchange(&g_pendingChatSoundHasUnit, 1);
-    }
-    else
-        InterlockedExchange(&g_pendingChatSoundHasUnit, 0);
-
-    InterlockedExchange(&g_hasPendingChatSound, 1);
-}
-
 bool __fastcall Process_SCMD_CHATSTART_Hook(SCMD_CHATSTART_PACKET* pPacket) {
-    if (IsFloatingDamageActive() && pPacket && pPacket->message[0])
-        TryQueuePoisonCombatMessage(pPacket->message);
+    const bool watchDamage = IsFloatingDamageActive();
+    const bool watchChat = HudChat::Enabled();
+    const bool custom = pPacket && pPacket->msgType == 0xFF;
+    const auto length = pPacket && (watchDamage || watchChat || custom)
+        ? strnlen_s(pPacket->message, sizeof(pPacket->message)) : 0;
+    if (watchDamage && pPacket && length && length < sizeof(pPacket->message))
+        HudCombat::ObserveCombatMessage(pPacket->message);
 
-    if (pPacket && pPacket->msgType == 0xFF) {
+    if (custom) {
         auto pChatMgr = GetChatManager();
-        blz_string msg = { pPacket->message, strlen(pPacket->message), strlen(pPacket->message) };
+        blz_string msg = { pPacket->message, length, length };
         int colorValue = mapColorToInt(settings.channelColor);
         ChatMsg gameChatMsgType = *reinterpret_cast<ChatMsg*>(Pattern::Address(gameChatMsgTypeOffset));
         ChatOptionalStruct opt = {};
 
         oChatManager_PushChatEntry(pChatMgr, msg, colorValue, false, gameChatMsgType, opt, opt, opt, opt);
 
-        if (pPacket->sender[0] && pPacket->message[0])
-            QueueChatNotificationForSender(pPacket->sender, pPacket->message, pPacket->unitType, pPacket->id, true);
+        if (watchChat)
+            HudChat::Observe({pPacket->sender, strnlen_s(pPacket->sender, sizeof(pPacket->sender))},
+                {pPacket->message, length}, pPacket->unitType, pPacket->id, true);
         return true;
     }
 
     const bool result = Process_SCMD_CHATSTART_Orig(pPacket);
-    if (pPacket && pPacket->sender[0] && pPacket->message[0])
-        QueueChatNotificationForSender(pPacket->sender, pPacket->message, pPacket->unitType, pPacket->id, true);
+    if (pPacket && watchChat)
+        HudChat::Observe({pPacket->sender, strnlen_s(pPacket->sender, sizeof(pPacket->sender))},
+            {pPacket->message, length}, pPacket->unitType, pPacket->id, true);
     return result;
 }
 
@@ -1630,22 +1057,26 @@ static bool g_SunitdmHookInstalled = false;
 
 void __fastcall HookedSUNITDMG_ApplyResistancesAndAbsorb(D2DamageInfoStrc* pDamageInfo, D2DamageStatTableStrc* pDamageStatTableRecord, int32_t bDontAbsorb);
 
+static bool TryInstallHooks(HudHooks::Installer& installer)
+{
+    if (installer.Ready()) return false;
+    const auto result = installer.Tick(GetTickCount64());
+    if (result.outcome == HudHooks::Outcome::Failed && result.diagnosticChanged) {
+        std::cerr << "HUD hooks [" << result.group << "]: " << result.phase;
+        if (!result.hook.empty()) std::cerr << " [" << result.hook << "]";
+        std::cerr << " failed with Windows error " << result.error << "; installation will retry." << std::endl;
+    }
+    return result.outcome == HudHooks::Outcome::Installed;
+}
+
 static void EnsureSunitdmHook()
 {
-    if (g_SunitdmHookInstalled)
-        return;
-
-    const uint64_t addr = Pattern::Address(0x3253d0);
-    if (!addr)
-        return;
-
-    oSUNITDMG_ApplyResistancesAndAbsorb = reinterpret_cast<SUNITDMG_ApplyResistancesAndAbsorb_t>(addr);
-
-    DetourTransactionBegin();
-    DetourUpdateThread(GetCurrentThread());
-    DetourAttach(&(PVOID&)oSUNITDMG_ApplyResistancesAndAbsorb, HookedSUNITDMG_ApplyResistancesAndAbsorb);
-    DetourTransactionCommit();
-    g_SunitdmHookInstalled = true;
+    if (g_SunitdmHookInstalled) return;
+    static auto* installer = new HudHooks::Installer("Resistance/damage", {
+        HudHooks::Bind(oSUNITDMG_ApplyResistancesAndAbsorb, HookedSUNITDMG_ApplyResistancesAndAbsorb,
+            Pattern::Address(0x3253d0), "SUNITDMG_ApplyResistancesAndAbsorb")
+    });
+    if (TryInstallHooks(*installer)) g_SunitdmHookInstalled = true;
 }
 
 static int32_t* gnVirtualPlayerCount = reinterpret_cast<int32_t*>(Pattern::Address(0x1d637e4));
@@ -1710,7 +1141,7 @@ void __fastcall ScaleDamage(D2DamageInfoStrc* pDamageInfo, D2DamageStatTableStrc
 void __fastcall HookedSUNITDMG_ApplyResistancesAndAbsorb(D2DamageInfoStrc* pDamageInfo, D2DamageStatTableStrc* pDamageStatTableRecord, int32_t bDontAbsorb) {
     oSUNITDMG_ApplyResistancesAndAbsorb(pDamageInfo, pDamageStatTableRecord, bDontAbsorb);
 
-    TryQueuePoisonDamageFromStatTable(pDamageInfo, pDamageStatTableRecord);
+    HudCombat::ObserveDamageTable(pDamageInfo, pDamageStatTableRecord);
 
     if ((settings.HPRollover || cachedSettings.HPRollover) && pDamageInfo && pDamageInfo->pGame && pDamageInfo->pGame->nDifficulty > settings.HPRolloverDiff) {
         ScaleDamage(pDamageInfo, pDamageStatTableRecord);
@@ -1880,7 +1311,7 @@ struct MonsterTreasureResult {
 
 int playerLevel = 0;
 static std::string g_ActiveZoneInfoText;
-int g_ManualZoneGroupOverride = -1;
+std::atomic<int> g_ManualZoneGroupOffset{0};
 time_t g_LastToggleTime = 0;
 TerrorZoneDisplayData g_TerrorZoneData;
 std::vector<DesecratedZone> gDesecratedZones;
@@ -2658,6 +2089,7 @@ bool LoadDesecratedZones(const std::string& filename) {
     try {
         gDesecratedZones = j.at("desecrated_zones").get<std::vector<DesecratedZone>>();
         level_names = j.at("level_names").get<std::vector<LevelName>>();
+        {std::map<int,std::string> names;for(const auto& level:level_names)names[level.id]=level.name;RunTracker::SetAreaNames(names);}
 
         // Randomize initial zone group for each desecrated zone (cycle start position)
         std::random_device rd;
@@ -2954,7 +2386,7 @@ void __fastcall ForceTCDrops(D2GameStrc* pGame, D2UnitStrc* pMonster, D2UnitStrc
 void UpdateActiveZoneInfoText(time_t currentUtc)
 {
     g_ActiveZoneInfoText.clear();
-    g_TerrorZoneData.activeLevels.clear();
+    g_TerrorZoneData = {};
 
     std::stringstream ss;
 
@@ -2971,20 +2403,9 @@ void UpdateActiveZoneInfoText(time_t currentUtc)
         if (cycleLengthMin <= 0)
             continue;
 
-        int activeGroupIndex = g_ManualZoneGroupOverride;
-        if (activeGroupIndex == -1)
-        {
-            // Advance each full terror+break period, preserving the random start.
-            activeGroupIndex = TerrorZoneRotationIndex(currentUtc, zone.start_time_utc,
-                zone.terror_duration_min, zone.terror_break_min, groupCount, zone.random_start_offset);
-        }
-        else if (activeGroupIndex >= groupCount)
-        {
-            activeGroupIndex = groupCount - 1;
-        }
-
-        if (activeGroupIndex >= groupCount)
-            continue;
+        const int activeGroupIndex = TerrorZoneSelectedIndex(currentUtc, zone.start_time_utc,
+            zone.terror_duration_min, zone.terror_break_min, groupCount, zone.random_start_offset,
+            g_ManualZoneGroupOffset.load());
 
         const ZoneGroup& activeGroup = zone.zones[activeGroupIndex];
 
@@ -3133,22 +2554,11 @@ void __fastcall ApplyGhettoTerrorZone(D2GameStrc* pGame, D2ActiveRoomStrc* pRoom
         if (cycleLengthMin <= 0)
             continue;
 
-        int minutesSinceStart = static_cast<int>((currentUtc - zone.start_time_utc) / 60);
-        int totalCycle = cycleLengthMin * groupCount;
-        int cyclePos = minutesSinceStart % totalCycle;
-        int posWithinGroup = cyclePos % cycleLengthMin;
-
-        // Select the same UTC rotation group as the display.
-        int activeGroupIndex = (g_ManualZoneGroupOverride == -1)
-            ? TerrorZoneRotationIndex(currentUtc, zone.start_time_utc,
-                zone.terror_duration_min, zone.terror_break_min, groupCount, zone.random_start_offset)
-            : g_ManualZoneGroupOverride;
-
-        if (activeGroupIndex < 0 || activeGroupIndex >= groupCount)
-            continue;
-
-        // Only active during terror duration, not break
-        bool isInActivePhase = (posWithinGroup < zone.terror_duration_min);
+        const int activeGroupIndex = TerrorZoneSelectedIndex(currentUtc, zone.start_time_utc,
+            zone.terror_duration_min, zone.terror_break_min, groupCount, zone.random_start_offset,
+            g_ManualZoneGroupOffset.load());
+        const bool isInActivePhase = TerrorZoneCurrentPhase(currentUtc, zone.start_time_utc,
+            zone.terror_duration_min, zone.terror_break_min).active;
         if (!isInActivePhase)
         {
             isTerrorized = false;
@@ -3163,12 +2573,6 @@ void __fastcall ApplyGhettoTerrorZone(D2GameStrc* pGame, D2ActiveRoomStrc* pRoom
         g_TerrorZoneData.groupCount = groupCount;
         g_TerrorZoneData.activeGroupIndex = activeGroupIndex;
         g_TerrorZoneData.zoneStartUtc = zone.start_time_utc;
-        int totalSecondsInPhase = g_TerrorZoneData.terrorDurationMin * 60;
-        int secondsIntoPhase = (currentUtc - g_TerrorZoneData.zoneStartUtc) % (g_TerrorZoneData.cycleLengthMin * 60) % totalSecondsInPhase;
-        int secondsRemaining = totalSecondsInPhase - secondsIntoPhase;
-        int remainingMinutes = secondsRemaining / 60;
-        int remainingSeconds = secondsRemaining % 60;
-
         double now = static_cast<double>(std::time(nullptr));
         UpdateActiveZoneInfoText(static_cast<time_t>(now));
         InitRandomStatsForAllMonsters(false);
@@ -3229,23 +2633,8 @@ static void ToggleManualZoneGroupInternal(bool forward)
     if (maxGroups == 0)
         return; // no active groups
 
-    if (g_ManualZoneGroupOverride == -1)
-        g_ManualZoneGroupOverride = forward ? 0 : maxGroups - 1;
-    else
-    {
-        if (forward)
-        {
-            g_ManualZoneGroupOverride++;
-            if (g_ManualZoneGroupOverride >= maxGroups)
-                g_ManualZoneGroupOverride = 0; // wrap to first
-        }
-        else
-        {
-            g_ManualZoneGroupOverride--;
-            if (g_ManualZoneGroupOverride < 0)
-                g_ManualZoneGroupOverride = maxGroups - 1; // wrap to last
-        }
-    }
+    const int offset = g_ManualZoneGroupOffset.load() % maxGroups;
+    g_ManualZoneGroupOffset.store((offset + (forward ? 1 : maxGroups - 1)) % maxGroups);
 
     InitRandomStatsForAllMonsters(true);
     UpdateActiveZoneInfoText(static_cast<time_t>(now));
@@ -3309,40 +2698,18 @@ std::string BuildTerrorZoneInfoText()
         return "";
 
     time_t currentUtc = std::time(nullptr);
-    int remainingSeconds = 0;
-
-    if (g_TerrorZoneData.cycleLengthMin > 0 &&
-        g_TerrorZoneData.groupCount > 0 &&
-        g_TerrorZoneData.activeGroupIndex >= 0)
-    {
-        int totalCycleMinutes = g_TerrorZoneData.cycleLengthMin * g_TerrorZoneData.groupCount;
-        int minutesSinceStart = static_cast<int>((currentUtc - g_TerrorZoneData.zoneStartUtc) / 60);
-        int cyclePos = minutesSinceStart % totalCycleMinutes;
-        int positionInCycle = cyclePos % g_TerrorZoneData.cycleLengthMin;
-
-        if (positionInCycle < g_TerrorZoneData.terrorDurationMin)
-        {
-            // In terror phase
-            int totalSecondsInPhase = g_TerrorZoneData.terrorDurationMin * 60;
-            int secondsIntoPhase = (currentUtc - g_TerrorZoneData.zoneStartUtc) % (g_TerrorZoneData.cycleLengthMin * 60) % totalSecondsInPhase;
-            remainingSeconds = totalSecondsInPhase - secondsIntoPhase;
-        }
-        else
-        {
-            // In break phase
-            int totalSecondsInCycle = g_TerrorZoneData.cycleLengthMin * 60;
-            int secondsIntoCycle = (currentUtc - g_TerrorZoneData.zoneStartUtc) % totalSecondsInCycle;
-            remainingSeconds = totalSecondsInCycle - secondsIntoCycle;
-        }
-    }
+    const auto phase = TerrorZoneCurrentPhase(currentUtc, g_TerrorZoneData.zoneStartUtc,
+        g_TerrorZoneData.terrorDurationMin,
+        g_TerrorZoneData.cycleLengthMin - g_TerrorZoneData.terrorDurationMin);
+    auto remainingSeconds = phase.remaining;
 
     // Convert remaining seconds into DHMS
-    int days = remainingSeconds / 86400;
+    auto days = remainingSeconds / 86400;
     remainingSeconds %= 86400;
-    int hours = remainingSeconds / 3600;
+    auto hours = remainingSeconds / 3600;
     remainingSeconds %= 3600;
-    int minutes = remainingSeconds / 60;
-    int seconds = remainingSeconds % 60;
+    auto minutes = remainingSeconds / 60;
+    auto seconds = remainingSeconds % 60;
 
     std::string timeText;
     if (days > 0)
@@ -3548,52 +2915,8 @@ static void ShowItemLocationTooltip(int id, bool isSet)
 
 #pragma region - Static/Structs
 
-struct CameraPreset
-{
-    std::string Name;
-    float Pitch = 0.0f;
-    float Height = 0.0f;
-    float Pan = 0.0f;
-    float Roll = 0.0f;
-    float Zoom = 0.0f;
-    bool HasValues = false;
-};
-
-struct D2RHUDConfig
-{
-    bool MonsterStatsDisplay = true;
-    std::string ChannelColor = "ÿc5";
-    std::string PlayerNameColor = "ÿc8";
-    std::string MessageColor = "ÿc0";
-    bool HPRolloverMods = true;
-    int HPRolloverPercent = 99;
-    int HPRolloverDifficulty = -1;
-    bool SunderedMonUMods = true;
-    int SunderValue = 99;
-    bool MinionEquality = true;
-    bool PersistentSummons = false;
-    bool MultipleUseitemOutputs = false;
-    bool MultipleUseitemInputs = false;
-    bool ExtendedCubeConditions = false;
-    bool SurvivorArena = false;
-    bool ActVI = false;
-    bool D3StyleWhirlwind = false;
-    bool NoWidescreenBars = false;
-    bool QuantityRightClicks = true;
-    bool DisableRightClickItemPickup = false;
-    bool MinimalistQuantityPopup = false;
-    bool GambleCostControl = true;
-    bool CombatLog = true;
-    bool TransmogVisuals = true;
-    bool ExtendedItemcodes = true;
-    bool FloatingDamage = true;
-    bool ChatSounds = true;
-    std::string ChatSoundPath;
-    std::vector<std::string> DLLsToLoad = { "D2RHUD.dll" };
-    std::array<CameraPreset, 3> CameraPresets{};
-    bool CameraAutoloadLastPreset = false;
-    int CameraLastPresetIndex = 0;  // 0 = Default, 1â€“3 = preset slot
-};
+using CameraPreset = HudPreferences::CameraPreset;
+using D2RHUDConfig = HudPreferences::Config;
 
 std::vector<std::string> priorityOrder = {
         "reload", "debug", "allowOverrides", "audioPlayback", "modTips",
@@ -3635,11 +2958,7 @@ struct LootFilterRule
 
 std::vector<LootFilterRule> g_LootFilterRules;
 
-struct CommandEntry
-{
-    std::string key;
-    std::string command;
-};
+using CommandEntry = HudPreferences::Command;
 
 static constexpr int kCustomCommandSlotCount = 6;
 static std::vector<CommandEntry> g_CommandHotkeys;
@@ -3655,25 +2974,6 @@ static void EnsureCustomCommandSlots()
 static std::string CustomCommandHotkeyId(size_t index)
 {
     return "CustomCommand:" + std::to_string(index);
-}
-
-static std::string EscapeJsonStringForConfig(const std::string& s)
-{
-    std::string out;
-    out.reserve(s.size() + 8);
-    for (char c : s)
-    {
-        switch (c)
-        {
-        case '\\': out += "\\\\"; break;
-        case '"':  out += "\\\""; break;
-        case '\n': out += "\\n"; break;
-        case '\r': out += "\\r"; break;
-        case '\t': out += "\\t"; break;
-        default:   out += c; break;
-        }
-    }
-    return out;
 }
 
 static std::string g_StartupCommands;
@@ -3747,36 +3047,6 @@ static bool showBaseCodes = false;
 static bool showBaseNames = false;
 static bool showDuplicates = false;
 
-// Persistent camera state for Camera Controls menu
-struct CameraState
-{
-    bool programEnabled = true;
-    bool valuesFound = false;
-    bool zoomFound = false;
-
-    // Track whether a scan has been attempted (for UI messaging)
-    bool didScanAngles = false;
-    bool didScanZoom = false;
-
-    // Track whether the last scan attempt was in-game or out-of-game
-    bool lastAngleScanInGame = false;
-    bool lastZoomScanInGame = false;
-
-    float pitch = 0.0f;
-    float height = 0.0f;
-    float pan = 0.0f;
-    float roll = 0.0f;
-    float zoom = 0.0f;
-
-    float defaultPitch = 0.0f;
-    float defaultHeight = 0.0f;
-    float defaultPan = 0.0f;
-    float defaultRoll = 0.0f;
-    float defaultZoom = 0.0f;
-};
-
-static CameraState g_CameraState;
-
 LootFilterHeader g_LootFilterHeader;
 std::unordered_map<std::string, std::string> g_LuaVariables;
 std::unordered_map<std::string, std::string> g_LuaVariableComments;
@@ -3792,9 +3062,7 @@ static std::string s_pendingFilter;
 static std::string s_activeFilterInternalName;
 static std::string s_lootFilterUpdateStatus;
 static std::chrono::steady_clock::time_point s_lootFilterUpdateStatusTime;
-static std::atomic<bool> s_lootFilterUpdating{ false };
-static std::string s_lootFilterNewVersion;
-static bool s_lootFilterUpdateApplied = false;
+static HudFilterUpdate::Outcome s_lootFilterUpdateOutcome = HudFilterUpdate::Outcome::Current;
 
 #pragma endregion
 
@@ -3809,46 +3077,6 @@ void ImGuiTextCentered(const char* text, ImFont* font = nullptr, ImVec4 color = 
     ImGui::SetCursorPosX((windowWidth - textSize.x) * 0.5f);
     HudText::TextColored(color, "%s", text);
     if (font) ImGui::PopFont();
-}
-
-std::string RemoveComments(const std::string& input)
-{
-    std::string output;
-    size_t i = 0;
-    while (i < input.size())
-    {
-        // Handle single-line comments //
-        if (i + 1 < input.size() && input[i] == '/' && input[i + 1] == '/')
-        {
-            i += 2;
-            while (i < input.size() && input[i] != '\n') i++;
-        }
-        // Handle multi-line comments
-        else if (i + 1 < input.size() && input[i] == '/' && input[i + 1] == '*')
-        {
-            i += 2;
-            while (i + 1 < input.size() && !(input[i] == '*' && input[i + 1] == '/')) i++;
-            i += 2;
-        }
-        else
-        {
-            output += input[i];
-            i++;
-        }
-    }
-
-    return output;
-}
-
-std::string CleanJsonFile(const std::string& path)
-{
-    std::ifstream file(path);
-    if (!file.is_open()) return "";
-    std::string text((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
-    text = RemoveComments(text);
-    text = std::regex_replace(text, std::regex(R"(,\s*([}\]]))"), "$1");
-
-    return text;
 }
 
 // Returns 2.0f for 4K resolution (width >= 3840 or height >= 2160), else 1.0f. Used to scale all menu elements.
@@ -3973,6 +3201,8 @@ static void SyncWorkspacePages() {
 
 bool D2RHUD::TryCloseMenuOnEscape()
 {
+    if(Spectate::Current().open){Spectate::Close();return true;}
+    if(Inspect::IsOpen()){Inspect::Close();return true;}
     if (!showMainMenu && !IsAnyMenuOpen() && !showSettingsPanel && !showHUDSettingsMenu) return false;
     showMainMenu = false;
     showHUDSettingsMenu = false;
@@ -4100,47 +3330,6 @@ static bool IsTZCycleUnavailable(const std::string& name)
 
 #pragma region - File Load/Save
 
-ordered_json LoadJsonConfig(const std::string& filename)
-{
-    if (!std::filesystem::exists(filename))
-        throw std::runtime_error("Config file not found");
-
-    std::ifstream file(filename);
-    if (!file.is_open())
-        throw std::runtime_error("Failed to open config file");
-
-    ordered_json j;
-    file >> j;
-    return j;
-}
-
-struct Keybind
-{
-    std::string name;
-    std::string key;
-    std::string extra;
-};
-
-static std::vector<Keybind> g_Keybinds;
-
-void ReadKeybindsFromJson(const ordered_json& j)
-{
-    g_Keybinds.clear();
-
-    if (!j.contains("Keybinds") || !j["Keybinds"].is_object())
-        return;
-
-    for (const auto& [name, value] : j["Keybinds"].items())
-    {
-        Keybind kb;
-        kb.name = name;
-        kb.key = value.value("Key", "");
-        kb.extra = value.value("Extra", "");
-
-        g_Keybinds.push_back(kb);
-    }
-}
-
 static std::vector<std::string> ApplyStartupCommandsFromString(const std::string& startup)
 {
     std::vector<std::string> result;
@@ -4161,12 +3350,13 @@ static std::vector<std::string> ApplyStartupCommandsFromString(const std::string
 
     result.resize(6);
 
-    automaticCommand1 = result[0];
-    automaticCommand2 = result[1];
-    automaticCommand3 = result[2];
-    automaticCommand4 = result[3];
-    automaticCommand5 = result[4];
-    automaticCommand6 = result[5];
+    s_AutomaticCommands[0] = result[0];
+    s_AutomaticCommands[1] = result[1];
+    s_AutomaticCommands[2] = result[2];
+    s_AutomaticCommands[3] = result[3];
+    s_AutomaticCommands[4] = result[4];
+    s_AutomaticCommands[5] = result[5];
+    HudCommands::Configure(s_AutomaticCommands);
 
     return result;
 }
@@ -4178,366 +3368,49 @@ static void RegisterStartupCommandsAfterEdit(const std::string& startupText)
         return;
     s_registeredStartupSnapshot = startupText;
     if (GetClientStatus() == 1)
-        QueueStartupCommandExecution(3.0f);
+        HudCommands::Configure(s_AutomaticCommands);
 }
 
-std::vector<std::string> ReadStartupCommandsFromJson(const ordered_json& j)
+static HudPreferences::BindingState& RuntimeBindings()
 {
-    std::cout << "[StartupCmd] Enter ReadStartupCommandsFromJson()\n";
-
-    if (!j.contains("Commands"))
-    {
-        std::cout << "[StartupCmd] ERROR: JSON has no 'Commands' object\n";
-        EnsureCustomCommandSlots();
-        return std::vector<std::string>(6);
-    }
-
-    const auto& cmdsObj = j["Commands"];
-
-    if (!cmdsObj.contains("Startup Commands"))
-        std::cout << "[StartupCmd] WARNING: 'Commands' has no 'Startup Commands' entry\n";
-
-    const std::string startup = cmdsObj.value("Startup Commands", "");
-    std::cout << "[StartupCmd] Raw Startup Commands string: \""
-        << startup << "\" (len=" << startup.size() << ")\n";
-
-    std::vector<std::string> result = ApplyStartupCommandsFromString(startup);
-    s_registeredStartupSnapshot = startup;
-
-    std::cout << "[StartupCmd] Parsed command count = " << result.size() << "\n";
-    std::cout << "[StartupCmd] Assigned commands:\n";
-    std::cout << "  [1] \"" << automaticCommand1 << "\"\n";
-    std::cout << "  [2] \"" << automaticCommand2 << "\"\n";
-    std::cout << "  [3] \"" << automaticCommand3 << "\"\n";
-    std::cout << "  [4] \"" << automaticCommand4 << "\"\n";
-    std::cout << "  [5] \"" << automaticCommand5 << "\"\n";
-    std::cout << "  [6] \"" << automaticCommand6 << "\"\n";
-
-    return result;
+    return HudLifetime::State<HudPreferences::BindingState>();
 }
 
-void ReadCustomCommandsFromJson(const ordered_json& j)
+static void PublishBindings()
 {
-    g_CommandHotkeys.clear();
-
-    if (!j.contains("Commands") || !j["Commands"].is_object())
-    {
-        EnsureCustomCommandSlots();
-        return;
-    }
-
-    const auto& commands = j["Commands"];
-    if (!commands.contains("Custom Commands") || !commands["Custom Commands"].is_array())
-    {
-        EnsureCustomCommandSlots();
-        return;
-    }
-
-    for (const auto& entry : commands["Custom Commands"])
-    {
-        CommandEntry ce;
-        ce.key = entry.value("Key", "");
-        ce.command = entry.value("Command", "");
-
-        g_CommandHotkeys.push_back(ce);
-    }
-
-    EnsureCustomCommandSlots();
+    RuntimeBindings().Publish({g_Hotkeys, g_StartupCommands, g_CommandHotkeys});
 }
 
-void LoadCommandsAndKeybinds(const std::string& filename)
+static void LoadCommandPreferences(const ordered_json& document)
 {
-    std::cout << "LOADKEYBINDS";
-
-
-    ordered_json j = LoadJsonConfig(filename);
-
-    ReadKeybindsFromJson(j);
-    ReadStartupCommandsFromJson(j);
-    ReadCustomCommandsFromJson(j);
-
-    g_Hotkeys.clear();
-
-    for (const auto& kb : g_Keybinds)
-    {
-        g_Hotkeys[kb.name] = { kb.key, kb.extra };
-    }
-}
-
-const Keybind* FindKeybind(const std::string& name)
-{
-    for (const auto& kb : g_Keybinds)
-    {
-        if (kb.name == name)
-            return &kb;
-    }
-    return nullptr;
-}
-
-void LoadHotkeys(const std::string& filename)
-{
-    g_Hotkeys.clear();
-    g_CommandHotkeys.clear();
-    g_StartupCommands.clear();
-
-    std::ifstream file(filename);
-    if (!file.is_open())
-        return;
-
-    json j;
-    try
-    {
-        file >> j;
-    }
-    catch (...)
-    {
-        return;
-    }
-
-    // --- Load Keybinds ---
-    if (j.contains("Keybinds") && j["Keybinds"].is_object())
-    {
-        const json& keybinds = j["Keybinds"];
-        for (auto it = keybinds.begin(); it != keybinds.end(); ++it)
-        {
-            const std::string& name = it.key();
-            const json& entry = it.value();
-
-            std::string key;
-            std::string extra;
-
-            if (entry.contains("Key") && entry["Key"].is_string())
-                key = entry["Key"].get<std::string>();
-            else
-                key = "";
-
-            if (entry.contains("Enabled") && entry["Enabled"].is_boolean())
-                extra = entry["Enabled"].get<bool>() ? "Enabled" : "Disabled";
-
-            g_Hotkeys[name] = { key, extra };
-        }
-    }
-
-    // --- Load Commands ---
-    if (j.contains("Commands") && j["Commands"].is_object())
-    {
-        const json& commands = j["Commands"];
-
-        // Startup Commands
-        if (commands.contains("Startup Commands") && commands["Startup Commands"].is_string())
-            g_StartupCommands = commands["Startup Commands"].get<std::string>();
-
-        // Custom Commands
-        if (commands.contains("Custom Commands") && commands["Custom Commands"].is_array())
-        {
-            for (const auto& cmdEntry : commands["Custom Commands"])
-            {
-                std::string key, command;
-                if (cmdEntry.contains("Key") && cmdEntry["Key"].is_string())
-                    key = cmdEntry["Key"].get<std::string>();
-                else
-                    key = "";
-
-                if (cmdEntry.contains("Command") && cmdEntry["Command"].is_string())
-                    command = cmdEntry["Command"].get<std::string>();
-
-                g_CommandHotkeys.push_back({ key, command });
-            }
-        }
-    }
-}
-
-void SaveHotkeys(const std::string& filename)
-{
-    json j;
-
-    // Load existing config if present
-    {
-        std::ifstream in(filename);
-        if (in.is_open())
-        {
-            try { in >> j; }
-            catch (...) {}
-        }
-    }
-
-    // ---------------- Keybinds ----------------
-    json& keybinds = j["Keybinds"];
-    if (!keybinds.is_object())
-        keybinds = json::object();
-
-    for (auto& [name, pair] : g_Hotkeys)
-    {
-        json& entry = keybinds[name];
-
-        if (!pair.first.empty())
-            entry["Key"] = pair.first;
-        else
-            entry["Key"] = nullptr;
-
-        if (!pair.second.empty())
-            entry["Enabled"] = (pair.second == "Enabled");
-    }
-
-    // ---------------- Commands ----------------
-    json& commands = j["Commands"];
-    if (!commands.is_object())
-        commands = json::object();
-
-    commands["Startup Commands"] = g_StartupCommands;
-
-    commands["Custom Commands"] = json::array();
-    EnsureCustomCommandSlots();
-    for (const auto& cmd : g_CommandHotkeys)
-        commands["Custom Commands"].push_back(json{ {"Key", cmd.key}, {"Command", cmd.command} });
-
-    // ---------------- Write file ----------------
-    std::ofstream out(filename);
-    if (!out.is_open())
-        return;
-
-    out << std::setw(4) << j << std::endl;
+    auto bindings = HudPreferences::LoadBindings(document);
+    g_Hotkeys = std::move(bindings.hotkeys);
+    g_CommandHotkeys = std::move(bindings.commands);
+    RegisterStartupCommands(bindings.startup);
+    PublishBindings();
 }
 
 // Returns the app-root "My Filters" directory (used for filter list and imports). May not exist yet.
 static std::string GetModFiltersDir()
 {
-    std::string appRoot = GetExecutableDir();
+    std::string appRoot = HudSounds::ExecutableDirectory();
     if (appRoot.empty()) return "";
-    return (std::filesystem::path(appRoot) / "My Filters").string();
+    return LootFilterLibrary::Utf8(std::filesystem::u8path(appRoot) / "My Filters");
 }
 
 // Keep discovery and application on the same modern/legacy search paths.
 static std::vector<std::filesystem::path> GetModFilterDirectories()
 {
-    return LootFilterLibrary::Directories(GetExecutableDir(), GetModName());
-}
-
-// Returns the first existing sounds directory under a mod data folder.
-// Prefers <folder>/Sounds, then the legacy <folder>/filters/sounds path.
-// Checks the .mpq data path, then the extracted data path, then a lowercase folder name.
-static std::string FindModSoundsDir(const std::string& dataFolder)
-{
-    std::string modName = GetModName();
-    if (modName.empty() || dataFolder.empty()) return "";
-
-    auto existsDir = [](const std::filesystem::path& p) {
-        std::error_code ec;
-        return std::filesystem::exists(p, ec) && std::filesystem::is_directory(p, ec);
-    };
-
-    auto tryFolder = [&](const std::string& folder) -> std::string {
-        std::filesystem::path exe(GetExecutableDir());
-        const std::filesystem::path bases[] = {
-            exe / "Mods" / modName / (modName + ".mpq") / "data" / folder,
-            exe / "Mods" / modName / "data" / folder
-        };
-        const char* relative[] = { "Sounds", "sounds", "filters/Sounds", "filters/sounds" };
-        for (const char* rel : relative)
-        {
-            for (const auto& base : bases)
-            {
-                std::filesystem::path p = base / rel;
-                if (existsDir(p))
-                    return p.string();
-            }
-        }
-        return "";
-    };
-
-    std::string found = tryFolder(dataFolder);
-    if (!found.empty()) return found;
-
-    std::string lower = dataFolder;
-    std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) { return (char)std::tolower(c); });
-    if (lower != dataFolder)
-        return tryFolder(lower);
-    return "";
-}
-
-// Pandemonium/Sounds is the default mod sounds folder. May not exist.
-static std::string GetModPandemoniumSoundsDir()
-{
-    return FindModSoundsDir("Pandemonium");
-}
-
-// D2RLAN/Sounds (or legacy D2RLAN/filters/sounds). May not exist.
-static std::string GetModD2RLANSoundsDir()
-{
-    return FindModSoundsDir("D2RLAN");
-}
-
-// Merge user imports, Pandemonium packages and legacy D2RLAN packages.
-static std::vector<std::string> GetModFilterNames()
-{
-    return LootFilterLibrary::Names(GetModFilterDirectories());
-}
-
-// Returns the app-root "My Filters/sounds" directory. May not exist yet.
-static std::string GetModSoundsDir()
-{
-    std::string filtersDir = GetModFiltersDir();
-    if (filtersDir.empty()) return "";
-    return (std::filesystem::path(filtersDir) / "sounds").string();
-}
-
-static bool IsSoundExtension(const std::filesystem::path& p);
-
-// Lists sound files from My Filters/sounds, Pandemonium/Sounds, and D2RLAN/Sounds.
-// Same filename keeps the earlier source: user imports, then Pandemonium (default), then D2RLAN.
-// Returns (fullPath, filename) for each.
-static std::vector<std::pair<std::string, std::string>> GetSoundFilesFromBothLocations()
-{
-    std::vector<std::pair<std::string, std::string>> out;
-    std::set<std::string> seen;
-    std::error_code ec;
-    auto addFromDir = [&](const std::string& dir) {
-        if (dir.empty() || !std::filesystem::exists(dir, ec)) return;
-        for (const auto& entry : std::filesystem::directory_iterator(dir, std::filesystem::directory_options::skip_permission_denied, ec))
-        {
-            if (!entry.is_regular_file(ec)) continue;
-            if (!IsSoundExtension(entry.path())) continue;
-            std::string name = entry.path().filename().string();
-            std::string key = name;
-            std::transform(key.begin(), key.end(), key.begin(), [](unsigned char c) { return (char)std::tolower(c); });
-            if (!seen.insert(key).second) continue;
-            out.push_back({ entry.path().string(), name });
-        }
-        };
-    addFromDir(GetModSoundsDir());
-    addFromDir(GetModPandemoniumSoundsDir());
-    addFromDir(GetModD2RLANSoundsDir());
-    std::sort(out.begin(), out.end(), [](const auto& a, const auto& b) { return a.second < b.second; });
-    return out;
+    return LootFilterLibrary::Directories(std::filesystem::u8path(HudSounds::ExecutableDirectory()), modName);
 }
 
 // Display name for filter list; internal name is file/dir name.
 static std::string GetFilterDisplayName(const std::string& internalName)
 {
     if (internalName == "lootfilter_config_blank") return "No Filter";
-    if (internalName == "lootfilter_default") return GetModName() + "'s Default Filter";
-    if (internalName == "override_rules") return GetModName() + "'s Override Rules";
+    if (internalName == "lootfilter_default") return modName + "'s Default Filter";
+    if (internalName == "override_rules") return modName + "'s Override Rules";
     return internalName;
-}
-
-// Ordered list: all filters except special two (sorted), then override_rules, then lootfilter_config_blank.
-static std::vector<std::string> GetOrderedFilterList()
-{
-    std::vector<std::string> raw = GetModFilterNames();
-    std::vector<std::string> out;
-    std::vector<std::string> tail;
-    for (const auto& name : raw)
-    {
-        if (name == "lootfilter_config_blank")
-            tail.push_back(name);
-        else if (name == "override_rules")
-            tail.insert(tail.begin(), name);
-        else
-            out.push_back(name);
-    }
-    std::sort(out.begin(), out.end());
-    for (const auto& t : tail) out.push_back(t);
-    return out;
 }
 
 // Path to lootfilter_config.lua (same directory as lootfilter.lua / lootFile).
@@ -4561,140 +3434,14 @@ static void OpenInShell(const std::string& pathOrUrl)
     ShellExecuteA(nullptr, "open", pathOrUrl.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
 }
 
-// Play sound file using Windows API (WAV: PlaySound; MP3: MCI; FLAC: fallback to default app).
 static void PlaySoundFile(const std::string& path)
 {
-    if (path.empty()) return;
-    std::string ext = std::filesystem::path(path).extension().string();
-    for (auto& c : ext) c = (char)std::tolower((unsigned char)c);
-    if (ext == ".wav")
-    {
-        PlaySoundA(path.c_str(), nullptr, SND_FILENAME | SND_ASYNC | SND_NODEFAULT);
-        return;
-    }
-    if (ext == ".mp3")
-    {
-        mciSendStringA("close snd", nullptr, 0, nullptr);
-        std::string cmd = "open \"" + path + "\" type mpegvideo alias snd";
-        if (mciSendStringA(cmd.c_str(), nullptr, 0, nullptr) == 0)
-            mciSendStringA("play snd", nullptr, 0, nullptr);
-        return;
-    }
-    if (ext == ".flac")
-    {
-        OpenInShell(path);
-        return;
-    }
+    if (!HudSounds::PlayFile(path)) HudSounds::Beep();
 }
 
 bool SaveFullGrailConfig(const std::string& userPath, bool isAutoBackup);
-
-#pragma region Chat Sounds
-
-static bool IsChatSoundsEnabled()
-{
-    return d2rHUDConfig.ChatSounds;
-}
-
-static std::atomic<bool> g_chatSoundPathCacheDirty{ true };
-static std::string g_cachedChatSoundPlayPath;
-
-static void InvalidateChatSoundPathCache()
-{
-    g_chatSoundPathCacheDirty.store(true, std::memory_order_release);
-}
-
-static std::string ResolveChatNotificationSoundPath()
-{
-    if (!g_chatSoundPathCacheDirty.load(std::memory_order_acquire))
-        return g_cachedChatSoundPlayPath;
-
-    g_chatSoundPathCacheDirty.store(false, std::memory_order_release);
-    g_cachedChatSoundPlayPath.clear();
-
-    try
-    {
-        if (!d2rHUDConfig.ChatSoundPath.empty() && std::filesystem::exists(d2rHUDConfig.ChatSoundPath))
-            g_cachedChatSoundPlayPath = d2rHUDConfig.ChatSoundPath;
-        else
-        {
-            const auto soundFiles = GetSoundFilesFromBothLocations();
-            if (!soundFiles.empty() && std::filesystem::exists(soundFiles.front().first))
-                g_cachedChatSoundPlayPath = soundFiles.front().first;
-        }
-    }
-    catch (...)
-    {
-        g_cachedChatSoundPlayPath.clear();
-    }
-
-    return g_cachedChatSoundPlayPath;
-}
-
-static void PlayChatNotificationSoundOnWorker(std::string path)
-{
-    static auto lastPlay = std::chrono::steady_clock::time_point{};
-    const auto now = std::chrono::steady_clock::now();
-    if (now - lastPlay < std::chrono::milliseconds(350))
-        return;
-    lastPlay = now;
-
-    try
-    {
-        if (!path.empty())
-            PlaySoundFile(path);
-        else
-            MessageBeep(MB_OK);
-    }
-    catch (...)
-    {
-        MessageBeep(MB_OK);
-    }
-}
-
-static void PlayChatNotificationSound()
-{
-    PlayChatNotificationSoundOnWorker(ResolveChatNotificationSoundPath());
-}
-
-static void ProcessPendingChatNotificationSound()
-{
-    if (InterlockedExchange(&g_hasPendingChatSound, 0) == 0)
-        return;
-    if (!IsChatSoundsEnabled() || !IsPlayerInGame())
-        return;
-
-    RefreshLocalChatFilterNameCache();
-
-    char sender[64] = {};
-    strncpy_s(sender, g_pendingChatSoundSender, _TRUNCATE);
-
-    if (InterlockedExchange(&g_pendingChatSoundHasUnit, 0) != 0)
-    {
-        if (IsPendingChatFromLocalUnit(g_pendingChatSoundUnitType, g_pendingChatSoundUnitId))
-            return;
-    }
-
-    if (IsLikelySystemFeedbackMessage(g_pendingChatSoundMessage))
-        return;
-
-    if (!IsChatSenderOtherPlayer(sender))
-        return;
-
-    PlayChatNotificationSound();
-}
-
-static void EnsureChatManagerHook();
-
-static void UpdateChatSoundsFeature()
-{
-    if (IsChatSoundsEnabled())
-        EnsureChatManagerHook();
-}
-
+static void InvalidateChatSoundPathCache() { HudSounds::Invalidate(); }
 static bool DrawChatSoundSelector(float menuScale);
-
-#pragma endregion
 
 static bool CopyModFilterToActive(const std::string& filterName);
 void LoadLootFilterConfig(const std::string& path);
@@ -4763,14 +3510,6 @@ static void OpenImportSoundsPathInput()
     s_importSoundsPathError.clear();
 }
 
-static bool IsSoundExtension(const std::filesystem::path& p)
-{
-    std::string ext = p.extension().string();
-    if (ext.empty()) return false;
-    for (auto& c : ext) c = (char)std::tolower((unsigned char)c);
-    return ext == ".mp3" || ext == ".flac" || ext == ".wav";
-}
-
 static void DrawImportSoundsPathRow()
 {
     if (!s_showImportSoundsPathInput) return;
@@ -4796,39 +3535,12 @@ static void DrawImportSoundsPathRow()
     }
     if (doImport)
     {
-        s_importSoundsPathError.clear();
-        std::string pathTrim = TrimPathPaste(s_importSoundsPathBuf);
-        if (pathTrim.empty())
-            s_importSoundsPathError = "Enter a path.";
-        else
-        {
-            std::string destDir = GetModSoundsDir();
-            if (destDir.empty())
-                s_importSoundsPathError = "My Filters/sounds path not found.";
-            else
-            {
-                std::filesystem::path srcDir(pathTrim);
-                std::error_code ec;
-                if (!std::filesystem::exists(srcDir, ec) || !std::filesystem::is_directory(srcDir, ec))
-                    s_importSoundsPathError = "Folder not found.";
-                else
-                {
-                    std::filesystem::create_directories(destDir, ec);
-                    int copied = 0;
-                    for (const auto& entry : std::filesystem::directory_iterator(srcDir, std::filesystem::directory_options::skip_permission_denied, ec))
-                    {
-                        if (!entry.is_regular_file(ec)) continue;
-                        if (!IsSoundExtension(entry.path())) continue;
-                        std::filesystem::path dest = std::filesystem::path(destDir) / entry.path().filename();
-                        std::filesystem::copy_file(entry.path(), dest, std::filesystem::copy_options::overwrite_existing, ec);
-                        if (!ec) copied++;
-                    }
-                    s_showImportSoundsPathInput = false;
-                    s_importSoundsPathBuf[0] = '\0';
-                    if (copied == 0)
-                        s_importSoundsPathError = "No .mp3, .flac or .wav files found in folder.";
-                }
-            }
+        const auto path = TrimPathPaste(s_importSoundsPathBuf);
+        const auto result = path.empty() ? HudSounds::ImportResult{0, "Enter a path."} : HudSounds::Import(path);
+        s_importSoundsPathError = result.error;
+        if (result.error.empty()) {
+            s_showImportSoundsPathInput = false;
+            s_importSoundsPathBuf[0] = '\0';
         }
     }
     if (!s_importSoundsPathError.empty())
@@ -4858,7 +3570,8 @@ static bool DrawChatSoundSelector(float menuScale)
     if (!d2rHUDConfig.ChatSounds)
         ImGui::BeginDisabled();
 
-    const auto soundFiles = GetSoundFilesFromBothLocations();
+    const auto soundSnapshot = HudSounds::Catalog();
+    const auto& soundFiles = *soundSnapshot;
     const int kAutoIdx = 0;
     const int kCustomIdx = 1 + static_cast<int>(soundFiles.size());
 
@@ -4957,7 +3670,7 @@ static bool DrawChatSoundSelector(float menuScale)
         else if (currentIdx > 0 && currentIdx <= static_cast<int>(soundFiles.size()))
             path = soundFiles[static_cast<size_t>(currentIdx - 1)].first;
 
-        if (!path.empty() && std::filesystem::exists(path))
+        if (!path.empty())
             PlaySoundFile(path);
         else
             MessageBeep(MB_OK);
@@ -5036,7 +3749,7 @@ static void DrawImportFilterPathRow()
                 s_importPathError = "My Filters path not found.";
             else
             {
-                std::filesystem::path src(pathTrim);
+                std::filesystem::path src=std::filesystem::u8path(pathTrim);
                 std::error_code ec;
                 if (!std::filesystem::exists(src, ec) || !std::filesystem::is_regular_file(src, ec))
                     s_importPathError = "File not found.";
@@ -5044,14 +3757,15 @@ static void DrawImportFilterPathRow()
                     s_importPathError = "File must be .lua";
                 else
                 {
-                    std::filesystem::create_directories(dir, ec);
-                    std::filesystem::path dest = std::filesystem::path(dir) / src.filename();
+                    std::filesystem::create_directories(std::filesystem::u8path(dir), ec);
+                    std::filesystem::path dest = std::filesystem::u8path(dir) / src.filename();
                     std::filesystem::copy_file(src, dest, std::filesystem::copy_options::overwrite_existing, ec);
                     if (ec)
                         s_importPathError = "Copy failed.";
                     else
                     {
-                        std::string filterName = src.stem().string();
+                        HudFilterCatalog::Runtime().Invalidate();
+                        std::string filterName = LootFilterLibrary::Utf8(src.stem());
                         if (CopyModFilterToActive(filterName))
                         {
                             s_activeFilterInternalName = filterName;
@@ -5082,103 +3796,6 @@ static void DrawImportFilterPathRow()
         HudText::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "%s", s_importPathError.c_str());
     ImGui::Separator();
     ImGui::Spacing();
-}
-
-// Returns true if version string a is strictly newer than b (e.g. "1.4.2" > "1.4.1").
-static bool IsVersionNewer(const std::string& a, const std::string& b)
-{
-    auto parse = [](const std::string& s) -> std::vector<int> {
-        std::vector<int> parts;
-        size_t i = 0;
-        while (i < s.size())
-        {
-            while (i < s.size() && (s[i] == '.' || !std::isdigit(static_cast<unsigned char>(s[i])))) i++;
-            if (i >= s.size()) break;
-            int n = 0;
-            while (i < s.size() && std::isdigit(static_cast<unsigned char>(s[i])))
-                n = n * 10 + (s[i++] - '0');
-            parts.push_back(n);
-        }
-        return parts;
-        };
-    std::vector<int> va = parse(a), vb = parse(b);
-    size_t n = (va.size() >= vb.size()) ? va.size() : vb.size();
-    for (size_t i = 0; i < n; i++)
-    {
-        int na = (i < va.size()) ? va[i] : 0;
-        int nb = (i < vb.size()) ? vb[i] : 0;
-        if (na != nb) return na > nb;
-    }
-    return false;
-}
-
-static const char* s_lootFilterUpdateUrl = "https://github.com/locbones/D2RLAN-Filters/raw/refs/heads/main/lootfilter.lua";
-
-static void LootFilterUpdateThread()
-{
-    std::string destPath = std::filesystem::path(lootFile).is_relative()
-        ? (std::filesystem::current_path() / lootFile).string()
-        : lootFile;
-    std::string tempPath = destPath + ".tmp";
-    HRESULT hr = URLDownloadToFileA(nullptr, s_lootFilterUpdateUrl, tempPath.c_str(), 0, nullptr);
-    if (FAILED(hr))
-    {
-        s_lootFilterUpdateStatusTime = std::chrono::steady_clock::now();
-        s_lootFilterUpdateStatus = "Update failed (download error)";
-        s_lootFilterUpdating = false;
-        return;
-    }
-    std::ifstream in(tempPath);
-    if (!in)
-    {
-        s_lootFilterUpdateStatusTime = std::chrono::steady_clock::now();
-        s_lootFilterUpdateStatus = "Update failed (could not read)";
-        std::filesystem::remove(tempPath);
-        s_lootFilterUpdating = false;
-        return;
-    }
-    std::stringstream buf;
-    buf << in.rdbuf();
-    in.close();
-    std::filesystem::remove(tempPath);
-    std::string content = buf.str();
-    std::regex versionRegex(R"delim(local\s+version\s*=\s*"([^"]*)")delim");
-    std::smatch match;
-    std::string remoteVersion;
-    for (std::sregex_iterator it(content.begin(), content.end(), versionRegex), end; it != end; ++it)
-    {
-        remoteVersion = (*it)[1].str();
-        break;
-    }
-    if (remoteVersion.empty())
-    {
-        s_lootFilterUpdateStatusTime = std::chrono::steady_clock::now();
-        s_lootFilterUpdateStatus = "Update failed (no version in file)";
-        s_lootFilterUpdating = false;
-        return;
-    }
-    std::string currentVersion = g_LootFilterHeader.Version;
-    if (!currentVersion.empty() && !IsVersionNewer(remoteVersion, currentVersion))
-    {
-        s_lootFilterUpdateStatusTime = std::chrono::steady_clock::now();
-        s_lootFilterUpdateStatus = "No update available";
-        s_lootFilterUpdating = false;
-        return;
-    }
-    std::ofstream out(destPath);
-    if (!out || !out.write(content.data(), content.size()))
-    {
-        s_lootFilterUpdateStatusTime = std::chrono::steady_clock::now();
-        s_lootFilterUpdateStatus = "Update failed (could not write)";
-        s_lootFilterUpdating = false;
-        return;
-    }
-    out.close();
-    g_LootFilterHeader.Version = remoteVersion;
-    s_lootFilterNewVersion = remoteVersion;
-    s_lootFilterUpdateStatusTime = std::chrono::steady_clock::now();
-    s_lootFilterUpdateStatus = "Updated to " + remoteVersion;
-    s_lootFilterUpdating = false;
 }
 
 // Resolve from the same library roots used by the dropdown, user imports first.
@@ -5274,10 +3891,13 @@ static void DrawCreateFilterPopup()
                 std::string myFiltersDir = GetModFiltersDir();
                 if (!myFiltersDir.empty())
                 {
-                    std::filesystem::create_directories(myFiltersDir, ec);
-                    std::string configPath = (std::filesystem::path(myFiltersDir) / (filterName + "_config.lua")).string();
+                    std::filesystem::create_directories(std::filesystem::u8path(myFiltersDir), ec);
+                    auto configPath = std::filesystem::u8path(myFiltersDir) / std::filesystem::u8path(filterName + "_config.lua");
                     std::ofstream out2(configPath);
-                    if (out2) out2.write(content.data(), content.size());
+                    if (out2 && out2.write(content.data(), content.size())) {
+                        out2.close();
+                        if (out2) HudFilterCatalog::Runtime().Invalidate();
+                    }
                 }
                 s_activeFilterInternalName = filterName;
                 s_pendingFilter.clear();
@@ -5301,32 +3921,29 @@ static void DrawCreateFilterPopup()
 
 void LoadLootFilterLogic(const std::string& path)
 {
-    auto tryLoadVersion = [](std::ifstream& file) {
-        std::string line;
-        std::regex versionRegex(R"delim(local\s+version\s*=\s*"([^"]*)")delim");
-        while (std::getline(file, line))
-        {
-            std::smatch match;
-            if (std::regex_search(line, match, versionRegex))
-            {
-                g_LootFilterHeader.Version = match[1].str();
-                return true;
-            }
-        }
-        return false;
-        };
+    std::string source;
+    g_LootFilterHeader.Version = LootFilterConfig::Read(path, source) ? HudFilterUpdate::Version(source) : std::string{};
+    if (g_LootFilterHeader.Version.empty() && path != lootFile && LootFilterConfig::Read(lootFile, source))
+        g_LootFilterHeader.Version = HudFilterUpdate::Version(source);
+}
 
-    std::ifstream file(path);
-    if (file.is_open() && tryLoadVersion(file))
-        return;
-    file.close();
-    g_LootFilterHeader.Version.clear();
-    if (path != lootFile)
-    {
-        file.open(lootFile);
-        if (file.is_open())
-            tryLoadVersion(file);
+// The worker owns all download/file work; only this render-thread poll publishes
+// UI metadata. Poll even with the loot page closed so no task is abandoned.
+static void PollLootFilterUpdate()
+{
+    if (auto result = HudFilterUpdate::Runtime().Poll()) {
+        s_lootFilterUpdateStatus = std::move(result->message);
+        s_lootFilterUpdateOutcome = result->outcome;
+        s_lootFilterUpdateStatusTime = std::chrono::steady_clock::now();
+        if (result->outcome == HudFilterUpdate::Outcome::Updated) {
+            g_LootFilterHeader.Version = std::move(result->version);
+            ++g_LootConfigRevision; // Refresh preview/simulator engine caches.
+        }
     }
+    if (!s_lootFilterUpdateStatus.empty() && s_lootFilterUpdateOutcome != HudFilterUpdate::Outcome::Failed &&
+        s_lootFilterUpdateOutcome != HudFilterUpdate::Outcome::Conflict &&
+        std::chrono::steady_clock::now() - s_lootFilterUpdateStatusTime >= std::chrono::seconds(4))
+        s_lootFilterUpdateStatus.clear();
 }
 
 static void ApplyUITheme(const std::string& themeName);  // implemented later
@@ -5337,99 +3954,57 @@ static bool ShouldDrawFrameBgImage();                   // implemented later
 static void BeginFrameBgImageRegion();                  // implemented later
 static void EndFrameBgImageRegion();                    // implemented later
 
+static void ApplyFeaturePreferences()
+{
+    Inspect::SetEnabled(d2rHUDConfig.Inspect);
+    Inspect::SetAppearance({d2rHUDConfig.InspectLabels, d2rHUDConfig.InspectIconHeight, d2rHUDConfig.InspectLabelSize});
+    settings.sunderedMonUMods = d2rHUDConfig.SunderedMonUMods;
+    settings.SunderValue = 99;
+    SunderSystem::SetEnabled(d2rHUDConfig.SunderedMonUMods);
+    CubeVisual::SetMultipleUseOutputs(d2rHUDConfig.MultipleUseitemOutputs);
+    CubeVisual::SetMultipleUseInputs(d2rHUDConfig.MultipleUseitemInputs);
+    CubeVisual::SetExtendedConditions(d2rHUDConfig.ExtendedCubeConditions);
+    CubeVisual::SetBulkOutputs(d2rHUDConfig.BulkCubeOutputs);
+    CubeVisual::SetExtendedOutputs(d2rHUDConfig.ExtendedCubeOutputs);
+    CubeMap::SetSurvivorsEnabled(d2rHUDConfig.SurvivorArena);
+    ExtendedActs::SetRequested(d2rHUDConfig.ActVI);
+    SummonPersistence::SetEnabled(d2rHUDConfig.PersistentSummons);
+    MercSeller::SetEnabled(d2rHUDConfig.MercSellerUnlock);
+    MercIcons::SetEnabled(d2rHUDConfig.MercIconsFix);
+    D3Whirlwind::SetEnabled(d2rHUDConfig.D3StyleWhirlwind);
+    WidescreenBars::SetEnabled(d2rHUDConfig.NoWidescreenBars);
+    DynamicAutomap::Configure(d2rHUDConfig.DynamicAutomap, d2rHUDConfig.DynamicAutomapInterval);
+    D3Whirlwind::SetRightClickPickupDisabled(d2rHUDConfig.DisableRightClickItemPickup);
+    LegacyTransmog::SetQuantityRightClicks(d2rHUDConfig.QuantityRightClicks);
+    LegacyTransmog::SetMinimalistQuantityPopup(d2rHUDConfig.MinimalistQuantityPopup);
+}
+
 void LoadD2RHUDConfig(const std::string& path)
 {
-    const bool defaultCubeRecipes = modName == "RMD-MP";
-    auto loadCubeOptions = [&](const nlohmann::json& options) {
-        d2rHUDConfig.MultipleUseitemOutputs = options.value("MultipleUseitemOutputs", defaultCubeRecipes);
-        d2rHUDConfig.MultipleUseitemInputs = options.value("MultipleUseitemInputs", defaultCubeRecipes);
-        d2rHUDConfig.ExtendedCubeConditions = options.value("ExtendedCubeConditions", defaultCubeRecipes);
-        CubeVisual::SetMultipleUseOutputs(d2rHUDConfig.MultipleUseitemOutputs);
-        CubeVisual::SetMultipleUseInputs(d2rHUDConfig.MultipleUseitemInputs);
-        CubeVisual::SetExtendedConditions(d2rHUDConfig.ExtendedCubeConditions);
-    };
-    // Apply mod defaults even when this player has no preferences file yet.
-    loadCubeOptions(nlohmann::json::object());
-    std::string cleanedJson = CleanJsonFile(path);
-    if (cleanedJson.empty())
-    {
-        std::cerr << "Failed to read or clean D2RHUD config file: " << path << std::endl;
+    HudSounds::Configure(HudSounds::ExecutableDirectory(), modName);
+    HudFilterCatalog::Runtime().Configure(GetModFilterDirectories());
+    ordered_json document = ordered_json::object();
+    const auto result = HudConfig::Read(std::filesystem::u8path(path), document);
+    // Missing or malformed preferences still receive the established mod defaults.
+    HudPreferences::Load(d2rHUDConfig, document, modName == "RMD-MP");
+    ApplyFeaturePreferences();
+    if (!result) {
+        std::cerr << "HUD configuration: " << result.error << std::endl;
+        LoadCommandPreferences(document);
+        EnsureCustomCommandSlots();
         return;
     }
-
     try
     {
-        nlohmann::json j = nlohmann::json::parse(cleanedJson);
-
-        d2rHUDConfig.MonsterStatsDisplay = j.value("MonsterStatsDisplay", d2rHUDConfig.MonsterStatsDisplay);
-        //d2rHUDConfig.ChannelColor = j.value("ChannelColor", d2rHUDConfig.ChannelColor);
-        //d2rHUDConfig.PlayerNameColor = j.value("PlayerNameColor", d2rHUDConfig.PlayerNameColor);
-        //d2rHUDConfig.MessageColor = j.value("MessageColor", d2rHUDConfig.MessageColor);
-        d2rHUDConfig.HPRolloverMods = j.value("HPRolloverMods", d2rHUDConfig.HPRolloverMods);
-        d2rHUDConfig.HPRolloverPercent = j.value("HPRollover%", d2rHUDConfig.HPRolloverPercent);
-        d2rHUDConfig.HPRolloverDifficulty = j.value("HPRolloverDifficulty", d2rHUDConfig.HPRolloverDifficulty);
-        d2rHUDConfig.SunderedMonUMods = j.value("SunderedMonUMods", d2rHUDConfig.SunderedMonUMods);
-        d2rHUDConfig.SunderValue = 99;
-        settings.sunderedMonUMods = d2rHUDConfig.SunderedMonUMods;
-        settings.SunderValue = 99;
-        SunderSystem::SetEnabled(d2rHUDConfig.SunderedMonUMods);
-        d2rHUDConfig.MinionEquality = j.value("MinionEquality", d2rHUDConfig.MinionEquality);
-        d2rHUDConfig.PersistentSummons = j.value("PersistentSummons", false);
-        d2rHUDConfig.ActVI = j.value("ActVI", false);
-        loadCubeOptions(j);
-        d2rHUDConfig.SurvivorArena = j.value("SurvivorArena", false);
-        CubeMap::SetSurvivorsEnabled(d2rHUDConfig.SurvivorArena);
-        ExtendedActs::SetRequested(d2rHUDConfig.ActVI);
-        SummonPersistence::SetEnabled(d2rHUDConfig.PersistentSummons);
-        d2rHUDConfig.D3StyleWhirlwind = j.value("D3StyleWhirlwind", false);
-        D3Whirlwind::SetEnabled(d2rHUDConfig.D3StyleWhirlwind);
-        d2rHUDConfig.NoWidescreenBars = j.value("NoWidescreenBars", false);
-        WidescreenBars::SetEnabled(d2rHUDConfig.NoWidescreenBars);
-        d2rHUDConfig.QuantityRightClicks = j.value("QuantityRightClicks", true);
-        d2rHUDConfig.DisableRightClickItemPickup = j.value("DisableRightClickItemPickup", false);
-        D3Whirlwind::SetRightClickPickupDisabled(d2rHUDConfig.DisableRightClickItemPickup);
-        LegacyTransmog::SetQuantityRightClicks(d2rHUDConfig.QuantityRightClicks);
-        d2rHUDConfig.MinimalistQuantityPopup = j.value("MinimalistQuantityPopup", false);
-        LegacyTransmog::SetMinimalistQuantityPopup(d2rHUDConfig.MinimalistQuantityPopup);
-        d2rHUDConfig.GambleCostControl = j.value("GambleCostControl", d2rHUDConfig.GambleCostControl);
-        d2rHUDConfig.CombatLog = j.value("CombatLog", d2rHUDConfig.CombatLog);
-        d2rHUDConfig.TransmogVisuals = j.value("TransmogVisuals", d2rHUDConfig.TransmogVisuals);
-        d2rHUDConfig.ExtendedItemcodes = j.value("ExtendedItemcodes", d2rHUDConfig.ExtendedItemcodes);
-        d2rHUDConfig.FloatingDamage = j.value("FloatingDamage", d2rHUDConfig.FloatingDamage);
+        LoadCommandPreferences(document);
+        nlohmann::json j = document;
         FloatingDamage::LoadFromJson(j);
         BuffIcons::LoadFromJson(j);
         StatRanges::LoadFromJson(j);
         d2rHUDConfig.FloatingDamage = FloatingDamage::IsEnabled();
         settings.FloatingDamage = d2rHUDConfig.FloatingDamage;
         cachedSettings.FloatingDamage = d2rHUDConfig.FloatingDamage;
-        d2rHUDConfig.ChatSounds = j.value("ChatSounds", d2rHUDConfig.ChatSounds);
-        d2rHUDConfig.ChatSoundPath = j.value("ChatSoundPath", d2rHUDConfig.ChatSoundPath);
         InvalidateChatSoundPathCache();
-
-        if (j.contains("DLLsToLoad"))
-            d2rHUDConfig.DLLsToLoad = j["DLLsToLoad"].get<std::vector<std::string>>();
-
-        // Camera presets (optional)
-        if (j.contains("CameraPresets") && j["CameraPresets"].is_array())
-        {
-            auto& arr = j["CameraPresets"];
-            size_t count = std::min<size_t>(arr.size(), d2rHUDConfig.CameraPresets.size());
-            for (size_t i = 0; i < count; ++i)
-            {
-                const auto& pj = arr[i];
-                CameraPreset preset;
-                preset.Name = pj.value("Name", std::string{});
-                preset.Pitch = pj.value("Pitch", 0.0f);
-                preset.Height = pj.value("Height", 0.0f);
-                preset.Pan = pj.value("Pan", 0.0f);
-                preset.Roll = pj.value("Roll", 0.0f);
-                preset.Zoom = pj.value("Zoom", 0.0f);
-                preset.HasValues = pj.value("HasValues", true);
-                d2rHUDConfig.CameraPresets[i] = preset;
-            }
-        }
-        d2rHUDConfig.CameraAutoloadLastPreset = j.value("CameraAutoloadLastPreset", d2rHUDConfig.CameraAutoloadLastPreset);
-        d2rHUDConfig.CameraLastPresetIndex = j.value("CameraLastPresetIndex", d2rHUDConfig.CameraLastPresetIndex);
 
         if (j.contains("UIThemePresets") && j["UIThemePresets"].is_array())
         {
@@ -5645,233 +4220,89 @@ bool SaveFullGrailConfig(const std::string& userPath, bool isAutoBackup)
 {
     try
     {
-        ordered_json j;
-
-        // --- Determine file path ---
-        std::filesystem::path path = userPath.empty() ? (std::filesystem::current_path() / configFilePath) : userPath;
-        if (std::filesystem::is_directory(path)) path /= configFilePath;
-        auto parent = path.parent_path();
-        if (!parent.empty()) std::filesystem::create_directories(parent);
-
-        // --- Load existing file if it exists ---
-        ordered_json existing;
-        if (std::filesystem::exists(path))
-        {
-            std::ifstream in(path);
-            if (in.is_open())
-            {
-                in >> existing;
-                in.close();
+        PublishBindings();
+        auto path = userPath.empty() ? (std::filesystem::current_path() / std::filesystem::u8path(configFilePath))
+                                    : std::filesystem::u8path(userPath);
+        if (std::filesystem::is_directory(path)) path /= std::filesystem::u8path(configFilePath);
+        const auto result = HudConfig::Update(path, [&](ordered_json& j) {
+            if (grailLoaded || !g_ExcludedGrailItems.empty()) {
+                j["Excluded Grail Items"] = ordered_json::array();
+                for (const auto& item : g_ExcludedGrailItems) j["Excluded Grail Items"].push_back(item);
             }
-        }
 
-        if (!g_ExcludedGrailItems.empty())
-        {
-            j["Excluded Grail Items"] = ordered_json::array();
-            for (const auto& x : g_ExcludedGrailItems)
-                j["Excluded Grail Items"].push_back(x);
-        }
-        else if (existing.contains("Excluded Grail Items"))
-        {
-            j["Excluded Grail Items"] = existing["Excluded Grail Items"];
-        }
+            HudPreferences::Save(d2rHUDConfig, j);
+            FloatingDamage::SetEnabled(d2rHUDConfig.FloatingDamage);
+            FloatingDamage::SaveToJson(j);
+            BuffIcons::SaveToJson(j);
+            StatRanges::SaveToJson(j);
+            if (!j["Options"].is_object()) j["Options"] = ordered_json::object();
+            j["Options"].update(ordered_json{
+                {"Base Codes", showBaseCodes},
+                {"Base Names", showBaseNames},
+                {"Collected", showCollected},
+                {"Excluded", showExcluded},
+                {"Duplicates", showDuplicates}
+            });
+            if (!j["AutoBackups"].is_object()) j["AutoBackups"] = ordered_json::object();
+            j["AutoBackups"].update(ordered_json{
+                {"Interval", backupIntervalMinutes},
+                {"On", autoBackups},
+                {"Overwrite", overwriteOldBackup},
+                {"Path", backupPath},
+                {"Timestamps", backupWithTimestamps}
+            });
 
-        // --- Other sections (always save) ---
-        j["MonsterStatsDisplay"] = d2rHUDConfig.MonsterStatsDisplay;
-        j["Channel Color"] = d2rHUDConfig.ChannelColor;
-        j["Player Name Color"] = d2rHUDConfig.PlayerNameColor;
-        j["Message Color"] = d2rHUDConfig.MessageColor;
-        j["HPRolloverMods"] = d2rHUDConfig.HPRolloverMods;
-        j["HPRollover%"] = d2rHUDConfig.HPRolloverPercent;
-        j["HPRolloverDifficulty"] = d2rHUDConfig.HPRolloverDifficulty;
-        j["SunderedMonUMods"] = d2rHUDConfig.SunderedMonUMods;
-        j["SunderValue"] = 99;
-        j["MinionEquality"] = d2rHUDConfig.MinionEquality;
-        j["PersistentSummons"] = d2rHUDConfig.PersistentSummons;
-        j["ActVI"] = d2rHUDConfig.ActVI;
-        j["MultipleUseitemOutputs"]=d2rHUDConfig.MultipleUseitemOutputs;
-        j["MultipleUseitemInputs"]=d2rHUDConfig.MultipleUseitemInputs;
-        j["ExtendedCubeConditions"] = d2rHUDConfig.ExtendedCubeConditions;
-        j["SurvivorArena"] = d2rHUDConfig.SurvivorArena;
-        j["D3StyleWhirlwind"] = d2rHUDConfig.D3StyleWhirlwind;
-        j["NoWidescreenBars"] = d2rHUDConfig.NoWidescreenBars;
-        j["QuantityRightClicks"] = d2rHUDConfig.QuantityRightClicks;
-        j["DisableRightClickItemPickup"] = d2rHUDConfig.DisableRightClickItemPickup;
-        j["MinimalistQuantityPopup"] = d2rHUDConfig.MinimalistQuantityPopup;
-        j["GambleCostControl"] = d2rHUDConfig.GambleCostControl;
-        j["CombatLog"] = d2rHUDConfig.CombatLog;
-        j["TransmogVisuals"] = d2rHUDConfig.TransmogVisuals;
-        j["ExtendedItemcodes"] = d2rHUDConfig.ExtendedItemcodes;
-        j["ChatSounds"] = d2rHUDConfig.ChatSounds;
-        if (!d2rHUDConfig.ChatSoundPath.empty())
-            j["ChatSoundPath"] = d2rHUDConfig.ChatSoundPath;
-        FloatingDamage::SetEnabled(d2rHUDConfig.FloatingDamage);
-        FloatingDamage::SaveToJson(j);
-        BuffIcons::SaveToJson(j);
-        StatRanges::SaveToJson(j);
-        j["Options"] = ordered_json{
-            {"Base Codes", showBaseCodes},
-            {"Base Names", showBaseNames},
-            {"Collected", showCollected},
-            {"Excluded", showExcluded},
-            {"Duplicates", showDuplicates}
-        };
-        j["AutoBackups"] = ordered_json{
-            {"Interval", backupIntervalMinutes},
-            {"On", autoBackups},
-            {"Overwrite", overwriteOldBackup},
-            {"Path", backupPath},
-            {"Timestamps", backupWithTimestamps}
-        };
-
-        // --- Camera presets ---
-        {
-            ordered_json presets = ordered_json::array();
-            for (const auto& preset : d2rHUDConfig.CameraPresets)
+            j["UITheme"] = s_UITheme;
+            j["UIThemeDefaultsVersion"] = 1;
+            j["HUDWorkspacePage"] = int(s_WorkspacePage);
+            if ((int)s_UIColorImageOverrides.size() != s_ThemeColorCount)
+                s_UIColorImageOverrides.resize(s_ThemeColorCount, "");
             {
-                if (!preset.HasValues && preset.Name.empty())
-                    continue;
-
-                ordered_json pj;
-                pj["Name"] = preset.Name;
-                pj["Pitch"] = preset.Pitch;
-                pj["Height"] = preset.Height;
-                pj["Pan"] = preset.Pan;
-                pj["Roll"] = preset.Roll;
-                pj["Zoom"] = preset.Zoom;
-                pj["HasValues"] = preset.HasValues;
-                presets.push_back(pj);
+                ordered_json arr = ordered_json::array();
+                for (const auto& s : s_UIColorImageOverrides)
+                    arr.push_back(s);
+                j["UIColorImageOverrides"] = arr;
             }
-            if (!presets.empty())
             {
-                j["CameraPresets"] = presets;
+                ordered_json customArr = ordered_json::array();
+                for (const auto& v : s_UICustomColors)
+                    customArr.push_back(ordered_json::array({ v.x, v.y, v.z, v.w }));
+                j["UICustomColors"] = customArr;
             }
-            else if (existing.contains("CameraPresets"))
             {
-                // Preserve existing presets if we don't have new ones yet
-                j["CameraPresets"] = existing["CameraPresets"];
+                j["WindowBgOrderVersion"] = 2;
+                ordered_json winBgArr = ordered_json::array();
+                for (int w = 0; w < kWindowBgCount; ++w)
+                    winBgArr.push_back(ordered_json::array({ s_WindowBgColors[w].x, s_WindowBgColors[w].y, s_WindowBgColors[w].z, s_WindowBgColors[w].w }));
+                j["WindowBgColors"] = winBgArr;
             }
-        }
-        j["CameraAutoloadLastPreset"] = d2rHUDConfig.CameraAutoloadLastPreset;
-        j["CameraLastPresetIndex"] = d2rHUDConfig.CameraLastPresetIndex;
-        j["UITheme"] = s_UITheme;
-        j["UIThemeDefaultsVersion"] = 1;
-        j["HUDWorkspacePage"] = int(s_WorkspacePage);
-        if ((int)s_UIColorImageOverrides.size() != s_ThemeColorCount)
-            s_UIColorImageOverrides.resize(s_ThemeColorCount, "");
-        {
-            ordered_json arr = ordered_json::array();
-            for (const auto& s : s_UIColorImageOverrides)
-                arr.push_back(s);
-            j["UIColorImageOverrides"] = arr;
-        }
-        {
-            ordered_json customArr = ordered_json::array();
-            for (const auto& v : s_UICustomColors)
-                customArr.push_back(ordered_json::array({ v.x, v.y, v.z, v.w }));
-            j["UICustomColors"] = customArr;
-        }
-        {
-            j["WindowBgOrderVersion"] = 2;
-            ordered_json winBgArr = ordered_json::array();
-            for (int w = 0; w < kWindowBgCount; ++w)
-                winBgArr.push_back(ordered_json::array({ s_WindowBgColors[w].x, s_WindowBgColors[w].y, s_WindowBgColors[w].z, s_WindowBgColors[w].w }));
-            j["WindowBgColors"] = winBgArr;
-        }
-        {
-            ordered_json winBgImgArr = ordered_json::array();
-            for (int w = 0; w < kWindowBgCount; ++w)
-                winBgImgArr.push_back(s_WindowBgImageOverrides[w]);
-            j["WindowBgImageOverrides"] = winBgImgArr;
-        }
-        {
-            ordered_json presetsArr = ordered_json::array();
-            for (const auto& p : s_UIThemePresets)
             {
-                ordered_json colorsArr = ordered_json::array();
-                for (const auto& v : p.second)
-                    colorsArr.push_back(ordered_json::array({ v.x, v.y, v.z, v.w }));
-                presetsArr.push_back(ordered_json{ {"Name", p.first}, {"Colors", colorsArr} });
+                ordered_json winBgImgArr = ordered_json::array();
+                for (int w = 0; w < kWindowBgCount; ++w)
+                    winBgImgArr.push_back(s_WindowBgImageOverrides[w]);
+                j["WindowBgImageOverrides"] = winBgImgArr;
             }
-            j["UIThemePresets"] = presetsArr;
-        }
-
-        if (existing.contains("MemoryConfigs"))
-            j["MemoryConfigs"] = existing["MemoryConfigs"];
-
-
-        // --- Serialize manually to preserve 1-line-per-entry format for Keybinds/Commands ---
-        std::stringstream outFile;
-        outFile << "{\n";
-
-        bool firstItem = true;
-        for (auto it = j.begin(); it != j.end(); ++it)
-        {
-            if (it.key() == "Keybinds" || it.key() == "Commands") continue;
-            if (!firstItem) outFile << ",\n";
-            firstItem = false;
-            outFile << "    \"" << it.key() << "\": " << it.value().dump(4);
-        }
-
-        // --- Keybinds ---
-        outFile << ",\n    \"Keybinds\": {\n";
-        bool firstKey = true;
-        ordered_json keybinds;
-        if (g_Hotkeys.empty() && existing.contains("Keybinds"))
-            keybinds = existing["Keybinds"];
-        else
-        {
-            for (auto& [name, pair] : g_Hotkeys)
-                keybinds[name] = ordered_json{ {"Key", pair.first}, {"Extra", pair.second} };
-        }
-
-        for (auto it = keybinds.begin(); it != keybinds.end(); ++it)
-        {
-            if (!firstKey) outFile << ",\n";
-            firstKey = false;
-
-            outFile << "        \"" << it.key() << "\": { \"Key\": \"" << it.value()["Key"].get<std::string>() << "\"";
-            if (it.value().contains("Enabled")) outFile << ", \"Enabled\": true";
-            else if (it.value().contains("Extra")) outFile << ", \"Extra\": \"" << it.value()["Extra"].get<std::string>() << "\"";
-            outFile << " }";
-        }
-        outFile << "\n    }";
-
-        // --- Commands ---
-        outFile << ",\n    \"Commands\": {\n";
-        EnsureCustomCommandSlots();
-        ordered_json commands;
-            commands["Startup Commands"] = g_StartupCommands;
-            commands["Custom Commands"] = ordered_json::array();
-        for (const auto& cmd : g_CommandHotkeys)
-                commands["Custom Commands"].push_back(ordered_json{ {"Key", cmd.key}, {"Command", cmd.command} });
-
-        if (commands.contains("Startup Commands"))
-            outFile << "        \"Startup Commands\": \"" << EscapeJsonStringForConfig(commands["Startup Commands"].get<std::string>()) << "\",\n";
-        if (commands.contains("Custom Commands"))
-        {
-            outFile << "        \"Custom Commands\": [\n";
-            bool firstCmd = true;
-            for (auto& cmd : commands["Custom Commands"])
             {
-                if (!firstCmd) outFile << ",\n";
-                firstCmd = false;
-                outFile << "            { \"Key\": \"" << EscapeJsonStringForConfig(cmd["Key"].get<std::string>())
-                    << "\", \"Command\": \"" << EscapeJsonStringForConfig(cmd["Command"].get<std::string>()) << "\" }";
+                ordered_json presetsArr = ordered_json::array();
+                for (const auto& p : s_UIThemePresets)
+                {
+                    ordered_json colorsArr = ordered_json::array();
+                    for (const auto& v : p.second)
+                        colorsArr.push_back(ordered_json::array({ v.x, v.y, v.z, v.w }));
+                    presetsArr.push_back(ordered_json{ {"Name", p.first}, {"Colors", colorsArr} });
+                }
+                j["UIThemePresets"] = presetsArr;
             }
-            outFile << "\n        ]\n";
-        }
-        outFile << "    }\n}";
 
-        // --- Write to file ---
-        std::ofstream out(path);
-        if (!out.is_open()) return false;
-        out << outFile.str();
-        out.close();
-
-        return true;
+            HudPreferences::SaveBindings({g_Hotkeys, g_StartupCommands, g_CommandHotkeys}, j);
+        });
+        if (!result) std::cerr << "Could not save HUD configuration: " << result.error << std::endl;
+        return bool(result);
     }
-    catch (...) { return false; }
+    catch (const std::exception& error) {
+        std::cerr << "Could not save HUD configuration: " << error.what() << std::endl;
+        return false;
+    }
 }
 
 #pragma endregion
@@ -7047,7 +5478,6 @@ void ShowHotkeyMenu()
                             pair.first = combo;
                             g_Hotkeys[name] = pair;
                             SaveFullGrailConfig("HUDConfig_" + modName + ".json", false);
-                            LoadCommandsAndKeybinds("HUDConfig_" + modName + ".json");
                         }
                     }
 
@@ -7278,479 +5708,34 @@ void ShowHotkeyMenu()
 // Camera Controller
 void ShowCameraMenu()
 {
-    static bool wasOpen = false;
-    static bool didAutoScanThisOpen = false;
-
-    if (!showCameraMenu)
-    {
-        wasOpen = false;
-        didAutoScanThisOpen = false;
-        return;
-    }
-    bool justOpened = !wasOpen;
-    wasOpen = true;
-    static bool s_autoloadDoneThisOpen = false;
-    static int selectedPreset = 0;
-    if (justOpened)
-    {
-        s_autoloadDoneThisOpen = false;
-        // If autoload is enabled, start from the last-used preset.
-        // Otherwise always start from Default in the dropdown.
-        if (d2rHUDConfig.CameraAutoloadLastPreset)
-            selectedPreset = std::clamp(d2rHUDConfig.CameraLastPresetIndex, 0, 3);
-        else
-            selectedPreset = 0;
-    }
-
-    CameraState& camera = g_CameraState;
-
-    // Async scan state: futures and resolved flags live in this scope so we poll on the main thread.
-    static std::future<DWORD64> angleScanFuture;
-    static std::future<DWORD64> zoomScanFuture;
-    static bool anglePatternResolved = false;
-    static bool zoomPatternResolved = false;
-
-    auto ScanAngleValues = []()
-        {
-            CameraState& camera = g_CameraState;
-            if (camera.valuesFound)
-                return;
-
-            camera.didScanAngles = true;
-            camera.lastAngleScanInGame = IsPlayerInGame();
-            if (!camera.lastAngleScanInGame)
-                return;
-
-            if (anglePatternResolved)
-            {
-                if (gCameraPitchValue && gCameraHeightValue && gCameraPanValue && gCameraRollValue)
-                {
-                    camera.pitch = *gCameraPitchValue;
-                    camera.height = *gCameraHeightValue;
-                    camera.pan = *gCameraPanValue;
-                    camera.roll = *gCameraRollValue;
-                    camera.defaultPitch = camera.pitch;
-                    camera.defaultHeight = camera.height;
-                    camera.defaultPan = camera.pan;
-                    camera.defaultRoll = camera.roll;
-                    camera.valuesFound = true;
-                }
-                return;
-            }
-
-            if (angleScanFuture.valid())
-                return;
-
-            angleScanFuture = std::async(std::launch::async, []() {
-                return Pattern::ScanProcess("44 74 64 BF 3F DB 74 3E F4 41 BD 3E");
-                });
-        };
-
-    auto ScanZoomValue = []()
-        {
-            CameraState& camera = g_CameraState;
-            if (camera.zoomFound)
-                return;
-
-            camera.didScanZoom = true;
-            camera.lastZoomScanInGame = IsPlayerInGame();
-            if (!camera.lastZoomScanInGame)
-                return;
-
-            if (zoomPatternResolved)
-            {
-                if (gCameraZoomValue)
-                {
-                    camera.zoom = *gCameraZoomValue;
-                    camera.defaultZoom = camera.zoom;
-                    camera.zoomFound = true;
-                }
-                return;
-            }
-
-            if (zoomScanFuture.valid())
-                return;
-
-            zoomScanFuture = std::async(std::launch::async, []() {
-                DWORD64 base = Pattern::ScanProcess("00 00 06 00 00 00 ? ? ? ? ? ? ? 43 ? ? ? ? ? ? ? ? 00 00 00 00 01 00 00 00 00 00 00 00 00 00 80 3F");
-                return base ? (base + 0x32) : 0ull;
-                });
-        };
-
-    auto ApplyAngleValues = []()
-        {
-            CameraState& camera = g_CameraState;
-            if (!camera.programEnabled || !camera.valuesFound)
-                return;
-
-            if (gCameraPitchValue)  *gCameraPitchValue = camera.pitch;
-            if (gCameraHeightValue) *gCameraHeightValue = camera.height;
-            if (gCameraPanValue)    *gCameraPanValue = camera.pan;
-            if (gCameraRollValue)   *gCameraRollValue = camera.roll;
-        };
-
-    auto ApplyZoomValue = []()
-        {
-            CameraState& camera = g_CameraState;
-            if (!camera.programEnabled || !camera.zoomFound || !gCameraZoomValue)
-                return;
-
-            *gCameraZoomValue = camera.zoom;
-        };
-
-    // Auto-scan once when the window is opened (fast enough to start immediately).
-    if (!didAutoScanThisOpen)
-    {
-        didAutoScanThisOpen = true;
-        ScanAngleValues();
-        ScanZoomValue();
-    }
-
-    // Poll async scan results on the main thread and apply when ready
-    if (angleScanFuture.valid() && angleScanFuture.wait_for(std::chrono::seconds(0)) == std::future_status::ready)
-    {
-        DWORD64 pitchAddr = angleScanFuture.get();
-        if (pitchAddr)
-        {
-            gCameraPitchValue = reinterpret_cast<float*>(pitchAddr);
-            gCameraHeightValue = reinterpret_cast<float*>(pitchAddr + 0x4);
-            gCameraPanValue = reinterpret_cast<float*>(pitchAddr + 0x8);
-            gCameraRollValue = reinterpret_cast<float*>(pitchAddr - 0x4);
-            anglePatternResolved = true;
-
-            CameraState& cam = g_CameraState;
-            cam.pitch = *gCameraPitchValue;
-            cam.height = *gCameraHeightValue;
-            cam.pan = *gCameraPanValue;
-            cam.roll = *gCameraRollValue;
-            cam.defaultPitch = cam.pitch;
-            cam.defaultHeight = cam.height;
-            cam.defaultPan = cam.pan;
-            cam.defaultRoll = cam.roll;
-            cam.valuesFound = true;
-        }
-    }
-
-    if (zoomScanFuture.valid() && zoomScanFuture.wait_for(std::chrono::seconds(0)) == std::future_status::ready)
-    {
-        DWORD64 zoomAddr = zoomScanFuture.get();
-        if (zoomAddr)
-        {
-            gCameraZoomValue = reinterpret_cast<float*>(zoomAddr);
-            zoomPatternResolved = true;
-
-            CameraState& cam = g_CameraState;
-            cam.zoom = *gCameraZoomValue;
-            cam.defaultZoom = cam.zoom;
-            cam.zoomFound = true;
-        }
-    }
-
-    const bool angleScanning = angleScanFuture.valid() && angleScanFuture.wait_for(std::chrono::seconds(0)) != std::future_status::ready;
-    const bool zoomScanning = zoomScanFuture.valid() && zoomScanFuture.wait_for(std::chrono::seconds(0)) != std::future_status::ready;
-
-    // Only autoload after both scans have completed and default values are captured
-    if (!s_autoloadDoneThisOpen
-        && d2rHUDConfig.CameraAutoloadLastPreset
-        && d2rHUDConfig.CameraLastPresetIndex >= 1
-        && d2rHUDConfig.CameraLastPresetIndex <= 3
-        && !angleScanning && !zoomScanning
-        && camera.valuesFound && camera.zoomFound)
-    {
-        const CameraPreset& p = d2rHUDConfig.CameraPresets[d2rHUDConfig.CameraLastPresetIndex - 1];
-        if (p.HasValues)
-        {
-            camera.pitch = p.Pitch;
-            camera.height = p.Height;
-            camera.pan = p.Pan;
-            camera.roll = p.Roll;
-            camera.zoom = p.Zoom;
-
-            ApplyAngleValues();
-            ApplyZoomValue();
-        }
-
-        // Either we applied a preset or there was nothing to apply;
-        s_autoloadDoneThisOpen = true;
-    }
-
-    EnableAllInput();
-    float menuScale = GetMenuScaleFactor();
-    ImVec2 windowSize = ImVec2(680.0f, 380.0f);
-    CenterWindow(windowSize);
-
-    ImGui::PushStyleColor(ImGuiCol_WindowBg, ShouldDrawWindowBackgroundImage(kWindowBg_Camera) ? ImVec4(0, 0, 0, 0) : s_WindowBgColors[kWindowBg_Camera]);
-    PushFontSafe(3);
-    if (HudMenu::Begin("Camera Controls", &showCameraMenu, ImGuiWindowFlags_NoTitleBar))
-    {
-        if (ShouldDrawWindowBackgroundImage(kWindowBg_Camera))
-            DrawWindowBackgroundImage(kWindowBg_Camera);
-        DrawWindowTitleAndClose("Camera Controls", &showCameraMenu);
-        PopFontSafe(3);
-
-        ImGui::Separator();
-        ImGui::Dummy(ImVec2(0.0f, 4.0f * menuScale));
-
-        // Top info line
-        PushFontSafe(1);
-        ImGuiTextCentered("Adjust in-game camera pitch, height, pan, roll, and zoom.");
-        ImGuiTextCentered("Camera values are scanned automatically when you open this window.");
-        PopFontSafe(1);
-
-        ImGui::Dummy(ImVec2(0.0f, 4.0f * menuScale));
-
-        // Status text (auto-scan runs on open)
-        ImVec4 okColor = ImVec4(0.4f, 0.9f, 0.4f, 1.0f);
-        ImVec4 warnColor = ImVec4(0.9f, 0.7f, 0.2f, 1.0f);
-        ImVec4 errColor = ImVec4(0.9f, 0.3f, 0.3f, 1.0f);
-
-        ImVec4 angleColor = camera.valuesFound ? okColor : (camera.didScanAngles ? errColor : warnColor);
-        ImVec4 zoomColor = camera.zoomFound ? okColor : (camera.didScanZoom ? errColor : warnColor);
-
-        const char* angleStatus = angleScanning ? "scanning..."
-            : (camera.valuesFound ? "found" : (camera.didScanAngles ? "not found (pattern missing)" : "not scanned"));
-        const char* zoomStatus = zoomScanning ? "scanning..."
-            : (camera.zoomFound ? "found" : (camera.didScanZoom ? "not found (pattern missing)" : "not scanned"));
-
-        char statusBuf[96];
-        snprintf(statusBuf, sizeof(statusBuf), "Angles: %s  Zoom: %s", angleStatus, zoomStatus);
-        float statusWidth = HudText::CalcTextSize(statusBuf).x;
-        float avail = ImGui::GetContentRegionAvail().x;
-        const float statusOffset = 8.0f * menuScale;
-        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (avail - statusWidth) * 0.5f + statusOffset);
-        HudText::TextColored(angleColor, "Angles: %s", angleStatus);
-        ImGui::SameLine();
-        HudText::TextColored(zoomColor, "Zoom: %s", zoomStatus);
-
-        ImGui::Dummy(ImVec2(0.0f, 6.0f * menuScale));
-
-        const float cameraLabelWidth = 90.0f * menuScale;
-        const float cameraInputWidth = 200.0f * menuScale;
-        const float presetColWidth = 350.0f * menuScale;
-
-        // Left: Presets | Right: All values + reset buttons
-        HudWindowLayout::PrepareLeftPane(menuScale);
-        ImGui::BeginChild("CameraPresets", ImVec2(presetColWidth, 0), ImGuiChildFlags_Borders | ImGuiChildFlags_ResizeX);
-        HudText::TextColored(ImVec4(0.8f, 0.8f, 0.3f, 1.0f), "Presets");
-        ImGui::Separator();
-
-        static char presetNameBuf[64] = {};
-        static int lastPresetIndex = -1;
-        if (lastPresetIndex != selectedPreset)
-        {
-            CameraPreset p{};
-            if (selectedPreset > 0 && selectedPreset <= static_cast<int>(d2rHUDConfig.CameraPresets.size()))
-            {
-                p = d2rHUDConfig.CameraPresets[selectedPreset - 1];
-
-                // When switching to a saved preset, update the input values to match it
-                if (p.HasValues)
-                {
-                    camera.pitch = p.Pitch;
-                    camera.height = p.Height;
-                    camera.pan = p.Pan;
-                    camera.roll = p.Roll;
-                    camera.zoom = p.Zoom;
-                }
-            }
-            else if (selectedPreset == 0 && camera.valuesFound && camera.zoomFound)
-            {
-                // Default slot: show the captured in-game defaults in the inputs
-                camera.pitch = camera.defaultPitch;
-                camera.height = camera.defaultHeight;
-                camera.pan = camera.defaultPan;
-                camera.roll = camera.defaultRoll;
-                camera.zoom = camera.defaultZoom;
-            }
-
-            strncpy(presetNameBuf, p.Name.c_str(), sizeof(presetNameBuf));
-            presetNameBuf[sizeof(presetNameBuf) - 1] = '\0';
-            lastPresetIndex = selectedPreset;
-        }
-
-        static char presetLabel0[64] = "Default";
-        static char presetLabel1[64] = "Preset 1";
-        static char presetLabel2[64] = "Preset 2";
-        static char presetLabel3[64] = "Preset 3";
-        for (int i = 0; i < 3; ++i)
-        {
-            char* buf = (i == 0) ? presetLabel1 : (i == 1) ? presetLabel2 : presetLabel3;
-            const CameraPreset& p = d2rHUDConfig.CameraPresets[i];
-            if (!p.Name.empty())
-            {
-                strncpy(buf, p.Name.c_str(), sizeof(presetLabel1) - 1);
-                buf[sizeof(presetLabel1) - 1] = '\0';
-            }
-            else
-            {
-                snprintf(buf, sizeof(presetLabel1), "Preset %d", i + 1);
-            }
-        }
-        const char* presetLabels[4] = { presetLabel0, presetLabel1, presetLabel2, presetLabel3 };
-        ImGui::AlignTextToFramePadding();
-        HudText::Text("Slot");
-        ImGui::SameLine(cameraLabelWidth);
-        ImGui::SetNextItemWidth(-1);
-        BeginFrameBgImageRegion();
-        HudText::Combo("##PresetSlot", &selectedPreset, presetLabels, IM_ARRAYSIZE(presetLabels));
-        EndFrameBgImageRegion();
-
-        ImGui::AlignTextToFramePadding();
-        HudText::Text("Name");
-        ImGui::SameLine(cameraLabelWidth);
-        ImGui::SetNextItemWidth(-1);
-        BeginFrameBgImageRegion();
-        HudText::InputText("##PresetName", presetNameBuf, sizeof(presetNameBuf));
-        EndFrameBgImageRegion();
-
-        if (ThemeButton("Save Current to Preset", ImVec2(-1, 0)))
-        {
-            if (selectedPreset > 0 && selectedPreset <= static_cast<int>(d2rHUDConfig.CameraPresets.size()))
-            {
-                CameraPreset& p = d2rHUDConfig.CameraPresets[selectedPreset - 1];
-                p.Name = presetNameBuf;
-                p.Pitch = camera.pitch;
-                p.Height = camera.height;
-                p.Pan = camera.pan;
-                p.Roll = camera.roll;
-                p.Zoom = camera.zoom;
-                p.HasValues = true;
-                SaveFullGrailConfig(configFilePath, false);
-            }
-        }
-        if (ThemeButton("Apply Preset", ImVec2(-1, 0)))
-        {
-            if (selectedPreset == 0)
-            {
-                if (camera.valuesFound) {
-                    camera.pitch = camera.defaultPitch;
-                    camera.height = camera.defaultHeight;
-                    camera.pan = camera.defaultPan;
-                    camera.roll = camera.defaultRoll;
-                    ApplyAngleValues();
-                }
-                if (camera.zoomFound) {
-                    camera.zoom = camera.defaultZoom;
-                    ApplyZoomValue();
-                }
-            }
-            else if (selectedPreset > 0 && selectedPreset <= static_cast<int>(d2rHUDConfig.CameraPresets.size()))
-            {
-                const CameraPreset& p = d2rHUDConfig.CameraPresets[selectedPreset - 1];
-                if (p.HasValues)
-                {
-                    camera.pitch = p.Pitch;
-                    camera.height = p.Height;
-                    camera.pan = p.Pan;
-                    camera.roll = p.Roll;
-                    camera.zoom = p.Zoom;
-                    if (camera.valuesFound) ApplyAngleValues();
-                    if (camera.zoomFound) ApplyZoomValue();
-                }
-            }
-            d2rHUDConfig.CameraLastPresetIndex = selectedPreset;
-            SaveFullGrailConfig(configFilePath, false);
-        }
-        if (ThemeCheckbox("Autoload last preset", &d2rHUDConfig.CameraAutoloadLastPreset))
-            SaveFullGrailConfig(configFilePath, false);
-        ImGui::EndChild();
-
-        ImGui::SameLine();
-
-        ImGui::BeginChild("CameraValues", ImVec2(0, 0), true);
-        HudText::TextColored(ImVec4(0.8f, 0.8f, 0.3f, 1.0f), "Camera values");
-        ImGui::Separator();
-
-        ImGui::BeginDisabled(!camera.programEnabled || !camera.valuesFound);
-        ImGui::AlignTextToFramePadding();
-        HudText::Text("Pitch");
-        ImGui::SameLine(cameraLabelWidth);
-        ImGui::SetNextItemWidth(cameraInputWidth);
-        if (HudText::DragFloat("##Pitch", &camera.pitch, 0.01f, -10.0f, 10.0f, "%.3f"))
-            ApplyAngleValues();
-        ImGui::AlignTextToFramePadding();
-        HudText::Text("Yaw");
-        ImGui::SameLine(cameraLabelWidth);
-        ImGui::SetNextItemWidth(cameraInputWidth);
-        if (HudText::DragFloat("##Pan", &camera.pan, 0.01f, -10.0f, 10.0f, "%.3f"))
-            ApplyAngleValues();
-        ImGui::AlignTextToFramePadding();
-        HudText::Text("Roll");
-        ImGui::SameLine(cameraLabelWidth);
-        ImGui::SetNextItemWidth(cameraInputWidth);
-        if (HudText::DragFloat("##Roll", &camera.roll, 0.01f, -10.0f, 10.0f, "%.3f"))
-            ApplyAngleValues();
-        ImGui::AlignTextToFramePadding();
-        HudText::Text("Height");
-        ImGui::SameLine(cameraLabelWidth);
-        ImGui::SetNextItemWidth(cameraInputWidth);
-        if (HudText::DragFloat("##Height", &camera.height, 0.01f, -10.0f, 10.0f, "%.3f"))
-            ApplyAngleValues();
-        ImGui::EndDisabled();
-
-        ImGui::BeginDisabled(!camera.programEnabled || !camera.zoomFound);
-        ImGui::AlignTextToFramePadding();
-        HudText::Text("Zoom");
-        ImGui::SameLine(cameraLabelWidth);
-        ImGui::SetNextItemWidth(cameraInputWidth);
-        if (HudText::DragFloat("##Zoom", &camera.zoom, 0.01f, -5.0f, 5.0f, "%.3f"))
-            ApplyZoomValue();
-        ImGui::EndDisabled();
-
-        ImGui::Dummy(ImVec2(0.0f, 4.0f * menuScale));
-        ImGui::BeginDisabled(!camera.valuesFound);
-        if (ThemeButton("Reset Angles"))
-        {
-            camera.pitch = camera.defaultPitch;
-            camera.height = camera.defaultHeight;
-            camera.pan = camera.defaultPan;
-            camera.roll = camera.defaultRoll;
-            ApplyAngleValues();
-        }
-        ImGui::EndDisabled();
-        ImGui::SameLine();
-        ImGui::BeginDisabled(!camera.zoomFound);
-        if (ThemeButton("Reset Zoom"))
-        {
-            camera.zoom = camera.defaultZoom;
-            ApplyZoomValue();
-        }
-        ImGui::EndDisabled();
-
-        ImGui::EndChild();
-
-        ImGui::PopStyleColor();
-        HudMenu::End();
-    }
-    else {
-        ImGui::PopStyleColor();
-        HudMenu::End();
-        PopFontSafe(3);
-    }
+    static HudCameraEditor::State state;
+    if(!showCameraMenu){state.wasOpen=false;return;}
+    const bool image=ShouldDrawWindowBackgroundImage(kWindowBg_Camera);
+    HudCameraEditor::Host host{
+        GetMenuScaleFactor(),image?ImVec4(0,0,0,0):s_WindowBgColors[kWindowBg_Camera],
+        EnableAllInput,[](ImVec2 size){CenterWindow(size);},PushFontSafe,PopFontSafe,
+        DrawWindowTitleAndClose,[](const char* text){ImGuiTextCentered(text);},
+        image?+[](){DrawWindowBackgroundImage(kWindowBg_Camera);}:nullptr,
+        [](const char* text,ImVec2 size){return ThemeButton(text,size);},ThemeCheckbox,BeginFrameBgImageRegion,EndFrameBgImageRegion,
+        []{return SaveFullGrailConfig(configFilePath,false);},[]{HudCamera::Tick();},
+        HudCamera::ApplyAngles,HudCamera::ApplyZoom
+    };
+    HudCameraEditor::Draw(state,showCameraMenu,
+        {d2rHUDConfig.CameraPresets,d2rHUDConfig.CameraLastPresetIndex,d2rHUDConfig.CameraAutoloadLastPreset},
+        HudCamera::Runtime(),host);
 }
 
 static const LootFilterConfig::Builder::Catalog& GetLootFilterBuilderCatalog()
 {
-    using namespace LootFilterConfig::Builder;
-    struct State { Catalog catalog; std::future<Catalog> loading; bool started = false; };
     // The HUD is process-resident. Keep worker ownership until process exit;
     // no game pointers or ImGui state are accessed on the asset reader thread.
-    static auto* state = new State;
-    if (!state->started) {
-        state->started = true;
-        state->catalog.status = "Loading item, category, area and stat lists...";
-        const auto install = std::filesystem::path(GetExecutableDir());
-        const auto mod = modName;
-        state->loading = std::async(std::launch::async, [install, mod]() {
+    static auto* loader = new HudBuilderCatalog::Loader({
+        [](const std::filesystem::path& install, const std::string& mod) {
             GameAssets assets(install, mod);
             return LootFilterConfig::Builder::Tables::Load(assets);
-        });
-    }
-    if (state->loading.valid() && state->loading.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
-        try { state->catalog = state->loading.get(); }
-        catch (...) { state->catalog.status = "Item lists could not be loaded."; }
-    }
-    return state->catalog;
+        }});
+    static const auto install = std::filesystem::path(GetExecutableDir());
+    return loader->Get(install, modName);
 }
 
 static const std::string& GetLootFilterPreviewEngine()
@@ -7764,8 +5749,21 @@ static const std::string& GetLootFilterPreviewEngine()
     return source;
 }
 
+static const std::map<std::string,std::string>& GetLootFilterSimulatorOverrides()
+{
+    static unsigned revision=~0u;static std::map<std::string,std::string> files;
+    if(revision!=g_LootConfigRevision){
+        revision=g_LootConfigRevision;files.clear();
+        for(const char* name:{"override_rules.lua","overrides.lua"}){
+            std::string text;if(LootFilterConfig::Read((std::filesystem::path(GetExecutableDir())/name).string(),text))files[name]=std::move(text);
+        }
+    }
+    return files;
+}
+
 #include "../ItemFilter/LootFilterRuleBuilderUI.inl"
 #include "../ItemFilter/LootFilterPreviewUI.inl"
+#include "../ItemFilter/LootFilterSimulatorUI.inl"
 #include "../ItemFilter/LootFilterEditorUI.inl"
 #include "../QuestJournalUI.inl"
 
@@ -7857,9 +5855,10 @@ void ShowLootMenu()
         ImGui::SetNextItemWidth((std::min)(360.f,ImGui::GetContentRegionAvail().x*.4f));
         const auto comboLabel=s_pendingFilter.empty()?currentDisplayName:GetFilterDisplayName(s_pendingFilter);
         if(HudText::BeginCombo("##selected_filter",comboLabel.c_str(),ImGuiComboFlags_HeightLarge)){
-            const auto names=GetOrderedFilterList();
-            if(names.empty())HudText::TextDisabled("No installed filters found.");
-            for(const auto& name:names){
+            const auto catalog=HudFilterCatalog::Runtime().Get();
+            if(catalog.names->empty())HudText::TextDisabled(catalog.loading?"Loading installed filters...":"No installed filters found.");
+            if(!catalog.error.empty())HudText::TextWrapped("%s",catalog.error.c_str());
+            for(const auto& name:*catalog.names){
                 ImGui::PushID(name.c_str());
                 const bool selected=name==(s_pendingFilter.empty()?s_activeFilterInternalName:s_pendingFilter);
                 if(HudText::Selectable(GetFilterDisplayName(name).c_str(),selected))s_pendingFilter=name;
@@ -7877,45 +5876,26 @@ void ShowLootMenu()
                 s_pendingFilter.clear();
             }
         }
-        if (!s_lootFilterUpdateStatus.empty())
-        {
-            if (s_lootFilterUpdateStatus.size() >= 9 && s_lootFilterUpdateStatus.compare(0, 9, "Updated to") == 0 && !s_lootFilterUpdateApplied)
-            {
-                if (!s_lootFilterNewVersion.empty())
-                    g_LootFilterHeader.Version = s_lootFilterNewVersion;
-                else
-                    LoadLootFilterLogic(lootFile);
-                s_lootFilterUpdateApplied = true;
-            }
-            auto now = std::chrono::steady_clock::now();
-            if (std::chrono::duration_cast<std::chrono::seconds>(now - s_lootFilterUpdateStatusTime).count() >= 4)
-            {
-                s_lootFilterUpdateStatus.clear();
-                s_lootFilterUpdateStatusTime = {};
-                s_lootFilterNewVersion.clear();
-                s_lootFilterUpdateApplied = false;
-            }
-        }
         ImGui::SameLine();if(ThemeButton("Files, sounds & updates..."))HudText::OpenPopup("LootFilterTools");
         ImGui::SetNextWindowSizeConstraints({650,0},{850,650});
         if(HudText::BeginPopup("LootFilterTools")){
             if (!g_LootFilterHeader.Version.empty())
                 HudText::Text("D2RLoot version: %s", g_LootFilterHeader.Version.c_str());
             ImGui::SameLine(0.0f, 12.0f);
-            if (ThemeButton(s_lootFilterUpdating ? "Updating..." : "Update"))
-            {
-                if (!s_lootFilterUpdating)
-                {
-                    s_lootFilterUpdating = true;
-                    s_lootFilterUpdateStatus.clear();
-                    s_lootFilterUpdateApplied = false;
-                    std::thread(LootFilterUpdateThread).detach();
-                }
+            auto& update = HudFilterUpdate::Runtime();
+            ImGui::BeginDisabled(update.Busy());
+            if (ThemeButton(update.Busy() ? "Updating..." : "Update")) {
+                // Match LoadScript's actual engine path, including copied test
+                // installations whose directory is not literally named D2R.
+                if (update.Start({L"lootfilter.lua"})) s_lootFilterUpdateStatus.clear();
             }
-            if (!s_lootFilterUpdateStatus.empty())
-            {
-                ImGui::SameLine(0.0f, 8.0f);
-                HudText::TextColored(ImVec4(0.7f, 0.9f, 0.7f, 1.0f), "%s", s_lootFilterUpdateStatus.c_str());
+            ImGui::EndDisabled();
+            if (!s_lootFilterUpdateStatus.empty()) {
+                ImGui::Spacing();
+                ImGui::PushTextWrapPos(0.f);
+                const bool failed = s_lootFilterUpdateOutcome == HudFilterUpdate::Outcome::Failed || s_lootFilterUpdateOutcome == HudFilterUpdate::Outcome::Conflict;
+                HudText::TextColored(failed ? ImVec4(1.f, .45f, .35f, 1.f) : ImVec4(.7f, .9f, .7f, 1.f), "%s", s_lootFilterUpdateStatus.c_str());
+                ImGui::PopTextWrapPos();
             }
 
             // --- Sounds section ---
@@ -7923,7 +5903,8 @@ void ShowLootMenu()
             {
                 ImGui::Indent(8.0f);
                 ImGui::Dummy(ImVec2(0.0f, 2.0f));
-                std::vector<std::pair<std::string, std::string>> soundFiles = GetSoundFilesFromBothLocations();
+                const auto soundSnapshot = HudSounds::Catalog();
+                const auto& soundFiles = *soundSnapshot;
                 if (soundFiles.empty())
                 {
                     HudText::TextWrapped("No sounds in My Filters/sounds, Pandemonium/Sounds, or D2RLAN/Sounds yet. Use \"Import sounds\" to add .mp3, .flac or .wav files.");
@@ -7942,8 +5923,7 @@ void ShowLootMenu()
                             std::string playId = "Play##" + name + std::to_string(i);
                             if (ThemeButton(playId.c_str(), ImVec2(50.0f, 0.0f)))
                             {
-                                if (std::filesystem::exists(path))
-                                    PlaySoundFile(path);
+                                PlaySoundFile(path);
                             }
                         }
                     }
@@ -8955,6 +6935,112 @@ void ShowSettingsPanel()
     if (themeVisible && fontBody) ImGui::PopFont();
 }
 
+#include "../MarketplaceUI.inl"
+#include "../MarketplaceNative.inl"
+#include "../MarketplaceLiveCustodyRuntime.inl"
+#include "../MarketplaceChat.h"
+#include "../../CrashDiagnostics.h"
+static Marketplace::Chat::Bridge gMarketplaceChat;
+static bool gMarketplaceChatHooked=false;
+static bool gMarketplaceChatSubmitHooked=false;
+static std::atomic<bool> gMarketplaceChatCloseInput{false};
+using MarketplaceChatSubmit_t=void(__fastcall*)(void*,const char*,void*,void*);
+static MarketplaceChatSubmit_t gMarketplaceChatSubmit=reinterpret_cast<MarketplaceChatSubmit_t>(Pattern::Address(0x11f590));
+static void __fastcall HookedMarketplaceChatSubmit(void* context,const char* text,void* channel,void* target){
+    if(modName=="RMD-MP"&&GetClientStatus()==1&&text){
+        std::string value;value.reserve(256);
+        for(size_t n=0;n<256;++n){char c=0;if(!Marketplace::NativePanel::Read(text+n,c)||!c)break;value+=c;}
+        if(gMarketplaceChat.Outgoing(value)){
+            CrashDiagnostics::Event("market-chat-command-consumed",0,0,0);
+            // Leave the native submit stack before dismissing its input. The
+            // render tick uses the game's normal Escape input path afterward.
+            gMarketplaceChatCloseInput=true;
+            return;
+        }
+    }
+    gMarketplaceChatSubmit(context,text,channel,target);
+}
+
+static void __fastcall HookedMarketplaceQueuePacket(void* packet,int32_t size){
+    // Only recognized private chat commands are consumed. Page handshakes,
+    // normal game chat, debug cheats and every other packet keep their path.
+    if(modName=="RMD-MP"&&GetClientStatus()==1&&packet&&size>3){
+        std::array<uint8_t,259> bytes{};SIZE_T read=0;const auto count=(std::min)(size,int32_t(bytes.size()));
+        if(ReadProcessMemory(GetCurrentProcess(),packet,bytes.data(),count,&read)&&read==count){
+            const auto text=Marketplace::Chat::PacketText(std::span(bytes.data(),size_t(count)));
+            if(text&&gMarketplaceChat.Outgoing(*text))return;
+        }
+    }
+    CCMD_QueuePacket(packet,size);
+}
+static constexpr UINT_PTR kMarketplaceChatTimerId=0x4D434854;
+static std::atomic<bool> gMarketplaceChatScheduled{false};
+static VOID CALLBACK MarketplaceChatWindowTick(HWND hwnd,UINT,UINT_PTR timer,DWORD){
+    if(timer!=kMarketplaceChatTimerId)return;
+    KillTimer(hwnd,kMarketplaceChatTimerId);
+    gMarketplaceChatScheduled=false;
+    if(modName!="RMD-MP"||GetClientStatus()!=1)return;
+    const auto now=GetTickCount64();
+    if(gMarketplaceChatCloseInput.exchange(false)){
+        uint8_t open=0;
+        if(Marketplace::NativePanel::Read(reinterpret_cast<void*>(Pattern::Address(0x1d53fb8+5)),open)&&open)
+            HudCommands::PostKeyTap(find_main_window(GetCurrentProcessId()),VK_ESCAPE,false);
+    }
+    gMarketplaceChat.Tick(now,[](const std::string& text){
+        CrashDiagnostics::Event("market-chat-before-print",0,0,0);
+        // The getter constructs the native ring buffers on first use. A raw
+        // global address can still contain an uninitialized chat manager when
+        // our early submit hook is the first message in this game session.
+        auto manager=GetChatManager();
+        CrashDiagnostics::Event("market-chat-manager-ready",0,0,0);
+        if(!manager)return;
+        blz_string message={text.c_str(),text.size(),16};
+        auto& type=*reinterpret_cast<ChatMsg*>(Pattern::Address(gameChatMsgTypeOffset));
+        ChatOptionalStruct optional{};
+        oChatManager_PushChatEntry(manager,message,4,false,type,optional,optional,optional,optional);
+        CrashDiagnostics::Event("market-chat-after-print",0,0,0);
+        if(text.starts_with("[Message]")||text.starts_with("[Trade]"))HudChat::Observe("Marketplace",text.c_str(),0,0,false);
+    });
+}
+static void MarketplaceChatTick(){
+    if(modName!="RMD-MP"||GetClientStatus()!=1)return;
+    if(!gMarketplaceChatSubmitHooked){
+        std::array<uint8_t,24> submit{};
+        if(Marketplace::NativePanel::Read(reinterpret_cast<void*>(gMarketplaceChatSubmit),submit)&&submit==Marketplace::Chat::SubmitPrefix){
+            DetourTransactionBegin();DetourUpdateThread(GetCurrentThread());DetourAttach(&(PVOID&)gMarketplaceChatSubmit,HookedMarketplaceChatSubmit);
+            gMarketplaceChatSubmitHooked=DetourTransactionCommit()==NO_ERROR;
+        }
+    }
+    if(!gMarketplaceChatHooked){
+        std::array<uint8_t,16> code{};
+        if(Marketplace::NativePanel::Read(reinterpret_cast<void*>(CCMD_QueuePacket),code)&&code==Marketplace::Chat::PacketQueuePrefix){
+            DetourTransactionBegin();DetourUpdateThread(GetCurrentThread());DetourAttach(&(PVOID&)CCMD_QueuePacket,HookedMarketplaceQueuePacket);
+            gMarketplaceChatHooked=DetourTransactionCommit()==NO_ERROR;
+        }
+    }
+    static uint64_t configured=0;const auto now=GetTickCount64();
+    if(now>=configured+2000){configured=now;try{
+        wchar_t profile[32768]{};const auto size=GetEnvironmentVariableW(L"USERPROFILE",profile,32768);
+        if(size&&size<32768){const auto cfg=Marketplace::LiveCustody::Read(std::filesystem::path(profile)/L".d2r-marketplace/custody-enrollment.json");
+            const auto saves=std::filesystem::path(GetSavePath())/L"Diablo II Resurrected"/L"Mods"/L"RMD-MP";
+            if(cfg.at("schema")==1&&cfg.at("enrolled")==true&&_wcsicmp(std::filesystem::path(cfg.at("save_directory").get<std::string>()).lexically_normal().c_str(),saves.lexically_normal().c_str())==0)
+            {
+                gMarketplaceChat.Configure(saves,cfg.at("owner").get<std::string>(),IsHardcore());
+                const auto observed=std::filesystem::path(cfg.at("state_directory").get<std::string>())/L"live-chat-native.json";
+                const Marketplace::Json status={{"schema",1},{"pid",GetCurrentProcessId()},{"submit_hooked",gMarketplaceChatSubmitHooked},{"packet_hooked",gMarketplaceChatHooked}};
+                static Marketplace::Json previous;if(previous!=status){Marketplace::LiveCustody::Write(observed,status);previous=status;}
+            }
+        }
+    }catch(...){} }
+    // SetTimer(hwnd,...) dispatches on the HWND's owning event thread. Native
+    // chat updates layout/font resources and must not run under Present's lock.
+    static uint64_t scheduledAt=0;
+    if(now>=scheduledAt+250&&!gMarketplaceChatScheduled.exchange(true)){
+        scheduledAt=now;
+        const auto hwnd=find_main_window(GetCurrentProcessId());
+        if(!hwnd||!SetTimer(hwnd,kMarketplaceChatTimerId,16,MarketplaceChatWindowTick))gMarketplaceChatScheduled=false;
+    }
+}
 #include "OptionsUI.inl"
 
 void ShowHUDSettingsMenu()
@@ -8989,6 +7075,8 @@ static void DrawThemeWheelIcon(ImDrawList* drawList, const ImVec2& buttonMin, fl
 }
 
 static void DrawWorkspaceEditors(HudMenu::Page page) {
+    if(showMainMenu && page==HudMenu::Page::Runs){RunTracker::DrawPanel();return;}
+    if(showMainMenu && page==HudMenu::Page::Diagnostics){RuntimeDiagnostics::DrawPanel();return;}
     SyncWorkspacePages();
     ShowD2RHUDMenu();ShowLootMenu();ShowGrailMenu();ShowHotkeyMenu();ShowCameraMenu();
     ShowFloatingDamageMenu();ShowBuffIconsMenu();ShowStatRangesMenu();ShowSettingsPanel();
@@ -8999,6 +7087,7 @@ static void DrawWorkspaceEditors(HudMenu::Page page) {
 
 void ShowMainMenu()
 {
+    HudTelemetry::Scope measured(HudTelemetry::Feature::Menu);
     if (!showMainMenu) return;
     EnableAllInput();
     PushFontSafe(1);
@@ -9208,1147 +7297,6 @@ void __fastcall HookedDropTCTest(D2GameStrc* pGame, D2UnitStrc* pMonster, D2Unit
     LogDebug("debug logging: {}\n---------------------\n");
 }
 
-#pragma region Floating Damage
-
-static ImVec2 g_LastDisplaySize = ImVec2(1920.0f, 1080.0f);
-static bool g_DamageInfoHookInstalled = false;
-
-typedef void(__fastcall* DamageInfo_t)(void* param1, D2UnitStrc* attacker, D2UnitStrc* target, int damage, int param5, void* param6, int param7, void* param8, char param9, void* param10);
-DamageInfo_t oDamageInfo = nullptr;
-
-static bool IsFloatingDamageActive()
-{
-    return FloatingDamage::IsEnabled();
-}
-
-void __fastcall Hooked_DamageInfo(void* param1, D2UnitStrc* attacker, D2UnitStrc* target, int baseDamage, int param5, void* param6, int finalDamage, void* param8, char param9, void* param10);
-
-static bool LooksLikeGamePointer(const void* ptr)
-{
-    const uintptr_t addr = reinterpret_cast<uintptr_t>(ptr);
-    return addr >= 0x10000;
-}
-
-static bool IsCommittedReadableMemory(const void* address, size_t size)
-{
-    if (!LooksLikeGamePointer(address) || size == 0)
-        return false;
-
-    const uint8_t* cursor = static_cast<const uint8_t*>(address);
-    const uint8_t* end = cursor + size;
-
-    while (cursor < end)
-    {
-        MEMORY_BASIC_INFORMATION mbi{};
-        if (VirtualQuery(cursor, &mbi, sizeof(mbi)) == 0)
-            return false;
-        if (mbi.State != MEM_COMMIT)
-            return false;
-        if (mbi.Protect & (PAGE_NOACCESS | PAGE_GUARD))
-            return false;
-
-        const uint8_t* regionEnd = static_cast<const uint8_t*>(mbi.BaseAddress) + mbi.RegionSize;
-        if (regionEnd <= cursor)
-            return false;
-
-        cursor = regionEnd;
-    }
-
-    return true;
-}
-
-static bool SafeReadShortString(const char* src, char* dst, size_t dstSize)
-{
-    if (!src || !dst || dstSize == 0 || !LooksLikeGamePointer(src))
-        return false;
-
-    __try
-    {
-        for (size_t i = 0; i + 1 < dstSize; ++i)
-        {
-            const char c = src[i];
-            dst[i] = c;
-            if (c == '\0')
-                return true;
-        }
-        dst[dstSize - 1] = '\0';
-        return true;
-    }
-    __except (EXCEPTION_EXECUTE_HANDLER)
-    {
-        if (dstSize > 0)
-            dst[0] = '\0';
-        return false;
-    }
-}
-
-static bool NameEqualsI(const char* value, const char* token)
-{
-    return value && token && _stricmp(value, token) == 0;
-}
-
-static bool NameContainsI(const char* value, const char* token)
-{
-    if (!value || !token || !token[0])
-        return false;
-
-    const size_t tokenLen = strlen(token);
-    if (tokenLen == 0)
-        return false;
-
-    for (const char* cursor = value; *cursor; ++cursor)
-    {
-        if (_strnicmp(cursor, token, tokenLen) == 0)
-            return true;
-    }
-    return false;
-}
-
-static FloatingDamage::Element ElementFromDamageTypeName(const char* name)
-{
-    if (!name || !name[0])
-        return FloatingDamage::Element::Physical;
-
-    if (NameEqualsI(name, "Fire") || NameEqualsI(name, "Burn"))
-        return FloatingDamage::Element::Fire;
-    if (NameEqualsI(name, "Lightning") || NameEqualsI(name, "Ltng") || NameEqualsI(name, "Light") || NameEqualsI(name, "ligt"))
-        return FloatingDamage::Element::Lightning;
-    if (NameEqualsI(name, "Cold"))
-        return FloatingDamage::Element::Cold;
-    if (NameEqualsI(name, "Poison") || NameEqualsI(name, "Pois") || NameEqualsI(name, "pois"))
-        return FloatingDamage::Element::Poison;
-    if (NameEqualsI(name, "Magic") || NameEqualsI(name, "Mag") || NameEqualsI(name, "magc"))
-        return FloatingDamage::Element::Magic;
-    if (NameEqualsI(name, "Physical") || NameEqualsI(name, "Phys") || NameEqualsI(name, "Attack"))
-        return FloatingDamage::Element::Physical;
-
-    if (NameContainsI(name, "POISON:") || NameContainsI(name, " poison damage"))
-        return FloatingDamage::Element::Poison;
-
-    if (NameContainsI(name, "ligt") || NameContainsI(name, "Lightning") || NameContainsI(name, "Ltng"))
-        return FloatingDamage::Element::Lightning;
-    if (NameContainsI(name, "Fire"))
-        return FloatingDamage::Element::Fire;
-    if (NameContainsI(name, "Cold"))
-        return FloatingDamage::Element::Cold;
-    if (NameContainsI(name, "pois") || NameContainsI(name, "Poison"))
-        return FloatingDamage::Element::Poison;
-    if (NameContainsI(name, "magc") || NameContainsI(name, "Magic"))
-        return FloatingDamage::Element::Magic;
-
-    return FloatingDamage::Element::Physical;
-}
-
-static FloatingDamage::Element ElementFromReductionType(int32_t type)
-{
-    switch (type)
-    {
-    case 1: return FloatingDamage::Element::Fire;
-    case 2: return FloatingDamage::Element::Lightning;
-    case 3: return FloatingDamage::Element::Cold;
-    case 4: return FloatingDamage::Element::Poison;
-    case 5: return FloatingDamage::Element::Magic;
-    case 0:
-    default: return FloatingDamage::Element::Physical;
-    }
-}
-
-static FloatingDamage::Element ElementFromTypeIndex(int index)
-{
-    switch (index)
-    {
-    case 1: return FloatingDamage::Element::Fire;
-    case 2: return FloatingDamage::Element::Lightning;
-    case 3: return FloatingDamage::Element::Cold;
-    case 4: return FloatingDamage::Element::Poison;
-    case 5: return FloatingDamage::Element::Magic;
-    case 0:
-    default: return FloatingDamage::Element::Physical;
-    }
-}
-
-static bool SafeReadShortWideStringToUtf8(const wchar_t* src, char* dst, size_t dstSize)
-{
-    if (!src || !dst || dstSize == 0 || !LooksLikeGamePointer(src))
-        return false;
-
-    __try
-    {
-        wchar_t buffer[128]{};
-        for (size_t i = 0; i + 1 < 128; ++i)
-        {
-            buffer[i] = src[i];
-            if (src[i] == L'\0')
-                break;
-        }
-
-        const int written = WideCharToMultiByte(CP_UTF8, 0, buffer, -1, dst, static_cast<int>(dstSize), nullptr, nullptr);
-        return written > 0;
-    }
-    __except (EXCEPTION_EXECUTE_HANDLER)
-    {
-        if (dstSize > 0)
-            dst[0] = '\0';
-        return false;
-    }
-}
-
-static bool SafeReadBlzString(const blz_string* src, char* dst, size_t dstSize)
-{
-    if (!src || !dst || dstSize == 0 || !LooksLikeGamePointer(src))
-        return false;
-    if (!IsCommittedReadableMemory(src, sizeof(blz_string)))
-        return false;
-
-    __try
-    {
-        const char* text = src->str;
-        if (!text || !LooksLikeGamePointer(text))
-        {
-            if (src->length > 0 && src->length < sizeof(src->data))
-                text = src->data;
-            else
-                return false;
-        }
-
-        return SafeReadShortString(text, dst, dstSize);
-    }
-    __except (EXCEPTION_EXECUTE_HANDLER)
-    {
-        if (dstSize > 0)
-            dst[0] = '\0';
-        return false;
-    }
-}
-
-static bool TextLooksLikeDamageType(const char* text)
-{
-    if (!text || !text[0])
-        return false;
-
-    return NameEqualsI(text, "Physical") ||
-        NameEqualsI(text, "Phys") ||
-        NameEqualsI(text, "Attack") ||
-        NameEqualsI(text, "ligt") ||
-        NameEqualsI(text, "magc") ||
-        NameEqualsI(text, "pois") ||
-        NameContainsI(text, "POISON:") ||
-        NameContainsI(text, " poison damage") ||
-        NameContainsI(text, "Fire") ||
-        NameContainsI(text, "Cold") ||
-        NameContainsI(text, "Lightning") ||
-        NameContainsI(text, "Light") ||
-        NameContainsI(text, "Ltng") ||
-        NameContainsI(text, "ligt") ||
-        NameContainsI(text, "Poison") ||
-        NameContainsI(text, "pois") ||
-        NameContainsI(text, "Magic") ||
-        NameContainsI(text, "magc") ||
-        NameContainsI(text, "Burn");
-}
-
-static FloatingDamage::Element TryElementFromReadableText(const char* text)
-{
-    if (!TextLooksLikeDamageType(text))
-        return FloatingDamage::Element::Physical;
-
-    return ElementFromDamageTypeName(text);
-}
-
-static FloatingDamage::Element TryElementFromStringCandidate(const void* candidate)
-{
-    if (!candidate || !LooksLikeGamePointer(candidate))
-        return FloatingDamage::Element::Physical;
-
-    char text[256]{};
-
-    if (SafeReadShortString(static_cast<const char*>(candidate), text, sizeof(text)))
-    {
-        const FloatingDamage::Element element = TryElementFromReadableText(text);
-        if (element != FloatingDamage::Element::Physical)
-            return element;
-    }
-
-    if (SafeReadShortWideStringToUtf8(static_cast<const wchar_t*>(candidate), text, sizeof(text)))
-    {
-        const FloatingDamage::Element element = TryElementFromReadableText(text);
-        if (element != FloatingDamage::Element::Physical)
-            return element;
-    }
-
-    if (SafeReadBlzString(static_cast<const blz_string*>(candidate), text, sizeof(text)))
-    {
-        const FloatingDamage::Element element = TryElementFromReadableText(text);
-        if (element != FloatingDamage::Element::Physical)
-            return element;
-    }
-
-    if (IsCommittedReadableMemory(candidate, sizeof(void*)))
-    {
-        __try
-        {
-            const char* indirect = *static_cast<const char* const*>(candidate);
-            if (indirect && SafeReadShortString(indirect, text, sizeof(text)))
-            {
-                const FloatingDamage::Element element = TryElementFromReadableText(text);
-                if (element != FloatingDamage::Element::Physical)
-                    return element;
-            }
-        }
-        __except (EXCEPTION_EXECUTE_HANDLER)
-        {
-        }
-    }
-
-    return FloatingDamage::Element::Physical;
-}
-
-static FloatingDamage::Element TryElementFromStatTable(const D2DamageStatTableStrc* pTable)
-{
-    if (!pTable)
-        return FloatingDamage::Element::Physical;
-
-    char typeName[32]{};
-    if (pTable->szName && SafeReadShortString(pTable->szName, typeName, sizeof(typeName)))
-    {
-        const FloatingDamage::Element fromName = ElementFromDamageTypeName(typeName);
-        if (fromName != FloatingDamage::Element::Physical ||
-            NameEqualsI(typeName, "Physical") ||
-            NameEqualsI(typeName, "Phys") ||
-            NameEqualsI(typeName, "Attack"))
-        {
-            return fromName;
-        }
-    }
-
-    return ElementFromReductionType(pTable->nDamageReductionType);
-}
-
-static const char* AdvancePastColorCodes(const char* text)
-{
-    while (text && *text)
-    {
-        if (static_cast<unsigned char>(text[0]) == 0xFF && text[1] == 'c' && text[2])
-        {
-            text += 3;
-            continue;
-        }
-        break;
-    }
-    return text;
-}
-
-static const char* FindCaseInsensitive(const char* haystack, const char* needle)
-{
-    if (!haystack || !needle || !needle[0])
-        return nullptr;
-
-    const size_t needleLen = strlen(needle);
-    for (const char* cursor = haystack; *cursor; ++cursor)
-    {
-        if (_strnicmp(cursor, needle, needleLen) == 0)
-            return cursor;
-    }
-    return nullptr;
-}
-
-static D2GameStrc* GetActiveGame()
-{
-    D2Client* pGameClient = GetClientPtr();
-    if (!pGameClient)
-        return nullptr;
-
-    return reinterpret_cast<D2GameStrc*>(pGameClient->pGame);
-}
-
-static bool TryReadTextCandidate(const void* candidate, char* dst, size_t dstSize)
-{
-    if (!candidate || !dst || dstSize == 0 || !LooksLikeGamePointer(candidate))
-        return false;
-
-    if (SafeReadShortString(static_cast<const char*>(candidate), dst, dstSize) && dst[0])
-        return true;
-
-    if (SafeReadShortWideStringToUtf8(static_cast<const wchar_t*>(candidate), dst, dstSize) && dst[0])
-        return true;
-
-    if (SafeReadBlzString(static_cast<const blz_string*>(candidate), dst, dstSize) && dst[0])
-        return true;
-
-    return false;
-}
-
-static void CollectHookCombatText(void* param1, void* param6, void* param8, void* param10, char* dst, size_t dstSize)
-{
-    if (!dst || dstSize == 0)
-        return;
-
-    dst[0] = '\0';
-
-    const void* candidates[] = { param8, param10, param6, param1 };
-    for (const void* candidate : candidates)
-    {
-        char text[512]{};
-        if (!TryReadTextCandidate(candidate, text, sizeof(text)))
-            continue;
-
-        if (!dst[0] || strlen(text) > strlen(dst))
-            strncpy_s(dst, dstSize, text, _TRUNCATE);
-    }
-}
-
-static int ParseCombatLogDamageAmount(const char* text)
-{
-    if (!text || !text[0])
-        return 0;
-
-    const char* dmgLabel = FindCaseInsensitive(text, " poison damage");
-    if (dmgLabel && dmgLabel > text)
-    {
-        const char* cursor = dmgLabel;
-        while (cursor > text && cursor[-1] == ' ')
-            --cursor;
-
-        int amount = 0;
-        int multiplier = 1;
-        while (cursor > text && cursor[-1] >= '0' && cursor[-1] <= '9')
-        {
-            amount += (cursor[-1] - '0') * multiplier;
-            multiplier *= 10;
-            --cursor;
-        }
-
-        if (amount > 0)
-            return amount;
-    }
-
-    const char* cursor = text;
-    while ((cursor = FindCaseInsensitive(cursor, "takes")) != nullptr)
-    {
-        cursor += 5;
-        for (int attempt = 0; attempt < 8 && *cursor; ++attempt)
-        {
-            cursor = AdvancePastColorCodes(cursor);
-            while (*cursor == ' ')
-                ++cursor;
-
-            if (*cursor >= '0' && *cursor <= '9')
-            {
-                int amount = 0;
-                while (*cursor >= '0' && *cursor <= '9')
-                {
-                    amount = (amount * 10) + (*cursor - '0');
-                    ++cursor;
-                }
-
-                if (amount > 0)
-                    return amount;
-            }
-
-            if (static_cast<unsigned char>(*cursor) == 0xFF && cursor[1] == 'c' && cursor[2])
-                cursor += 3;
-            else if (*cursor)
-                ++cursor;
-        }
-    }
-
-    return 0;
-}
-
-static bool ExtractBracketedName(const char* text, char* out, size_t outSize)
-{
-    if (!text || !out || outSize == 0)
-        return false;
-
-    const char* open = strchr(text, '[');
-    if (!open)
-        return false;
-
-    ++open;
-    const char* close = strchr(open, ']');
-    if (!close || close <= open)
-        return false;
-
-    const size_t length = static_cast<size_t>(close - open);
-    if (length == 0 || length >= outSize)
-        return false;
-
-    memcpy(out, open, length);
-    out[length] = '\0';
-    return true;
-}
-
-static const char* StripLeadingColorCodes(const char* text, char* scratch, size_t scratchSize)
-{
-    if (!text)
-        return "";
-
-    strncpy_s(scratch, scratchSize, text, _TRUNCATE);
-    char* cursor = scratch;
-    while (*cursor)
-    {
-        char* next = cursor;
-        if (static_cast<unsigned char>(*next) == 0xFF && next[1] == 'c' && next[2])
-            next += 3;
-        if (next == cursor)
-            break;
-        cursor = next;
-    }
-
-    return cursor;
-}
-
-static bool UnitNameMatches(const char* unitName, const char* bracketName)
-{
-    char strippedUnit[128]{};
-    char strippedBracket[128]{};
-    const char* lhs = StripLeadingColorCodes(unitName, strippedUnit, sizeof(strippedUnit));
-    const char* rhs = StripLeadingColorCodes(bracketName, strippedBracket, sizeof(strippedBracket));
-
-    if (!lhs[0] || !rhs[0])
-        return false;
-
-    return _stricmp(lhs, rhs) == 0 || NameContainsI(lhs, rhs) || NameContainsI(rhs, lhs);
-}
-
-static D2UnitStrc* FindClientMonsterByDisplayName(const char* displayName)
-{
-    if (!displayName || !displayName[0])
-        return nullptr;
-
-    auto* ppClientUnitList = reinterpret_cast<D2UnitStrc**>(Pattern::Address(unitDataOffset));
-    if (!ppClientUnitList)
-        return nullptr;
-
-    D2UnitStrc** ppMonsterList = &ppClientUnitList[UNIT_MONSTER * 0x80];
-    for (int bucket = 0; bucket < 0x80; ++bucket)
-    {
-        for (D2UnitStrc* pUnit = ppMonsterList[bucket]; pUnit; pUnit = pUnit->pListNext)
-        {
-            if (!pUnit->pDynamicPath)
-                continue;
-
-            char nameBuf[128]{};
-            const char* unitName = GetUnitName(reinterpret_cast<uint64_t>(pUnit), nameBuf);
-            if (!unitName || !unitName[0])
-                unitName = nameBuf;
-
-            if (UnitNameMatches(unitName, displayName))
-                return pUnit;
-        }
-    }
-
-    return nullptr;
-}
-
-static bool ComputeScreenPositionForTarget(D2UnitStrc* attacker, D2UnitStrc* target, float& screenX, float& screenY)
-{
-    if (!target || !target->pDynamicPath)
-        return false;
-
-    if (!attacker || !attacker->pDynamicPath)
-        attacker = target;
-
-    D2DynamicPathStrc* a = attacker->pDynamicPath;
-    D2DynamicPathStrc* t = target->pDynamicPath;
-
-    constexpr float INV_SUBTILE = 1.0f / 65536.0f;
-
-    const float ax = a->wPosX + a->wOffsetX * INV_SUBTILE;
-    const float ay = a->wPosY + a->wOffsetY * INV_SUBTILE;
-    const float tx = t->wPosX + t->wOffsetX * INV_SUBTILE;
-    const float ty = t->wPosY + t->wOffsetY * INV_SUBTILE;
-    const float dx = tx - ax;
-    const float dy = ty - ay;
-
-    const float isoX = dx - dy;
-    const float isoY = dx + dy;
-    const float pixelOffsetX = 40.0f + isoX * 30.0f;
-    const float pixelOffsetY = 120.0f + isoY * -12.5f;
-
-    screenX = g_LastDisplaySize.x * 0.5f + pixelOffsetX;
-    screenY = g_LastDisplaySize.y * 0.5f - pixelOffsetY;
-    return true;
-}
-
-static std::unordered_map<uint64_t, std::pair<FloatingDamage::Element, std::chrono::steady_clock::time_point>> g_targetElementCache;
-
-static D2UnitStrc* GetClientUnitByIdAndType(uint32_t unitId, uint32_t unitType)
-{
-    auto* ppClientUnitList = reinterpret_cast<D2UnitStrc**>(Pattern::Address(unitDataOffset));
-    if (!ppClientUnitList)
-        return nullptr;
-
-    D2UnitStrc** ppUnitList = &ppClientUnitList[unitType * 0x80];
-    D2UnitStrc* pUnit = ppUnitList[unitId & 0x7F];
-    while (pUnit && pUnit->dwUnitId != unitId)
-        pUnit = pUnit->pListNext;
-
-    return pUnit;
-}
-
-static bool ReadBlzStringMessage(const blz_string* msg, char* dst, size_t dstSize)
-{
-    if (!msg || !dst || dstSize == 0)
-        return false;
-
-    return SafeReadBlzString(msg, dst, dstSize);
-}
-
-// "ÿc4Playerÿc1: hello" or "Player: hello" -> Player
-static bool TryParsePlayerChatSender(const char* text, std::string& outSender)
-{
-    if (!text || !text[0])
-        return false;
-
-    const char* p = text;
-    while ((unsigned char)p[0] == 0xFF && p[1] == 'c' && p[2])
-        p += 3;
-
-    const char* colon = strchr(p, ':');
-    if (!colon || colon == p || colon[1] != ' ')
-        return false;
-
-    const size_t nameLen = static_cast<size_t>(colon - p);
-    if (nameLen == 0 || nameLen > 60)
-        return false;
-
-    for (size_t i = 0; i < nameLen; ++i)
-    {
-        const unsigned char c = static_cast<unsigned char>(p[i]);
-        if (c == '\n' || c == '\r' || c == 0xFF)
-            return false;
-    }
-
-    outSender.assign(p, nameLen);
-    while (!outSender.empty() && (outSender.back() == ' ' || outSender.back() == '\t'))
-        outSender.pop_back();
-
-    return !outSender.empty();
-}
-
-static bool TryParsePlayerChatLine(const char* text, std::string& outSender, std::string& outBody)
-{
-    outSender.clear();
-    outBody.clear();
-    if (!TryParsePlayerChatSender(text, outSender))
-        return false;
-
-    const char* p = SkipD2ColorCodesForChat(text);
-    const char* colon = strchr(p, ':');
-    if (!colon || colon[1] != ' ')
-        return false;
-
-    outBody = SkipD2ColorCodesForChat(colon + 2);
-    return !outBody.empty();
-}
-
-static D2UnitStrc* FindCachedPoisonTarget()
-{
-    const auto now = std::chrono::steady_clock::now();
-
-    for (const auto& entry : g_targetElementCache)
-    {
-        if (entry.second.second <= now)
-            continue;
-        if (entry.second.first != FloatingDamage::Element::Poison)
-            continue;
-
-        const uint32_t unitType = static_cast<uint32_t>(entry.first >> 32);
-        const uint32_t unitId = static_cast<uint32_t>(entry.first & 0xFFFFFFFFu);
-        D2UnitStrc* pUnit = GetClientUnitByIdAndType(unitId, unitType);
-        if (pUnit && pUnit->pDynamicPath)
-            return pUnit;
-    }
-
-    return nullptr;
-}
-
-struct RecentDamageQueueEntry {
-    uint64_t targetKey = 0;
-    std::chrono::steady_clock::time_point queuedAt{};
-};
-
-static RecentDamageQueueEntry g_recentDamageQueue{};
-
-struct PoisonWatchEntry {
-    int32_t lastHpPoints = -1;
-};
-
-static std::unordered_map<uint64_t, PoisonWatchEntry> g_poisonWatch;
-static std::unordered_map<uint64_t, std::chrono::steady_clock::time_point> g_lastPoisonHookQueue;
-static std::unordered_map<uint64_t, std::chrono::steady_clock::time_point> g_lastNonPoisonDamageOnTarget;
-
-static uint64_t MakeTargetElementKey(uint32_t unitType, uint32_t unitId);
-static FloatingDamage::Element ResolveTargetElement(
-    FloatingDamage::Element detected,
-    uint32_t unitType,
-    uint32_t unitId);
-
-static void QueueTargetDamage(
-    int amount,
-    float screenX,
-    float screenY,
-    uint32_t unitType,
-    uint32_t unitId,
-    FloatingDamage::Kind kind,
-    FloatingDamage::Element element)
-{
-    if (amount <= 0)
-        return;
-
-    if (element != FloatingDamage::Element::Poison)
-    {
-        const uint64_t targetKey = MakeTargetElementKey(unitType, unitId);
-        const auto now = std::chrono::steady_clock::now();
-        if (g_recentDamageQueue.targetKey == targetKey &&
-            now - g_recentDamageQueue.queuedAt < std::chrono::milliseconds(20))
-        {
-            return;
-        }
-
-        g_recentDamageQueue = { targetKey, now };
-        g_lastNonPoisonDamageOnTarget[targetKey] = now;
-        SyncPoisonWatchHp(unitType, unitId);
-    }
-
-    FloatingDamage::QueueGameDamage(amount, screenX, screenY, unitType, unitId, kind, element);
-}
-
-static std::pair<uint32_t, uint32_t> g_lastPoisonTarget{ UINT32_MAX, UINT32_MAX };
-
-static void TryQueuePoisonCombatMessage(const char* text, D2UnitStrc* targetOverride)
-{
-    if (!text || !text[0])
-        return;
-
-    if (!FindCaseInsensitive(text, "POISON:") && !FindCaseInsensitive(text, " poison damage"))
-        return;
-
-    const int amount = ParseCombatLogDamageAmount(text);
-    if (amount <= 0)
-        return;
-
-    D2UnitStrc* target = targetOverride;
-    if (!target)
-    {
-        char bracketName[128]{};
-        if (ExtractBracketedName(text, bracketName, sizeof(bracketName)))
-            target = FindClientMonsterByDisplayName(bracketName);
-    }
-
-    if (!target)
-        target = GetClientUnitByIdAndType(g_lastPoisonTarget.second, g_lastPoisonTarget.first);
-
-    if (!target)
-        target = FindCachedPoisonTarget();
-
-    if (!target || !target->pDynamicPath)
-        return;
-
-    g_lastPoisonTarget = { target->dwUnitType, target->dwUnitId };
-
-    float screenX = 0.0f;
-    float screenY = 0.0f;
-    if (!ComputeScreenPositionForTarget(target, target, screenX, screenY))
-        return;
-
-    const FloatingDamage::Element element = ResolveTargetElement(
-        FloatingDamage::Element::Poison,
-        target->dwUnitType,
-        target->dwUnitId);
-
-    QueuePoisonDamageEvent(
-        amount,
-        screenX,
-        screenY,
-        target->dwUnitType,
-        target->dwUnitId,
-        element);
-}
-
-static FloatingDamage::Element DetectDamageElement(void* param1, int param5, void* param6, void* param8, void* param10)
-{
-    char combatText[512]{};
-    CollectHookCombatText(param1, param6, param8, param10, combatText, sizeof(combatText));
-    if (combatText[0])
-    {
-        const FloatingDamage::Element fromCombat = ElementFromDamageTypeName(combatText);
-        if (fromCombat != FloatingDamage::Element::Physical)
-            return fromCombat;
-    }
-
-    const FloatingDamage::Element fromParam8 = TryElementFromStringCandidate(param8);
-    if (fromParam8 != FloatingDamage::Element::Physical)
-        return fromParam8;
-
-    const FloatingDamage::Element fromParam6Text = TryElementFromStringCandidate(param6);
-    if (fromParam6Text != FloatingDamage::Element::Physical)
-        return fromParam6Text;
-
-    if (param6 && LooksLikeGamePointer(param6) &&
-        IsCommittedReadableMemory(param6, sizeof(D2DamageStatTableStrc)))
-    {
-        __try
-        {
-            const auto* pTable = reinterpret_cast<const D2DamageStatTableStrc*>(param6);
-            const FloatingDamage::Element fromTable = TryElementFromStatTable(pTable);
-            if (fromTable != FloatingDamage::Element::Physical)
-                return fromTable;
-        }
-        __except (EXCEPTION_EXECUTE_HANDLER)
-        {
-        }
-    }
-    else if (param6 && !LooksLikeGamePointer(param6))
-    {
-        const int typeIndex = static_cast<int>(reinterpret_cast<intptr_t>(param6));
-        if (typeIndex >= 0 && typeIndex <= 16)
-        {
-            const FloatingDamage::Element fromIndex = ElementFromTypeIndex(typeIndex);
-            if (fromIndex != FloatingDamage::Element::Physical)
-                return fromIndex;
-        }
-    }
-
-    if (param5 >= 0 && param5 <= 16)
-    {
-        const FloatingDamage::Element fromParam5 = ElementFromTypeIndex(param5);
-        if (fromParam5 != FloatingDamage::Element::Physical)
-            return fromParam5;
-    }
-
-    const FloatingDamage::Element fromParam10 = TryElementFromStringCandidate(param10);
-    if (fromParam10 != FloatingDamage::Element::Physical)
-        return fromParam10;
-
-    const FloatingDamage::Element fromParam1 = TryElementFromStringCandidate(param1);
-    if (fromParam1 != FloatingDamage::Element::Physical)
-        return fromParam1;
-
-    return FloatingDamage::Element::Physical;
-}
-
-static uint64_t MakeTargetElementKey(uint32_t unitType, uint32_t unitId)
-{
-    return (static_cast<uint64_t>(unitType) << 32) | static_cast<uint64_t>(unitId);
-}
-
-static FloatingDamage::Element ResolveTargetElement(
-    FloatingDamage::Element detected,
-    uint32_t unitType,
-    uint32_t unitId)
-{
-    const uint64_t key = MakeTargetElementKey(unitType, unitId);
-    const auto now = std::chrono::steady_clock::now();
-    constexpr auto kDoTElementCacheDuration = std::chrono::seconds(60);
-
-    if (detected != FloatingDamage::Element::Physical)
-    {
-        g_targetElementCache[key] = { detected, now + kDoTElementCacheDuration };
-        return detected;
-    }
-
-    const auto it = g_targetElementCache.find(key);
-    if (it != g_targetElementCache.end())
-    {
-        if (it->second.second > now)
-            return it->second.first;
-
-        g_targetElementCache.erase(it);
-    }
-
-    return FloatingDamage::Element::Physical;
-}
-
-static int32_t ReadUnitHpPoints(D2UnitStrc* pUnit)
-{
-    if (!pUnit)
-        return -1;
-
-    __try
-    {
-        return STATLIST_GetUnitStatSigned(pUnit, STAT_HITPOINTS, 0) >> 8;
-    }
-    __except (EXCEPTION_EXECUTE_HANDLER)
-    {
-        return -1;
-    }
-}
-
-static int32_t ReadUnitHpPointsById(uint32_t unitType, uint32_t unitId, D2UnitStrc* pClientUnit)
-{
-    if (D2GameStrc* pGame = GetActiveGame())
-    {
-        D2UnitStrc* pServerUnit = UNITS_GetServerUnitByTypeAndId(
-            pGame,
-            static_cast<D2C_UnitTypes>(unitType),
-            unitId);
-        if (pServerUnit)
-        {
-            const int32_t serverHp = ReadUnitHpPoints(pServerUnit);
-            if (serverHp >= 0)
-                return serverHp;
-        }
-    }
-
-    return ReadUnitHpPoints(pClientUnit);
-}
-
-static void SyncPoisonWatchHp(uint32_t unitType, uint32_t unitId)
-{
-    D2UnitStrc* pUnit = GetClientUnitByIdAndType(unitId, unitType);
-    if (!pUnit)
-        return;
-
-    const uint64_t key = MakeTargetElementKey(unitType, unitId);
-    g_poisonWatch[key].lastHpPoints = ReadUnitHpPointsById(unitType, unitId, pUnit);
-}
-
-static bool IsTargetPoisonActive(uint32_t unitType, uint32_t unitId)
-{
-    const uint64_t key = MakeTargetElementKey(unitType, unitId);
-    const auto now = std::chrono::steady_clock::now();
-
-    const auto cacheIt = g_targetElementCache.find(key);
-    if (cacheIt != g_targetElementCache.end() &&
-        cacheIt->second.first == FloatingDamage::Element::Poison &&
-        cacheIt->second.second > now)
-    {
-        return true;
-    }
-
-    D2UnitStrc* pUnit = GetClientUnitByIdAndType(unitId, unitType);
-    if (!pUnit)
-        return g_poisonWatch.find(key) != g_poisonWatch.end();
-
-    __try
-    {
-        if (STATLIST_GetUnitStatSigned(pUnit, STAT_POISON_COUNT, 0) > 0)
-            return true;
-    }
-    __except (EXCEPTION_EXECUTE_HANDLER)
-    {
-    }
-
-    return g_poisonWatch.find(key) != g_poisonWatch.end();
-}
-
-static void QueuePoisonDamageEvent(
-    int amount,
-    float screenX,
-    float screenY,
-    uint32_t unitType,
-    uint32_t unitId,
-    FloatingDamage::Element element)
-{
-    if (!IsFloatingDamageActive() || amount <= 0)
-        return;
-
-    const uint64_t key = MakeTargetElementKey(unitType, unitId);
-    const auto now = std::chrono::steady_clock::now();
-    const auto recentHookIt = g_lastPoisonHookQueue.find(key);
-    if (recentHookIt != g_lastPoisonHookQueue.end() &&
-        now - recentHookIt->second < std::chrono::milliseconds(8))
-    {
-        return;
-    }
-
-    g_lastPoisonHookQueue[key] = now;
-    g_lastPoisonTarget = { unitType, unitId };
-    ResolveTargetElement(FloatingDamage::Element::Poison, unitType, unitId);
-    SyncPoisonWatchHp(unitType, unitId);
-
-    FloatingDamage::QueueGameDamage(
-        amount,
-        screenX,
-        screenY,
-        unitType,
-        unitId,
-        FloatingDamage::Kind::Normal,
-        element);
-}
-
-static void UpdatePoisonDoTWatch()
-{
-    static bool wasActive = false;
-    const bool active = IsFloatingDamageActive();
-    const bool resume = active && !wasActive;
-    wasActive = active;
-    if (!active)
-        return;
-
-    const auto now = std::chrono::steady_clock::now();
-    constexpr auto kHookGracePeriod = std::chrono::milliseconds(120);
-    constexpr auto kStaleWatchTimeout = std::chrono::seconds(3);
-
-    std::vector<uint64_t> keys;
-    keys.reserve(g_poisonWatch.size() + g_targetElementCache.size());
-    for (const auto& entry : g_poisonWatch)
-        keys.push_back(entry.first);
-    for (const auto& entry : g_targetElementCache)
-    {
-        if (entry.second.first == FloatingDamage::Element::Poison && entry.second.second > now)
-            keys.push_back(entry.first);
-    }
-
-    std::sort(keys.begin(), keys.end());
-    keys.erase(std::unique(keys.begin(), keys.end()), keys.end());
-
-    for (const uint64_t key : keys)
-    {
-        const uint32_t unitType = static_cast<uint32_t>(key >> 32);
-        const uint32_t unitId = static_cast<uint32_t>(key & 0xFFFFFFFFu);
-
-        D2UnitStrc* pUnit = GetClientUnitByIdAndType(unitId, unitType);
-        if (!pUnit || !pUnit->pDynamicPath)
-            continue;
-
-        if (!IsTargetPoisonActive(unitType, unitId))
-        {
-            const auto watchIt = g_poisonWatch.find(key);
-            if (watchIt != g_poisonWatch.end())
-            {
-                const auto lastHookIt = g_lastPoisonHookQueue.find(key);
-                if (lastHookIt == g_lastPoisonHookQueue.end() ||
-                    now - lastHookIt->second > kStaleWatchTimeout)
-                {
-                    g_poisonWatch.erase(watchIt);
-                }
-            }
-            continue;
-        }
-
-        const auto hookIt = g_lastPoisonHookQueue.find(key);
-        if (hookIt != g_lastPoisonHookQueue.end() && now - hookIt->second < kHookGracePeriod)
-        {
-            SyncPoisonWatchHp(unitType, unitId);
-            continue;
-        }
-
-        const auto nonPoisonIt = g_lastNonPoisonDamageOnTarget.find(key);
-        if (nonPoisonIt != g_lastNonPoisonDamageOnTarget.end() && now - nonPoisonIt->second < kHookGracePeriod)
-        {
-            SyncPoisonWatchHp(unitType, unitId);
-            continue;
-        }
-
-        const int32_t hp = ReadUnitHpPointsById(unitType, unitId, pUnit);
-        if (hp < 0)
-            continue;
-
-        PoisonWatchEntry& watch = g_poisonWatch[key];
-        if (!resume && watch.lastHpPoints >= 0 && hp < watch.lastHpPoints)
-        {
-            const int delta = watch.lastHpPoints - hp;
-            if (delta > 0)
-            {
-                float screenX = 0.0f;
-                float screenY = 0.0f;
-                if (ComputeScreenPositionForTarget(pUnit, pUnit, screenX, screenY))
-                {
-                    const FloatingDamage::Element element = ResolveTargetElement(
-                        FloatingDamage::Element::Poison,
-                        unitType,
-                        unitId);
-
-                    g_lastPoisonHookQueue[key] = now;
-                    FloatingDamage::QueueGameDamage(
-                        delta,
-                        screenX,
-                        screenY,
-                        unitType,
-                        unitId,
-                        FloatingDamage::Kind::Normal,
-                        element);
-                }
-            }
-        }
-
-        watch.lastHpPoints = hp;
-    }
-}
-
-static bool IsPoisonStatTableRecord(const D2DamageStatTableStrc* pTable)
-{
-    if (!pTable)
-        return false;
-
-    if (TryElementFromStatTable(pTable) == FloatingDamage::Element::Poison)
-        return true;
-
-    return pTable->nDamageReductionType == 4;
-}
-
-static int ReadPoisonDamageAmount(D2DamageInfoStrc* pDamageInfo, D2DamageStatTableStrc* pTable)
-{
-    if (pTable && pTable->pOffsetInDamageStrc &&
-        LooksLikeGamePointer(pTable->pOffsetInDamageStrc) &&
-        IsCommittedReadableMemory(pTable->pOffsetInDamageStrc, sizeof(int32_t)))
-    {
-        const int amount = *pTable->pOffsetInDamageStrc;
-        if (amount > 0)
-            return amount;
-    }
-
-    if (pDamageInfo && pDamageInfo->pDamage &&
-        LooksLikeGamePointer(pDamageInfo->pDamage) &&
-        IsCommittedReadableMemory(pDamageInfo->pDamage, sizeof(D2DamageStrc)))
-    {
-        return pDamageInfo->pDamage->dwPoisDamage;
-    }
-
-    return 0;
-}
-
-static void TryQueuePoisonDamageFromStatTable(D2DamageInfoStrc* pDamageInfo, D2DamageStatTableStrc* pDamageStatTableRecord)
-{
-    if (!IsFloatingDamageActive())
-        return;
-    if (!pDamageInfo || !pDamageStatTableRecord || !pDamageInfo->pDefender)
-        return;
-    if (!pDamageInfo->pDefender->pDynamicPath)
-        return;
-    if (!IsCommittedReadableMemory(pDamageStatTableRecord, sizeof(D2DamageStatTableStrc)))
-        return;
-
-    __try
-    {
-        if (!IsPoisonStatTableRecord(pDamageStatTableRecord))
-            return;
-
-        const int amount = ReadPoisonDamageAmount(pDamageInfo, pDamageStatTableRecord);
-        if (amount <= 0)
-            return;
-
-        D2UnitStrc* target = pDamageInfo->pDefender;
-        D2UnitStrc* attacker = pDamageInfo->pAttacker;
-
-        float screenX = 0.0f;
-        float screenY = 0.0f;
-        if (!ComputeScreenPositionForTarget(attacker, target, screenX, screenY))
-            return;
-
-        const FloatingDamage::Element resolved = ResolveTargetElement(
-            FloatingDamage::Element::Poison,
-            target->dwUnitType,
-            target->dwUnitId);
-
-        QueuePoisonDamageEvent(
-            amount,
-            screenX,
-            screenY,
-            target->dwUnitType,
-            target->dwUnitId,
-            resolved);
-    }
-    __except (EXCEPTION_EXECUTE_HANDLER)
-    {
-    }
-}
-
-static void EnsureDamageInfoHook();
-static bool g_BroadcastChatHookInstalled = false;
 static bool g_ChatManagerHookInstalled = false;
 
 D2ChatManager* __fastcall Hooked_ChatManager_PushChatEntry(
@@ -10363,14 +7311,16 @@ D2ChatManager* __fastcall Hooked_ChatManager_PushChatEntry(
     ChatOptionalStruct& a9)
 {
     char text[512]{};
-    const bool hasText = ReadBlzStringMessage(&msg, text, sizeof(text));
+    const bool watchDamage = IsFloatingDamageActive();
+    const bool watchChat = HudChat::Enabled();
+    const bool hasText = (watchDamage || watchChat) && HudCombat::ReadChatMessage(&msg, text, sizeof(text));
 
-    if (IsFloatingDamageActive() && hasText)
-        TryQueuePoisonCombatMessage(text);
+    if (watchDamage && hasText)
+        HudCombat::ObserveCombatMessage(text);
 
     D2ChatManager* result = oChatManager_PushChatEntry(pMgr, msg, color, a4, typeMsg, a6, a7, a8, a9);
 
-    if (IsGameSystemChatEntry(typeMsg))
+    if (!watchChat || IsGameSystemChatEntry(typeMsg))
         return result;
 
     // After the game finishes pushing chat (re-entrancy safe). Joiners usually only get this path.
@@ -10378,8 +7328,8 @@ D2ChatManager* __fastcall Hooked_ChatManager_PushChatEntry(
     {
         std::string sender;
         std::string body;
-        if (TryParsePlayerChatLine(text, sender, body))
-            QueueChatNotificationForSender(sender.c_str(), body.c_str(), 0, 0, false);
+        if (HudCombat::ParseChatLine(text, sender, body))
+            HudChat::Observe(sender.c_str(), body.c_str(), 0, 0, false);
     }
 
     return result;
@@ -10387,172 +7337,33 @@ D2ChatManager* __fastcall Hooked_ChatManager_PushChatEntry(
 
 static void EnsureChatManagerHook()
 {
-    if (g_ChatManagerHookInstalled || !oChatManager_PushChatEntry)
-        return;
-
-    DetourTransactionBegin();
-    DetourUpdateThread(GetCurrentThread());
-    DetourAttach(&(PVOID&)oChatManager_PushChatEntry, Hooked_ChatManager_PushChatEntry);
-    DetourTransactionCommit();
-    g_ChatManagerHookInstalled = true;
+    if (g_ChatManagerHookInstalled || !oChatManager_PushChatEntry) return;
+    static auto* installer = new HudHooks::Installer("Chat", {
+        HudHooks::Bind(oChatManager_PushChatEntry, Hooked_ChatManager_PushChatEntry,
+            Pattern::Address(ChatManager_PushChatEntryOffset), "ChatManager_PushChatEntry")
+    });
+    if (TryInstallHooks(*installer)) g_ChatManagerHookInstalled = true;
 }
 
-void __fastcall Hooked_BroadcastChatMessage(uint64_t pGame, const char* szMsg, uint8_t color)
-{
-    // Disabled for chat sounds to avoid triggering on system/status broadcasts.
-
-    if (szMsg && IsFloatingDamageActive())
-    {
-        char text[512]{};
-        if (SafeReadShortString(szMsg, text, sizeof(text)))
-            TryQueuePoisonCombatMessage(text);
-    }
-
-    oBroadcastChatMessage(pGame, szMsg, color);
-}
-
-static void EnsureBroadcastChatHook()
-{
-    if (g_BroadcastChatHookInstalled || !oBroadcastChatMessage)
-        return;
-
-    DetourTransactionBegin();
-    DetourUpdateThread(GetCurrentThread());
-    DetourAttach(&(PVOID&)oBroadcastChatMessage, Hooked_BroadcastChatMessage);
-    DetourTransactionCommit();
-    g_BroadcastChatHookInstalled = true;
-}
-
-static void EnsureDamageInfoHook()
-{
-    if (g_DamageInfoHookInstalled)
-        return;
-
-    const uint64_t addr = Pattern::Address(0x27ab90);
-    if (!addr)
-        return;
-
-    oDamageInfo = reinterpret_cast<DamageInfo_t>(addr);
-
-    DetourTransactionBegin();
-    DetourUpdateThread(GetCurrentThread());
-    DetourAttach(&(PVOID&)oDamageInfo, Hooked_DamageInfo);
-    DetourTransactionCommit();
-    g_DamageInfoHookInstalled = true;
-
-    EnsureBroadcastChatHook();
-    EnsureChatManagerHook();
-    EnsureSunitdmHook();
-}
-
-void __fastcall Hooked_DamageInfo(void* param1, D2UnitStrc* attacker, D2UnitStrc* target, int baseDamage, int param5, void* param6, int finalDamage, void* param8, char param9, void* param10)
-{
-    char combatText[512]{};
-    CollectHookCombatText(param1, param6, param8, param10, combatText, sizeof(combatText));
-
-    const int actualDamage = finalDamage >> 8;
-    const int parsedDamage = ParseCombatLogDamageAmount(combatText);
-    const bool isPoisonCombat = FindCaseInsensitive(combatText, "POISON:") != nullptr ||
-        FindCaseInsensitive(combatText, " poison damage") != nullptr;
-    int displayDamage = actualDamage > 0 ? actualDamage : parsedDamage;
-    if (isPoisonCombat && parsedDamage > 0)
-        displayDamage = parsedDamage;
-    const FloatingDamage::Element detectedElement = DetectDamageElement(param1, param5, param6, param8, param10);
-
-    oDamageInfo(param1, attacker, target, baseDamage, param5, param6, finalDamage, param8, param9, param10);
-
-    // The hook stays installed for fast re-enable; disabled hits still take
-    // their normal native path but never update damage-number tracking.
-    if (!IsFloatingDamageActive())
-        return;
-    if (!target || !target->pDynamicPath)
-        return;
-
-    if (isPoisonCombat && parsedDamage > 0)
-    {
-        TryQueuePoisonCombatMessage(combatText, target);
-        return;
-    }
-
-    if (displayDamage <= 0)
-        return;
-
-    if (!attacker || !attacker->pDynamicPath)
-        attacker = target;
-
-    const FloatingDamage::Element element = ResolveTargetElement(
-        detectedElement,
-        target->dwUnitType,
-        target->dwUnitId);
-
-    float screenX = 0.0f;
-    float screenY = 0.0f;
-    if (!ComputeScreenPositionForTarget(attacker, target, screenX, screenY))
-        return;
-
-    if (element == FloatingDamage::Element::Poison)
-    {
-        QueuePoisonDamageEvent(
-            displayDamage,
-            screenX,
-            screenY,
-            target->dwUnitType,
-            target->dwUnitId,
-            element);
-        return;
-    }
-
-    QueueTargetDamage(
-        displayDamage,
-        screenX,
-        screenY,
-        target->dwUnitType,
-        target->dwUnitId,
-        FloatingDamage::Kind::Normal,
-        element);
-}
-
-struct PreferenceEditorState { bool wasOpen=false,dirty=false,failed=false; };
-
-template<class Draw,class Snapshot>
-static void DrawPreferenceEditor(const char* title,bool& open,ImVec2 initialSize,PreferenceEditorState& state,Draw draw,Snapshot snapshot) {
-    if(!open){
-        if(state.wasOpen&&state.dirty){state.failed=!SaveFullGrailConfig(configFilePath,false);state.dirty=state.failed;}
-        state.wasOpen=false;return;
-    }
-    state.wasOpen=true;
-    const float scale=GetMenuScaleFactor();
-    HudMenu::Prepare({initialSize.x*scale,initialSize.y*scale});
-    if(HudMenu::Begin(title,&open,ImGuiWindowFlags_NoTitleBar)){
-        if(!HudMenu::embedded){PushFontSafe(3);DrawWindowTitleAndClose(title,&open);PopFontSafe(3);}
-        const float footer=state.failed?2*ImGui::GetFrameHeightWithSpacing()+8*scale:ImGui::GetTextLineHeightWithSpacing()+6*scale;
-        ImGui::BeginChild("PreferenceFields",{0,-footer},0,ImGuiWindowFlags_NoBackground);
-        const auto before=snapshot();draw(scale);
-        if(before!=snapshot()){state.dirty=true;state.failed=false;}
-        ImGui::EndChild();
-        if(state.dirty&&!state.failed&&!ImGui::IsAnyItemActive()){
-            state.failed=!SaveFullGrailConfig(configFilePath,false);state.dirty=state.failed;
-        }
-        HudSettings::Note(state.failed?"Changes apply now, but could not be saved.":"Changes apply and save automatically.");
-        if(state.failed&&ThemeButton("Retry saving")){state.failed=!SaveFullGrailConfig(configFilePath,false);state.dirty=state.failed;}
-    }
-    HudMenu::End();
+static HudPresentation::PreferenceHost PreferenceHost() {
+    return {GetMenuScaleFactor(),PushFontSafe,PopFontSafe,DrawWindowTitleAndClose,
+        []{return SaveFullGrailConfig(configFilePath,false);},[](const char* text){return ThemeButton(text);}};
 }
 
 void ShowBuffIconsMenu()
 {
-    static PreferenceEditorState state;
-    DrawPreferenceEditor("Buff Icons",showBuffIconsMenu,{720,760},state,BuffIcons::DrawSettingsPanel,[]{
+    static HudPresentation::PreferenceState state;
+    HudPresentation::Preferences("Buff Icons",showBuffIconsMenu,{720,760},state,BuffIcons::DrawSettingsPanel,[]{
         nlohmann::ordered_json value;BuffIcons::SaveToJson(value);return value;
-    });
+    },PreferenceHost());
 }
 
 void ShowStatRangesMenu()
 {
-    static PreferenceEditorState state;
-    DrawPreferenceEditor("Show Stat Ranges",showStatRangesMenu,{850,720},state,StatRanges::DrawSettingsPanel,[]{
+    static HudPresentation::PreferenceState state;
+    HudPresentation::Preferences("Show Stat Ranges",showStatRangesMenu,{850,720},state,StatRanges::DrawSettingsPanel,[]{
         nlohmann::ordered_json value;StatRanges::SaveToJson(value);return value;
-    });
+    },PreferenceHost());
 }
 
 // Polling reads releases as well as presses, including release of a modifier in
@@ -10601,10 +7412,10 @@ static bool IsStatRangesBindingDown()
 
 void ShowFloatingDamageMenu()
 {
-    static PreferenceEditorState state;
-    DrawPreferenceEditor("Floating Damage",showFloatingDamageMenu,{860,820},state,FloatingDamage::DrawSettingsPanel,[]{
+    static HudPresentation::PreferenceState state;
+    HudPresentation::Preferences("Floating Damage",showFloatingDamageMenu,{860,820},state,FloatingDamage::DrawSettingsPanel,[]{
         nlohmann::ordered_json value;FloatingDamage::SaveToJson(value);return value;
-    });
+    },PreferenceHost());
 }
 
 #pragma endregion
@@ -10613,8 +7424,50 @@ void ShowFloatingDamageMenu()
 #pragma endregion
 
 #pragma region Draw Loop for Detours and Stats Display
+static HudHooks::Installer& CoreHooks()
+{
+    static auto* installer = new HudHooks::Installer("Core HUD", {
+        HudHooks::Bind(mainMenuClickHandlerOrig, GameMenuOnClickHandlerHook,
+            Pattern::Address(mainMenuClickHandlerOffset), "GameMenuOnClickHandler"),
+        HudHooks::Bind(CCMD_DEBUGCHEAT_Handler_Orig, CCMD_DEBUGCHEAT_Hook,
+            Pattern::Address(CCMD_DEBUGCHEAT_HandlerOffset), "CCMD_DEBUGCHEAT"),
+        HudHooks::Bind(Process_SCMD_CHATSTART_Orig, Process_SCMD_CHATSTART_Hook,
+            Pattern::Address(Process_SCMD_CHATSTARTOffset), "SCMD_CHATSTART"),
+        HudHooks::Bind(oCCMD_ProcessClientSystemMessage, CCMD_ProcessClientSystemMessageHook,
+            Pattern::Address(ccmdProcessClientSystemMessage), "CCMD_ProcessClientSystemMessage"),
+        HudHooks::Bind(oMONSTER_InitializeStatsAndSkills, HookedMONSTER_InitializeStatsAndSkills,
+            Pattern::Address(0x33f380), "MONSTER_InitializeStatsAndSkills"),
+        HudHooks::Bind(oDropTCTest, HookedDropTCTest, Pattern::Address(0x2f9d50), "Monster drops"),
+        HudHooks::Bind(oGambleForce, Hooked_ITEMS_CalculateGambleCost, Pattern::Address(0x1fc0b0), "Gamble cost")
+    });
+    return *installer;
+}
+
+static HudHooks::Installer& MonsterCountHooks()
+{
+    static auto* installer = new HudHooks::Installer("Monster HP scaling", {
+        HudHooks::Bind(oMONSTER_GetPlayerCountBonus, HookedMONSTER_GetPlayerCountBonus,
+            Pattern::Address(0x341120), "MONSTER_GetPlayerCountBonus")
+    });
+    return *installer;
+}
+
+static HudHooks::Installer& AutomapTextHooks()
+{
+    static auto* installer = new HudHooks::Installer("Terror-zone automap text", {
+        HudHooks::Bind(oHUDWarnings__PopulateHUDWarnings, Hooked_HUDWarnings__PopulateHUDWarnings,
+            Pattern::Address(0xbb2a90), "HUDWarnings_PopulateHUDWarnings"),
+        HudHooks::Bind(oWidget__OnClose, Hooked__Widget__OnClose,
+            Pattern::Address(0x5766f0), "Widget_OnClose")
+    });
+    return *installer;
+}
+
 void D2RHUD::OnDraw() {
-    WidescreenBars::SetInGame(GetClientStatus() == 1);
+    HudTelemetry::Scope measured(HudTelemetry::Feature::Frame);
+    const auto frame=HudFrame::Capture();
+    const int clientStatus=frame.status;
+    WidescreenBars::SetInGame(clientStatus == 1);
     SelectedAuras::Update();
     D2GameStrc* pGame = nullptr;
     D2Client* pGameClient = GetClientPtr();
@@ -10622,19 +7475,35 @@ void D2RHUD::OnDraw() {
     if (pGameClient != nullptr)
         pGame = (D2GameStrc*)pGameClient->pGame;
 
-
     if (!configLoaded)
     {
-        LoadCommandsAndKeybinds("HUDConfig_" + modName + ".json");
         LoadD2RHUDConfig(configFilePath);
         RegisterModOverrides();
         ApplyModOverrides(modName);
         ApplyUITheme(s_UITheme);
 
-        HUDControls::Configure(FindKeybind("Open HUDCC Menu") ? FindKeybind("Open HUDCC Menu")->key.c_str() : nullptr);
+        RestartGame::SetSaveAndExitHandler([] { QueueSaveAndExit(0); });
+        HudCombat::ConfigureHooks(EnsureSunitdmHook,EnsureChatManagerHook);
+
+        const auto bindings = RuntimeBindings().Read();
+        const auto hudKey = HudPreferences::FindBinding(*bindings, "Open HUDCC Menu");
+        HUDControls::Configure(hudKey ? hudKey->first.c_str() : nullptr);
         configLoaded = true;
+        Spectate::LoadSettings();
+        RunTracker::ConfigureAnalysisFolder([]{const auto saved=GetSavePath();return saved.empty()?std::filesystem::path{}:std::filesystem::path(saved)/L"Diablo II Resurrected/Mods"/std::filesystem::u8path(modName);});
     }
 
+    const auto commandSession=HudCommands::Tick(D3D12::Window,frame);
+    FloatingDamage::SetSession(commandSession);
+    TooltipText::ResetSession(commandSession);
+    ItemFilter::SetSession(commandSession);
+    RunTracker::SetStashPage(gSelectedPage,!gMarketplacePageSwitching.load());
+    RunTracker::Tick(frame,commandSession,modName,IsHardcore());
+    Inspect::ClientTick(frame,commandSession);
+    Spectate::ClientTick(frame,commandSession);
+    HudCamera::Tick(frame,showCameraMenu);
+    HudChat::Tick(commandSession, clientStatus == 1, d2rHUDConfig.ChatSounds, d2rHUDConfig.ChatSoundPath);
+    PollLootFilterUpdate();
     CandyCornSave::DrawNotification();
     HUDControls::Tick();
     if (HUDControls::TakeToggle()) {
@@ -10643,27 +7512,10 @@ void D2RHUD::OnDraw() {
         if (saveGrail && !showMainMenu) SaveFullGrailConfig(configFilePath, false);
     }
 
-    RefreshLocalChatFilterNameCache();
-    ProcessPendingChatNotificationSound();
+    MarketplaceChatTick();
 
-    if (!menuClickHookInstalled)
+    if (!menuClickHookInstalled && TryInstallHooks(CoreHooks()))
     {
-        RestartGame::SetSaveAndExitHandler([] { QueueSaveAndExit(0); });
-        mainMenuClickHandlerOrig = reinterpret_cast<GameMenuOnClickHandler>(Pattern::Address(mainMenuClickHandlerOffset));
-        DetourTransactionBegin();
-        DetourUpdateThread(GetCurrentThread());
-        DetourAttach(&(PVOID&)mainMenuClickHandlerOrig, GameMenuOnClickHandlerHook);
-        DetourTransactionCommit();
-        CCMD_DEBUGCHEAT_Handler_Orig = reinterpret_cast<CCMD_HANDLER_Fptr>(Pattern::Address(CCMD_DEBUGCHEAT_HandlerOffset));
-        DetourTransactionBegin();
-        DetourUpdateThread(GetCurrentThread());
-        DetourAttach(&(PVOID&)CCMD_DEBUGCHEAT_Handler_Orig, CCMD_DEBUGCHEAT_Hook);
-        DetourTransactionCommit();
-        Process_SCMD_CHATSTART_Orig = reinterpret_cast<Process_SCMD_CHATSTART_Fptr>(Pattern::Address(Process_SCMD_CHATSTARTOffset));
-        DetourTransactionBegin();
-        DetourUpdateThread(GetCurrentThread());
-        DetourAttach(&(PVOID&)Process_SCMD_CHATSTART_Orig, Process_SCMD_CHATSTART_Hook);
-        DetourTransactionCommit();
         EnsureChatManagerHook();
         menuClickHookInstalled = true;
 
@@ -10672,52 +7524,39 @@ void D2RHUD::OnDraw() {
         g_ItemFilterMessageStartTime = std::chrono::steady_clock::now();
     }
 
-    UpdateChatSoundsFeature();
+    if (HudChat::Enabled()) EnsureChatManagerHook();
 
-    if (g_ShouldShowItemFilterMessage)
-    {
-        auto now = std::chrono::steady_clock::now();
-        auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - g_ItemFilterMessageStartTime);
-        int timeoutSeconds = 3; //default time
-        ImU32 color = IM_COL32(199, 179, 119, 255); //default gold
-        int fontIndex = 4; //default font size
-
-        if (g_ItemFilterStatusMessage.find("D2RHUD") != std::string::npos)
-        {
-            color = IM_COL32(3, 110, 32, 255); // green
-            timeoutSeconds = 5;
-            fontIndex = 3;
-        }
-
-        if (elapsed.count() < timeoutSeconds)
-        {
-            ImGuiIO& io = ImGui::GetIO();
-            ImFont* chosenFont = (fontIndex >= 0 && fontIndex < io.Fonts->Fonts.Size) ? io.Fonts->Fonts[fontIndex] : nullptr;
-
-            if (chosenFont)
-                ImGui::PushFont(chosenFont);
-
-            auto drawList = ImGui::GetBackgroundDrawList();
-            ImVec2 screenSize = io.DisplaySize;
-            ImVec2 textSize = HudText::CalcTextSize(g_ItemFilterStatusMessage.c_str());
-            ImVec2 textPos = ImVec2((screenSize.x - textSize.x) * 0.5f,
-                (screenSize.y - textSize.y) * 0.1f);
-
-            HudText::AddText(drawList,textPos, color, g_ItemFilterStatusMessage.c_str());
-
-            if (chosenFont)
-                ImGui::PopFont();
-        }
-        else
-            g_ShouldShowItemFilterMessage = false;
-    }
+    HudPresentation::Toast(g_ItemFilterStatusMessage,g_ShouldShowItemFilterMessage,g_ItemFilterMessageStartTime);
 
     if (!oBankPanelDraw) {
         DetourTransactionBegin();
         DetourUpdateThread(GetCurrentThread());
         oBankPanelDraw = reinterpret_cast<BankPanelDraw_t>(Pattern::Address(bankPanelDraw));
         DetourAttach(&(PVOID&)oBankPanelDraw, HookedBankPanelDraw);
+        DetourAttach(&(PVOID&)BankPanelMessage, HookedMarketplaceBankMessage);
         DetourTransactionCommit();
+        // 2.4 BankPanel open/close callbacks, verified against the installed PE.
+        // They provide a real close edge; losing focus or skipping a paint does
+        // not authorize a live save handoff.
+        std::array<uint8_t,8> openCode{},closeCode{};
+        const auto opened=reinterpret_cast<void*>(Pattern::Address(0x18ee80));
+        const auto closed=reinterpret_cast<void*>(Pattern::Address(0x18f050));
+        if(Marketplace::NativePanel::Read(opened,openCode)&&Marketplace::NativePanel::Read(closed,closeCode)&&
+            openCode==Marketplace::LiveCustody::BankOpenCode&&closeCode==Marketplace::LiveCustody::BankCloseCode){
+            oMarketplaceBankOpen=reinterpret_cast<MarketplaceBankLifecycle>(opened);
+            oMarketplaceBankClose=reinterpret_cast<MarketplaceBankLifecycle>(closed);
+            DetourTransactionBegin();
+            DetourUpdateThread(GetCurrentThread());
+            const auto openResult=DetourAttach(&(PVOID&)oMarketplaceBankOpen,HookedMarketplaceBankOpen);
+            const auto closeResult=DetourAttach(&(PVOID&)oMarketplaceBankClose,HookedMarketplaceBankClose);
+            if(openResult==NO_ERROR&&closeResult==NO_ERROR){
+                const auto committed=DetourTransactionCommit();
+                MarketplaceLiveObserve(committed==NO_ERROR?"native-hooks-ready":"native-hooks-commit-failed");
+            }else{
+                DetourTransactionAbort();MarketplaceLiveObserve("native-hooks-attach-failed");
+            }
+        }
+        else MarketplaceLiveObserve("native-hooks-unsupported");
         UpdateStashFileName(gSelectedPage);
         DWORD oldProtect = 0;
         VirtualProtect(&gpCCMDHandlerTable[CCMD_CUSTOM_OP_CODE], sizeof(D2CCMDStrc), PAGE_EXECUTE_READWRITE, &oldProtect);
@@ -10741,30 +7580,17 @@ void D2RHUD::OnDraw() {
         VirtualProtect(SharedStashGenerate, nSize, oldProtect, &oldProtect);
     }
 
-    if (!oCCMD_ProcessClientSystemMessage) {
-        DetourTransactionBegin();
-        DetourUpdateThread(GetCurrentThread());
-        oCCMD_ProcessClientSystemMessage = reinterpret_cast<CCMD_ProcessClientSystemMessage_t>(Pattern::Address(ccmdProcessClientSystemMessage));
-        DetourAttach(&(PVOID&)oCCMD_ProcessClientSystemMessage, CCMD_ProcessClientSystemMessageHook);
-        DetourTransactionCommit();
-    }
-
     if ((settings.HPRollover || cachedSettings.HPRollover) && !g_SunitdmHookInstalled)
         EnsureSunitdmHook();
 
         {
             ImGuiIO& io = ImGui::GetIO();
-        g_LastDisplaySize = io.DisplaySize;
 
         const bool floatingDamageEnabled = IsFloatingDamageActive();
         const bool floatingDamagePreview =
             showFloatingDamageMenu || FloatingDamage::HasDisplayActivity();
 
-        if (floatingDamageEnabled)
-        {
-            EnsureDamageInfoHook();
-        }
-        UpdatePoisonDoTWatch();
+        HudCombat::Tick(io.DisplaySize,clientStatus==1,commandSession);
 
         if (floatingDamageEnabled || floatingDamagePreview)
         {
@@ -10773,9 +7599,7 @@ void D2RHUD::OnDraw() {
         }
     }
 
-
-
-    QuestJournal::ClientUI::Update(showQuestJournalMenu, GetClientStatus() == 1);
+    QuestJournal::ClientUI::Update(showQuestJournalMenu, clientStatus == 1);
     // Native quest alerts and the journal hotkey open this same workspace page.
     HudMenu::RouteJournal(s_WorkspacePage,showMainMenu,showQuestJournalMenu,s_LastJournalVisible);
     if(showHUDSettingsMenu){s_WorkspacePage=HudMenu::Page::Loot;showMainMenu=true;showHUDSettingsMenu=false;}
@@ -10783,99 +7607,26 @@ void D2RHUD::OnDraw() {
     ImGui::GetIO().FontGlobalScale=showMainMenu?GetMenuScaleFactor():1.f;
     QuestJournal::PollMenus();
     BuffIcons::Update(pGameClient,modName,showBuffIconsMenu);
-    StatRanges::Update(modName,GetClientStatus()==1,showMainMenu,IsStatRangesBindingDown(),showStatRangesMenu);
+    StatRanges::Update(modName,clientStatus==1,showMainMenu,IsStatRangesBindingDown(),showStatRangesMenu);
     if(showMainMenu)ShowMainMenu();
     else DrawWorkspaceEditors(s_WorkspacePage);
     s_LastJournalVisible=showQuestJournalMenu;
     BuffIcons::Render(showBuffIconsMenu,GetMenuScaleFactor());
-    CubeMap::Draw(GetMenuScaleFactor(), GetClientStatus() == 1);
-    D3Whirlwind::SetInputBlocked(GetClientStatus() != 1 || showMainMenu || IsAnyMenuOpen() ||
-        ImGui::GetIO().WantCaptureMouse || ImGui::GetIO().WantTextInput);
-    StatRanges::Render(GetMenuScaleFactor());
-
-
-    /*
-    if (!oD2GAME_UModInit)
-    {
-        DetourTransactionBegin();
-        DetourUpdateThread(GetCurrentThread());
-        oD2GAME_UModInit = reinterpret_cast<D2GAME_UModInit_t>(Pattern::Address(0x2FDDB0));
-        DetourAttach(&(PVOID&)oD2GAME_UModInit, Hooked_D2GAME_UModInit);
-        DetourTransactionCommit();
+    CubeMap::Draw(GetMenuScaleFactor(), clientStatus == 1);
+    RunTracker::DrawOverlay();
+    if(showMainMenu)Inspect::Close();
+    else {
+        if(clientStatus==1 && !IsAnyMenuOpen() && !Marketplace::Panel::NativeOpen())Inspect::DrawEyes();
+        Inspect::Draw();
     }
+    MarketplaceLiveTick(clientStatus==1);
+    Marketplace::UI::DrawStash(clientStatus==1&&!showMainMenu&&!IsAnyMenuOpen());
+    D3Whirlwind::SetInputBlocked(clientStatus != 1 || Spectate::BlocksGameInput() || showMainMenu || IsAnyMenuOpen() ||
+        Marketplace::Panel::NativeOpen() || ImGui::GetIO().WantCaptureMouse || ImGui::GetIO().WantTextInput);
+    if(!Marketplace::Panel::NativeOpen())StatRanges::Render(GetMenuScaleFactor());
 
-    if (!oD2GAME_SpawnChampUnique_1402fddd0)
-    {
-        DetourTransactionBegin();
-        DetourUpdateThread(GetCurrentThread());
-        oD2GAME_SpawnChampUnique_1402fddd0 = reinterpret_cast<D2GAME_SpawnChampUnique_t>(Pattern::Address(0x2FDDD0));
-        DetourAttach(&(PVOID&)oD2GAME_SpawnChampUnique_1402fddd0, Hooked_D2GAME_SpawnChampUnique_1402fddd0);
-        DetourTransactionCommit();
-    }
-    */
-
-
-
-    /*
-    if (!oD2GAME_SpawnMonsters_140301b5f)
-    {
-        DetourTransactionBegin();
-        DetourUpdateThread(GetCurrentThread());
-        oD2GAME_SpawnMonsters_140301b5f = reinterpret_cast<D2GAME_SpawnMonsters_t>(Pattern::Address(0x301B5F));
-        DetourAttach(&(PVOID&)oD2GAME_SpawnMonsters_140301b5f, Hooked_D2GAME_SpawnMonsters_140301b5f);
-        DetourTransactionCommit();
-    }
-    */
-
-    if ((settings.HPRollover || cachedSettings.HPRollover) && !oMONSTER_GetPlayerCountBonus) {
-        DetourTransactionBegin();
-        DetourUpdateThread(GetCurrentThread());
-        oMONSTER_GetPlayerCountBonus = reinterpret_cast<MONSTER_GetPlayerCountBonus_t>(Pattern::Address(0x341120));
-        DetourAttach(&(PVOID&)oMONSTER_GetPlayerCountBonus, HookedMONSTER_GetPlayerCountBonus);
-        DetourTransactionCommit();
-
-        // Patch max player count for testing
-        /*
-        DWORD oldProtect = 0;
-        {
-            for (uint32_t patches : {0x135EF8, 0x135F16, 0x1E31CCC, 0x1E31D64}) {
-                auto PlayerCount = (uint32_t*)Pattern::Address(patches);
-                VirtualProtect(PlayerCount, 4, PAGE_EXECUTE_READWRITE, &oldProtect);
-                *PlayerCount = 65535;
-                VirtualProtect(PlayerCount, 4, oldProtect, &oldProtect);
-            }
-        }
-        {
-            size_t nSize = 17;
-            auto PlayerCount = (uint8_t*)Pattern::Address(0x11FE12);
-            VirtualProtect(PlayerCount, nSize, PAGE_EXECUTE_READWRITE, &oldProtect);
-            memset(PlayerCount, 0x90, nSize);
-            uint8_t* p = PlayerCount;
-            *p++ = 0x41; *p++ = 0x89; *p++ = 0xC4;
-            VirtualProtect(PlayerCount, nSize, oldProtect, &oldProtect);
-        }
-        {
-            size_t nSize = 3;
-            auto PlayerCount = (uint8_t*)Pattern::Address(0x136910);
-            VirtualProtect(PlayerCount, nSize, PAGE_EXECUTE_READWRITE, &oldProtect);
-            memset(PlayerCount, 0x90, nSize);
-            uint8_t* p = PlayerCount;
-            *p++ = 0x89; *p++ = 0xC8;
-            VirtualProtect(PlayerCount, nSize, oldProtect, &oldProtect);
-        }
-        */
-
-    }
-
-
-    if (!oMONSTER_InitializeStatsAndSkills) {
-        DetourTransactionBegin();
-        DetourUpdateThread(GetCurrentThread());
-        oMONSTER_InitializeStatsAndSkills = reinterpret_cast<MONSTER_InitializeStatsAndSkills_t>(Pattern::Address(0x33f380));
-        DetourAttach(&(PVOID&)oMONSTER_InitializeStatsAndSkills, HookedMONSTER_InitializeStatsAndSkills);
-        DetourTransactionCommit();
-    }
-
+    if (settings.HPRollover || cachedSettings.HPRollover)
+        TryInstallHooks(MonsterCountHooks());
 
     static bool settingsLoaded = false;
 
@@ -10898,170 +7649,16 @@ void D2RHUD::OnDraw() {
         grailLoaded = true;
     }
 
-    if (!oHUDWarnings__PopulateHUDWarnings && GetClientStatus() == 1) {
-        DetourTransactionBegin();
-        DetourUpdateThread(GetCurrentThread());
-        oHUDWarnings__PopulateHUDWarnings = reinterpret_cast<HUDWarnings__PopulateHUDWarnings_t>(Pattern::Address(0xbb2a90));
-        DetourAttach(&(PVOID&)oHUDWarnings__PopulateHUDWarnings, Hooked_HUDWarnings__PopulateHUDWarnings);
-        oWidget__OnClose = reinterpret_cast<Widget__OnClose_t>(Pattern::Address(0x5766f0));
-        DetourAttach(&(PVOID&)oWidget__OnClose, Hooked__Widget__OnClose);
-        DetourTransactionCommit();
+    if (clientStatus == 1 && TryInstallHooks(AutomapTextHooks())) {
         CheckToggleForward();
 
         if (settings.CombatLog || cachedSettings.CombatLog)
             ExecuteDebugCheatFunc("attackinfo 1");
     }
 
-    if (!oDropTCTest) {
-        DetourTransactionBegin();
-        DetourUpdateThread(GetCurrentThread());
-        oDropTCTest = reinterpret_cast<DropTCTest_t>(Pattern::Address(0x2f9d50));
-        DetourAttach(&(PVOID&)oDropTCTest, HookedDropTCTest);
-        DetourTransactionCommit();
-    }
-
-    if (!oGambleForce) {
-        DetourTransactionBegin();
-        DetourUpdateThread(GetCurrentThread());
-        oGambleForce = reinterpret_cast<GambleForce_t>(Pattern::Address(0x1FC0B0));
-        DetourAttach(&(PVOID&)oGambleForce, Hooked_ITEMS_CalculateGambleCost);
-        DetourTransactionCommit();
-    }
-
-    auto drawList = ImGui::GetBackgroundDrawList();
-    auto min = drawList->GetClipRectMin();
-    auto max = drawList->GetClipRectMax();
-    auto width = max.x - min.x;
-    auto center = width / 2.f;
-
-    ImGuiIO& io = ImGui::GetIO();
-    ImVec2 display_size = io.DisplaySize;
-    float ypercent1 = display_size.y * 0.0745f;
-    float ypercent2 = display_size.y * 0.043f;
-
-    ImFont* selectedFont = nullptr;
-    bool fontPushed = false;
-
-    if (display_size.y <= 720)
-        selectedFont = io.Fonts->Fonts[0];
-    else if (display_size.y <= 900)
-        selectedFont = io.Fonts->Fonts[1];
-    else if (display_size.y <= 1080)
-        selectedFont = io.Fonts->Fonts[2];
-    else if (display_size.y <= 1440)
-        selectedFont = io.Fonts->Fonts[3];
-    else if (display_size.y <= 2160)
-        selectedFont = io.Fonts->Fonts[4];
-    else if (display_size.y <= 2400)
-        selectedFont = io.Fonts->Fonts[4];
-
-    if (selectedFont)
-    {
-        ImGui::PushFont(selectedFont);
-        fontPushed = true;
-    }
-
-    do
-    {
-        if (!gMouseHover->IsHovered) break;
-        if (gMouseHover->HoveredUnitType > UNIT_MONSTER) break;
-
-        D2UnitStrc* pUnit = nullptr;
-        D2UnitStrc* pUnitServer = nullptr;
-        if (pGame != nullptr)
-        {
-            pUnit = UNITS_GetServerUnitByTypeAndId(pGame, gMouseHover->HoveredUnitType, gMouseHover->HoveredUnitId);
-            pUnitServer = UNITS_GetServerUnitByTypeAndId(pGame, gMouseHover->HoveredUnitType, gMouseHover->HoveredUnitId);
-        }
-        else
-        {
-            pUnit = GetClientUnitPtrFunc(Pattern::Address(unitDataOffset + 0x400 * gMouseHover->HoveredUnitType), gMouseHover->HoveredUnitId & 0x7F, gMouseHover->HoveredUnitId, gMouseHover->HoveredUnitType);
-            pUnitServer = GetClientUnitPtrFunc(Pattern::Address(unitDataOffset + 0x400 * gMouseHover->HoveredUnitType), gMouseHover->HoveredUnitId & 0x7F, gMouseHover->HoveredUnitId, gMouseHover->HoveredUnitType);
-        }
-
-        // TCP/IP joiner is not server player id 1; use client list (same as item filter). Fallback keeps SP / host working if client list is not ready.
-        D2UnitStrc* pUnitPlayer = GetClientPlayerUnit();
-        if (!pUnitPlayer && pGame != nullptr)
-            pUnitPlayer = UNITS_GetServerUnitByTypeAndId(pGame, UNIT_PLAYER, 1);
-
-        for (int i = 0; i < 8; ++i)
-        {
-            auto pClient = gpClientList[i];
-            if (!pClient) continue;
-
-            uint32_t guid = pClient->dwUnitGUID;
-            D2UnitStrc* pPlayer = UNITS_GetServerUnitByTypeAndId(pGame, UNIT_PLAYER, guid);
-            if (!pPlayer) continue;
-
-            TerrorStat = STATLIST_GetUnitStatSigned(pPlayer, 361, 0);
-        }
-
-        /* Debug Example - Retrieves stat references from D2Enums.h, Remove the // at start of line to use
-
-        if (pUnitServer)
-        {
-            std::string mystatname = std::format("Defense: {}", STATLIST_GetUnitStatSigned(pUnitServer, 31, 0));
-            HudText::AddText(drawList,{ 20, 10 }, IM_COL32(170, 50, 50, 255), mystatname.c_str());
-        }
-        */
-
-        if (!pUnit || !pUnitServer) break;
-
-        if (STATLIST_GetUnitStatSigned(pUnitServer, STAT_HITPOINTS, 0) == 0) break;
-
-        if (pUnitServer && (cachedSettings.monsterStatsDisplay || settings.monsterStatsDisplay))
-        {
-            float totalWidth = 0.f;
-            float spaceWidth = HudText::CalcTextSize(Seperator).x;
-            std::string resistances[6];
-            float widths[6];
-
-            for (int i = 0; i < 6; i++)
-            {
-                int resistanceValue = SunderSystem::EffectiveResistance(pGame, pUnitServer, ResistanceStats[i], STATLIST_GetUnitStatSigned(pUnitServer, ResistanceStats[i], 0));
-                resistances[i] = std::format("{}", resistanceValue);
-            }
-
-            for (int i = 0; i < 6; i++)
-            {
-                if (i > 0) totalWidth += spaceWidth;
-                widths[i] = HudText::CalcTextSize(resistances[i].c_str()).x;
-                totalWidth += widths[i];
-            }
-
-            float startX = center - (totalWidth / 2.f);
-            for (int i = 0; i < 6; i++)
-            {
-                if (i > 0) startX += spaceWidth;
-                HudText::AddText(drawList,{ startX, ypercent1 }, ResistanceColors[i], resistances[i].c_str());
-                startX += widths[i];
-            }
-
-            if (pUnitServer)
-            {
-                if (pGame == nullptr)
-                {
-                    auto clienthp = std::format("{}%", ((STATLIST_GetUnitStatSigned(pUnitServer, STAT_HITPOINTS, 0) >> 8) * 100) / (STATLIST_GetUnitStatSigned(pUnitServer, STAT_MAXHP, 0) >> 8));
-                    auto width = HudText::CalcTextSize(clienthp.c_str()).x;
-                    HudText::AddText(drawList,{ center - (width / 2.0f) + 1, ypercent2 }, IM_COL32(255, 255, 255, 255), clienthp.c_str());
-                }
-                else
-                {
-                    auto hp = std::format("{} / {}", STATLIST_GetUnitStatSigned(pUnitServer, STAT_HITPOINTS, 0) >> 8, STATLIST_GetUnitStatSigned(pUnitServer, STAT_MAXHP, 0) >> 8);
-                    auto width = HudText::CalcTextSize(hp.c_str()).x;
-                    HudText::AddText(drawList,{ center - (width / 2.0f) + 1, ypercent2 }, IM_COL32(255, 255, 255, 255), hp.c_str());
-
-
-                }
-            }
-        }
-
-
-
-    } while (false);
-
-    if (fontPushed)
-        ImGui::PopFont();
+    TerrorStat=clientStatus==1?HudMonsterStats::LocalTerrorStat(pGame):0;
+    HudMonsterStats::Draw(pGame,clientStatus==1 && (cachedSettings.monsterStatsDisplay || settings.monsterStatsDisplay));
+    Spectate::Draw(!showMainMenu);
 }
 
 #pragma endregion
@@ -11070,41 +7667,16 @@ void D2RHUD::OnDraw() {
 
 bool D2RHUD::OnKeyPressed(short key)
 {
+    if(Marketplace::Panel::NativeActive())return false; // Native search/quantity controls own keyboard focus.
+    const auto bindings = RuntimeBindings().Read();
+    const auto FindKeybind = [&](const std::string& name) { return HudPreferences::FindBinding(*bindings, name); };
     struct BindingMatch { bool matched; int modifierCount; };
     struct PendingAction { int modifierCount; std::function<void()> action; };
     std::vector<PendingAction> matches;
 
-    auto GetVirtualKeyFromName = [&](std::string token) -> short
-        {
-            std::transform(token.begin(), token.end(), token.begin(), ::toupper);
-
-            // modifiers
-            if (token == "CTRL" || token == "CONTROL" || token == "VK_CTRL" || token == "VK_CONTROL")
-                return VK_CONTROL;
-            if (token == "SHIFT" || token == "VK_SHIFT")
-                return VK_SHIFT;
-            if (token == "ALT" || token == "MENU" || token == "VK_ALT" || token == "VK_MENU")
-                return VK_MENU;
-
-            // mouse
-            if (token == "LBUTTON") return VK_LBUTTON;
-            if (token == "RBUTTON") return VK_RBUTTON;
-            if (token == "MBUTTON") return VK_MBUTTON;
-            if (token == "XBUTTON1") return VK_XBUTTON1;
-            if (token == "XBUTTON2") return VK_XBUTTON2;
-
-            // function keys: F1â€“F24
-            if (token.size() >= 2 && token[0] == 'F')
-            {
-                int f = std::atoi(token.c_str() + 1);
-                if (f >= 1 && f <= 24)
-                    return VK_F1 + (f - 1);
-            }
-
-            // fallback to keyMap
-            auto it = keyMap.find(token);
-            return it != keyMap.end() ? it->second : 0;
-        };
+    auto GetVirtualKeyFromName = [](std::string token) -> short {
+        return HudHotkeys::VirtualKey(std::move(token),keyMap);
+    };
 
     auto GetCurrentlyPressedKeys = [&](short triggeringKey) -> std::unordered_set<short>
         {
@@ -11171,30 +7743,30 @@ bool D2RHUD::OnKeyPressed(short key)
     // ---------------- Built-in actions ----------------
 
     if (StatRanges::UsesHotkey() && !showMainMenu && !IsAnyMenuOpen() && !ImGui::GetIO().WantTextInput)
-        if (auto kb = g_Hotkeys.find("Show Stat Ranges"); kb != g_Hotkeys.end())
-            CheckAndAddMatch(kb->second.first, 0, []() {});
+        if (auto kb = FindKeybind("Show Stat Ranges"))
+            CheckAndAddMatch(kb->first, 0, []() {});
 
     if (auto kb = FindKeybind("Transmute"))
-        CheckAndAddMatch(kb->key, 0, []() { D2CLIENT_Transmute(); });
+        CheckAndAddMatch(kb->first, 0, []() { D2CLIENT_Transmute(); });
 
     if (auto kb = FindKeybind("Identify Items"))
-        CheckAndAddMatch(kb->key, 0, []() { ExecuteDebugCheatFunc("idall 1"); });
+        CheckAndAddMatch(kb->first, 0, []() { ExecuteDebugCheatFunc("idall 1"); });
 
     if (auto kb = FindKeybind("Force Save"))
-        CheckAndAddMatch(kb->key, 0, []() { ExecuteDebugCheatFunc("save 1"); });
+        CheckAndAddMatch(kb->first, 0, []() { ExecuteDebugCheatFunc("save 1"); });
 
     if (auto kb = FindKeybind("Reset Stats"))
-        CheckAndAddMatch(kb->key, 0, []() { ExecuteDebugCheatFunc("resetstats 1"); });
+        CheckAndAddMatch(kb->first, 0, []() { ExecuteDebugCheatFunc("resetstats 1"); });
 
     if (auto kb = FindKeybind("Reset Skills"))
-        CheckAndAddMatch(kb->key, 0, []() { ExecuteDebugCheatFunc("resetskills 1"); });
+        CheckAndAddMatch(kb->first, 0, []() { ExecuteDebugCheatFunc("resetskills 1"); });
 
     if (auto kb = FindKeybind("Remove Ground Items"))
-        CheckAndAddMatch(kb->key, 0, []() { ExecuteDebugCheatFunc("itemgroundclear 1"); });
+        CheckAndAddMatch(kb->first, 0, []() { ExecuteDebugCheatFunc("itemgroundclear 1"); });
 
     // ---------------- Custom commands ----------------
 
-    for (const auto& cmd : g_CommandHotkeys)
+    for (const auto& cmd : bindings->commands)
     {
         if (cmd.key.empty() || cmd.command.empty())
             continue;
@@ -11202,7 +7774,7 @@ bool D2RHUD::OnKeyPressed(short key)
     }
 
     if (auto kb = FindKeybind("Reload Game/Filter"))
-        CheckAndAddMatch(kb->key, 0, [=]() {
+        CheckAndAddMatch(kb->first, 0, [=]() {
         if (itemFilter) itemFilter->ReloadGameFilter();
             }, true);
 
@@ -11210,12 +7782,12 @@ bool D2RHUD::OnKeyPressed(short key)
 
     if (QuestJournal::Bindings() && !showHotkeyMenu && !ImGui::GetIO().WantTextInput &&
         !*reinterpret_cast<const uint8_t*>(Pattern::Address(0x1d53fb8 + 5)))
-        if (auto kb = g_Hotkeys.find("Open Quest Journal"); kb != g_Hotkeys.end())
-            CheckAndAddMatch(kb->second.first, 0, []() { QuestJournal::ClientUI::Hotkey(); });
+        if (auto kb = FindKeybind("Open Quest Journal"))
+            CheckAndAddMatch(kb->first, 0, []() { QuestJournal::ClientUI::Hotkey(); });
 
     if (auto kb = FindKeybind("Open Cube Panel"))
     {
-        CheckAndAddMatch(kb->key, 0, [=]() {
+        CheckAndAddMatch(kb->first, 0, [=]() {
             if (!gpClientList) return;
             auto pClient = *gpClientList;
             if (!pClient || !pClient->pGame) return;
@@ -11228,7 +7800,7 @@ bool D2RHUD::OnKeyPressed(short key)
 
     if (!HUDControls::Installed()) if (auto kb = FindKeybind("Open HUDCC Menu"))
     {
-        CheckAndAddMatch(kb->key, 0, [=]() {
+        CheckAndAddMatch(kb->first, 0, [=]() {
             bool wasOpen = showGrailMenu && showMainMenu;
             showMainMenu = !showMainMenu;
 
@@ -11239,12 +7811,12 @@ bool D2RHUD::OnKeyPressed(short key)
 
     // ---------------- Cycle filter / TZ ----------------
     if (auto kb = FindKeybind("Cycle Filter Level"))
-        CheckAndAddMatch(kb->key, 0, [=]() {
+        CheckAndAddMatch(kb->first, 0, [=]() {
         if (itemFilter) itemFilter->CycleFilter();
             });
 
     if (auto kb = FindKeybind("Filtered Items Toggle"))
-        CheckAndAddMatch(kb->key, 0, [=]() {
+        CheckAndAddMatch(kb->first, 0, [=]() {
         ItemFilter::SetShowFilteredItems(!ItemFilter::GetShowFilteredItems());
             }, true);
 
@@ -11253,10 +7825,10 @@ bool D2RHUD::OnKeyPressed(short key)
         if (modName == "RMD-MP")
         {
             if (TerrorStat == 1)
-                CheckAndAddMatch(kb->key, 0, []() { CheckToggleForward(); });
+                CheckAndAddMatch(kb->first, 0, []() { CheckToggleForward(); });
         }
         else
-            CheckAndAddMatch(kb->key, 0, []() { CheckToggleForward(); });
+            CheckAndAddMatch(kb->first, 0, []() { CheckToggleForward(); });
     }
 
 
@@ -11265,10 +7837,10 @@ bool D2RHUD::OnKeyPressed(short key)
         if (modName == "RMD-MP")
         {
             if (TerrorStat == 1)
-                CheckAndAddMatch(kb->key, 0, []() { CheckToggleBackward(); });
+                CheckAndAddMatch(kb->first, 0, []() { CheckToggleBackward(); });
         }
         else
-            CheckAndAddMatch(kb->key, 0, []() { CheckToggleBackward(); });
+            CheckAndAddMatch(kb->first, 0, []() { CheckToggleBackward(); });
     }
 
     // ---------------- Version display ----------------

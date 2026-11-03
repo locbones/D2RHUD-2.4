@@ -1,4 +1,5 @@
 #include "WindowLayout.h"
+#include "D2RHUD/HudConfigStore.h"
 #include <windows.h>
 #include <fstream>
 #include <iterator>
@@ -8,6 +9,7 @@ namespace HudWindowLayout {
 namespace {
 std::filesystem::path layoutPath;
 std::string savedLayout;
+bool shared=false;
 
 bool Save() {
     if(layoutPath.empty()||!ImGui::GetCurrentContext())return false;
@@ -15,6 +17,10 @@ bool Save() {
     const char* data=ImGui::SaveIniSettingsToMemory(&size);
     const std::string layout(data,size);
     if(layout==savedLayout)return true;
+    if(shared){
+        const auto saved=HudUserConfig::Update("WindowLayout",[&](HudConfig::Json& section){section["ini"]=layout;},layoutPath.parent_path());
+        if(!saved)return false;savedLayout=layout;return true;
+    }
     std::error_code error;
     std::filesystem::create_directories(layoutPath.parent_path(),error);
     if(error)return false;
@@ -37,16 +43,16 @@ void Initialize(const std::filesystem::path& path) {
     auto& io=ImGui::GetIO();
     io.IniFilename=nullptr; // Use wide Windows paths, including Unicode user names.
     io.ConfigWindowsResizeFromEdges=true;
-    layoutPath=path;
+    layoutPath=path;shared=path.empty();
     if(layoutPath.empty()) {
         wchar_t localAppData[32768];
         const auto length=GetEnvironmentVariableW(L"LOCALAPPDATA",localAppData,32768);
-        if(length&&length<32768)layoutPath=std::filesystem::path(localAppData)/L"D2RHUD"/L"ui-layout.ini";
+        if(length&&length<32768)layoutPath=std::filesystem::path(localAppData)/L"D2RHUD"/L"preferences.json";
     }
     savedLayout.clear();
     if(!layoutPath.empty()) {
-        std::ifstream input(layoutPath,std::ios::binary);
-        if(input)savedLayout.assign(std::istreambuf_iterator<char>(input),{});
+        if(shared){HudConfig::Json section;if(HudUserConfig::Read("WindowLayout",section,layoutPath.parent_path())&&section.contains("ini")&&section["ini"].is_string())savedLayout=section["ini"].get<std::string>();}
+        else {std::ifstream input(layoutPath,std::ios::binary);if(input)savedLayout.assign(std::istreambuf_iterator<char>(input),{});}
         if(!savedLayout.empty())ImGui::LoadIniSettingsFromMemory(savedLayout.data(),savedLayout.size());
     }
 }

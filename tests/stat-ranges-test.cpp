@@ -1,5 +1,10 @@
 // Exercise native layout capture with synthetic memory; never inject into D2R.
+#include <Windows.h>
+unsigned foregroundLookups=0;
+HWND WINAPI CountForeground(){++foregroundLookups;return GetForegroundWindow();}
+#define GetForegroundWindow CountForeground
 #include "../d2rhud/plugin/StatRanges.cpp"
+#undef GetForegroundWindow
 #include <imgui_internal.h>
 #include <cassert>
 #include <iostream>
@@ -7,10 +12,32 @@
 #include <fstream>
 
 uintptr_t testExecutable = 0;
-DWORD64 Pattern::Address(uint32_t rva) { return testExecutable ? testExecutable + rva : 0; }
+namespace { void* __fastcall MockAllocator(); }
+DWORD64 Pattern::Address(uint32_t rva) {
+    if(rva==0xacdd80)return reinterpret_cast<uintptr_t>(MockAllocator);
+    return testExecutable ? testExecutable + rva : 0;
+}
 D2UnitStrc* GetClientPlayerUnit() { return nullptr; }
 
 namespace {
+int nativeTextFreed=0;
+bool nativeTextHeap=false,nativeTextSockets=false;
+void __fastcall MockFree(void*,void* memory){++nativeTextFreed;delete[] static_cast<char*>(memory);}
+void* __fastcall MockAllocator(){
+    static std::array<uintptr_t,5> table{0,0,0,0,reinterpret_cast<uintptr_t>(MockFree)};
+    static auto pointer=table.data();return &pointer;
+}
+void* __fastcall MockInspectionText(void* output,D2UnitStrc* viewer,D2UnitStrc* owner,D2UnitStrc* item,int32_t context,bool details){
+    assert(viewer&&owner&&item&&context==1);
+    const std::string value=!details?"Socket info unavailable in Item Link\n":
+        nativeTextSockets?"ÿc0Socketed (2)\nÿc4The Grandfather":
+        nativeTextHeap?"ÿc3+20 to Strength\nÿc4The Grandfather":"Test";
+    auto bytes=static_cast<uint8_t*>(output);
+    char* text=nullptr;memcpy(&text,bytes,8);
+    if(nativeTextHeap || value.size()>15){text=new char[value.size()+1];memcpy(bytes,&text,8);uint64_t capacity=value.size();memcpy(bytes+16,&capacity,8);}
+    memcpy(text,value.c_str(),value.size()+1);uint64_t size=value.size();memcpy(bytes+8,&size,8);
+    return output;
+}
 void* __fastcall MockBuild(void* output,D2UnitStrc* viewer,D2UnitStrc* owner,D2UnitStrc* item,int32_t context,bool details) {
     assert(viewer && owner && item && context==37 && details);
     return output;
@@ -41,6 +68,11 @@ void CheckNativeExecutable(const std::filesystem::path& path) {
         return 0;
     };
     assert(StatRanges::SupportedBuilder(at));
+    // Actual inventory tooltip callers enable the sixth argument; chat links
+    // forward a completeness flag. False selects BrokenSocketInfo in the builder.
+    assert(memcmp(reinterpret_cast<const void*>(at(0x184f01)),"\xc6\x44\x24\x28\x01",5)==0);
+    assert(memcmp(reinterpret_cast<const void*>(at(0x1bd810)),"\xc6\x44\x24\x28\x01",5)==0);
+    assert(strcmp(reinterpret_cast<const char*>(at(0x157e268)),"BrokenSocketInfo")==0);
     assert(memcmp(reinterpret_cast<const void*>(at(0x5d9940)),"\x40\x53\x48\x83\xec\x20",6)==0);
     auto changed=std::vector<uint8_t>(reinterpret_cast<const uint8_t*>(at(0x1bb940)),reinterpret_cast<const uint8_t*>(at(0x1bb940))+0x127a);
     changed[changed.size()/2]^=1;
@@ -51,6 +83,15 @@ void CheckNativeExecutable(const std::filesystem::path& path) {
 
 int main(int argc, char** argv) {
     using namespace StatRanges;
+    D2UnitStrc textUnit{};textUnit.dwUnitId=1000;
+    assert(NativeItemText(&textUnit,&textUnit,&textUnit).empty());
+    originalBuild=MockInspectionText;
+    assert(NativeItemText(&textUnit,&textUnit,&textUnit)=="Test"&&nativeTextFreed==0);
+    nativeTextHeap=true;
+    assert(NativeItemText(&textUnit,&textUnit,&textUnit)=="ÿc3+20 to Strength\nÿc4The Grandfather"&&nativeTextFreed==1);
+    nativeTextSockets=true;
+    assert(NativeItemText(&textUnit,&textUnit,&textUnit)=="ÿc0Socketed (2)\nÿc4The Grandfather" && nativeTextFreed==2);
+    originalBuild=nullptr;
     Database db;
     db.statIds = { {"strength", 0}, {"energy", 1}, {"dexterity", 2}, {"vitality", 3}, {"fireresist", 39}, {"lightresist", 41}, {"coldresist", 43}, {"poisonresist", 45},
         {"item_mindamage_percent", 18}, {"item_maxdamage_percent", 17}, {"item_singleskill", 107} };
@@ -340,6 +381,14 @@ int main(int argc, char** argv) {
     ImGui::CreateContext(); auto& io = ImGui::GetIO(); io.IniFilename = nullptr;
     for (int i=0;i<4;++i) io.Fonts->AddFontDefault();
     unsigned char* pixels; int width,height; io.Fonts->GetTexDataAsRGBA32(&pixels,&width,&height);
+    {
+        const auto previous=config;config={};const auto priorForeground=foregroundLookups;
+        for(int tick=0;tick<10000;++tick)Update("RMD-MP",false,false,false,false);
+        assert(!PropertyAssets().Busy()&&!PropertyAssets().Value());
+        assert(foregroundLookups==priorForeground);
+        config=previous;
+        std::cout<<"10000 disabled stat-range updates: no asset worker.\n";
+    }
     for (float scale : {1.0f,2.0f}) {
         io.DisplaySize = ImVec2(1920*scale,1080*scale); io.DeltaTime = 1.0f/60; io.FontGlobalScale = scale;
         ImGui::NewFrame(); ImGui::SetNextWindowSize(ImVec2(650*scale,570*scale)); ImGui::Begin("Stat range test");

@@ -55,7 +55,11 @@ template<class T> inline void Write(void* pointer, size_t offset, T value) {
     memcpy(static_cast<uint8_t*>(pointer) + offset, &value, sizeof(value));
 }
 inline bool Alive(D2UnitStrc* unit) {
-    return unit && unit->dwUnitType == 0 && unit->dwAnimMode != 0 && unit->dwAnimMode != 17 && !(unit->dwFlags & 0x10000);
+    if (!unit || unit->dwUnitType != 0 || unit->dwAnimMode == 0 || unit->dwAnimMode == 17 || (unit->dwFlags & 0x10000)) return false;
+    // Life can reach zero before native cleanup changes the animation/death
+    // flags. Never extend that channel or allow a potion to revive it.
+    const auto stat = At<int(__fastcall*)(D2UnitStrc*, int, uint16_t)>(0x1e5620);
+    return stat && stat(unit, 6, 0) > 0;
 }
 inline bool Active(void* skill) { return skill && (Read<uint32_t>(skill, 0x14) & 1) != 0; }
 inline void Finish(void* skill) {

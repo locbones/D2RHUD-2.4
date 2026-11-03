@@ -437,7 +437,7 @@ void ProcessSurvivors(Game* game,Run& run,const std::vector<Unit*>& connected){
     using namespace Survivors;
     const uint32_t frame=game->dwGameFrame,seconds=(frame-run.eventStarted)/25;
     std::vector<Unit*> players;for(auto p:connected)if(!Dead(p) && Level(p)==run.level && run.ready.contains(p->dwUnitId))players.push_back(p);
-    if(seconds>=Duration){SurvivorReturn(game,run,false);return;}
+    if(seconds>=Duration && !run.clearedAt){SurvivorReturn(game,run,false);return;}
     if(players.empty()){
         // A missing lookup, room transition, or temporarily unready client is
         // not proof of death. Allow a short reconciliation window, without
@@ -481,7 +481,7 @@ void ProcessSurvivors(Game* game,Run& run,const std::vector<Unit*>& connected){
         for(auto p:players){auto& b=run.survival.builds[p->dwUnitId];b.xp=(std::min)(1000000u,b.xp+(id==run.survival.boss?100u:run.survival.elites.contains(id)?10u:3u));++b.kills;}
     if(run.survival.bossSpawned && run.survival.credited.contains(run.survival.boss) && living.empty() && run.census.Complete()){
         if(!run.clearedAt)run.clearedAt=frame;
-        if(frame-*run.clearedAt>=50){SurvivorReturn(game,run,true);return;}
+        if(frame-*run.clearedAt>=ClearReturnFrames){SurvivorReturn(game,run,true);return;}
     }else run.clearedAt.reset();
     if(seconds>=FinalBossAt && !run.survival.bossSpawned){
         const int boss=LookupName(0x1c9f890,"diablo");

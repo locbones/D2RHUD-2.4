@@ -102,6 +102,8 @@ bool ProcessEvent(Game* game,Run& run,GameState& state){
             // Capture objective deaths on the boundary before deciding Trial
             // success. A kill after the deadline never awards stat points.
             CensusAndBuffs(game,run);run.success=run.census.Complete();run.timedOut=true;
+            // A clear at/before the deadline still receives its loot window.
+            if(run.success){if(!run.clearedAt)run.clearedAt=frame;return false;}
             run.phase=Phase::Returning;run.eventPhase=EventPhase::Returning;run.eventFrame=frame;for(const auto& [id,p]:run.returns)run.returning.insert(id);
         }
         return false;

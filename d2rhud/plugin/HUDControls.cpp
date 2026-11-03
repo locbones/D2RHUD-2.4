@@ -245,7 +245,7 @@ bool Install(){
     std::lock_guard lock(mutex);if(installed.load())return true;
     if(!Supported()){status="Native Controls unavailable: executable signatures differ. The HUD shortcut remains in Hotkeys & Commands.";return false;}
     wchar_t path[32768]{};const auto length=GetEnvironmentVariableW(L"LOCALAPPDATA",path,32768);if(!length||length>=32768)return false;
-    storage=std::filesystem::path(path)/L"D2RHUD"/L"controls.json";
+    storage=std::filesystem::path(path)/L"D2RHUD"/L"preferences.json";
     const auto init=MH_Initialize();if(init!=MH_OK&&init!=MH_ERROR_ALREADY_INITIALIZED)return false;
     void* hooks[]{reinterpret_cast<void*>(PopulateHook),reinterpret_cast<void*>(IterateHook),reinterpret_cast<void*>(NameHook),reinterpret_cast<void*>(KeyNameHook),reinterpret_cast<void*>(ColorHook),reinterpret_cast<void*>(AssignHook),reinterpret_cast<void*>(MessageHook),reinterpret_cast<void*>(ShowHook),reinterpret_cast<void*>(HideHook),reinterpret_cast<void*>(CancelHook),reinterpret_cast<void*>(DefaultsHook),reinterpret_cast<void*>(LoadHook)};
     void** originals[]{reinterpret_cast<void**>(&originalPopulate),reinterpret_cast<void**>(&originalIterate),reinterpret_cast<void**>(&originalName),reinterpret_cast<void**>(&originalKeyName),reinterpret_cast<void**>(&originalColor),reinterpret_cast<void**>(&originalAssign),reinterpret_cast<void**>(&originalMessage),reinterpret_cast<void**>(&originalShow),reinterpret_cast<void**>(&originalHide),reinterpret_cast<void**>(&originalCancel),reinterpret_cast<void**>(&originalDefaults),reinterpret_cast<void**>(&originalLoad)};

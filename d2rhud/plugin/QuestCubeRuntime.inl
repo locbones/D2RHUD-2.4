@@ -6,7 +6,7 @@ struct QuestOutputScope {
     std::vector<uint32_t> inputCodes;std::vector<Before> before;std::set<uint32_t> placed;
     bool attempted=false,failed=false,finalSeen=false;
     QuestOutputScope(Game* g,Unit* p,const QuestJournal::RecipeGate& q,const Recipe& recipe):game(g),player(p),gate(q){
-        for(const auto& out:recipe.outputs)if(out.type)expected+=(std::max)(1,int(out.quantity));
+        for(const auto& out:RuntimeRecipe(recipe).outputs)if(out.type)expected+=bulkOutputs.load()?1:(std::max)(1,int(out.quantity));
         std::set<Unit*> seen;
         for(auto item=player->pInventory->pFirstItem;item&&seen.size()<4096;){
             if(!seen.insert(item).second||!item->pItemData)break;auto data=item->pItemData;
@@ -58,14 +58,17 @@ bool CreateQuest(Game* game,Unit* player,Recipe* recipe,Input* inputs){
             memmove(native.header.data()+0x1c,native.header.data()+0x24,5*8);memset(native.header.data()+0x44,0,8);native.header[0x10]=3;
         }
     }
-    for(const auto& out:native.outputs)if(out.type&&((out.type!=252&&out.type!=254)||out.quantity>1||out.Visual())){
+    auto wide=RuntimeRecipe(native);
+    for(const auto& out:wide.outputs)if(out.type&&((out.type!=252&&out.type!=254)||(out.quantity>1&&!bulkOutputs.load())||out.Visual())){
         QuestJournal::Finish(game,player,*gate,QuestJournal::Outcome::Rejected);QuestJournal::Refused(game,player,"Quest recipe has unsupported output semantics; no inputs were consumed.");return true;
     }
     const int property=RuneName(0x1c9ebd8,"rng-generator");
     if(property<0){QuestJournal::Finish(game,player,*gate,QuestJournal::Outcome::Rejected);QuestJournal::Refused(game,player,"Quest progress property is missing; no inputs were consumed.");return true;}
     // Progress is owned by the journal. Keep every actual reward/bag balance
     // modifier, but stop adding tutorial stage numbers to movable items.
-    for(auto& out:native.outputs)for(auto& mod:out.mods)if(mod.property==property)mod=Modifier{};
+    for(auto& out:wide.outputs)for(auto& mod:out.mods)if(mod.property==property)mod=Modifier{};
+    native=wide.Native();
+    struct OutputScope {WideRecipe* old=activeWideRecipe;OutputScope(WideRecipe* next){activeWideRecipe=next;}~OutputScope(){activeWideRecipe=old;}} outputScope(activeWideRecipe?&wide:nullptr);
     QuestOutputScope transaction(game,player,*gate,native);
     struct Scope {QuestOutputScope* previous;Scope(QuestOutputScope* q):previous(questOutput){questOutput=q;}~Scope(){questOutput=previous;}} scope(&transaction);
     DispatchCreate(game,player,&native,inputs);

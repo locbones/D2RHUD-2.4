@@ -11,6 +11,7 @@ using Builder::Catalog;
 struct Context {
     int difficulty = 2, area = 2, filterLevel = 1, playerLevel = 85, location = 3;
     std::string itemCode;
+    std::map<std::pair<int,int>,int> playerStats{{{0,0},150},{{2,0},150},{{1,0},80},{{3,0},80}};
 };
 struct Sample {
     std::string code, name;
@@ -19,11 +20,16 @@ struct Sample {
     std::vector<int> types;
     std::map<std::pair<int,int>,int> stats;
 };
+struct RuleTrace {
+    int number=0;std::string source,label,status,reason;std::vector<std::string> actions;
+    std::vector<std::pair<std::string,std::string>> conditions;
+};
 struct Result {
     std::string name, description, reason, messages;
     bool matched = false, hidden = false, audio = false;
     std::array<float,4> background{0,0,0,0.9f}, border{0,0,0,0};
     float thickness = 1;
+    int filterLevel=1;std::vector<RuleTrace> rules;std::vector<std::string> warnings;std::string explanation;
 };
 inline constexpr const char* Qualities[] = {"Unknown","Inferior","Normal","Superior","Magic","Set","Rare","Unique","Crafted","Tempered"};
 
@@ -119,6 +125,7 @@ class Session {
     struct Memory { size_t used=0; } memory;
     lua_State* lua=nullptr;
     std::string config;
+    std::map<std::string,std::string> files;
     std::string setupMessages;
     Result* receiving=nullptr;
     int instructions=0;
@@ -130,7 +137,14 @@ class Session {
     }
     static Session& Self(lua_State* state){return **static_cast<Session**>(lua_getextraspace(state));}
     static void Budget(lua_State* state,lua_Debug*){if((Self(state).instructions-=1000)<=0)luaL_error(state,"Preview instruction limit exceeded");}
-    static int NoFile(lua_State* state){lua_pushnil(state);return 1;}
+    static int CloseFile(lua_State*){return 0;}
+    static int NoFile(lua_State* state){
+        const char* name=lua_tostring(state,1);const char* mode=lua_tostring(state,2);
+        if(name&&mode&&std::string(mode)=="r"&&Self(state).files.count(name)){
+            lua_newtable(state);lua_pushcfunction(state,CloseFile);lua_setfield(state,-2,"close");return 1;
+        }
+        lua_pushnil(state);return 1;
+    }
     static int Time(lua_State* state){lua_pushinteger(state,0);return 1;}
     static int Print(lua_State* state){
         auto& self=Self(state);
@@ -146,15 +160,19 @@ class Session {
     }
     static int LoadConfig(lua_State* state){
         const char* filename=lua_tostring(state,1);
-        if(!filename||std::string(filename)!="lootfilter_config.lua"){lua_pushnil(state);lua_pushliteral(state,"Preview has no filesystem access");return 2;}
-        auto& self=Self(state);
-        if(luaL_loadbufferx(state,self.config.data(),self.config.size(),"preview config","t")){lua_pushnil(state);lua_insert(state,-2);return 2;}
+        auto& self=Self(state);const std::string* source=nullptr;
+        if(filename&&std::string(filename)=="lootfilter_config.lua")source=&self.config;
+        else if(filename){auto file=self.files.find(filename);if(file!=self.files.end())source=&file->second;}
+        if(!source){lua_pushnil(state);lua_pushliteral(state,"Preview has no filesystem access");return 2;}
+        const size_t bom=source->compare(0,3,"\xEF\xBB\xBF")==0?3:0;
+        if(luaL_loadbufferx(state,source->data()+bom,source->size()-bom,filename,"t")){lua_pushnil(state);lua_insert(state,-2);return 2;}
         if(lua_istable(state,3)){lua_pushvalue(state,3);lua_setupvalue(state,-2,1);}
         return 1;
     }
     bool Run(const std::string& source,const char* label,int returns=0){
         instructions=2000000;lua_sethook(lua,Budget,LUA_MASKCOUNT,1000);
-        int code=luaL_loadbufferx(lua,source.data(),source.size(),label,"t");if(!code)code=lua_pcall(lua,0,returns,0);
+        const size_t bom=source.compare(0,3,"\xEF\xBB\xBF")==0?3:0;
+        int code=luaL_loadbufferx(lua,source.data()+bom,source.size()-bom,label,"t");if(!code)code=lua_pcall(lua,0,returns,0);
         if(code){const char* message=lua_tostring(lua,-1);error=message?message:"Preview failed";if(!setupMessages.empty())error+='\n'+setupMessages;lua_pop(lua,1);return false;}return true;
     }
     static std::string String(lua_State* state,int table,const char* key){lua_getfield(state,table,key);size_t size=0;const char* text=lua_tolstring(state,-1,&size);std::string result=text?std::string(text,(std::min)(size,size_t(8192))):"";lua_pop(state,1);return result;}
@@ -168,6 +186,83 @@ class Session {
         }
         lua_pop(lua,2);
     }
+    void Reset(){
+        if(lua){lua_close(lua);lua=nullptr;}error.clear();setupMessages.clear();samples.clear();results.clear();files.clear();receiving=nullptr;
+    }
+    bool Initialize(const std::string& engine){
+        lua=lua_newstate(Allocate,&memory);if(!lua){error="Unable to allocate the preview.";return false;}*static_cast<Session**>(lua_getextraspace(lua))=this;
+        for(auto library:{std::make_pair(LUA_GNAME,luaopen_base),std::make_pair(LUA_STRLIBNAME,luaopen_string),std::make_pair(LUA_TABLIBNAME,luaopen_table),std::make_pair(LUA_MATHLIBNAME,luaopen_math),std::make_pair(LUA_UTF8LIBNAME,luaopen_utf8)}){luaL_requiref(lua,library.first,library.second,1);lua_pop(lua,1);}
+        for(const char* name:{"dofile","load","collectgarbage"}){lua_pushnil(lua);lua_setglobal(lua,name);}
+        lua_newtable(lua);lua_pushcfunction(lua,NoFile);lua_setfield(lua,-2,"open");lua_setglobal(lua,"io");
+        lua_newtable(lua);lua_pushcfunction(lua,Time);lua_setfield(lua,-2,"time");lua_pushcfunction(lua,Time);lua_setfield(lua,-2,"clock");lua_setglobal(lua,"os");
+        lua_newtable(lua);lua_newtable(lua);lua_setfield(lua,-2,"loaded");lua_setglobal(lua,"package");
+        lua_pushcfunction(lua,LoadConfig);lua_setglobal(lua,"loadfile");lua_pushcfunction(lua,Print);lua_setglobal(lua,"print");
+        if(!Run(engine,"installed filter engine"))return false;
+        return true;
+    }
+    void ReadReport(size_t index){
+        lua_getglobal(lua,"_previewReports");lua_rawgeti(lua,-1,lua_Integer(index+1));const int report=lua_gettop(lua);auto& result=results[index];
+        result.explanation=String(lua,report,"reason");
+        lua_getfield(lua,report,"matched");result.matched=lua_toboolean(lua,-1)!=0;lua_pop(lua,1);
+        lua_getfield(lua,report,"audio");result.audio=lua_toboolean(lua,-1)!=0;lua_pop(lua,1);
+        lua_getfield(lua,report,"level");result.filterLevel=int(lua_tointeger(lua,-1));lua_pop(lua,1);
+        lua_getfield(lua,report,"rules");const int rules=lua_gettop(lua);const size_t count=(std::min)(lua_rawlen(lua,rules),size_t(10000));
+        for(size_t n=1;n<=count;++n){
+            lua_rawgeti(lua,rules,lua_Integer(n));const int row=lua_gettop(lua);RuleTrace trace;
+            trace.source=String(lua,row,"source");trace.label=String(lua,row,"label");trace.status=String(lua,row,"status");trace.reason=String(lua,row,"reason");
+            lua_getfield(lua,row,"number");trace.number=int(lua_tointeger(lua,-1));lua_pop(lua,1);
+            lua_getfield(lua,row,"actions");for(size_t i=1;i<=(std::min)(lua_rawlen(lua,-1),size_t(32));++i){lua_rawgeti(lua,-1,lua_Integer(i));size_t len=0;auto text=lua_tolstring(lua,-1,&len);if(text)trace.actions.emplace_back(text,(std::min)(len,size_t(128)));lua_pop(lua,1);}lua_pop(lua,1);
+            lua_getfield(lua,row,"conditions");for(size_t i=1;i<=(std::min)(lua_rawlen(lua,-1),size_t(32));++i){
+                lua_rawgeti(lua,-1,lua_Integer(i));std::string key,value;
+                lua_rawgeti(lua,-1,1);if(auto text=lua_tostring(lua,-1))key=std::string(text).substr(0,128);lua_pop(lua,1);
+                lua_rawgeti(lua,-1,2);if(auto text=lua_tostring(lua,-1))value=std::string(text).substr(0,2048);lua_pop(lua,2);
+                trace.conditions.emplace_back(std::move(key),std::move(value));
+            }lua_pop(lua,1);
+            result.rules.push_back(std::move(trace));lua_pop(lua,1);
+        }
+        if(lua_rawlen(lua,rules)>count)result.warnings.push_back("Only the first 10000 rule explanations are displayed.");lua_pop(lua,1);
+        lua_getfield(lua,report,"diagnostics");const int diagnostics=lua_gettop(lua);
+        for(const char* key:{"errors","warnings"}){lua_getfield(lua,diagnostics,key);if(lua_istable(lua,-1))for(size_t n=1;n<=(std::min)(lua_rawlen(lua,-1),size_t(100));++n){lua_rawgeti(lua,-1,lua_Integer(n));size_t len=0;auto text=lua_tolstring(lua,-1,&len);if(text)result.warnings.emplace_back(text,(std::min)(len,size_t(2048)));lua_pop(lua,1);}lua_pop(lua,1);}
+        lua_pop(lua,3);
+    }
+    bool Evaluate(const Context& context,bool audio,bool simulation){
+        results.resize(samples.size());
+        std::string data="_previewSamples={";
+        for(size_t i=0;i<samples.size();++i){const auto& sample=samples[i];data+="{ID="+std::to_string(i+1)+",name="+Quote(sample.name)+",code="+Quote(sample.code)+",quality="+std::to_string(sample.quality)+",tier="+std::to_string(sample.tier)+",level="+std::to_string(sample.level)+",index="+std::to_string(sample.index)+",sockets="+std::to_string(sample.sockets)+",maximum="+std::to_string(sample.maximum)+",ethereal="+(sample.ethereal?"true":"false")+",identified="+(sample.identified?"true":"false")+",runeword="+(sample.runeword?"true":"false")+",collected="+(sample.collected?"true":"false")+",stats={";
+            for(const auto& stat:sample.stats)data+="["+Quote(std::to_string(stat.first.first)+":"+std::to_string(stat.first.second))+"]="+std::to_string(stat.second)+",";
+            data+="},types={";for(int type:sample.types)data+="["+std::to_string(type)+"]=true,";data+="}},";
+        }
+        data+="}; _previewContext={difficulty="+std::to_string(context.difficulty)+",area="+std::to_string(context.area)+",level="+std::to_string(context.filterLevel)+",playerLevel="+std::to_string(context.playerLevel)+",location="+std::to_string(context.location)+"}";
+        data+=";_previewSimulation="+std::string(simulation?"true":"false")+";_previewContext.playerStats={";
+        for(const auto& stat:context.playerStats)data+="["+Quote(std::to_string(stat.first.first)+":"+std::to_string(stat.first.second))+"]="+std::to_string(stat.second)+",";
+        data+="}";
+        if(!Run(data,"preview samples"))return false;
+        if(!Run(R"(
+            _previewItems={};_previewResults={};_previewReports={}
+            function _previewApply(i)
+                local s=_previewSamples[i];local c=_previewContext
+                local item={ID=s.ID,Name=s.name,Txt={Code=s.code},Data={Quality=s.quality,FileIndex=s.index,ItemLevel=s.level,Flags=(s.identified and 0x10 or 0)+(s.runeword and 0x4000000 or 0),IsEthereal=s.ethereal,Owner=c.location==-1 and 500 or 1},Mode=c.location==-1 and 0 or c.location,Area=c.area,Rarity=s.tier}
+                item.Stat=function(_,id,param) if id==194 then return s.sockets end;return s.stats[tostring(id)..':'..tostring(param or 0)] or 0 end
+                item.MaxSockets=function()return s.maximum end;item.IsType=function(_,id)return s.types[id] or false end
+                item.Link=function()return s.name end
+                local me={ID=1,Difficulty=c.difficulty,Stat=function(_,id,param) if id==12 then return c.playerLevel end;return c.playerStats[tostring(id)..':'..tostring(param or 0)] or 0 end}
+                local result={Name=s.name,Description='Example item tooltip',Background={0,0,0,0.9},Border={0,0,0,0,1},Grail={isGrail=s.quality==5 or s.quality==7,collected=s.collected}}
+                local level=c.level>0 and c.level or nil
+                if _previewSimulation then _previewReports[i]=SimulateFilter(me,item,result,level) else ApplyFilter(me,item,result,level) end
+                result._baseName=result.Name
+                _previewItems[i]=item;_previewResults[i]=result
+            end
+            function _previewAnimate(tick)
+                for i,result in ipairs(_previewResults) do
+                    if result.BackgroundFunction then result.BackgroundFunction(_previewItems[i],result,tick) end
+                    if result.NameFunction then result.Name=result.NameFunction(_previewItems[i],result._baseName,tick) end
+                end
+            end
+        )","preview adapter"))return false;
+        for(size_t i=0;i<samples.size();++i){receiving=&results[i];bool ok=Run("_previewApply("+std::to_string(i+1)+")","sample evaluation");receiving=nullptr;if(!ok)return false;results[i].audio=audio&&results[i].matched;ReadResult(i);if(simulation)ReadReport(i);if(!results[i].matched&&results[i].reason.empty())results[i].reason="Item, filter level or enabled state does not match";}
+        return Animate(0);
+    }
+
 public:
     std::string error;
     std::vector<Sample> samples;
@@ -176,7 +271,7 @@ public:
     Session(const Session&)=delete;
     ~Session(){if(lua)lua_close(lua);}
     bool Build(const std::string& engine,const std::string& rule,const std::unordered_map<std::string,std::string>& globals,const Catalog& catalog,const Context& context){
-        if(lua){lua_close(lua);lua=nullptr;}error.clear();setupMessages.clear();samples.clear();results.clear();
+        Reset();
         if(engine.empty()){error="The installed filter engine is unavailable.";return false;}
         Document document;if(!document.Parse("return {rules={"+rule+"\n}}")||document.rules.size()!=1){error="This custom rule cannot be previewed.";return false;}
         try{document.Table(document.TokenAt(document.rules[0].valueBegin));}catch(...){error="This custom rule cannot be previewed.";return false;}
@@ -187,45 +282,16 @@ public:
         if(style){auto found=globals.find("styles");if(found==globals.end()||!DataExpression(found->second)){error="The custom style cannot be previewed.";return false;}styles="styles="+found->second+",";}
         auto language=globals.find("language");
         config="return {strict=true,debug={mode='all',limit=10000},allowOverrides=false,audioPlayback=false,language="+Quote(language==globals.end()?"enUS":language->second)+","+styles+"rules={"+rule+"\n}}";
-        lua=lua_newstate(Allocate,&memory);if(!lua){error="Unable to allocate the preview.";return false;}*static_cast<Session**>(lua_getextraspace(lua))=this;
-        for(auto library:{std::make_pair(LUA_GNAME,luaopen_base),std::make_pair(LUA_STRLIBNAME,luaopen_string),std::make_pair(LUA_TABLIBNAME,luaopen_table),std::make_pair(LUA_MATHLIBNAME,luaopen_math),std::make_pair(LUA_UTF8LIBNAME,luaopen_utf8)}){luaL_requiref(lua,library.first,library.second,1);lua_pop(lua,1);}
-        for(const char* name:{"dofile","load","collectgarbage"}){lua_pushnil(lua);lua_setglobal(lua,name);}
-        lua_newtable(lua);lua_pushcfunction(lua,NoFile);lua_setfield(lua,-2,"open");lua_setglobal(lua,"io");
-        lua_newtable(lua);lua_pushcfunction(lua,Time);lua_setfield(lua,-2,"time");lua_pushcfunction(lua,Time);lua_setfield(lua,-2,"clock");lua_setglobal(lua,"os");
-        lua_newtable(lua);lua_newtable(lua);lua_setfield(lua,-2,"loaded");lua_setglobal(lua,"package");
-        lua_pushcfunction(lua,LoadConfig);lua_setglobal(lua,"loadfile");lua_pushcfunction(lua,Print);lua_setglobal(lua,"print");
-        if(!Run(engine,"installed filter engine"))return false;
+        if(!Initialize(engine))return false;
         if(!Run("local d=GetFilterDiagnostics(); assert(d.disabled==0,'Rule is invalid'); _previewDisabled=(d.rules==0)","preview validation"))return false;
-        samples=Samples(rule,catalog,context.itemCode);results.resize(samples.size());
-        std::string data="_previewSamples={";
-        for(size_t i=0;i<samples.size();++i){const auto& sample=samples[i];data+="{ID="+std::to_string(i+1)+",name="+Quote(sample.name)+",code="+Quote(sample.code)+",quality="+std::to_string(sample.quality)+",tier="+std::to_string(sample.tier)+",level="+std::to_string(sample.level)+",index="+std::to_string(sample.index)+",sockets="+std::to_string(sample.sockets)+",maximum="+std::to_string(sample.maximum)+",ethereal="+(sample.ethereal?"true":"false")+",identified="+(sample.identified?"true":"false")+",runeword="+(sample.runeword?"true":"false")+",collected="+(sample.collected?"true":"false")+",stats={";
-            for(const auto& stat:sample.stats)data+="["+Quote(std::to_string(stat.first.first)+":"+std::to_string(stat.first.second))+"]="+std::to_string(stat.second)+",";
-            data+="},types={";for(int type:sample.types)data+="["+std::to_string(type)+"]=true,";data+="}},";
-        }
-        data+="}; _previewContext={difficulty="+std::to_string(context.difficulty)+",area="+std::to_string(context.area)+",level="+std::to_string(context.filterLevel)+",playerLevel="+std::to_string(context.playerLevel)+",location="+std::to_string(context.location)+"}";
-        if(!Run(data,"preview samples"))return false;
-        if(!Run(R"(
-            _previewItems={};_previewResults={}
-            function _previewApply(i)
-                local s=_previewSamples[i];local c=_previewContext
-                local item={ID=s.ID,Name=s.name,Txt={Code=s.code},Data={Quality=s.quality,FileIndex=s.index,ItemLevel=s.level,Flags=(s.identified and 0x10 or 0)+(s.runeword and 0x4000000 or 0),IsEthereal=s.ethereal,Owner=c.location==-1 and 500 or 1},Mode=c.location==-1 and 0 or c.location,Area=c.area,Rarity=s.tier}
-                item.Stat=function(_,id,param) if id==194 then return s.sockets end;return s.stats[tostring(id)..':'..tostring(param or 0)] or 0 end
-                item.MaxSockets=function()return s.maximum end;item.IsType=function(_,id)return s.types[id] or false end
-                item.Link=function()return s.name end
-                local me={ID=1,Difficulty=c.difficulty,Stat=function(_,id) if id==12 then return c.playerLevel elseif id==0 or id==2 then return 150 elseif id==1 or id==3 then return 80 end;return 0 end}
-                local result={Name=s.name,Description='Example item tooltip',Background={0,0,0,0.9},Border={0,0,0,0,1},Grail={isGrail=s.quality==5 or s.quality==7,collected=s.collected}}
-                ApplyFilter(me,item,result,c.level);result._baseName=result.Name
-                _previewItems[i]=item;_previewResults[i]=result
-            end
-            function _previewAnimate(tick)
-                for i,result in ipairs(_previewResults) do
-                    if result.BackgroundFunction then result.BackgroundFunction(_previewItems[i],result,tick) end
-                    if result.NameFunction then result.Name=result.NameFunction(_previewItems[i],result._baseName,tick) end
-                end
-            end
-        )","preview adapter"))return false;
-        for(size_t i=0;i<samples.size();++i){receiving=&results[i];bool ok=Run("_previewApply("+std::to_string(i+1)+")","sample evaluation");receiving=nullptr;if(!ok)return false;results[i].audio=audio&&results[i].matched;ReadResult(i);if(!results[i].matched&&results[i].reason.empty())results[i].reason="Item, filter level or enabled state does not match";}
-        return Animate(0);
+        samples=Samples(rule,catalog,context.itemCode);return Evaluate(context,audio,false);
+    }
+    bool BuildFilter(const std::string& engine,const std::string& source,const Sample& sample,const Context& context,const std::map<std::string,std::string>& overrides={}){
+        Reset();config=source;files=overrides;
+        if(engine.empty()){error="The installed filter engine is unavailable.";return false;}
+        if(!Initialize(engine))return false;
+        if(!Run("assert(type(SimulateFilter)=='function','Update lootfilter.lua to use the item simulator')","simulator support"))return false;
+        samples={sample};return Evaluate(context,false,true);
     }
     bool Animate(unsigned tick){
         if(!lua||!error.empty())return false;

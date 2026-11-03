@@ -83,7 +83,7 @@ void Scope(){
 void Eligibility(){
     auto& f=fixture;
     for(int type=76;type<=81;++type){Setup();family=type;assert(Potion::BeltItem(&f.owner,&item));}
-    for(int exclusion=0;exclusion<13;++exclusion){
+    for(int exclusion=0;exclusion<14;++exclusion){
         Setup();
         switch(exclusion){
         case 0:item.dwItemMode=0;break;
@@ -99,6 +99,7 @@ void Eligibility(){
         case 10:table=nullptr;break;
         case 11:item.pItemData=nullptr;break;
         case 12:f.owner.dwAnimMode=17;break;
+        case 13:f.life=0;break;
         }
         assert(!Potion::BeltItem(&f.owner,&item));
     }

@@ -64,4 +64,20 @@ int main() {
     assert(TerrorZoneRotationIndex(start, start, -10, 5, 4, 1) == 0);
     assert(TerrorZoneRotationIndex(start, start, INT_MIN, INT_MIN, 4, 1) == 0);
     std::cout << "Terror-zone hourly/break boundaries, wraparound, random offsets and bounded time arithmetic passed.\n";
+    for(int offset:{-4,-1,0,1,4}){
+        const int first=TerrorZoneSelectedIndex(start,start,10,5,5,2,offset);
+        assert(TerrorZoneSelectedIndex(start+899,start,10,5,5,2,offset)==first);
+        assert(TerrorZoneSelectedIndex(start+900,start,10,5,5,2,offset)==(first+1)%5);
+        assert(TerrorZoneSelectedIndex(start+4500,start,10,5,5,2,offset)==first);
+    }
+    for(const auto elapsed:{0,599,600,899,900,1499,1500}){
+        const auto phase=TerrorZoneCurrentPhase(start+elapsed,start,10,5);
+        assert(phase.active==(elapsed%900<600));
+        assert(phase.remaining==static_cast<unsigned>((elapsed%900<600?600:900)-elapsed%900));
+    }
+    assert(!TerrorZoneCurrentPhase(start,start,0,0).remaining);
+    assert(TerrorZoneCurrentPhase(start+1,start,0,5).remaining==299);
+    assert(!TerrorZoneCurrentPhase(start-1,start,10,5).remaining);
+    assert(TerrorZoneCurrentPhase(LLONG_MAX,LLONG_MIN,INT_MAX,INT_MAX).remaining>0);
+    std::cout<<"Manual cycle selections advance at the next scheduled boundary; active/break countdowns share bounded UTC phase arithmetic.\n";
 }

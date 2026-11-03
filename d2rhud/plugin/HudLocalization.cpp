@@ -1,5 +1,6 @@
 #include "HudLocalization.h"
 #include "../resource.h"
+#include "D2RHUD/HudConfigStore.h"
 #include <windows.h>
 #include <fstream>
 #include <sstream>
@@ -42,8 +43,8 @@ bool Load(){
 void Initialize(){std::call_once(initialized,[]{
     GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS|GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,reinterpret_cast<LPCWSTR>(&Initialize),&module);
     wchar_t path[32768]{};GetModuleFileNameW(module,path,DWORD(std::size(path)));shippedFolder=std::filesystem::path(path).parent_path()/L"D2RHUD"/L"translations";folder=shippedFolder;
-    wchar_t local[32768]{};if(GetEnvironmentVariableW(L"LOCALAPPDATA",local,DWORD(std::size(local)))){preferenceFile=std::filesystem::path(local)/L"D2RHUD"/L"language.json";folder=preferenceFile.parent_path()/L"Translations";}
-    try{const auto bytes=Read(preferenceFile);if(!bytes.empty()){const auto config=nlohmann::json::parse(bytes);const auto value=config.value("language",std::string("auto"));if(value=="auto"||Supported(value))preference=value;}}
+    wchar_t local[32768]{};if(GetEnvironmentVariableW(L"LOCALAPPDATA",local,DWORD(std::size(local)))){preferenceFile=std::filesystem::path(local)/L"D2RHUD"/L"preferences.json";folder=preferenceFile.parent_path()/L"Translations";}
+    try{HudConfig::Json config;if(!preferenceFile.empty()&&HudUserConfig::Read("Language",config,preferenceFile.parent_path())){const auto value=config.value("language",std::string("auto"));if(value=="auto"||Supported(value))preference=value;}}
     catch(...){} // A broken preference cannot block game startup.
     language=preference=="auto"?Detect():preference;Load();
 });}
@@ -68,10 +69,8 @@ bool SetPreference(const std::string& value){
     Initialize();if(value!="auto"&&!Supported(value))return false;std::lock_guard lock(runtimeMutex);
     try{
         if(preferenceFile.empty())throw std::runtime_error("Language preference folder is unavailable.");
-        std::filesystem::create_directories(preferenceFile.parent_path());auto temp=preferenceFile;temp+=L".tmp";
-        const std::string bytes=nlohmann::json{{"language",value}}.dump(2)+"\n";
-        {std::ofstream file(temp,std::ios::binary|std::ios::trunc);if(!file.write(bytes.data(),bytes.size()))throw std::runtime_error("Language preference could not be written.");}
-        if(!MoveFileExW(temp.c_str(),preferenceFile.c_str(),MOVEFILE_REPLACE_EXISTING|MOVEFILE_WRITE_THROUGH))throw std::runtime_error("Language preference could not be saved.");
+        const auto saved=HudUserConfig::Update("Language",[&](HudConfig::Json& config){config["language"]=value;},preferenceFile.parent_path());
+        if(!saved)throw std::runtime_error(saved.error);
         preference=value;return true;
     }catch(const std::exception& error){status=error.what();return false;}
 }
@@ -87,6 +86,6 @@ const unsigned char* FontBytes(size_t& size){
     size=resource?SizeofResource(module,resource):0;return resource?static_cast<const unsigned char*>(LockResource(LoadResource(module,resource))):nullptr;
 }
 std::string GlyphText(){
-    Initialize();std::string text;const auto table=active.load();if(table)for(const auto& [key,value]:table->strings){text+=key;text+=value;}return text;
+    Initialize();std::string text;const auto table=Store().Read();if(table)for(const auto& [key,value]:table->strings){text+=key;text+=value;}return text;
 }
 }

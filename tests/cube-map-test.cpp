@@ -10,6 +10,14 @@
 #include <fstream>
 #include <iostream>
 #include "quest-journal-stubs.inl"
+// These independent observers are covered by their own transport/host tests.
+namespace Inspect {void Tick(D2GameStrc*){}void Destroyed(D2GameStrc*){}void SetAvailable(bool){}}
+namespace Spectate {void Tick(D2GameStrc*){}void Destroyed(D2GameStrc*){}void SetAvailable(bool){}}
+// Dynamic monster CEL refresh has its own native snapshot regression suite.
+namespace DynamicAutomap {
+void Reset(){}
+void Draw(int style,void* tree,uint8_t* transform,void* opacity,DrawFunction original){original(style,tree,transform,opacity);}
+}
 
 void CubeVisual::SetMapPrepare(MapPrepare){}
 uintptr_t testImage=0;

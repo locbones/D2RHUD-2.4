@@ -1,5 +1,6 @@
 #pragma once
 #include <array>
+#include <algorithm>
 #include <charconv>
 #include <cstdint>
 #include <cstddef>
@@ -43,6 +44,19 @@ struct Output {
 static_assert(sizeof(Output) == 0x54 && offsetof(Output,mods) == 0x18);
 struct Recipe { std::array<uint8_t,0x4c> header{}; std::array<Output,3> outputs{}; };
 static_assert(sizeof(Recipe) == 0x148);
+// Keep the on-disk/native record at 0x148. Only an isolated invocation uses seven.
+struct WideRecipe {
+    std::array<uint8_t,0x4c> header{};std::array<Output,7> outputs{};
+    WideRecipe()=default;
+    explicit WideRecipe(const Recipe& recipe):header(recipe.header){std::copy(recipe.outputs.begin(),recipe.outputs.end(),outputs.begin());}
+    Recipe Native()const{Recipe out;out.header=header;std::copy_n(outputs.begin(),3,out.outputs.begin());return out;}
+};
+static_assert(sizeof(WideRecipe)==0x298);
+struct ExtraOutputSource {
+    std::string command;std::array<std::string,3> levels;
+    struct Mod {std::string property,param,min,max,chance;};std::array<Mod,5> mods;
+};
+struct ExtraRecipeSource {int enabled=0,inputs=0;std::array<ExtraOutputSource,4> outputs;};
 inline std::string Trim(std::string_view value) {
     const auto first=value.find_first_not_of(" \t\r\n");
     if(first==value.npos)return {};
@@ -81,7 +95,7 @@ inline UseToken ParseUseItem(std::string_view raw){
     }
     return result;
 }
-struct UseSource {std::array<UseToken,3> outputs;int enabled=0,inputs=0;};
+struct UseSource {std::array<UseToken,7> outputs;int enabled=0,inputs=0;bool extended=false;};
 struct Option { bool present=false, valid=true; std::string target; };
 // The native parser stops on unknown modifiers. Remove our token before native
 // parsing and reject mixed stat-changing options instead of silently ignoring them.
@@ -158,7 +172,7 @@ inline std::optional<Conditions> ParseConditions(const std::vector<std::string>&
     return out;
 }
 struct SourceRecipe { std::array<Option,3> outputs{}; std::array<std::string,3> rawOutputs{}; int enabled=0, inputs=0; bool matches=true; };
-struct SourceTable { size_t rows=0;std::map<size_t,SourceRecipe> visuals;std::map<size_t,Conditions> conditions;std::map<size_t,UseSource> useItems; };
+struct SourceTable { size_t rows=0;std::map<size_t,SourceRecipe> visuals;std::map<size_t,Conditions> conditions;std::map<size_t,UseSource> useItems;std::map<size_t,ExtraRecipeSource> extended; };
 inline SourceTable ParseSource(const std::string& text) {
     SourceTable result;std::istringstream stream(text);std::string line;
     auto fields=[](const std::string& row) {
@@ -168,11 +182,12 @@ inline SourceTable ParseSource(const std::string& text) {
     };
     if(!std::getline(stream,line))return result;
     auto header=fields(line);
-    std::array<int,3> columns{-1,-1,-1};int enabled=-1,inputs=-1;
+    std::array<int,7> columns{-1,-1,-1,-1,-1,-1,-1};int enabled=-1,inputs=-1;
     for(size_t i=0;i<header.size();++i) {
         if(Equal(header[i],"output"))columns[0]=int(i);
         if(Equal(header[i],"output b"))columns[1]=int(i);
         if(Equal(header[i],"output c"))columns[2]=int(i);
+        for(int slot=3;slot<7;++slot)if(Equal(header[i],std::string("output ")+char('a'+slot)))columns[slot]=int(i);
         if(Equal(header[i],"enabled"))enabled=int(i);
         if(Equal(header[i],"numinputs"))inputs=int(i);
     }
@@ -187,7 +202,20 @@ inline SourceTable ParseSource(const std::string& text) {
             recipe.outputs[i]=Parse(values[columns[i]]);visual|=recipe.outputs[i].present;
             visual|=HasMapToken(recipe.rawOutputs[i]);
         }
-        if(indexed)result.useItems.emplace(row,std::move(use));
+        ExtraRecipeSource extra;extra.enabled=recipe.enabled;extra.inputs=recipe.inputs;
+        auto cell=[&](const std::string& key){for(size_t c=0;c<header.size();++c)if(Equal(header[c],key))return c<values.size()?values[c]:std::string{};return std::string{};};
+        for(size_t i=3;i<7;++i){
+            auto& output=extra.outputs[i-3];const std::string prefix=std::string(1,char('a'+i))+" ";
+            output.command=cell("output "+std::string(1,char('a'+i)));
+            use.outputs[i]=ParseUseItem(output.command);
+            if(output.command.empty())continue;use.extended=true;indexed|=use.outputs[i].indexed;
+            output.levels={cell(prefix+"lvl"),cell(prefix+"plvl"),cell(prefix+"ilvl")};
+            for(size_t m=0;m<5;++m){const auto key=prefix+"mod "+std::to_string(m+1);auto& mod=output.mods[m];
+                mod={cell(key),cell(key+" param"),cell(key+" min"),cell(key+" max"),cell(key+" chance")};
+            }
+        }
+        if(use.extended)result.extended.emplace(row,std::move(extra));
+        if(indexed||use.extended)result.useItems.emplace(row,std::move(use));
         if(visual)result.visuals.emplace(row,std::move(recipe));
     }
     return result;

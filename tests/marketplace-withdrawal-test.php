@@ -1,0 +1,20 @@
+<?php
+declare(strict_types=1);
+require __DIR__.'/marketplace-publication-test.php';
+$mover=$m->auth($m->user('Mover')['token']);$movePub=$pub;$movePub['items'][0]['item_hex']='abcdabcdabcdabcd';$movePub['id']=Market::id();
+$m->publish($mover,$movePub,false);$physical=array_values(array_filter($m->snapshot($buyer,false)['listings'],fn($l)=>$l['seller_id']===$mover['id']))[0];
+$pending=$m->command($buyer,['id'=>Market::id(),'type'=>'propose','listing_id'=>$physical['id'],'listing_revision'=>1,'price'=>$gold],false);
+$scope=$m->run('SELECT scope FROM items WHERE id=?',[$physical['item_id']])->fetchColumn();$intent=Market::id();
+$m->run('INSERT INTO web_intents (id,owner,scope,kind,packet,status,message,created) VALUES (?,?,?,?,?,?,?,?)',[$intent,$mover['id'],$scope,'price',json_encode(['item_hex'=>'abcdabcdabcdabcd']),'queued','',time()]);
+$withdraw=['id'=>Market::id(),'type'=>'withdraw_physical','item_id'=>$physical['item_id'],'item_hex'=>'abcdabcdabcdabcd'];
+refuses(fn()=>$m->command($buyer,$withdraw,false),404);refuses(fn()=>$m->command($mover,$withdraw,true),404);
+refuses(fn()=>$m->command($mover,array_replace($withdraw,['item_hex'=>'abcdabcdabcdabce']),false),409);
+$done=$m->command($mover,$withdraw,false);check($done['withdrawn']);check($m->command($mover,$withdraw,false)===$done);
+check($m->run('SELECT status FROM offers WHERE id=?',[$pending['offer_id']])->fetchColumn()==='superseded');
+check($m->run('SELECT status FROM listings WHERE id=?',[$physical['id']])->fetchColumn()==='withdrawn');
+check($m->run('SELECT status FROM web_intents WHERE id=?',[$intent])->fetchColumn()==='failed');check($m->snapshot($mover,false)['history']===[]);
+refuses(fn()=>$m->command($mover,array_replace($withdraw,['item_hex'=>'abcdabcdabcdabce']),false),409);
+$m->run('INSERT INTO escrow_items VALUES (?,?,?,?,?,?)',[$physical['item_id'],$mover['id'],$scope,'available','{}',Market::id()]);
+refuses(fn()=>$m->command($mover,array_replace($withdraw,['id'=>Market::id()]),false),409);
+check($m->command($seller,['id'=>Market::id(),'type'=>'withdraw_physical','item_hex'=>'aabbccddeeff00','tab'=>1,'page'=>11],false)['withdrawn']);
+echo "Physical withdrawal: owner/mode/byte validation, open-offer cancellation, queued-price invalidation, idempotent logs, escrow exclusion and unpublished draft withdrawal passed.\n";

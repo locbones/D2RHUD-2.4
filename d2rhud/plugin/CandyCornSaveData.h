@@ -113,7 +113,13 @@ inline std::vector<size_t> Continuation(const State& state) {
     for(const auto& task:state.tasks){key.push_back(size_t(task.kind));key.push_back(task.count);key.push_back(task.depth);}
     return key;
 }
-struct Prefix {uint32_t flags=0;unsigned quality=0,sockets=0,depth=0;const ItemDefinition* definition=nullptr;};
+struct Prefix {uint32_t flags=0;unsigned quality=0,sockets=0,depth=0;const ItemDefinition* definition=nullptr;std::string uuid;size_t uuidBit=0;};
+inline bool Identity(Bits& b,Prefix& p){
+    if(b.Read(1)){p.uuidBit=b.pos;bool nonzero=false;constexpr char hex[]="0123456789abcdef";
+        for(unsigned n=0;n<16;++n){const auto v=b.Read(8);nonzero|=v!=0;p.uuid+=hex[v>>4];p.uuid+=hex[v&15];}
+        if(!nonzero)p.uuid.clear();
+    }return b.ok;
+}
 inline bool Header(Bits& b,const Tables& t) {
     const auto bytes=b.bytes;
     if(bytes.size()<0x2ff||!b.ok)return false;
@@ -131,7 +137,7 @@ inline bool ItemPrefix(State& state,const Tables& t,unsigned depth,Prefix& p) {
     if(ear){if(!compact)return false;b.Skip(10);return b.Name()&&b.Align();}
     std::array<char,4> code{};if(!b.Code(code))return false;state.itemCode=code;
     auto def=std::lower_bound(t.items.begin(),t.items.end(),code,[](const ItemDefinition& d,const auto& c){return d.code<c;});if(def==t.items.end()||def->code!=code)return false;p.definition=&*def;
-    if(compact){if(def->gold&&!Gold(b))return false;if(def->questDifficulty){auto s=Stat(t,356);if(!s)return false;b.Skip(s->saveBits);}if(b.Read(1))b.Skip(128);return b.Align();}
+    if(compact){if(def->gold&&!Gold(b))return false;if(def->questDifficulty){auto s=Stat(t,356);if(!s)return false;b.Skip(s->saveBits);}return Identity(b,p)&&b.Align();}
     p.sockets=b.Read(3);b.Skip(32);const auto level=b.Read(7);if(!level)return false;p.quality=b.Read(4);if(!p.quality||p.quality>9)return false;
     if(b.Read(1))b.Skip(3);if(b.Read(1))b.Skip(11);
     switch(p.quality){
@@ -145,7 +151,7 @@ inline bool ItemPrefix(State& state,const Tables& t,unsigned depth,Prefix& p) {
     if(p.flags&(1u<<26))b.Skip(16);
     if((p.flags&(1u<<24))&&!b.Name())return false;
     // Realm payload changed to a 16-byte string in modern saves (native200d50).
-    if(b.Read(1))b.Skip(128);
+    if(!Identity(b,p))return false;
     if(def->armor){auto s=Stat(t,31);if(!s)return false;b.Skip(s->saveBits);}
     if(def->armor||def->weapon){auto maximum=Stat(t,73),current=Stat(t,72);if(!maximum||!current||maximum->saveBits>32)return false;const auto raw=b.Read(maximum->saveBits);if(int64_t(raw)-maximum->saveAdd>0){b.Skip(current->saveBits);}}
     if(def->gold&&!Gold(b))return false;

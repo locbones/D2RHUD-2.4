@@ -7,6 +7,8 @@ using MapPrepare=bool(*)(D2GameStrc*,D2UnitStrc*,Data::Recipe&);
 void SetMapPrepare(MapPrepare handler);
 void SetMultipleUseOutputs(bool enabled);
 void SetMultipleUseInputs(bool enabled);
+void SetBulkOutputs(bool enabled);
+void SetExtendedOutputs(bool enabled);
 void SetExtendedConditions(bool enabled);
 bool ExtendedConditionsEnabled();
 bool Install();

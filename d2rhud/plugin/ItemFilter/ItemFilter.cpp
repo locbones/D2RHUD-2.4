@@ -4,6 +4,8 @@
 #include "LuaConfigIO.h"
 #include "../StatRanges.h"
 #include "../TooltipText.h"
+#include "../RunTracker.h"
+#include "../Inspect.h"
 #include "../ItemCodes.h"
 #include "../CubeVisual.h"
 #include "../GameAssets.h"
@@ -19,6 +21,11 @@
 #include <string>
 #include "../../json.hpp"
 #include <mutex>
+#include "ItemText.h"
+#include "ItemSessionState.h"
+#include "../../SessionEpoch.h"
+#include "../../RuntimeTelemetry.h"
+#include "../D2RHUD/FrameContext.h"
 
 #pragma region Global Static/Structs
 
@@ -80,18 +87,21 @@ typedef void(__fastcall* ITEMS_GetStatsDescription_t)(D2UnitStrc* pUnit, char* p
 ITEMS_GetStatsDescription_t oITEMS_GetStatsDescription = reinterpret_cast<ITEMS_GetStatsDescription_t>(Pattern::Address(0x1c72d0));
 class D2ItemUnitStrc : public D2UnitStrc {};
 class D2PlayerUnitStrc : public D2UnitStrc {};
-static std::unordered_map<DWORD, int32_t> g_TransmogValueByUnitId;
+static HudItems::SessionState& ItemSession(){return HudLifetime::State<HudItems::SessionState>();}
+static auto& g_TransmogValueByUnitId=ItemSession().transmogs;
 static std::mutex g_TransmogValueMutex;
-static std::unordered_map<DWORD, std::string> g_StoredItemNames;
+static auto& g_StoredItemNames=ItemSession().names;
 static std::mutex g_StoredItemNamesMutex;
-static bool g_ShowFilteredItems = false;
-static std::vector<std::pair<std::vector<uint8_t>, bool>> g_RemovedFilteredItemPackets;
+static auto& g_ShowFilteredItems=ItemSession().showFiltered;
+static auto& g_RemovedFilteredItemPackets=ItemSession().removed;
 static std::mutex g_RemovedFilteredItemPacketsMutex;
-static std::unordered_map<uint32_t, std::pair<std::vector<uint8_t>, bool>> g_ReaddedFilteredItemPackets;
+static auto& g_ReaddedFilteredItemPackets=ItemSession().readded;
 static std::mutex g_ReaddedFilteredItemPacketsMutex;
 static const size_t kMaxItemPacketSize = 1024;
 static thread_local std::vector<uint8_t> g_LastReceivedItemPacket;
 static thread_local bool g_LastReceivedItemPacketIs9D = false;
+static void SetItemSession(uint64_t epoch){std::lock_guard lock(ItemSession().mutex);if(epoch==HudSession::Current())ItemSession().Synchronize(epoch);}
+void ItemFilter::SetSession(uint64_t epoch){SetItemSession(epoch);}
 uint32_t crc32_table[256];
 
 
@@ -274,6 +284,7 @@ void HandleItemBackground(D2UnitStrcCustom* pUnit, D2UnitRectStrc* pRect, float*
 
 int32_t GetStoredTransmogValue(DWORD dwUnitId)
 {
+    std::lock_guard sessionLock(ItemSession().mutex);
 	std::lock_guard<std::mutex> lock(g_TransmogValueMutex);
 	auto it = g_TransmogValueByUnitId.find(dwUnitId);
 	return (it != g_TransmogValueByUnitId.end()) ? it->second : 0;
@@ -281,9 +292,12 @@ int32_t GetStoredTransmogValue(DWORD dwUnitId)
 
 const char* GetStoredItemName(DWORD dwUnitId)
 {
+    std::lock_guard sessionLock(ItemSession().mutex);
 	std::lock_guard<std::mutex> lock(g_StoredItemNamesMutex);
 	auto it = g_StoredItemNames.find(dwUnitId);
-	return (it != g_StoredItemNames.end()) ? it->second.c_str() : nullptr;
+	static thread_local std::string owned;
+    if(it==g_StoredItemNames.end())return nullptr;
+    owned=it->second;return owned.c_str();
 }
 
 void InitCRC32Table()
@@ -321,10 +335,13 @@ bool ReadFileToString(const std::string& path, std::string& outStr)
 #pragma endregion
 
 #pragma region Hooks
+thread_local bool inspectNativeText = false;
 
 void __fastcall Hooked_ITEMS_GetName(D2UnitStrc* pUnit, char* pBuffer)
 {
+    std::lock_guard sessionLock(ItemSession().mutex);
 	oITEMS_GetName(pUnit, pBuffer);
+    if (inspectNativeText) return;
 
 	auto pUnitToUse = pUnit;
 	if (gpClientList) {
@@ -338,7 +355,7 @@ void __fastcall Hooked_ITEMS_GetName(D2UnitStrc* pUnit, char* pBuffer)
 		auto pUnitCustom = (D2UnitStrcCustom*)pUnit;
 		char cBuffer[0x400];
 		snprintf(cBuffer, 0x400, pUnitCustom->pFilterResult->szName.c_str(), pBuffer);
-		strncpy(pBuffer, cBuffer, 0x400);
+		ItemText::Copy(pBuffer,0x400,cBuffer);
 
 		if (pUnitCustom->pFilterResult->cbNameFunction.valid()) {
 			std::string szName = pBuffer;
@@ -350,7 +367,7 @@ void __fastcall Hooked_ITEMS_GetName(D2UnitStrc* pUnit, char* pBuffer)
 			if (data.valid() && data.is<std::string>())
 				szName = data.as<std::string>();
 
-			strncpy(pBuffer, szName.c_str(), 0x400);
+			ItemText::Copy(pBuffer,0x400,szName);
 		}
 		{
 			std::lock_guard<std::mutex> lock(g_StoredItemNamesMutex);
@@ -361,7 +378,14 @@ void __fastcall Hooked_ITEMS_GetName(D2UnitStrc* pUnit, char* pBuffer)
 }
 
 void __fastcall Hooked_ITEMS_GetNameGold(D2UnitStrc* pUnit, char* pBuffer) {
-	oITEMS_GetName(pUnit, pBuffer);
+    std::lock_guard sessionLock(ItemSession().mutex);
+	if (!pBuffer || !pUnit) return;
+	// The shared name builder has a 1024-byte contract; the ground gold label
+	// has only 127. Generate into owned storage before copying to that label.
+	char nativeName[0x400]{};
+	oITEMS_GetName(pUnit, nativeName);
+	nativeName[sizeof(nativeName)-1]='\0';
+	ItemText::Copy(pBuffer,0x7F,nativeName);
 	auto pUnitToUse = pUnit;
 	if (gpClientList) {
 		auto pClient = *gpClientList;
@@ -373,7 +397,7 @@ void __fastcall Hooked_ITEMS_GetNameGold(D2UnitStrc* pUnit, char* pBuffer) {
 		auto pUnitCustom = (D2UnitStrcCustom*)pUnit;
 		char cBuffer[0x7F];
 		snprintf(cBuffer, 0x7F, pUnitCustom->pFilterResult->szName.c_str(), pBuffer);
-		strncpy(pBuffer, cBuffer, 0x7F);
+		ItemText::Copy(pBuffer,0x7F,cBuffer);
 
 		if (pUnitCustom->pFilterResult->cbNameFunction.valid()) {
 			std::string szName = std::string(pBuffer);
@@ -389,7 +413,7 @@ void __fastcall Hooked_ITEMS_GetNameGold(D2UnitStrc* pUnit, char* pBuffer) {
 			if (data.valid() && data.is<std::string>()) {
 				szName = data.as<std::string>();
 			}
-			strncpy(pBuffer, szName.c_str(), 0x400);
+			ItemText::Copy(pBuffer,0x7F,szName);
 		}
 		AppendHiddenSuffixIfNeeded(reinterpret_cast<D2UnitStrcCustom*>(pUnit), pBuffer, 0x7F);
 	}
@@ -410,7 +434,9 @@ void __fastcall Hooked_UI_BuildGroundItemTooltip(D2UnitStrc* pUnit, char* szTool
 
 void Hooked_ITEMS_GetStatsDescription(D2UnitStrc* pUnit, char* pBuffer, uint64_t nBufferSize, int a4, int a5, int a6, unsigned int a7, int a8)
 {
+    std::lock_guard sessionLock(ItemSession().mutex);
 	if (!pBuffer || !pUnit) return;
+    const auto tooltipSession=HudSession::Current();
 	// R8 is unused by the native implementation; it is not a reliable capacity.
 	// Native callers still allocate 1024 bytes. Always redirect generation to owned
 	// storage before raising any of the native output limits.
@@ -419,6 +445,11 @@ void Hooked_ITEMS_GetStatsDescription(D2UnitStrc* pUnit, char* pBuffer, uint64_t
 	oITEMS_GetStatsDescription(pUnit, storage.data(), storage.size(), a4, a5, a6, a7, a8);
 	storage.back() = '\0';
 	char* description = storage.data();
+    if (inspectNativeText) {
+        TooltipText::Remember(pUnit->dwUnitId, description, tooltipSession);
+        strncpy_s(pBuffer, TooltipText::LegacyCapacity, description, _TRUNCATE);
+        return;
+    }
 
 	auto pUnitToUse = pUnit;
 	if (gpClientList) {
@@ -461,7 +492,7 @@ void Hooked_ITEMS_GetStatsDescription(D2UnitStrc* pUnit, char* pBuffer, uint64_t
 				strcat_s(description, TooltipText::NativeCapacity, dbg);
 		}
 	}
-	TooltipText::Remember(pUnit->dwUnitId, description);
+	TooltipText::Remember(pUnit->dwUnitId, description,tooltipSession);
 	strncpy_s(pBuffer, TooltipText::LegacyCapacity, description, _TRUNCATE);
 }
 
@@ -690,6 +721,8 @@ void InitializeLUA() {
 }
 
 void DoFilter(D2UnitStrc* pItem) {
+    HudTelemetry::Scope measured(HudTelemetry::Feature::LootFilter);
+    std::lock_guard sessionLock(ItemSession().mutex);
 	if (!pItem) return;
 
 	auto pItemCustom = reinterpret_cast<D2UnitStrcCustom*>(pItem);
@@ -747,6 +780,7 @@ void DoFilter(D2UnitStrc* pItem) {
 }
 
 void DoFilter(uint32_t nUnitId) {
+    std::lock_guard sessionLock(ItemSession().mutex);
 	DoFilter(GetUnitByIdAndType(ppClientUnitList, nUnitId, UNIT_ITEM));
 }
 
@@ -758,24 +792,33 @@ void DoFilter(uint32_t nUnitId) {
 #pragma region Filter Apply Hooks
 
 int64_t __fastcall Hooked_D2CLIENT_PACKETCALLBACK_Rcv0x9C_SCMD_ITEMEX(uint8_t* pPacket) {
+    const auto frame=HudFrame::Capture();
+    SetItemSession(HudSession::Observe(frame.inGame,frame.nativeToken,frame.loading,frame.character));
+    std::lock_guard sessionLock(ItemSession().mutex);
 	g_LastReceivedItemPacket.assign(pPacket, pPacket + kMaxItemPacketSize);
 	g_LastReceivedItemPacketIs9D = false;
 	auto result = oD2CLIENT_PACKETCALLBACK_Rcv0x9C_SCMD_ITEMEX(pPacket);
+    if(pPacket[1]!=ITEMACTION_ADDTOGROUND&&pPacket[1]!=ITEMACTION_ONGROUND)RunTracker::InventoryChanged();
 	DoFilter(*(uint32_t*)(pPacket + 4));
 	g_LastReceivedItemPacket.clear();
 	return result;
 }
 
 int64_t __fastcall Hooked_D2CLIENT_PACKETCALLBACK_Rcv0x9D_SCMD_ITEMUNITEX(uint8_t* pPacket) {
+    const auto frame=HudFrame::Capture();
+    SetItemSession(HudSession::Observe(frame.inGame,frame.nativeToken,frame.loading,frame.character));
+    std::lock_guard sessionLock(ItemSession().mutex);
 	g_LastReceivedItemPacket.assign(pPacket, pPacket + kMaxItemPacketSize);
 	g_LastReceivedItemPacketIs9D = true;
 	auto result = oD2CLIENT_PACKETCALLBACK_Rcv0x9D_SCMD_ITEMUNITEX(pPacket);
+    if(pPacket[1]!=ITEMACTION_ADDTOGROUND&&pPacket[1]!=ITEMACTION_ONGROUND)RunTracker::InventoryChanged();
 	DoFilter(*(uint32_t*)(pPacket + 4));
 	g_LastReceivedItemPacket.clear();
 	return result;
 }
 
 void __fastcall Hooked_UNITS_FreeUnit(D2UnitStrc* pUnit) {
+    std::lock_guard sessionLock(ItemSession().mutex);
 	if (((D2UnitStrcCustom*)pUnit)->pFilterResult) {
 		delete ((D2UnitStrcCustom*)pUnit)->pFilterResult;
 	}
@@ -834,19 +877,22 @@ static auto BaseAddress = reinterpret_cast<uintptr_t>(GetModuleHandle(nullptr));
 static auto UNITS_GetInvGfxFromJson = reinterpret_cast<blz__string16 * (__fastcall*)(blz__string16*, D2UnitStrc*)>(BaseAddress + 0x87ee0);
 static auto UNITS_GetItemGfxFromJson = reinterpret_cast<const char* (__fastcall*)(void*, D2UnitStrc*, int32_t, uint32_t)>(BaseAddress + 0x42d2c0);
 std::unordered_map<std::string, std::string> g_SpecialItemGfx;
-static std::unordered_map<D2UnitStrc*, std::string> g_InvGfxCache;
-static std::unordered_map<D2UnitStrc*, std::string> g_ItemGfxCache;
-static std::mutex g_CacheMutex;
+
+
+
 static auto& gJsonManager = *reinterpret_cast<D2JSONManagerStrc*>(BaseAddress + 0x1e3d8b0);
 static auto& gJsonManagerU = *reinterpret_cast<D2JSONManagerStrc*>(BaseAddress + 0x1e3f8b0);
+static auto& s_InvMutex=ItemSession().mutex;
+static auto& s_InvOverrideAppliedCount=ItemSession().inventoryApplications;
+static auto& s_InvLastOverrideCache=ItemSession().inventoryPaths;
 using json = nlohmann::json;
 std::vector<ItemRow> g_ItemRows;
 extern std::vector<TransmogRow> g_TransmogTable;
-static std::unordered_map<DWORD, const char*> g_LastTransmogPathByUnitId;
-static std::mutex g_LastTransmogPathMutex;
-static std::unordered_map<DWORD, int> s_InvOverrideAppliedCount;
-static std::unordered_map<DWORD, std::string> s_InvLastOverrideCache;
-static std::mutex s_InvMutex;
+
+
+
+
+
 
 #pragma endregion
 
@@ -854,30 +900,11 @@ static std::mutex s_InvMutex;
 
 const char* GetTransmog(D2UnitStrc* pItem)
 {
+    std::lock_guard sessionLock(ItemSession().mutex);
 	if (!pItem) return nullptr;
 
 	static int32_t transmogStatIndex = -1;
 	static std::once_flag initFlag;
-	static int g_MaxTransmogApply = 2;
-	static std::unordered_map<DWORD, int> s_TransmogAppliedCount;
-	static std::mutex s_TransmogMutex;
-
-	// Limit transmog applications only while player is in game
-	if (IsPlayerInGame()) {
-		std::lock_guard<std::mutex> lock(s_TransmogMutex);
-		int count = s_TransmogAppliedCount[pItem->dwUnitId];
-		if (count < g_MaxTransmogApply) {
-			s_TransmogAppliedCount[pItem->dwUnitId] = count + 1;
-		}
-		else {
-			// Already reached max applications, return last used path
-			std::lock_guard<std::mutex> lock2(g_LastTransmogPathMutex);
-			auto it = g_LastTransmogPathByUnitId.find(pItem->dwUnitId);
-			if (it != g_LastTransmogPathByUnitId.end())
-				return it->second;
-		}
-	}
-
 	// Initialize transmog stat index and table
 	std::call_once(initFlag, [&]() {
         transmogStatIndex = CompiledNames::Resolve(0x1c9fb90,"transmog");
@@ -952,17 +979,16 @@ const char* GetForcedItemcodeOverride(D2UnitStrc* pItem)
 		return nullptr;
 
 	struct ItemVisualKey {
-		uint32_t seed;
 		uint32_t classId;
 
 		bool operator==(const ItemVisualKey& o) const {
-			return seed == o.seed && classId == o.classId;
+			return classId == o.classId;
 		}
 	};
 
 	struct ItemVisualKeyHash {
 		size_t operator()(const ItemVisualKey& k) const {
-			return (size_t(k.seed) << 1) ^ k.classId;
+			return k.classId;
 		}
 	};
 
@@ -970,7 +996,6 @@ const char* GetForcedItemcodeOverride(D2UnitStrc* pItem)
 	static std::mutex s_OverrideMutex;
 
 	ItemVisualKey key{
-		pItem->pItemData->dwInitSeed,
 		pItem->dwClassId
 	};
 
@@ -1135,11 +1160,8 @@ void GetItemVisuals()
 
 void ItemFilter::ClearInvOverrideCache()
 {
-	std::lock_guard<std::mutex> lock(s_InvMutex);
-	s_InvOverrideAppliedCount.clear();
-	s_InvLastOverrideCache.clear();
-
-	std::cout << "Cache Cleared!\n";
+    std::lock_guard lock(ItemSession().mutex);
+    s_InvOverrideAppliedCount.clear();s_InvLastOverrideCache.clear();
 }
 
 
@@ -1149,6 +1171,7 @@ void ItemFilter::ClearInvOverrideCache()
 
 blz__string16* __fastcall Hooked_UNITS_GetInvGfxFromJson(blz__string16* a1, D2UnitStrc* pUnit)
 {
+    std::lock_guard sessionLock(ItemSession().mutex);
 	auto ret = UNITS_GetInvGfxFromJson(a1, pUnit);
 
 	if (!pUnit || pUnit->dwUnitType != 4 || !ret || !ret->pData)
@@ -1162,7 +1185,7 @@ blz__string16* __fastcall Hooked_UNITS_GetInvGfxFromJson(blz__string16* a1, D2Un
 	
 	std::string finalPath;
 	{
-		std::lock_guard<std::mutex> lock(s_InvMutex);
+		std::lock_guard lock(s_InvMutex);
 
 		// Return last applied override if in-game and limit reached
 		if (IsPlayerInGame()) {
@@ -1189,9 +1212,7 @@ blz__string16* __fastcall Hooked_UNITS_GetInvGfxFromJson(blz__string16* a1, D2Un
 				finalPath = "items/weapon/";
 				finalPath += forced;
 			}
-			
-			std::lock_guard<std::mutex> lock(s_InvMutex);
-			s_InvLastOverrideCache[pUnit->dwUnitId] = finalPath;
+            s_InvLastOverrideCache[pUnit->dwUnitId]=finalPath;
 		}
 	}
 
@@ -1339,8 +1360,17 @@ bool ItemFilter::Install(MonsterStatsDisplaySettings settings) {
 
 
 		if (DetourTransactionCommit() != NO_ERROR) return false;
+        RunTracker::SetNameProvider(oITEMS_GetName);
+        Inspect::SetNameProvider(oITEMS_GetName);
+        Inspect::SetReadGuard([](void(*read)(void*),void* context){std::lock_guard lock(ItemSession().mutex);read(context);});
+        RunTracker::SetReadGuard([](void(*read)(void*),void* context){std::lock_guard lock(ItemSession().mutex);read(context);});
 		TooltipText::InstallLimits();
 		StatRanges::Install();
+        Inspect::SetTextProvider([](D2UnitStrc* viewer,D2UnitStrc* owner,D2UnitStrc* item){
+            std::lock_guard lock(ItemSession().mutex);
+            struct Scope { bool previous=inspectNativeText; Scope(){inspectNativeText=true;} ~Scope(){inspectNativeText=previous;} } scope;
+            return StatRanges::NativeItemText(viewer,owner,item);
+        });
 		InitializeLUA();
 
 		bInstalled = true;
@@ -1443,11 +1473,16 @@ void ItemFilter::CycleFilter()
 
 bool ItemFilter::GetShowFilteredItems()
 {
+    std::lock_guard sessionLock(ItemSession().mutex);
 	return g_ShowFilteredItems;
 }
 
 void ItemFilter::SetShowFilteredItems(bool show)
 {
+    const auto frame=HudFrame::Capture();
+    SetItemSession(HudSession::Observe(frame.inGame,frame.nativeToken,frame.loading,frame.character));
+    std::lock_guard sessionLock(ItemSession().mutex);
+    if(!ItemSession().epoch){g_ShowFilteredItems=false;return;}
 	bool wasShowing = g_ShowFilteredItems;
 	g_ShowFilteredItems = show;
 

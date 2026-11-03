@@ -65,6 +65,9 @@
     <ClCompile Include="plugin\HellSpindle.cpp" />
     <ClCompile Include="plugin\ImmunityLabels.cpp" />
     <ClCompile Include="plugin\AutomapLayers.cpp" />
+    <ClCompile Include="plugin\DynamicAutomap.cpp" />
+    <ClCompile Include="plugin\MercSeller.cpp" />
+    <ClCompile Include="plugin\MercIcons.cpp" />
     <ClCompile Include="plugin\ItemCodes.cpp" />
     <ClCompile Include="plugin\LegacyTransmog.cpp" />
     <ClCompile Include="plugin\StackSplitUI.cpp" />
@@ -154,6 +157,14 @@
     <ClInclude Include="plugin\ExtendedActsStrings.h" />
     <ClInclude Include="plugin\ImmunityLabels.h" />
     <ClInclude Include="plugin\AutomapLayers.h" />
+    <ClInclude Include="plugin\DynamicAutomap.h" />
+    <ClInclude Include="plugin\MercSeller.h" />
+    <ClInclude Include="plugin\MercIcons.h" />
+    <ClInclude Include="plugin\MercIconsData.h" />
+    <ClInclude Include="plugin\MercIconsNative.h" />
+    <ClInclude Include="plugin\MercSellerData.h" />
+    <ClInclude Include="plugin\MercSellerNative.h" />
+    <ClInclude Include="plugin\DynamicAutomapData.h" />
     <ClInclude Include="plugin\ItemCodes.h" />
     <ClInclude Include="plugin\LegacyTransmog.h" />
     <ClInclude Include="plugin\CubeVisual.h" />

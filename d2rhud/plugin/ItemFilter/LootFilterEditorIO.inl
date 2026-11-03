@@ -67,6 +67,21 @@ static std::string FormatLuaValue(const std::string& key, const std::string& val
     return value; // All other controls edit a Lua expression; preserve tables, booleans and references.
 }
 
+static std::string ComposeLootFilterConfig(int selected=-1,const std::string* draft=nullptr)
+{
+    std::map<std::string,std::string> edits;
+    for(const auto& pair:g_LuaVariables){
+        auto old=g_LootConfigOriginalValues.find(pair.first);
+        if(old!=g_LootConfigOriginalValues.end()&&old->second==pair.second)continue;
+        std::string key=pair.first;
+        if(key=="debug"&&!g_LootConfigDocument.Find("debug")&&g_LootConfigDocument.Find("Debug"))key="Debug";
+        edits[key]=FormatLuaValue(pair.first,pair.second);
+    }
+    std::vector<std::string> rules;
+    for(size_t i=0;i<g_LootFilterRules.size();++i)rules.push_back(draft&&int(i)==selected?*draft:g_LootFilterRules[i].rawLua);
+    return g_LootConfigDocument.Update(edits,rules,rules!=g_LootConfigOriginalRules);
+}
+
 bool SaveLootFilterConfig(const std::string& path)
 {
     try {

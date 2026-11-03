@@ -4,6 +4,7 @@
 #include "../d2rhud/plugin/ItemFilter/LootFilterEditorText.h"
 #include "../d2rhud/plugin/ItemFilter/LootFilterRuleBuilder.h"
 #include "../d2rhud/plugin/ItemFilter/LootFilterPreview.h"
+#include "../d2rhud/plugin/ItemFilter/LootFilterSimulator.h"
 #include <imgui_internal.h>
 #include "../d2rhud/plugin/HudText.h"
 #include <unordered_map>
@@ -21,6 +22,7 @@ ItemFilter* itemFilter = &testFilter;
 static std::string testPath;
 static std::string previewEngine;
 static const std::string& GetLootFilterPreviewEngine(){return previewEngine;}
+static const std::map<std::string,std::string>& GetLootFilterSimulatorOverrides(){static std::map<std::string,std::string> files;return files;}
 static std::string GetLootFilterConfigPath() { return testPath; }
 static bool ThemeButton(const char* label, const ImVec2& size = ImVec2(0,0)) { return ImGui::Button(label,size); }
 #include "../d2rhud/plugin/ItemFilter/LootFilterEditorIO.inl"
@@ -30,6 +32,7 @@ static const LootFilterConfig::Builder::Catalog& GetLootFilterBuilderCatalog() {
 }
 #include "../d2rhud/plugin/ItemFilter/LootFilterRuleBuilderUI.inl"
 #include "../d2rhud/plugin/ItemFilter/LootFilterPreviewUI.inl"
+#include "../d2rhud/plugin/ItemFilter/LootFilterSimulatorUI.inl"
 #include "../d2rhud/plugin/ItemFilter/LootFilterEditorUI.inl"
 
 static void Check(bool condition, const std::string& message) { if (!condition) throw std::runtime_error(message); }
@@ -61,6 +64,40 @@ static void Frame(bool longText = false, std::string* text = nullptr) {
     ImGui::End(); ImGui::Render();
     Check(ImGui::GetDrawData()->TotalVtxCount > 0,"Editor produced no drawing");
 }
+static void ChoiceInteraction() {
+    using namespace LootFilterConfig::Builder;
+    Catalog catalog;catalog.items={{"Ring","rin"},{"Amulet","amu"}};
+    Value value;value.choices={"custom"};
+    auto& io=ImGui::GetIO();io.DisplaySize={960,720};
+    ImVec2 combo{};
+    auto frame=[&]{
+        ImGui::NewFrame();ImGui::SetNextWindowPos({10,10});ImGui::SetNextWindowSize({700,400});
+        ImGui::Begin("Borrowed choices",nullptr,ImGuiWindowFlags_NoSavedSettings);
+        UI::MultiChoose(*FindSpec("codes"),value,catalog);
+        if(!ImGui::IsPopupOpen("##choices")){
+            const auto a=ImGui::GetItemRectMin(),b=ImGui::GetItemRectMax();combo={(a.x+b.x)*.5f,(a.y+b.y)*.5f};
+        }
+        ImGui::End();ImGui::Render();
+    };
+    auto click=[&](ImVec2 point){io.AddMousePosEvent(point.x,point.y);frame();io.AddMouseButtonEvent(0,true);frame();io.AddMouseButtonEvent(0,false);frame();};
+    frame();frame();click(combo);frame();
+    auto optionOrigin=[&]{
+        ImGuiWindow* options=nullptr;
+        for(auto* window:GImGui->Windows)if(window->WasActive&&std::string(window->Name).find("/options_")!=std::string::npos)options=window;
+        Check(options!=nullptr,"Borrowed item choices did not open");return options->DC.CursorStartPos;
+    };
+    auto p=optionOrigin();const auto line=ImGui::GetTextLineHeightWithSpacing();
+    click({p.x+25,p.y+line+ImGui::GetTextLineHeight()*.5f});
+    Check(value.choices.empty(),"Unknown selected item cannot be removed");
+    // Unknown row is gone; All items follows Clear selection now.
+    p=optionOrigin();click({p.x+25,p.y+line+ImGui::GetTextLineHeight()*.5f});
+    Check(value.choices==std::vector<std::string>{"allitems"},"All items cannot be selected");
+    p=optionOrigin();click({p.x+25,p.y+2*line+ImGui::GetTextLineHeight()*.5f});
+    Check(value.choices==std::vector<std::string>{"rin"},"Specific item did not replace All items");
+    Check(catalog.items.size()==2&&catalog.items[0].value=="rin", "Interaction mutated borrowed catalog");
+    io.AddMousePosEvent(950,710);io.AddMouseButtonEvent(0,true);frame();io.AddMouseButtonEvent(0,false);frame();
+    std::cout<<"PASS: real ImGui item popup removes unknown selections and preserves All items/specific-item behavior with borrowed catalog\n";
+}
 int main(int argc,char** argv) {
     try {
         if(argc>2)Check(LootFilterConfig::Read(argv[2],previewEngine),"Unable to read preview engine");
@@ -72,6 +109,11 @@ int main(int argc,char** argv) {
         LoadLootFilterConfig(testPath);
         Check(g_LootFilterRules.size()==1 && g_LootFilterRules[0].rawLua.size()>20000,"Long authored rule missing");
         Check(g_LuaVariables.at("allowOverrides")=="T" && g_LuaVariables.at("debug")=="false","Expressions/Debug alias changed");
+        const auto originalRules=g_LootFilterRules[0].rawLua;
+        const std::string simulatedDraft="{label='Unsaved test',codes='rin',hide=true}";
+        const auto simulatedSource=ComposeLootFilterConfig(0,&simulatedDraft);
+        Check(simulatedSource.find("Unsaved test")!=std::string::npos&&simulatedSource.find("for i=1,3")!=std::string::npos,"Simulator draft lost pending/generated source");
+        std::string untouched;Check(LootFilterConfig::Read(testPath,untouched)&&untouched==source&&g_LootFilterRules[0].rawLua==originalRules,"Simulating changed the file or rule draft");
         Check(SaveLootFilterConfig(testPath),g_LootConfigStatus);
         std::string disk; LootFilterConfig::Read(testPath,disk);
         Check(disk==source,"Unchanged production editor save changed source");
@@ -91,6 +133,7 @@ int main(int argc,char** argv) {
         unsigned char* pixels; int width,height;
         io.Fonts->GetTexDataAsRGBA32(&pixels,&width,&height);
         io.Fonts->SetTexID(1);
+        ChoiceInteraction();
         // Optional native panel RGBA fixture: uint32 width/height, then pixels.
         // The capture keeps texture IDs so visual QA can render native artwork.
         if(argc>3){std::ifstream fixture(argv[3],std::ios::binary);uint32_t dimensions[2]{};fixture.read(reinterpret_cast<char*>(dimensions),8);Check(fixture&&dimensions[0]>120&&dimensions[0]<=8192&&dimensions[1]>146&&dimensions[1]<=8192,"Invalid native panel fixture");LootFilterConfig::Builder::UI::panelArt={2,float(dimensions[0]),float(dimensions[1]),float(dimensions[0])};}
@@ -101,7 +144,7 @@ int main(int argc,char** argv) {
             auto& context = *GImGui;
             Check(context.TabBars.GetAliveCount()>0,"Editor tab bar missing");
             auto* bar = context.TabBars.GetByIndex(0);
-            Check(bar->Tabs.Size==5,"Expected Settings/Rules/Styles/Diagnostics/Source");
+            Check(bar->Tabs.Size==6,"Expected Settings/Rules/Simulator/Styles/Diagnostics/Source");
             for (int tab=0;tab<bar->Tabs.Size;++tab) {
                 bar->NextSelectedTabId=bar->Tabs[tab].ID;
                 Frame(); Frame();
@@ -141,6 +184,14 @@ int main(int argc,char** argv) {
                 for(int view=0;view<3;++view){views->NextSelectedTabId=views->Tabs[view].ID;Frame();Frame();Frame();if(argc>1&&*argv[1])Capture(std::filesystem::path(argv[1]),"editor-1200-large-type-view-"+std::to_string(view),pixels,width,height);}
                 io.FontGlobalScale=1;
             }
+        }
+        // Capture the new full-filter result at normal, narrow and 4K sizes.
+        {std::ofstream file(testPath,std::ios::binary);file<<"return {rules={{label='Highlight rings',codes='rin',suffix=' Keep',border={220,180,90,255,2}},{label='Hide ordinary rings',codes='rin',quality='Normal',hide=true},{label='Later rule',codes='rin',suffix=' Later'}}}";}
+        LoadLootFilterConfig(testPath);
+        for(const auto size:{ImVec2(640,720),ImVec2(960,720),ImVec2(1200,720),ImVec2(3840,2160)}){
+            io.DisplaySize=size;io.FontGlobalScale=size.x>=3840?2.f:1.f;Frame();Frame();
+            auto* tabs=GImGui->TabBars.GetByIndex(0);tabs->NextSelectedTabId=tabs->Tabs[2].ID;Frame();Frame();Frame();
+            if(argc>1&&*argv[1])Capture(std::filesystem::path(argv[1]),"simulator-"+std::to_string(int(size.x)),pixels,width,height);
         }
         // Exercise the real ImGui resize callback through keyboard text events.
         io.DisplaySize=ImVec2(960,720);

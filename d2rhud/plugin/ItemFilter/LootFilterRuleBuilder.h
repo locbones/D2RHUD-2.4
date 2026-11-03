@@ -144,19 +144,31 @@ inline std::vector<std::pair<std::string,std::string>> RuleFields(const std::str
     Document doc;if(!doc.Parse("return {rules={"+rule+"\n}}")||doc.rules.size()!=1)return {};
     try{return doc.RuleFields(0);}catch(...){return {};}
 }
-inline std::vector<Option> Options(const std::string& key,const Catalog& catalog) {
+// Borrow catalog lists; fixed choices are constructed once. Callers needing
+// editable entries must keep those separate rather than copying every item.
+inline const std::vector<Option>& Options(const std::string& key,const Catalog& catalog) {
     if(key=="codes")return catalog.items;
     if(key=="itype")return catalog.types;
     if(key=="area")return catalog.areas;
-    std::vector<Option> result;
-    auto add=[&](const char* name){result.push_back({name,name});};
-    if(key=="quality")for(auto name:{"Inferior","Normal","Superior","Magic","Set","Rare","Unique","Crafted","Tempered"})add(name);
-    if(key=="rarity")for(auto name:{"Normal","Exceptional","Elite"})add(name);
-    if(key=="difficulty")for(auto name:{"Normal","Nightmare","Hell"})add(name);
-    if(key=="location")result={{"On the ground","onground"},{"In inventory or storage","onplayer"},{"Equipped","equipped"},{"At a vendor","atvendor"}};
-    if(key=="name_style")for(auto name:{"Rainbow","Rainbow Group","Cotton Candy","Frost Wave","Toxic Fog","Open Flames","Christmas","Rainbow Static","Rainbow Group Static","Cotton Candy Static","Frost Wave Static","Toxic Fog Static","Open Flames Static"})add(name);
-    if(key=="background_style")for(auto name:{"Rainbow","Ocean Drift","Fading Ember","Midnight Memory","Verdant Bloom","Sapphire Sonnet","Tamarillo Glow"})add(name);
-    return result;
+    auto list=[](std::initializer_list<const char*> names){std::vector<Option> result;result.reserve(names.size());for(auto name:names)result.push_back({name,name});return result;};
+    if(key=="quality"){static const auto values=list({"Inferior","Normal","Superior","Magic","Set","Rare","Unique","Crafted","Tempered"});return values;}
+    if(key=="rarity"){static const auto values=list({"Normal","Exceptional","Elite"});return values;}
+    if(key=="difficulty"){static const auto values=list({"Normal","Nightmare","Hell"});return values;}
+    if(key=="location"){static const std::vector<Option> values{{"On the ground","onground"},{"In inventory or storage","onplayer"},{"Equipped","equipped"},{"At a vendor","atvendor"}};return values;}
+    if(key=="name_style"){static const auto values=list({"Rainbow","Rainbow Group","Cotton Candy","Frost Wave","Toxic Fog","Open Flames","Christmas","Rainbow Static","Rainbow Group Static","Cotton Candy Static","Frost Wave Static","Toxic Fog Static","Open Flames Static"});return values;}
+    if(key=="background_style"){static const auto values=list({"Rainbow","Ocean Drift","Fading Ember","Midnight Memory","Verdant Bloom","Sapphire Sonnet","Tamarillo Glow"});return values;}
+    static const std::vector<Option> empty;
+    return empty;
+}
+inline std::vector<Option> SelectionExtras(const std::string& key,const std::vector<std::string>& choices,const std::vector<Option>& options) {
+    std::vector<Option> extra;
+    if(key=="codes")extra.push_back({"All items","allitems"});
+    for(const auto& selected:choices){
+        auto matches=[&](const Option& option){return option.value==selected;};
+        if(std::none_of(options.begin(),options.end(),matches)&&std::none_of(extra.begin(),extra.end(),matches))
+            extra.insert(extra.begin(),{selected,selected});
+    }
+    return extra;
 }
 inline std::vector<std::string> Columns(const std::string& line) {
     std::vector<std::string> result;size_t start=0;

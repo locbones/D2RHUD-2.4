@@ -20,7 +20,13 @@ cl /nologo /std:c++17 /EHsc /O2 /MT /W4 /I "%dependencyRoot%\include" /Fo"%outpu
 if errorlevel 1 exit /b 1
 "%outputRoot%\lootfilter-preview-test.exe" %4
 if errorlevel 1 exit /b 1
-cl /nologo /std:c++17 /EHsc /O2 /MT /W4 /I "%dependencyRoot%\include" /Fo"%outputRoot%\\" /Fe"%outputRoot%\lootfilter-editor-test.exe" "%~dp0lootfilter-editor-test.cpp" /link /LIBPATH:"%dependencyRoot%\lib" lua.lib imgui.lib
+if "%~4"=="" goto simulator_done
+cl /nologo /std:c++17 /EHsc /O2 /MT /W4 /I "%dependencyRoot%\include" /Fo"%outputRoot%\\" /Fe"%outputRoot%\lootfilter-simulator-test.exe" "%~dp0lootfilter-simulator-test.cpp" /link /LIBPATH:"%dependencyRoot%\lib" lua.lib
+if errorlevel 1 exit /b 1
+"%outputRoot%\lootfilter-simulator-test.exe" %4
+if errorlevel 1 exit /b 1
+:simulator_done
+cl /nologo /std:c++latest /EHsc /O2 /MT /W4 /I "%dependencyRoot%\include" /Fo"%outputRoot%\\" /Fe"%outputRoot%\lootfilter-editor-test.exe" "%~dp0lootfilter-editor-test.cpp" /link /LIBPATH:"%dependencyRoot%\lib" lua.lib imgui.lib
 if errorlevel 1 exit /b 1
 "%outputRoot%\lootfilter-editor-test.exe" "" %4
 if errorlevel 1 exit /b 1

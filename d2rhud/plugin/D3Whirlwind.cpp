@@ -1,3 +1,4 @@
+﻿#include "../RuntimeTelemetry.h"
 #include "D3Whirlwind.h"
 #include "D3WhirlwindData.h"
 #include "D3WhirlwindNative.h"
@@ -128,8 +129,14 @@ void SendControl(bool held) {
 }
 void StopClient(bool finish = true) {
     if (!client.active) return;
-    SendControl(false);
-    if (finish && client.player && Skill(client.player) == client.skill) Finish(client.skill);
+    // A stopped game can leave the old skill address in the input channel.
+    // Only the current character in the original session still owns that address.
+    auto player = LocalPlayer();
+    uint32_t seed = 0;
+    if (player && player == client.player && LocalSession(player, seed) && seed == client.seed && Skill(player) == client.skill) {
+        SendControl(false);
+        if (finish) Finish(client.skill);
+    }
     client.active = false;
 }
 bool Held(Unit* unit) {
@@ -196,6 +203,7 @@ int __fastcall ServerStartHook(Game* game, Unit* unit, int id, int level) {
     return result;
 }
 int __fastcall ServerDoHook(Game* game, Unit* unit, int id, int level) {
+    HudTelemetry::Scope measured(HudTelemetry::Feature::Whirlwind);
     {
         std::lock_guard lock(serverMutex);
         if (auto channel = Channel(game, unit); channel && channel->lease.accepted) {
@@ -209,6 +217,7 @@ int __fastcall ServerDoHook(Game* game, Unit* unit, int id, int level) {
     return originalServerDo(game, unit, id, level);
 }
 int __fastcall ServerMoveHook(Game* game, Unit* unit) {
+    HudTelemetry::Scope measured(HudTelemetry::Feature::Whirlwind);
     std::lock_guard lock(serverMutex);
     if (auto channel = Channel(game, unit); channel && channel->lease.accepted) {
         if (!Holding(game, unit, *channel)) { channel->lease.stopped = true; Finish(channel->skill); }
@@ -286,7 +295,7 @@ int __fastcall ClientInteractionHook(Unit* unit,int action,int x,int y,uint16_t 
     if(action==7 && client.active && unit==client.player && ready.load() && enabled.load()){
         auto gold=Read<Unit*>(At<void*>(Pickup::AutoGoldTargetRva));
         if(Pickup::GoldItem(gold) && Held(unit))
-            return Pickup::ClientRequest(unit,gold->dwUnitId) ? 1 : 0;
+            return Pickup::ClientRequest(unit,gold->dwUnitId,true,true) ? 1 : 0;
     }
     return originalClientInteraction(unit,action,x,y,modifiers);
 }

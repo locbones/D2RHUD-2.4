@@ -8,11 +8,13 @@
 // A reader belongs to the loading worker, never the render/game thread.
 class GameAssets {
 public:
+    static std::filesystem::path ExecutableDirectory();
     GameAssets(const std::filesystem::path& install, const std::string& mod);
     ~GameAssets();
     GameAssets(const GameAssets&) = delete;
     GameAssets& operator=(const GameAssets&) = delete;
     std::vector<uint8_t> Read(const std::string& relative);
+    const std::string& ReadError() const { return readError_; }
     struct TableFiles { std::vector<uint8_t> text, binary; std::filesystem::path layer; };
     // Choose a data layer before choosing TXT/BIN, so a compiled mod table
     // wins over retail source text. Optional companion BIN stays in that layer.
@@ -35,4 +37,5 @@ private:
     std::filesystem::path install_, mod_;
     void* storage_ = nullptr;
     bool triedStorage_ = false;
+    std::string readError_;
 };

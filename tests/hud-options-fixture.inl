@@ -4,11 +4,16 @@
 
 static bool showD2RHUDMenu=true;
 static std::string modName="RMD-MP",configFilePath="fixture.json";
+namespace Inspect { struct Appearance {bool labels=false;int lift=96,textSize=22;};void SetEnabled(bool){} void SetAppearance(Appearance){} }
+namespace Spectate {void DrawOptions(){HudText::TextUnformatted("Spectate players (TCP/IP)");}}
 struct OptionSettings {
+    bool Inspect=true,InspectLabels=false;
+    int InspectIconHeight=96,InspectLabelSize=22;
     bool MonsterStatsDisplay=true,SunderedMonUMods=true,MinionEquality=false,GambleCostControl=false,CombatLog=false,TransmogVisuals=true;
     bool NoWidescreenBars=false,DisableRightClickItemPickup=false,QuantityRightClicks=true,MinimalistQuantityPopup=false;
     bool PersistentSummons=false,D3StyleWhirlwind=false,ExtendedItemcodes=false,ChatSounds=false,FloatingDamage=false;
     bool HPRolloverMods=false,SurvivorArena=false,ActVI=false;
+    bool ExtendedCubeConditions=false,MultipleUseitemOutputs=false,MultipleUseitemInputs=false,BulkCubeOutputs=false,ExtendedCubeOutputs=false;
     int HPRolloverDifficulty=0,HPRolloverPercent=0,SunderValue=99;
     std::string ChatSoundPath;
 } d2rHUDConfig;
@@ -48,4 +53,5 @@ namespace D3Whirlwind {void SetEnabled(bool){}void SetRightClickPickupDisabled(b
 namespace ItemCodes {bool Installed(){return false;}}
 namespace ExtendedActs {bool enabled=false;void SetRequested(bool value){enabled=value;}bool Requested(){return enabled;}bool Active(){return false;}const char* Status(){return "Ready";}}
 namespace CubeMap {void SetSurvivorsEnabled(bool){}const char* Status(){return "Ready";}}
+namespace CubeVisual {void SetExtendedConditions(bool){}void SetMultipleUseOutputs(bool){}void SetMultipleUseInputs(bool){}void SetBulkOutputs(bool){}void SetExtendedOutputs(bool){}}
 #include "../d2rhud/plugin/D2RHUD/OptionsUI.inl"

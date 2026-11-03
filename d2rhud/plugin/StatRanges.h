@@ -7,6 +7,7 @@ void LoadFromJson(const nlohmann::json& root);
 void SaveToJson(nlohmann::ordered_json& root);
 // Install only after verifying the native text layout functions for this build.
 void Install();
+std::string NativeItemText(D2UnitStrc* viewer, D2UnitStrc* owner, D2UnitStrc* item);
 void BeginTooltip(D2UnitStrc* item, const void* panel);
 void EndTooltip();
 void Update(const std::string& mod, bool inGame, bool menusOpen, bool bindingDown, bool previewOpen = false);

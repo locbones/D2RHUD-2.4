@@ -21,6 +21,8 @@ Image ArtworkImage(Part part);
 void Load();
 std::shared_ptr<const Collection> Assets();
 // Polled only by the render thread. File reads/decoding run on a worker.
+// Up to eight decoded icons / 32 MiB pixel storage are retained for reuse;
+// missing or failed loads retry after two seconds. Returned art stays owned.
 std::shared_ptr<const Sprite> ItemSprite(const std::string& code);
 inline std::vector<std::string> IconPaths(std::string asset){
     std::replace(asset.begin(),asset.end(),'\\','/');

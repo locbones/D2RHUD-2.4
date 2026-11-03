@@ -4,10 +4,10 @@ void DrawSettingsPanel(float scale) {
     HudText::Checkbox("Enable buff icons",&config.enabled);
     ImGui::Dummy({0,6*scale});
     auto skills=[&]{
-        if(!loaded){UI::Note("Loading skill data and original icon sprites...");return;}
-        if(!database.error.empty()){
-            HudText::TextWrapped("%s",database.error.c_str());
-            if(HudText::Button("Retry loading game data")){loaded=false;loadStarted=false;}
+        if(!loaded){UI::Note(SkillAssets().Failed()?"Skill data could not be loaded. Retrying...":"Loading skill data and original icon sprites...");return;}
+        if(!CurrentDatabase().error.empty()){
+            HudText::TextWrapped("%s",CurrentDatabase().error.c_str());
+            if(HudText::Button("Retry loading game data")){SkillAssets().Invalidate();database.reset();loaded=false;}
             return;
         }
         if(character.empty()){UI::Note("Enter a game to choose your character's available buff skills.");return;}
@@ -19,7 +19,7 @@ void DrawSettingsPanel(float scale) {
     const auto filter = Lower(search);
     if (available.empty()) HudText::TextWrapped("No available skills with a buff state were found.");
     for (const auto& live : available) {
-        const auto& skill = database.skills.at(live.id);
+        const auto& skill = CurrentDatabase().skills.at(live.id);
         if (!filter.empty() && Lower(skill.name).find(filter) == std::string::npos) continue;
         ImGui::PushID(live.id);
         bool selected = selection.count(live.id) != 0;
@@ -31,7 +31,7 @@ void DrawSettingsPanel(float scale) {
         DrawIcon(ImGui::GetWindowDrawList(), skill, pos, 28 * scale, -1, true, false);
         ImGui::Dummy(ImVec2(28 * scale, 28 * scale)); ImGui::SameLine();
         HudText::Text("%s (level %d)%s", skill.name.c_str(), live.level, live.active ? " - active" : "");
-        if (database.atlases.find(skill.sprite) == database.atlases.end() && ImGui::IsItemHovered())
+        if (CurrentDatabase().atlases.find(skill.sprite) == CurrentDatabase().atlases.end() && ImGui::IsItemHovered())
             HudText::SetTooltip("Icon sprite unavailable; the skill ID is shown as a fallback.");
         ImGui::PopID();
     }

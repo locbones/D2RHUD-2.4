@@ -3,6 +3,9 @@
 using MapCells=void(__fastcall*)(int,void*,uint8_t*,void*);
 using MapReset=void(__fastcall*)();
 MapCells originalMapCells=nullptr;MapReset originalMapReset=nullptr;
+void DrawMapCells(int style,void* tree,uint8_t* transform,void* opacity){
+    DynamicAutomap::Draw(style,tree,transform,opacity,originalMapCells);
+}
 std::array<AutomapData::Assembly,2> automapStreams;
 std::shared_ptr<AutomapData::Geometry> eventGeometry;
 const std::vector<AutomapData::Entry>* geometrySource=nullptr;
@@ -24,6 +27,7 @@ void __fastcall MapResetHook(){
     {std::lock_guard lock(viewMutex);saved=survivorView;ClearEventAutomap();view={};receivedAt=0;survivorView={};survivorReceived=0;}
     SaveSurvivorProfile(saved,true);
     originalMapReset();
+    DynamicAutomap::Reset();
     // Keep plans through the native save above, then discard them before the
     // next game can generate levels using the same offline world seed.
     ClearClientLayouts();
@@ -48,13 +52,13 @@ void __fastcall MapCellsHook(int style,void* tree,uint8_t* transform,void* opaci
     std::shared_ptr<const std::vector<AutomapData::Entry>> monsters;
     {std::lock_guard lock(viewMutex);packet=view;time=receivedAt;geometry=eventGeometry;monsters=automapStreams[1].ready;}
     auto player=LocalPlayer();
-    if(!installed.load() || !player){originalMapCells(style,tree,transform,opacity);return;}
+    if(!installed.load() || !player){DrawMapCells(style,tree,transform,opacity);return;}
     const auto age=GetTickCount64()-time;
     const bool eventVisible=time && AutomapData::Visible(packet,age,player->dwUnitId,Level(player));
     auto reveal=VisibleMonsterReveal(player,packet,time?age:UINT64_MAX);
-    if(!eventVisible && !reveal){originalMapCells(style,tree,transform,opacity);return;}
+    if(!eventVisible && !reveal){DrawMapCells(style,tree,transform,opacity);return;}
     const auto layer=Field<uint8_t*>(Native<void*>(0x1d56150),0);
-    if(!layer || !transform){originalMapCells(style,tree,transform,opacity);return;}
+    if(!layer || !transform){DrawMapCells(style,tree,transform,opacity);return;}
     if(eventVisible && !geometry && packet.eventPhase==EventPhase::Active){
         bool request=false;const auto now=GetTickCount64();
         {std::lock_guard lock(viewMutex);if(!lastAutomapRequest || now-lastAutomapRequest>=1000){lastAutomapRequest=now;request=true;}}
@@ -65,7 +69,7 @@ void __fastcall MapCellsHook(int style,void* tree,uint8_t* transform,void* opaci
     const bool validImages=eventVisible && geometry && geometry->highestImage<Field<int>(Native<void*>(0x1c9b89c),0) && Field<int>(Native<void*>(0x1c9b898),0)>0;
     if(validImages && geometry->trees[0].count && tree==layer+8)visible=&geometry->trees[0];
     if(validImages && geometry->trees[1].count && tree==layer+0x30)visible=&geometry->trees[1];
-    originalMapCells(style,visible,transform,opacity);
+    DrawMapCells(style,visible,transform,opacity);
     if(tree==layer+0x58){
         if(eventVisible && monsters)DrawEventMarkers(*monsters,transform);
         else if(reveal)DrawEventMarkers(*reveal,transform);

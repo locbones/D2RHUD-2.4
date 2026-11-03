@@ -71,8 +71,8 @@ void SoulSurprisePickup(){
     Unit second=item;second.dwClassId=4;second.dwItemMode=IMODE_ONGROUND;item.pRoomNext=&second;item.dwItemMode=IMODE_ONCURSOR;
     UpdateClearTransition(game,run,true);assert(!run.clearedAt);
     second.dwItemMode=IMODE_STORED;UpdateClearTransition(game,run,true);assert(run.clearedAt==game->dwGameFrame);
-    const auto picked=game->dwGameFrame;game->dwGameFrame=picked+49;UpdateClearTransition(game,run,true);assert(run.phase==Phase::Running);
-    game->dwGameFrame=picked+50;UpdateClearTransition(game,run,true);assert(run.phase==Phase::Returning&&run.success);
+    const auto picked=game->dwGameFrame;game->dwGameFrame=picked+249;UpdateClearTransition(game,run,true);assert(run.phase==Phase::Running);
+    game->dwGameFrame=picked+250;UpdateClearTransition(game,run,true);assert(run.phase==Phase::Returning&&run.success);
     // A late drop or revived monster cancels a queued return on non-census ticks.
     second.dwItemMode=IMODE_ONGROUND;run.returning.insert(55);UpdateClearTransition(game,run,false);
     assert(run.phase==Phase::Running&&run.eventPhase==EventPhase::Active&&!run.success&&!run.clearedAt&&run.returning.empty());
@@ -89,6 +89,16 @@ void SoulSurprisePickup(){
     game->pUnitList[1][2]=nullptr;
     // Inventory/cursor copies and unrelated codes do not hold an ordinary map.
     run.event=Event::None;run.soulDropObserved=false;run.clearedAt.reset();UpdateClearTransition(game,run,true);assert(run.clearedAt);
+    // Ordinary maps and untimed events share the ten-second server deadline.
+    for(const auto event:{Event::None,Event::ChampionClash,Event::GoblinGrotto}){
+        run.event=event;run.phase=Phase::Running;run.timedOut=false;run.clearedAt.reset();
+        game->dwGameFrame=UINT32_MAX-100;UpdateClearTransition(game,run,true);assert(run.clearedAt);
+        game->dwGameFrame+=249;UpdateClearTransition(game,run,true);assert(run.phase==Phase::Running);
+        run.census.Observe(2,false);UpdateClearTransition(game,run,true);assert(!run.clearedAt);
+        run.census.Observe(2,true);UpdateClearTransition(game,run,true);const auto clear=game->dwGameFrame;
+        game->dwGameFrame=clear+249;UpdateClearTransition(game,run,true);assert(run.phase==Phase::Running);
+        game->dwGameFrame=clear+250;UpdateClearTransition(game,run,true);assert(run.phase==Phase::Returning);
+    }
     games.clear();populationCode=nullptr;installed=false;
     std::cout<<"Soul Surprise return waits for a confirmed fragment drop, every live monster and all S02-S05 floor/dropping copies; cursor/inventory and other areas do not block, pickup starts the delay, and late loot/revival cancels queued returns.\n";
 }

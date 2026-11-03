@@ -43,10 +43,14 @@ inline bool Choose(const char* id,std::string& value,const std::vector<Option>& 
     if(HudText::BeginCombo(id,Label(options,value).c_str())){
         auto& query=searches[ImGui::GetID("search")];InputTextWithHint("##search","Search...",&query);
         ImGui::BeginChild("options",ImVec2(0,180));
-        for(const auto& option:options){std::string haystack=option.label+" "+option.value,needle=query;
-            std::transform(haystack.begin(),haystack.end(),haystack.begin(),[](unsigned char c){return char(std::tolower(c));});
-            std::transform(needle.begin(),needle.end(),needle.begin(),[](unsigned char c){return char(std::tolower(c));});
-            if(!needle.empty()&&haystack.find(needle)==std::string::npos)continue;
+        std::string needle=query;
+        std::transform(needle.begin(),needle.end(),needle.begin(),[](unsigned char c){return char(std::tolower(c));});
+        for(const auto& option:options){
+            if(!needle.empty()){
+                std::string haystack=option.label+" "+option.value;
+                std::transform(haystack.begin(),haystack.end(),haystack.begin(),[](unsigned char c){return char(std::tolower(c));});
+                if(haystack.find(needle)==std::string::npos)continue;
+            }
             ImGui::PushID(option.value.c_str());
             if(HudText::Selectable(option.label.c_str(),option.value==value)){value=option.value;changed=true;ImGui::CloseCurrentPopup();}
             if(ImGui::IsItemHovered())HudText::SetTooltip("%s",option.value.c_str());
@@ -57,8 +61,7 @@ inline bool Choose(const char* id,std::string& value,const std::vector<Option>& 
     return changed;
 }
 inline bool MultiChoose(const Spec& spec,Value& value,const Catalog& catalog) {
-    const std::string key=spec.key;auto options=Options(key,catalog);
-    if(key=="codes")options.insert(options.begin(),{"All items","allitems"});
+    const std::string key=spec.key;const auto& options=Options(key,catalog);
     if(key=="name_style"||key=="background_style"){
         std::string selected=value.choices.empty()?"":value.choices[0];
         if(Choose("##value",selected,options)){value.choices={selected};return true;}return false;
@@ -79,18 +82,24 @@ inline bool MultiChoose(const Spec& spec,Value& value,const Catalog& catalog) {
         if(HudText::Selectable("Clear selection",false,ImGuiSelectableFlags_DontClosePopups)){value.choices.clear();changed=true;}
         // Unknown/custom selected values stay visible and removable even when
         // their catalog is unavailable or the player changed mods.
-        for(const auto& selected:value.choices)if(std::none_of(options.begin(),options.end(),[&](const Option& option){return option.value==selected;}))options.insert(options.begin(),{selected,selected});
-        for(const auto& option:options){std::string haystack=option.label+" "+option.value,needle=query;
-            std::transform(haystack.begin(),haystack.end(),haystack.begin(),[](unsigned char c){return char(std::tolower(c));});
-            std::transform(needle.begin(),needle.end(),needle.begin(),[](unsigned char c){return char(std::tolower(c));});
-            if(!needle.empty()&&haystack.find(needle)==std::string::npos)continue;
+        const auto extra=SelectionExtras(key,value.choices,options);
+        std::string needle=query;
+        std::transform(needle.begin(),needle.end(),needle.begin(),[](unsigned char c){return char(std::tolower(c));});
+        auto render=[&](const Option& option){
+            if(!needle.empty()){
+                std::string haystack=option.label+" "+option.value;
+                std::transform(haystack.begin(),haystack.end(),haystack.begin(),[](unsigned char c){return char(std::tolower(c));});
+                if(haystack.find(needle)==std::string::npos)return;
+            }
             auto found=std::find(value.choices.begin(),value.choices.end(),option.value);bool selected=found!=value.choices.end();
             ImGui::PushID(option.value.c_str());
             if(HudText::Selectable(option.label.c_str(),selected,ImGuiSelectableFlags_DontClosePopups)){
                 if(selected)value.choices.erase(found);else{if(key=="codes"){if(option.value=="allitems")value.choices.clear();else value.choices.erase(std::remove(value.choices.begin(),value.choices.end(),"allitems"),value.choices.end());}value.choices.push_back(option.value);}changed=true;
             }
             if(ImGui::IsItemHovered())HudText::SetTooltip("%s",option.value.c_str());ImGui::PopID();
-        }
+        };
+        for(const auto& option:extra)render(option);
+        for(const auto& option:options)render(option);
         ImGui::EndChild();ImGui::EndCombo();
     }
     return changed;
@@ -139,7 +148,7 @@ inline bool ValueControl(const Spec& spec,Value& value,const Catalog& catalog) {
 }
 inline Value Default(const Spec& spec,const Catalog& catalog) {
     Value value;
-    if(spec.kind==Kind::Choices){auto options=Options(spec.key,catalog);if(std::string(spec.key)=="codes")value.choices={"allitems"};else if(!options.empty())value.choices={options[0].value};}
+    if(spec.kind==Kind::Choices){const auto& options=Options(spec.key,catalog);if(std::string(spec.key)=="codes")value.choices={"allitems"};else if(!options.empty())value.choices={options[0].value};}
     if(std::string(spec.key)=="quality")value.choices={"Unique"};
     if(std::string(spec.key)=="location")value.choices={"onground"};
     if(std::string(spec.key)=="ilvl"){value.number=80;value.operation=1;}
@@ -173,7 +182,7 @@ inline bool Render(std::string& raw,std::string& status,const Catalog& catalog,i
         if(InputText("##rule_name",&title))set("label",Quote(title));ImGui::EndDisabled();
         ImGui::BeginDisabled(!enabledEditable);if(HudText::Checkbox("Rule enabled",&enabled))set("enabled",enabled?"true":"false");ImGui::EndDisabled();
     }
-    if(!catalog.loaded&&!catalog.status.empty())HudText::TextWrapped("%s",catalog.status.c_str());
+    if(!catalog.status.empty())HudText::TextWrapped("%s",catalog.status.c_str());
     for(bool actions:{false,true}){
         if(section>=0&&section!=int(actions))continue;
         Banner(actions?Symbol::Actions:Symbol::Conditions,actions?"Then apply these actions":"Match these conditions",actions?"Choose how matching items look or behave.":"All conditions must match. Multiple choices mean any.");

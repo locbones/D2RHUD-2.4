@@ -1,5 +1,6 @@
 #include "HudText.h"
 #include "FloatingDamage.h"
+#include "../SessionEpoch.h"
 #include "SettingsUI.h"
 
 #include <algorithm>
@@ -120,6 +121,7 @@ std::deque<DpsSample> g_dpsSamples;
 long long g_rollingDamage = 0;
 std::mt19937 g_rng{ std::random_device{}() };
 std::mutex g_queueMutex;
+uint64_t g_feedbackSession=UINT64_MAX;
 
 int ClampInt(int value, int minValue, int maxValue)
 {
@@ -775,6 +777,14 @@ bool IsEnabled()
     return g_enabled.load();
 }
 
+void SetSession(uint64_t session){
+    std::lock_guard lock(g_queueMutex);if(g_feedbackSession==session)return;
+    g_feedbackSession=session;
+    std::erase_if(g_pendingEvents,[](const DamageEvent& event){return !event.preview;});
+    std::erase_if(g_numbers,[](const DamageNumber& number){return !number.preview;});
+    g_dpsSamples.clear();g_rollingDamage=0;
+}
+
 void SetEnabled(bool enabled)
 {
     // Serialize the disable with the producer's final enabled check, so an
@@ -800,6 +810,7 @@ void ResetToDefaults()
 
 static void LoadSettingsFromJsonObject(const nlohmann::json& j)
 {
+    g_config.showDamageNumbers = j.value("ShowDamageNumbers", true);
     g_config.textSize = JsonValueOrLegacy(j, "TextSize", "FontSize", g_config.textSize);
     g_config.criticalHitSize = JsonValueOrLegacy(j, "CriticalHitSize", "CritFontSize", g_config.criticalHitSize);
     g_config.textOutlineWidth = JsonValueOrLegacy(j, "TextOutlineWidth", "OutlineThickness", g_config.textOutlineWidth);
@@ -888,6 +899,8 @@ static void LoadSettingsFromJsonObject(const nlohmann::json& j)
 
 void LoadFromJson(const nlohmann::json& root)
 {
+    // Existing profiles keep their visible damage numbers until explicitly hidden.
+    g_config.showDamageNumbers = true;
     const nlohmann::json* appearance = nullptr;
     if (root.contains("FloatingDamageSettings") && root["FloatingDamageSettings"].is_object())
         appearance = &root["FloatingDamageSettings"];
@@ -911,6 +924,7 @@ void SaveToJson(nlohmann::ordered_json& root)
 
     ordered_json j;
     j["Enabled"] = IsEnabled();
+    j["ShowDamageNumbers"] = g_config.showDamageNumbers;
     j["TextSize"] = g_config.textSize;
     j["CriticalHitSize"] = g_config.criticalHitSize;
     j["TextOutlineWidth"] = g_config.textOutlineWidth;
@@ -967,10 +981,11 @@ void SaveToJson(nlohmann::ordered_json& root)
     root["FloatingDamageSettings"] = j;
 }
 
-void QueueGameDamage(int amount, float screenX, float screenY, uint32_t unitType, uint32_t unitId, Kind kind, Element element)
+void QueueGameDamage(int amount, float screenX, float screenY, uint32_t unitType, uint32_t unitId, Kind kind, Element element,uint64_t ticket)
 {
     if (amount <= 0 || !IsEnabled())
         return;
+    const auto session=ticket==UINT64_MAX?HudSession::Current():ticket;
 
     DamageEvent event{};
     event.amount = amount;
@@ -985,6 +1000,7 @@ void QueueGameDamage(int amount, float screenX, float screenY, uint32_t unitType
         std::lock_guard<std::mutex> lock(g_queueMutex);
         if (!IsEnabled())
             return;
+        if(g_feedbackSession!=UINT64_MAX && (!session || session!=g_feedbackSession || session!=HudSession::Current()))return;
         g_pendingEvents.push_back(event);
     }
 }
@@ -1043,6 +1059,8 @@ bool HasDisplayActivity()
 
 void Update(float dt)
 {
+    if (!g_config.showDamageNumbers)
+        std::erase_if(g_numbers, [](const DamageNumber& number) { return !number.preview; });
     std::vector<DamageEvent> pending;
     {
         std::lock_guard<std::mutex> lock(g_queueMutex);
@@ -1056,6 +1074,8 @@ void Update(float dt)
         for (const auto& event : pending)
         {
             RecordDpsEvent(event);
+            if (!event.preview && !g_config.showDamageNumbers)
+                continue;
             if (!TryCombineRapidHit(event))
                 SpawnNumberFromEvent(event);
         }
@@ -1126,7 +1146,7 @@ void Render(ImDrawList* drawList, const ImVec2& displaySize)
     if (!font)
         return;
 
-    const bool showNumbers = IsEnabled() || !g_numbers.empty();
+    const bool showNumbers = (IsEnabled() && g_config.showDamageNumbers) || !g_numbers.empty();
     const bool showDps = IsEnabled() && g_config.showDpsCounter;
     if (!showNumbers && !showDps)
         return;
@@ -1135,6 +1155,8 @@ void Render(ImDrawList* drawList, const ImVec2& displaySize)
     {
     for (const auto& number : g_numbers)
     {
+        if (!number.preview && !g_config.showDamageNumbers)
+            continue;
         const float baseFontSize = number.isProminent ? g_config.criticalHitSize : g_config.textSize;
         for (const auto& tick : number.tickPopups)
             RenderTickPopup(drawList, font, number, tick, baseFontSize);
@@ -1142,6 +1164,8 @@ void Render(ImDrawList* drawList, const ImVec2& displaySize)
 
     for (const auto& number : g_numbers)
     {
+        if (!number.preview && !g_config.showDamageNumbers)
+            continue;
         const float baseFontSize = number.isProminent ? g_config.criticalHitSize : g_config.textSize;
         const float popScale = std::max(
             CalculatePopScale(number.age),
@@ -1229,6 +1253,18 @@ void DrawSettingsPanel(float menuScale)
             showTooltipOnHover(tooltipTitle ? tooltipTitle : label, tooltip);
             HudSettings::EndField(menuScale);
         };
+
+    HudSettings::BeginSection("DamageVisibility", "Display", nullptr, menuScale, true);
+    settingCheckbox(
+        "Show floating damage numbers", &cfg.showDamageNumbers,
+        "Displays damage values above monsters. Turn this off to use only the DPS counter.\n\nManual previews remain available.");
+    settingCheckbox(
+        "Show DPS Counter", &cfg.showDpsCounter,
+        "Displays rolling damage per second. Works independently of floating damage numbers.",
+        "Show DPS Counter");
+    if (!IsEnabled())
+        HudSettings::Note("Enable Floating Damage in Options > Display to show these displays during combat.");
+    HudSettings::EndSection(menuScale);
 
     static int section=0;
     constexpr const char* labels[]{"Appearance","Motion","Hit combining","Layout","DPS meter","Preview"};
@@ -1455,11 +1491,6 @@ void DrawSettingsPanel(float menuScale)
     const bool dpsMeterOpen = drawSectionHeader("DPS Meter");
     if (dpsMeterOpen)
     {
-        settingCheckbox(
-            "Show DPS Counter",
-            &cfg.showDpsCounter,
-            "Displays a rolling DPS counter on screen.\n\nCalculated from damage dealt within the sample window.",
-            "Show DPS Counter");
         settingSliderFloat(
             "Horizontal Position (%)", &cfg.horizontalPositionPercent, 0.0f, 100.0f, "%.1f",
             "Horizontal screen position of the DPS readout, as a percentage of screen width.\n\n0 = left edge, 100 = right edge.",

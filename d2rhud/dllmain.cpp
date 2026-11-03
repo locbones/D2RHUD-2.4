@@ -1,4 +1,6 @@
-﻿#include <Windows.h>
+﻿#include "RuntimeDiagnostics.h"
+#include "Version.h"
+#include <Windows.h>
 #include <TlHelp32.h>
 #include "D3D12Hook.h"
 #include <utility>
@@ -11,11 +13,15 @@
 #include "d2/D2Ptrs.h"
 #include <MinHook.h>
 #include "plugin/AutomapLayers.h"
+#include "plugin/DynamicAutomap.h"
+#include "plugin/MercSeller.h"
+#include "plugin/MercIcons.h"
 #include "plugin/ItemCodes.h"
 #include "plugin/LegacyTransmog.h"
 #include "plugin/StackSplitSkin.h"
 #include "plugin/CubeVisual.h"
 #include "plugin/CubeMap.h"
+#include "plugin/Inspect.h"
 #include "plugin/RestartGame.h"
 #include "plugin/SummonPersistence.h"
 #include "plugin/QuestJournal.h"
@@ -33,6 +39,8 @@
 #include "plugin/ExtendedActs.h"
 #include "plugin/CompiledNames.h"
 #include "plugin/TableMetadataExport.h"
+#include "plugin/MarketplaceLaunchGuard.h"
+#include "plugin/LoadingPerformance.h"
 
 LONG WINAPI ExceptionHandler(PEXCEPTION_POINTERS pExceptionInfo);
 
@@ -62,6 +70,7 @@ static void WriteFeatureStatus(HMODULE hud,const std::string& startupFailure) {
         report << "D2RHUD build: " << __DATE__ << ' ' << __TIME__ << '\n'
             << "Game: " << utf8(gamePath) << '\n'
             << "HUD: " << utf8(hudPath) << '\n'
+            << RuntimeDiagnostics::IdentityText()
             << "Startup result: " << (startupFailure.empty()?"ready":startupFailure) << '\n'
             << "State-table compatibility: " << States512::Status() << '\n'
             << "Extended classes / Warlock: " << ExtendedClasses::Status() << '\n'
@@ -74,11 +83,17 @@ static void WriteFeatureStatus(HMODULE hud,const std::string& startupFailure) {
             << "Cube maps / Survivors: " << CubeMap::Status() << '\n'
             << "Character save/load: " << CubeMap::SummonLifecycleStatus() << '\n'
             << "Persistent Summons: " << SummonPersistence::Status() << '\n'
+            << "D3 Whirlwind: " << D3Whirlwind::Status() << '\n'
             << "Native HUD Controls: " << HUDControls::Status() << '\n'
             << "Candy Corn save conversion: " << CandyCornSave::Status() << '\n'
             << "Immunity Sunder: " << SunderSystem::Status() << '\n'
             << "Hell Spindle: " << HellSpindle::Status() << '\n'
+            << "Inspect: " << Inspect::SelectionStatus() << '\n'
             << "No Widescreen Bars: " << WidescreenBars::Status() << '\n'
+            << "Dynamic Automap: " << DynamicAutomap::Status() << '\n'
+            << "Merc Seller Unlock: " << MercSeller::Status() << '\n'
+            << "Merc Icons Fix: " << MercIcons::Status() << '\n'
+            << "Loading performance: " << LoadingPerformance::Status() << '\n'
             << "Quest kills: " << QuestKillEvents::Status() << '\n'
             << "Quest Journal: " << QuestJournal::Status() << '\n'
             << "Quest Journal shortcuts: " << QuestJournal::ClientUI::Status() << '\n'
@@ -131,39 +146,75 @@ DWORD WINAPI CreateConsole(LPVOID lParam) {
 DWORD WINAPI AttachThread(LPVOID lParam) {
     CrashDiagnostics::Initialize();
     HMODULE hModule = static_cast<HMODULE>(lParam);
+    std::string custodyError;
+    if(!MarketplaceLaunchGuard::Acquire(custodyError)){
+        // Marketplace availability must never reject HUD/game startup. The
+        // companion also checks for a running game immediately before writing.
+        WriteFeatureStatus(hModule,custodyError);
+    }
+    wchar_t exe[32768]{};char selectedMod[128]{};SIZE_T selectedRead=0;
+    GetModuleFileNameW(nullptr,exe,32768);
+    ReadProcessMemory(GetCurrentProcess(),reinterpret_cast<void*>(Pattern::Address(0x1bf084f)),selectedMod,sizeof(selectedMod)-1,&selectedRead);
+    RuntimeDiagnostics::Initialize(hModule,selectedMod,D2RHUD_VERSION);
     D3D12::SetDllModule(hModule);
     States512::StartupStage(StartupDiagnostics::Stage::States);
+    RuntimeDiagnostics::SetStage("States512");
     const bool statesReady=States512::Install(false);
     if(!statesReady){CompleteHudStartup(hModule,false,true,true);return 0;}
     States512::StartupStage(StartupDiagnostics::Stage::Core);
     D2Ptrs::Initialize();
-    wchar_t exe[32768]{};char selectedMod[128]{};SIZE_T selectedRead=0;
     if(GetModuleFileNameW(nullptr,exe,32768) && ReadProcessMemory(GetCurrentProcess(),reinterpret_cast<void*>(Pattern::Address(0x1bf084f)),selectedMod,sizeof(selectedMod),&selectedRead)){
         selectedMod[127]=0;
         CompiledNames::Load(std::filesystem::path(exe).parent_path(),selectedMod);
+        MercIcons::Load(std::filesystem::path(exe).parent_path(),selectedMod);
     }
     CandyCornSave::Initialize(selectedMod);
+    RuntimeDiagnostics::SetStage("ItemCodes");
     ItemCodes::Install();
+    RuntimeDiagnostics::SetStage("RestartGame");
     RestartGame::Install();
+    RuntimeDiagnostics::SetStage("AutomapLayers");
     AutomapLayers::Install();
+    RuntimeDiagnostics::SetStage("LegacyTransmog");
     LegacyTransmog::Install();
+    RuntimeDiagnostics::SetStage("CubeVisual");
     CubeVisual::Install();
-    CubeMap::Install();
+    RuntimeDiagnostics::SetStage("DynamicAutomap");
+    DynamicAutomap::Install();
+    RuntimeDiagnostics::SetStage("CubeMap");
+    if(!CubeMap::Install())DynamicAutomap::Uninstall();
+    RuntimeDiagnostics::SetStage("Inspect");
+    Inspect::InstallSelection();
+    RuntimeDiagnostics::SetStage("SummonPersistence");
     SummonPersistence::Install();
+    RuntimeDiagnostics::SetStage("MercSellerUnlock");
+    MercSeller::Install();
+    RuntimeDiagnostics::SetStage("MercIconsFix");
+    MercIcons::Install();
     const auto questDefinitions=QuestJournal::Bindings();
     const bool questKills=questDefinitions&&questDefinitions->events&&questDefinitions->error.empty()&&QuestKillEvents::Install();
     QuestJournal::SetAvailable(questKills&&questDefinitions&&questDefinitions->events&&questDefinitions->error.empty()&&CubeVisual::QuestJournalSupported()&&CubeMap::SummonLifecycleAvailable());
+    RuntimeDiagnostics::SetStage("D3Whirlwind");
     D3Whirlwind::Install();
+    RuntimeDiagnostics::SetStage("SelectedAuras");
     SelectedAuras::Install();
+    RuntimeDiagnostics::SetStage("WidescreenBars");
     WidescreenBars::Install();
+    RuntimeDiagnostics::SetStage("HUDControls");
     HUDControls::Install();
+    RuntimeDiagnostics::SetStage("SunderSystem");
     SunderSystem::Install();
+    RuntimeDiagnostics::SetStage("HellSpindle");
     HellSpindle::Install();
+    RuntimeDiagnostics::SetStage("LoadingPerformance");
+    LoadingPerformance::Install();
     // Class storage must be widened before the suspended table loader resumes.
     // Install after features that verify the original player allocator bytes.
     States512::StartupStage(StartupDiagnostics::Stage::Classes);
+    RuntimeDiagnostics::SetStage("ExtendedClasses");
     const bool classesReady=ExtendedClasses::Install();
     States512::StartupStage(StartupDiagnostics::Stage::Acts);
+    RuntimeDiagnostics::SetStage("ExtendedActs");
     const bool actsReady=ExtendedActs::Install();
     // Whirlwind verifies the original UI-open bytes before these UI detours.
     States512::StartupStage(StartupDiagnostics::Stage::QuestUI);
@@ -171,6 +222,7 @@ DWORD WINAPI AttachThread(LPVOID lParam) {
     States512::StartupStage(StartupDiagnostics::Stage::Metadata);
     if(statesReady && classesReady && actsReady && exe[0])TableMetadataExport::Start(std::filesystem::path(exe).parent_path(),selectedMod);
     CompleteHudStartup(hModule,statesReady,classesReady,actsReady);
+    RuntimeDiagnostics::SetStage(statesReady && classesReady && actsReady ? "Ready" : "Startup rejected");
     if(!statesReady || !classesReady || !actsReady)return 0;
     LegacyTransmog::Skin::Load();
     if (D3D12::Init() == D3D12::Status::Success) {
@@ -210,9 +262,13 @@ BOOL APIENTRY DllMain( HMODULE hModule,
         // Let the OS reclaim resources without waiting or attempting to unhook.
         if (lpReserved != nullptr) break;
         ExtendedActs::Uninstall();
+        LoadingPerformance::Uninstall();
         SelectedAuras::Uninstall();
         HUDControls::Uninstall();
         WidescreenBars::Uninstall();
+        DynamicAutomap::Uninstall();
+        MercSeller::Uninstall();
+        MercIcons::Uninstall();
         RestartGame::Uninstall();
         SunderSystem::Uninstall();
         HellSpindle::Uninstall();
@@ -224,6 +280,7 @@ BOOL APIENTRY DllMain( HMODULE hModule,
         QuestJournal::ClientUI::Uninstall();QuestJournal::SetAvailable(false);QuestKillEvents::Uninstall();
         CandyCornSave::Uninstall();
         CubeMap::Uninstall();
+        Inspect::UninstallSelection();
         CubeVisual::Uninstall();
         States512::Uninstall();
         D3D12::RemoveHooks();

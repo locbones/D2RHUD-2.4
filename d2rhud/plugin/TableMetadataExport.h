@@ -64,9 +64,9 @@ inline Output Build(const fs::path& data) {
             if(rows.size()-1!=count)throw std::runtime_error("cubemain TXT/BIN row counts differ; compilation is incomplete");
             entry["source"]=text;
         }
-        if(name=="monstats"||name=="superuniques"){
+        if(name=="monstats"||name=="superuniques"||name=="skilldesc"){
             if(records.size()<count)throw std::runtime_error("TXT/BIN row count mismatch: "+name);
-            std::vector<size_t> wanted;for(size_t i=0;i<header.size();++i)if(header[i]=="id"||header[i]=="hcidx"||header[i]=="superunique"||header[i].find("treasureclass")!=std::string::npos||header[i].starts_with("tc"))wanted.push_back(i);
+            std::vector<size_t> wanted;for(size_t i=0;i<header.size();++i)if(name=="skilldesc"?(header[i]=="skilldesc"||header[i]=="hireableiconcel"):(header[i]=="id"||header[i]=="hcidx"||header[i]=="superunique"||header[i].find("treasureclass")!=std::string::npos||header[i].starts_with("tc")))wanted.push_back(i);
             std::string overlay;auto append=[&](const auto& row){bool first=true;for(auto i:wanted){if(!first)overlay+='\t';first=false;if(i<row.size())overlay+=row[i];}overlay+='\n';};
             append(rows[0]);for(size_t i=0;i<count;++i)append(records[i]);entry["overlay"]=std::move(overlay);
         }

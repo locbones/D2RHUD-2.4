@@ -34,7 +34,19 @@ bool SplitEligible(Unit* player,Unit* item,bool authoritative){
     if(!Read(table+size_t(i.dwClassId)*record.size(),record))return false;
     // Tomes retain their native right-click use rather than splitting scrolls.
     if(!memcmp(record.data()+0x80,"tbk ",4) || !memcmp(record.data()+0x80,"ibk ",4))return false;
-    return !record[0x141] && record[0x13a] && ItemQuantity(item)>1;
+    if(record[0x141] || !record[0x13a])return false;
+    // Equipment keeps its native right-click action, including quivers and
+    // throwing weapons sitting in inventory/cube/stash. Check both compiled
+    // item types, not item codes or the unit's currently occupied body slot.
+    uintptr_t types=0;uint64_t typeCount=0;
+    if(!Read(Pattern::Address(0x1c9fbf0),types) || !Read(Pattern::Address(0x1c9fbf8),typeCount) || !types || !typeCount || typeCount>8192)return false;
+    for(const size_t offset:{size_t(0x126),size_t(0x128)}){
+        int16_t type=0;memcpy(&type,record.data()+offset,sizeof(type));
+        if(type==0 || type==-1)continue;
+        std::array<uint8_t,3> body{}; // ItemTypes Body, BodyLoc1, BodyLoc2.
+        if(type<0 || uint64_t(type)>=typeCount || !Read(types+size_t(type)*0xe4+9,body) || body[0] || body[1] || body[2])return false;
+    }
+    return ItemQuantity(item)>1;
 }
 std::string SplitName(Unit* item){
     uintptr_t table=0;uint16_t index=0;

@@ -4,7 +4,9 @@
 #include <fstream>
 #include <string>
 #include <cstdint>
+#include <map>
 #include "../d2/json.hpp"
+#include "D2RHUD/HudConfigStore.h"
 
 namespace HUDControls {
 inline constexpr uint16_t Unbound = 0xffff;
@@ -19,6 +21,7 @@ class Store {
     std::filesystem::path path_;
     std::string scope_;
     Json document_;
+    std::map<std::string,Keys> unsaved_;
     bool cached_ = false;
 
     static bool ValidKey(const Json& value) {
@@ -47,29 +50,20 @@ public:
     bool Load(const std::filesystem::path& path, const std::string& scope, Keys fallback = {}) {
         saved = editing = fallback;
         scope_ = scope;
-        if (!cached_ || path_ != path) {
+        if(path_!=path)unsaved_.clear();
+        {
             path_ = path;
             cached_ = true;
             readOnly = false;
             document_ = Json{{"version", 1}, {"profiles", Json::object()}};
-            std::error_code error;
-            const bool exists = std::filesystem::exists(path_, error);
-            if (error || path_.empty()) readOnly = true;
-            else if (exists) {
-                try {
-                    std::ifstream input(path_, std::ios::binary);
-                    if (!input) readOnly = true;
-                    else {
-                        Json loaded;
-                        input >> loaded;
-                        input >> std::ws;
-                        if (!input.eof() || !ValidDocument(loaded)) readOnly = true;
-                        else document_ = std::move(loaded);
-                    }
-                } catch (...) { readOnly = true; }
-            }
+            if(path_.empty())readOnly=true;
+            else try{HudConfig::Json section;
+                if(!HudUserConfig::Read("Controls",section,path_.parent_path()))readOnly=true;
+                else if(!section.empty()){Json loaded=section;if(!ValidDocument(loaded))readOnly=true;else document_=std::move(loaded);}
+            }catch(...){readOnly=true;}
         }
         if (readOnly) return false;
+        for(const auto& [name,keys]:unsaved_){auto& profile=document_["profiles"][name];if(profile.is_null())profile=Json::object();profile["primary"]=keys.primary;profile["secondary"]=keys.secondary;}
         const auto& profiles = document_["profiles"];
         const auto profile = profiles.find(scope_);
         if (profile != profiles.end())
@@ -84,6 +78,7 @@ public:
         if (profile.is_null()) profile = Json::object();
         profile["primary"] = saved.primary;
         profile["secondary"] = saved.secondary;
+        unsaved_[scope_]=saved;
     }
     void Revert() { editing = saved; }
     void Defaults() { editing = Keys{}; }
@@ -97,25 +92,13 @@ public:
             if (profile.is_null()) profile = Json::object();
             profile["primary"] = saved.primary;
             profile["secondary"] = saved.secondary;
-            const auto contents = updated.dump(2) + "\n";
-            std::error_code error;
-            if (!path_.parent_path().empty()) std::filesystem::create_directories(path_.parent_path(), error);
-            if (error) return false;
-            auto temporary = path_;
-            temporary += L"." + std::to_wstring(GetCurrentProcessId()) + L"." +
-                std::to_wstring(reinterpret_cast<uintptr_t>(this)) + L".tmp";
-            {
-                std::ofstream output(temporary, std::ios::binary | std::ios::trunc);
-                output.write(contents.data(), static_cast<std::streamsize>(contents.size()));
-                output.flush();
-                output.close();
-                if (!output) { std::filesystem::remove(temporary, error); return false; }
-            }
-            if (!MoveFileExW(temporary.c_str(), path_.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
-                std::filesystem::remove(temporary, error);
-                return false;
-            }
-            document_ = std::move(updated);
+            const auto result=HudUserConfig::Update("Controls",[&](HudConfig::Json& section){
+                if(section.empty())section={{"version",1},{"profiles",HudConfig::Json::object()}};
+                if(!ValidDocument(Json(section)))throw std::runtime_error("Invalid native Controls preference section.");
+                auto pending=unsaved_;pending[scope_]=saved;
+                for(const auto& [name,keys]:pending){auto& profile=section["profiles"][name];if(profile.is_null())profile=HudConfig::Json::object();profile["primary"]=keys.primary;profile["secondary"]=keys.secondary;}updated=section;
+            },path_.parent_path());
+            if(!result)return false;document_=std::move(updated);unsaved_.clear();
             return true;
         } catch (...) { return false; }
     }

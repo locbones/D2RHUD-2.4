@@ -59,6 +59,9 @@ struct Fixture {
     Unit gold{};Bytes<0x30> goldPath{};Bytes<0x1b4> goldRow{};
     uint8_t* goldTable=nullptr;uint64_t goldRows=1;Unit* autoGoldTarget=nullptr;
     uint32_t goldDistance=2;bool goldFound=true;
+    int life=256;
+    Bytes<3> goldCompare{0x83,0xf8,4};
+    Bytes<4> goldRange{0x44,0x8d,0x48,4};
     int interactions=0;std::array<int,3> interactionArguments{};uint16_t interactionModifiers=0;
     std::vector<Pickup::Command> goldPackets;
     std::array<uint32_t, 8> localIds{};
@@ -182,6 +185,9 @@ void Fixture::Reset() {
     gold.dwUnitType=4;gold.dwUnitId=42;gold.dwAnimMode=3;gold.dwFlags=2;
     gold.pStaticPath=reinterpret_cast<D2StaticPathStrc*>(goldPath.data());
     Put(goldPath.data(),0x10,int(100));Put(goldPath.data(),0x14,int(200));Put(goldRow.data(),0x126,int16_t(4));
+    life=256; goldCompare={0x83,0xf8,4};goldRange={0x44,0x8d,0x48,4};
+    Bind(0x2aee79,goldCompare.data());Bind(0x2aee97,goldRange.data());
+    Bind(0x1e5620,+[](Unit*,int stat,uint16_t)->int{assert(stat==6);return fixture.life;});
     goldDistance=2;goldFound=true;interactions=0;interactionArguments={};interactionModifiers=0;goldPackets.clear();
     originalClientInteraction=NativeInteraction;
     Bind(Pickup::AutoGoldTargetRva,&autoGoldTarget);Bind(0x1ca0390,&goldTable);Bind(0x1ca0398,&goldRows);
@@ -437,6 +443,18 @@ void BeginHeldClient(int button) {
     assert(Held(&f.owner) && f.controls.size() == 1 && f.controls.back().held == 1 && f.Current().lease.accepted);
 }
 
+void ExpiredClientSession() {
+    auto& f = fixture;
+    BeginHeldClient(2);
+    const auto flags = NativeData::Read<uint32_t>(f.skill.data(), 0x14);
+    const auto controls = f.controls.size();
+    ++f.game.dwInitSeed;
+    StopClient();
+    assert(!client.active && f.controls.size() == controls);
+    assert(NativeData::Read<uint32_t>(f.skill.data(), 0x14) == flags);
+    std::cout << "Expired client session is stopped without sending old controls or modifying its skill.\n";
+}
+
 void WhirlwindPickupPreference() {
     auto& f=fixture;
     BeginHeldClient(1);
@@ -585,13 +603,20 @@ void AutomaticGoldRequests(){
         assert(f.path==path && f.skill==skill && !memcmp(&player,&f.owner,sizeof(player)) && client.active);
         f.goldDistance=5;assert(ClientInteractionHook(&f.owner,7,100,200,0)==0);
         assert(f.interactions==1 && f.goldPackets.size()==1 && f.path==path && f.skill==skill && client.active);
+        f.goldCompare[2]=20;f.goldRange[3]=20;
+        f.goldDistance=20;assert(ClientInteractionHook(&f.owner,7,100,200,0)==1);
+        assert(f.goldPackets.size()==2 && f.pickupCalls==2);
+        assert(!Pickup::ClientRequest(&f.owner,f.gold.dwUnitId)); // Manual range stays four.
+        f.goldDistance=21;assert(ClientInteractionHook(&f.owner,7,100,200,0)==0);
+        f.goldRange[3]=10;f.goldDistance=11;assert(ClientInteractionHook(&f.owner,7,100,200,0)==0);
+        f.goldCompare[0]=0;assert(Pickup::GoldPickupRange()==4);
         f.goldDistance=2;Put(f.goldRow.data(),0x126,int16_t(1));
         assert(ClientInteractionHook(&f.owner,7,123,456,0xabcd)==99 && f.interactions==2);
         assert((f.interactionArguments==std::array<int,3>{7,123,456}) && f.interactionModifiers==0xabcd);
         Put(f.goldRow.data(),0x126,int16_t(4));
         assert(ClientInteractionHook(&f.owner,6,100,200,0)==99 && f.interactions==3);
         enabled.store(false);assert(ClientInteractionHook(&f.owner,7,100,200,0)==99 && f.interactions==4);
-        assert(f.goldPackets.size()==1);
+        assert(f.goldPackets.size()==2);
     }
     BeginHeldClient(2);f.autoGoldTarget=&f.gold;InputMock::right=false;
     assert(ClientInteractionHook(&f.owner,7,100,200,0)==99 && f.goldPackets.empty() && !client.active);
@@ -599,7 +624,21 @@ void AutomaticGoldRequests(){
     assert(ClientInteractionHook(&f.owner,7,100,200,0)==99 && f.goldPackets.empty());
     std::cout<<"Native auto-gold requests use exact pickup packets during either-button channels without clicks, recasts or path changes; ordinary input/non-gold/disabled/released channels retain native handling.\n";
 }
+void ZeroLifeEndsChannel(){
+    auto& f=fixture;
+    for(int life:{0,-256}){
+        BeginHeldClient(2);f.Arm();f.Receive(f.Command());f.life=life;
+        assert(!NativeData::Alive(&f.owner));
+        assert(ServerMoveHook(&f.game,&f.owner)==88 && f.moveCalls==1);
+        assert(f.Current().lease.stopped && NativeData::Read<uint32_t>(f.skill.data(),0x14)==3);
+        assert(ServerDoHook(&f.game,&f.owner,151,20)==77 && f.doCalls==1);
+        assert(!Held(&f.owner) && !client.active);
+    }
+    f.Reset();f.life=0;assert(ServerStartHook(&f.game,&f.owner,151,20)==1 && channels.empty());
+    f.Reset();f.life=1;assert(NativeData::Alive(&f.owner));
+    std::cout<<"Zero/negative life ends held WW and delegates native cleanup while buttons remain held; positive life remains eligible.\n";
+}
 #include "d3-whirlwind-gold-native-test.inl"
 #include "d3-whirlwind-restart-test.inl"
 #include "d3-whirlwind-potion-test.inl"
-int main(int argc,char** argv) { assert(!RightClickPickupDisabled()); RightClickPickupPreference(); StartAndAuthentication(); PickupAndLifecycle(); SteeringIntegration(); BoundedLocalSession(); InitialCastOrdering(); CapturedItemClicks(); WhirlwindPickupPreference(); LiveHudActivation(); RepeatedHeldActions(); ImmediateCursorControls(); AutomaticGoldRequests(); WhirlwindPotions(); if(argc>1){NativeAutoGold(argv[1]);NativeAssassinRestart(argv[1]);NativeWhirlwindPotions(argv[1]);} }
+int main(int argc,char** argv) { assert(!RightClickPickupDisabled()); RightClickPickupPreference(); StartAndAuthentication(); PickupAndLifecycle(); SteeringIntegration(); BoundedLocalSession(); InitialCastOrdering(); CapturedItemClicks(); ExpiredClientSession(); WhirlwindPickupPreference(); LiveHudActivation(); RepeatedHeldActions(); ImmediateCursorControls(); AutomaticGoldRequests(); ZeroLifeEndsChannel(); WhirlwindPotions(); if(argc>1){NativeAutoGold(argv[1]);NativeAssassinRestart(argv[1]);NativeWhirlwindPotions(argv[1]);} }

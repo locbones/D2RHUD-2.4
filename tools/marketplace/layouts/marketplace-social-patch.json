@@ -1,0 +1,1861 @@
+{
+  "upsert": [
+    {
+      "parent": "MarketFilters",
+      "widget": {
+        "type": "DropdownListWidget",
+        "name": "MarketSearchScope",
+        "fields": {
+          "rect": {
+            "x": 860,
+            "y": 425,
+            "width": 540,
+            "height": 68
+          },
+          "background/rect": {
+            "x": 20,
+            "y": 0,
+            "width": 540,
+            "height": 68
+          },
+          "background/leftCapOffset": "$OptionsDropDownLeftCapOffset2",
+          "background/rightCapOffset": "$OptionsDropDownRightCapOffset2",
+          "pressedFrame": 1,
+          "disabledFrame": 2,
+          "hoveredFrame": 3,
+          "focusIndicatorFilename": "$OptionsDropDownFocusIndicatorFilename",
+          "states": [
+            "Offered + wanted",
+            "Offered items",
+            "Wanted payment"
+          ],
+          "text/style": "$StyleSettingsCarousel",
+          "textColor": "$FontColorLightGold"
+        }
+      }
+    },
+    {
+      "parent": "MarketFilters",
+      "widget": {
+        "type": "Widget",
+        "name": "MarketSocialFilters",
+        "fields": {
+          "rect": {
+            "x": 0,
+            "y": 0,
+            "width": 2250,
+            "height": 1635
+          },
+          "visible": false
+        },
+        "children": [
+          {
+            "type": "TextBoxWidget",
+            "name": "MarketSellerSearchTitle",
+            "fields": {
+              "rect": {
+                "x": 80,
+                "y": 525,
+                "width": 160,
+                "height": 40
+              },
+              "text": "Seller",
+              "style": {
+                "fontColor": "$FontColorGoldYellow",
+                "pointSize": 26,
+                "alignment": {
+                  "h": "left",
+                  "v": "top"
+                },
+                "options": {
+                  "lineWrap": true,
+                  "newlineHandling": "standard",
+                  "pipeCharacterBehavior": "handle"
+                }
+              }
+            }
+          },
+          {
+            "type": "Widget",
+            "name": "MarketSellerSearchField",
+            "fields": {
+              "rect": {
+                "x": 250,
+                "y": 515,
+                "width": 580,
+                "height": 66
+              }
+            },
+            "children": [
+              {
+                "type": "RectangleWidget",
+                "name": "MarketSellerSearchBorder",
+                "fields": {
+                  "rect": {
+                    "x": 0,
+                    "y": 0,
+                    "width": 580,
+                    "height": 66
+                  },
+                  "color": [
+                    0.65,
+                    0.48,
+                    0.25,
+                    1
+                  ]
+                }
+              },
+              {
+                "type": "RectangleWidget",
+                "name": "MarketSellerSearchRecess",
+                "fields": {
+                  "rect": {
+                    "x": 3,
+                    "y": 3,
+                    "width": 574,
+                    "height": 60
+                  },
+                  "color": [
+                    0.055,
+                    0.045,
+                    0.032,
+                    1
+                  ]
+                }
+              },
+              {
+                "type": "RectangleWidget",
+                "name": "MarketSellerSearchUnderline",
+                "fields": {
+                  "rect": {
+                    "x": 10,
+                    "y": 61,
+                    "width": 560,
+                    "height": 2
+                  },
+                  "color": [
+                    0.9,
+                    0.71,
+                    0.39,
+                    1
+                  ]
+                }
+              },
+              {
+                "type": "InputTextBoxWidget",
+                "name": "MarketSellerSearch",
+                "fields": {
+                  "rect": {
+                    "x": 6,
+                    "y": 5,
+                    "width": 568,
+                    "height": 56
+                  },
+                  "fontType": "Chat",
+                  "maxStringLength": 15,
+                  "backgroundColor": [
+                    0,
+                    0,
+                    0,
+                    0
+                  ],
+                  "text/rect": {
+                    "x": 10,
+                    "y": 0,
+                    "width": 548,
+                    "height": 56
+                  },
+                  "tooltipString": "Search trades by seller name",
+                  "fontStyle": {
+                    "fontColor": "$FontColorLightGold",
+                    "pointSize": "$MediumFontSize",
+                    "fontFace": "BlizzardGlobal",
+                    "alignment": {
+                      "h": "left",
+                      "v": "center"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "type": "DropdownListWidget",
+            "name": "MarketFavorites",
+            "fields": {
+              "rect": {
+                "x": 860,
+                "y": 515,
+                "width": 366,
+                "height": 68
+              },
+              "background/rect": {
+                "x": 20,
+                "y": 0,
+                "width": 366,
+                "height": 68
+              },
+              "background/leftCapOffset": "$OptionsDropDownLeftCapOffset2",
+              "background/rightCapOffset": "$OptionsDropDownRightCapOffset2",
+              "pressedFrame": 1,
+              "disabledFrame": 2,
+              "hoveredFrame": 3,
+              "focusIndicatorFilename": "$OptionsDropDownFocusIndicatorFilename",
+              "states": [
+                "All trades",
+                "Saved trades",
+                "Favorite sellers"
+              ],
+              "text/style": "$StyleSettingsCarousel",
+              "textColor": "$FontColorLightGold"
+            }
+          },
+          {
+            "type": "ButtonWidget",
+            "name": "MarketHideOwnButton",
+            "fields": {
+              "rect": {
+                "x": 1250,
+                "y": 515,
+                "width": 400,
+                "height": 68
+              },
+              "filename": "..\\..\\..\\ReMoDDeD\\Panels\\Buttons\\ButtonMed_R",
+              "pressedFrame": 1,
+              "disabledFrame": 2,
+              "hoveredFrame": 3,
+              "onClickMessage": "BankPanelMessage:MarketHideOwn"
+            },
+            "children": [
+              {
+                "type": "TextBoxWidget",
+                "name": "MarketHideOwnButtonLabel",
+                "fields": {
+                  "rect": {
+                    "x": 12,
+                    "y": 0,
+                    "width": 380,
+                    "height": 68
+                  },
+                  "text": "Hide mine: Off",
+                  "style": {
+                    "fontColor": "$FontColorLightGold",
+                    "pointSize": "$SmallPanelFontSize",
+                    "alignment": {
+                      "h": "center",
+                      "v": "center"
+                    },
+                    "options": {
+                      "lineWrap": true,
+                      "newlineHandling": "standard",
+                      "pipeCharacterBehavior": "handle"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "type": "ButtonWidget",
+            "name": "MarketHideOtherOffersButton",
+            "fields": {
+              "rect": {
+                "x": 1690,
+                "y": 515,
+                "width": 450,
+                "height": 68
+              },
+              "filename": "..\\..\\..\\ReMoDDeD\\Panels\\Buttons\\ButtonMed_R",
+              "pressedFrame": 1,
+              "disabledFrame": 2,
+              "hoveredFrame": 3,
+              "onClickMessage": "BankPanelMessage:MarketHideOtherOffers"
+            },
+            "children": [
+              {
+                "type": "TextBoxWidget",
+                "name": "MarketHideOtherOffersButtonLabel",
+                "fields": {
+                  "rect": {
+                    "x": 12,
+                    "y": 0,
+                    "width": 430,
+                    "height": 68
+                  },
+                  "text": "No other offers: Off",
+                  "style": {
+                    "fontColor": "$FontColorLightGold",
+                    "pointSize": "$SmallPanelFontSize",
+                    "alignment": {
+                      "h": "center",
+                      "v": "center"
+                    },
+                    "options": {
+                      "lineWrap": true,
+                      "newlineHandling": "standard",
+                      "pipeCharacterBehavior": "handle"
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "parent": "MarketItemDetail",
+      "widget": {
+        "type": "Widget",
+        "name": "MarketBrowseSocial",
+        "fields": {
+          "rect": {
+            "x": 0,
+            "y": 0,
+            "width": 2250,
+            "height": 1635
+          },
+          "visible": false
+        },
+        "children": [
+          {
+            "type": "ButtonWidget",
+            "name": "MarketFavoriteTradeButton",
+            "fields": {
+              "rect": {
+                "x": 80,
+                "y": 1305,
+                "width": 472,
+                "height": 68
+              },
+              "filename": "..\\..\\..\\ReMoDDeD\\Panels\\Buttons\\ButtonMed_R",
+              "pressedFrame": 1,
+              "disabledFrame": 2,
+              "hoveredFrame": 3,
+              "onClickMessage": "BankPanelMessage:MarketFavoriteTrade"
+            },
+            "children": [
+              {
+                "type": "TextBoxWidget",
+                "name": "MarketFavoriteTradeButtonLabel",
+                "fields": {
+                  "rect": {
+                    "x": 12,
+                    "y": 0,
+                    "width": 452,
+                    "height": 68
+                  },
+                  "text": "Save trade",
+                  "style": {
+                    "fontColor": "$FontColorLightGold",
+                    "pointSize": "$SmallPanelFontSize",
+                    "alignment": {
+                      "h": "center",
+                      "v": "center"
+                    },
+                    "options": {
+                      "lineWrap": true,
+                      "newlineHandling": "standard",
+                      "pipeCharacterBehavior": "handle"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "type": "ButtonWidget",
+            "name": "MarketFavoriteSellerButton",
+            "fields": {
+              "rect": {
+                "x": 610,
+                "y": 1305,
+                "width": 472,
+                "height": 68
+              },
+              "filename": "..\\..\\..\\ReMoDDeD\\Panels\\Buttons\\ButtonMed_R",
+              "pressedFrame": 1,
+              "disabledFrame": 2,
+              "hoveredFrame": 3,
+              "onClickMessage": "BankPanelMessage:MarketFavoriteSeller"
+            },
+            "children": [
+              {
+                "type": "TextBoxWidget",
+                "name": "MarketFavoriteSellerButtonLabel",
+                "fields": {
+                  "rect": {
+                    "x": 12,
+                    "y": 0,
+                    "width": 452,
+                    "height": 68
+                  },
+                  "text": "Save seller",
+                  "style": {
+                    "fontColor": "$FontColorLightGold",
+                    "pointSize": "$SmallPanelFontSize",
+                    "alignment": {
+                      "h": "center",
+                      "v": "center"
+                    },
+                    "options": {
+                      "lineWrap": true,
+                      "newlineHandling": "standard",
+                      "pipeCharacterBehavior": "handle"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "type": "ButtonWidget",
+            "name": "MarketViewOffersButton",
+            "fields": {
+              "rect": {
+                "x": 1140,
+                "y": 1305,
+                "width": 472,
+                "height": 68
+              },
+              "filename": "..\\..\\..\\ReMoDDeD\\Panels\\Buttons\\ButtonMed_R",
+              "pressedFrame": 1,
+              "disabledFrame": 2,
+              "hoveredFrame": 3,
+              "onClickMessage": "BankPanelMessage:MarketViewOffers"
+            },
+            "children": [
+              {
+                "type": "TextBoxWidget",
+                "name": "MarketViewOffersButtonLabel",
+                "fields": {
+                  "rect": {
+                    "x": 12,
+                    "y": 0,
+                    "width": 452,
+                    "height": 68
+                  },
+                  "text": "View offers",
+                  "style": {
+                    "fontColor": "$FontColorLightGold",
+                    "pointSize": "$SmallPanelFontSize",
+                    "alignment": {
+                      "h": "center",
+                      "v": "center"
+                    },
+                    "options": {
+                      "lineWrap": true,
+                      "newlineHandling": "standard",
+                      "pipeCharacterBehavior": "handle"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "type": "ButtonWidget",
+            "name": "MarketSellerTradesButton",
+            "fields": {
+              "rect": {
+                "x": 1668,
+                "y": 1305,
+                "width": 472,
+                "height": 68
+              },
+              "filename": "..\\..\\..\\ReMoDDeD\\Panels\\Buttons\\ButtonMed_R",
+              "pressedFrame": 1,
+              "disabledFrame": 2,
+              "hoveredFrame": 3,
+              "onClickMessage": "BankPanelMessage:MarketSellerTrades"
+            },
+            "children": [
+              {
+                "type": "TextBoxWidget",
+                "name": "MarketSellerTradesButtonLabel",
+                "fields": {
+                  "rect": {
+                    "x": 12,
+                    "y": 0,
+                    "width": 452,
+                    "height": 68
+                  },
+                  "text": "Seller trades",
+                  "style": {
+                    "fontColor": "$FontColorLightGold",
+                    "pointSize": "$SmallPanelFontSize",
+                    "alignment": {
+                      "h": "center",
+                      "v": "center"
+                    },
+                    "options": {
+                      "lineWrap": true,
+                      "newlineHandling": "standard",
+                      "pipeCharacterBehavior": "handle"
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "parent": "MarketReceiptPanel",
+      "widget": {
+        "type": "ButtonWidget",
+        "name": "MarketKeepListingButton",
+        "fields": {
+          "rect": {
+            "x": 80,
+            "y": 1390,
+            "width": 366,
+            "height": 68
+          },
+          "filename": "..\\..\\..\\ReMoDDeD\\Panels\\Buttons\\ButtonSmall_R",
+          "pressedFrame": 1,
+          "disabledFrame": 2,
+          "hoveredFrame": 3,
+          "onClickMessage": "BankPanelMessage:MarketKeepListing",
+          "visible": false
+        },
+        "children": [
+          {
+            "type": "TextBoxWidget",
+            "name": "MarketKeepListingButtonLabel",
+            "fields": {
+              "rect": {
+                "x": 12,
+                "y": 0,
+                "width": 342,
+                "height": 68
+              },
+              "text": "Keep listing",
+              "style": {
+                "fontColor": "$FontColorLightGold",
+                "pointSize": "$SmallPanelFontSize",
+                "alignment": {
+                  "h": "center",
+                  "v": "center"
+                },
+                "options": {
+                  "lineWrap": true,
+                  "newlineHandling": "standard",
+                  "pipeCharacterBehavior": "handle"
+                }
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "parent": "MarketReceiptPanel",
+      "widget": {
+        "type": "ButtonWidget",
+        "name": "MarketWithdrawForMoveButton",
+        "fields": {
+          "rect": {
+            "x": 1774,
+            "y": 1390,
+            "width": 366,
+            "height": 68
+          },
+          "filename": "..\\..\\..\\ReMoDDeD\\Panels\\Buttons\\ButtonSmall_R",
+          "pressedFrame": 1,
+          "disabledFrame": 2,
+          "hoveredFrame": 3,
+          "onClickMessage": "BankPanelMessage:MarketWithdrawForMove",
+          "visible": false
+        },
+        "children": [
+          {
+            "type": "TextBoxWidget",
+            "name": "MarketWithdrawForMoveButtonLabel",
+            "fields": {
+              "rect": {
+                "x": 12,
+                "y": 0,
+                "width": 342,
+                "height": 68
+              },
+              "text": "Withdraw listing",
+              "style": {
+                "fontColor": "$FontColorLightGold",
+                "pointSize": "$SmallPanelFontSize",
+                "alignment": {
+                  "h": "center",
+                  "v": "center"
+                },
+                "options": {
+                  "lineWrap": true,
+                  "newlineHandling": "standard",
+                  "pipeCharacterBehavior": "handle"
+                }
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "parent": "MarketFocus",
+      "widget": {
+        "type": "Widget",
+        "name": "MarketOfferBoard",
+        "fields": {
+          "rect": {
+            "x": 0,
+            "y": 0,
+            "width": 2250,
+            "height": 1635
+          },
+          "visible": false
+        },
+        "children": [
+          {
+            "type": "TextBoxWidget",
+            "name": "MarketBoardTitle",
+            "fields": {
+              "rect": {
+                "x": 90,
+                "y": 655,
+                "width": 1600,
+                "height": 48
+              },
+              "text": "OFFERS ON THIS TRADE",
+              "style": {
+                "fontColor": "$FontColorGoldYellow",
+                "pointSize": 26,
+                "alignment": {
+                  "h": "left",
+                  "v": "top"
+                },
+                "options": {
+                  "lineWrap": true,
+                  "newlineHandling": "standard",
+                  "pipeCharacterBehavior": "handle"
+                }
+              }
+            }
+          },
+          {
+            "type": "TextBoxWidget",
+            "name": "MarketBoardCount",
+            "fields": {
+              "rect": {
+                "x": 90,
+                "y": 710,
+                "width": 1500,
+                "height": 42
+              },
+              "text": "Loading offers...",
+              "style": {
+                "fontColor": "$FontColorGoldYellow",
+                "pointSize": 26,
+                "alignment": {
+                  "h": "left",
+                  "v": "top"
+                },
+                "options": {
+                  "lineWrap": true,
+                  "newlineHandling": "standard",
+                  "pipeCharacterBehavior": "handle"
+                }
+              }
+            }
+          },
+          {
+            "type": "ButtonWidget",
+            "name": "MarketOffersRefreshButton",
+            "fields": {
+              "rect": {
+                "x": 1774,
+                "y": 670,
+                "width": 366,
+                "height": 68
+              },
+              "filename": "..\\..\\..\\ReMoDDeD\\Panels\\Buttons\\ButtonMed_R",
+              "pressedFrame": 1,
+              "disabledFrame": 2,
+              "hoveredFrame": 3,
+              "onClickMessage": "BankPanelMessage:MarketOffersRefresh"
+            },
+            "children": [
+              {
+                "type": "TextBoxWidget",
+                "name": "MarketOffersRefreshButtonLabel",
+                "fields": {
+                  "rect": {
+                    "x": 12,
+                    "y": 0,
+                    "width": 346,
+                    "height": 68
+                  },
+                  "text": "Refresh",
+                  "style": {
+                    "fontColor": "$FontColorLightGold",
+                    "pointSize": "$SmallPanelFontSize",
+                    "alignment": {
+                      "h": "center",
+                      "v": "center"
+                    },
+                    "options": {
+                      "lineWrap": true,
+                      "newlineHandling": "standard",
+                      "pipeCharacterBehavior": "handle"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "type": "Widget",
+            "name": "MarketBid0Card",
+            "fields": {
+              "rect": {
+                "x": 0,
+                "y": 0,
+                "width": 2250,
+                "height": 1635
+              },
+              "visible": false
+            },
+            "children": [
+              {
+                "type": "RectangleWidget",
+                "name": "MarketBid0Edge",
+                "fields": {
+                  "rect": {
+                    "x": 80,
+                    "y": 780,
+                    "width": 2060,
+                    "height": 120
+                  },
+                  "color": [
+                    0.32,
+                    0.25,
+                    0.13,
+                    1
+                  ]
+                }
+              },
+              {
+                "type": "RectangleWidget",
+                "name": "MarketBid0Inset",
+                "fields": {
+                  "rect": {
+                    "x": 82,
+                    "y": 782,
+                    "width": 2056,
+                    "height": 116
+                  },
+                  "color": [
+                    0.035,
+                    0.028,
+                    0.02,
+                    1
+                  ]
+                }
+              },
+              {
+                "type": "ImageWidget",
+                "name": "MarketBid0Image",
+                "fields": {
+                  "rect": {
+                    "x": 100,
+                    "y": 802,
+                    "width": 72,
+                    "height": 72
+                  },
+                  "filename": "Blank"
+                }
+              },
+              {
+                "type": "TextBoxWidget",
+                "name": "MarketBid0Name",
+                "fields": {
+                  "rect": {
+                    "x": 205,
+                    "y": 795,
+                    "width": 540,
+                    "height": 40
+                  },
+                  "text": "Trader",
+                  "style": {
+                    "fontColor": "$FontColorGoldYellow",
+                    "pointSize": 26,
+                    "alignment": {
+                      "h": "left",
+                      "v": "top"
+                    },
+                    "options": {
+                      "lineWrap": true,
+                      "newlineHandling": "standard",
+                      "pipeCharacterBehavior": "handle"
+                    }
+                  }
+                }
+              },
+              {
+                "type": "TextBoxWidget",
+                "name": "MarketBid0State",
+                "fields": {
+                  "rect": {
+                    "x": 205,
+                    "y": 845,
+                    "width": 540,
+                    "height": 38
+                  },
+                  "text": "Open offer",
+                  "style": {
+                    "fontColor": "$FontColorGoldYellow",
+                    "pointSize": 26,
+                    "alignment": {
+                      "h": "left",
+                      "v": "top"
+                    },
+                    "options": {
+                      "lineWrap": true,
+                      "newlineHandling": "standard",
+                      "pipeCharacterBehavior": "handle"
+                    }
+                  }
+                }
+              },
+              {
+                "type": "TextBoxWidget",
+                "name": "MarketBid0Price",
+                "fields": {
+                  "rect": {
+                    "x": 790,
+                    "y": 795,
+                    "width": 900,
+                    "height": 94
+                  },
+                  "text": "Exact payment",
+                  "style": {
+                    "fontColor": "$FontColorGoldYellow",
+                    "pointSize": 26,
+                    "alignment": {
+                      "h": "left",
+                      "v": "top"
+                    },
+                    "options": {
+                      "lineWrap": true,
+                      "newlineHandling": "standard",
+                      "pipeCharacterBehavior": "handle"
+                    }
+                  }
+                }
+              },
+              {
+                "type": "ButtonWidget",
+                "name": "MarketBid0Button",
+                "fields": {
+                  "rect": {
+                    "x": 1755,
+                    "y": 805,
+                    "width": 366,
+                    "height": 68
+                  },
+                  "filename": "..\\..\\..\\ReMoDDeD\\Panels\\Buttons\\ButtonMed_R",
+                  "pressedFrame": 1,
+                  "disabledFrame": 2,
+                  "hoveredFrame": 3,
+                  "onClickMessage": "BankPanelMessage:MarketBid0"
+                },
+                "children": [
+                  {
+                    "type": "TextBoxWidget",
+                    "name": "MarketBid0ButtonLabel",
+                    "fields": {
+                      "rect": {
+                        "x": 12,
+                        "y": 0,
+                        "width": 346,
+                        "height": 68
+                      },
+                      "text": "Review offer",
+                      "style": {
+                        "fontColor": "$FontColorLightGold",
+                        "pointSize": "$SmallPanelFontSize",
+                        "alignment": {
+                          "h": "center",
+                          "v": "center"
+                        },
+                        "options": {
+                          "lineWrap": true,
+                          "newlineHandling": "standard",
+                          "pipeCharacterBehavior": "handle"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "type": "Widget",
+            "name": "MarketBid1Card",
+            "fields": {
+              "rect": {
+                "x": 0,
+                "y": 0,
+                "width": 2250,
+                "height": 1635
+              },
+              "visible": false
+            },
+            "children": [
+              {
+                "type": "RectangleWidget",
+                "name": "MarketBid1Edge",
+                "fields": {
+                  "rect": {
+                    "x": 80,
+                    "y": 920,
+                    "width": 2060,
+                    "height": 120
+                  },
+                  "color": [
+                    0.32,
+                    0.25,
+                    0.13,
+                    1
+                  ]
+                }
+              },
+              {
+                "type": "RectangleWidget",
+                "name": "MarketBid1Inset",
+                "fields": {
+                  "rect": {
+                    "x": 82,
+                    "y": 922,
+                    "width": 2056,
+                    "height": 116
+                  },
+                  "color": [
+                    0.035,
+                    0.028,
+                    0.02,
+                    1
+                  ]
+                }
+              },
+              {
+                "type": "ImageWidget",
+                "name": "MarketBid1Image",
+                "fields": {
+                  "rect": {
+                    "x": 100,
+                    "y": 942,
+                    "width": 72,
+                    "height": 72
+                  },
+                  "filename": "Blank"
+                }
+              },
+              {
+                "type": "TextBoxWidget",
+                "name": "MarketBid1Name",
+                "fields": {
+                  "rect": {
+                    "x": 205,
+                    "y": 935,
+                    "width": 540,
+                    "height": 40
+                  },
+                  "text": "Trader",
+                  "style": {
+                    "fontColor": "$FontColorGoldYellow",
+                    "pointSize": 26,
+                    "alignment": {
+                      "h": "left",
+                      "v": "top"
+                    },
+                    "options": {
+                      "lineWrap": true,
+                      "newlineHandling": "standard",
+                      "pipeCharacterBehavior": "handle"
+                    }
+                  }
+                }
+              },
+              {
+                "type": "TextBoxWidget",
+                "name": "MarketBid1State",
+                "fields": {
+                  "rect": {
+                    "x": 205,
+                    "y": 985,
+                    "width": 540,
+                    "height": 38
+                  },
+                  "text": "Open offer",
+                  "style": {
+                    "fontColor": "$FontColorGoldYellow",
+                    "pointSize": 26,
+                    "alignment": {
+                      "h": "left",
+                      "v": "top"
+                    },
+                    "options": {
+                      "lineWrap": true,
+                      "newlineHandling": "standard",
+                      "pipeCharacterBehavior": "handle"
+                    }
+                  }
+                }
+              },
+              {
+                "type": "TextBoxWidget",
+                "name": "MarketBid1Price",
+                "fields": {
+                  "rect": {
+                    "x": 790,
+                    "y": 935,
+                    "width": 900,
+                    "height": 94
+                  },
+                  "text": "Exact payment",
+                  "style": {
+                    "fontColor": "$FontColorGoldYellow",
+                    "pointSize": 26,
+                    "alignment": {
+                      "h": "left",
+                      "v": "top"
+                    },
+                    "options": {
+                      "lineWrap": true,
+                      "newlineHandling": "standard",
+                      "pipeCharacterBehavior": "handle"
+                    }
+                  }
+                }
+              },
+              {
+                "type": "ButtonWidget",
+                "name": "MarketBid1Button",
+                "fields": {
+                  "rect": {
+                    "x": 1755,
+                    "y": 945,
+                    "width": 366,
+                    "height": 68
+                  },
+                  "filename": "..\\..\\..\\ReMoDDeD\\Panels\\Buttons\\ButtonMed_R",
+                  "pressedFrame": 1,
+                  "disabledFrame": 2,
+                  "hoveredFrame": 3,
+                  "onClickMessage": "BankPanelMessage:MarketBid1"
+                },
+                "children": [
+                  {
+                    "type": "TextBoxWidget",
+                    "name": "MarketBid1ButtonLabel",
+                    "fields": {
+                      "rect": {
+                        "x": 12,
+                        "y": 0,
+                        "width": 346,
+                        "height": 68
+                      },
+                      "text": "Review offer",
+                      "style": {
+                        "fontColor": "$FontColorLightGold",
+                        "pointSize": "$SmallPanelFontSize",
+                        "alignment": {
+                          "h": "center",
+                          "v": "center"
+                        },
+                        "options": {
+                          "lineWrap": true,
+                          "newlineHandling": "standard",
+                          "pipeCharacterBehavior": "handle"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "type": "Widget",
+            "name": "MarketBid2Card",
+            "fields": {
+              "rect": {
+                "x": 0,
+                "y": 0,
+                "width": 2250,
+                "height": 1635
+              },
+              "visible": false
+            },
+            "children": [
+              {
+                "type": "RectangleWidget",
+                "name": "MarketBid2Edge",
+                "fields": {
+                  "rect": {
+                    "x": 80,
+                    "y": 1060,
+                    "width": 2060,
+                    "height": 120
+                  },
+                  "color": [
+                    0.32,
+                    0.25,
+                    0.13,
+                    1
+                  ]
+                }
+              },
+              {
+                "type": "RectangleWidget",
+                "name": "MarketBid2Inset",
+                "fields": {
+                  "rect": {
+                    "x": 82,
+                    "y": 1062,
+                    "width": 2056,
+                    "height": 116
+                  },
+                  "color": [
+                    0.035,
+                    0.028,
+                    0.02,
+                    1
+                  ]
+                }
+              },
+              {
+                "type": "ImageWidget",
+                "name": "MarketBid2Image",
+                "fields": {
+                  "rect": {
+                    "x": 100,
+                    "y": 1082,
+                    "width": 72,
+                    "height": 72
+                  },
+                  "filename": "Blank"
+                }
+              },
+              {
+                "type": "TextBoxWidget",
+                "name": "MarketBid2Name",
+                "fields": {
+                  "rect": {
+                    "x": 205,
+                    "y": 1075,
+                    "width": 540,
+                    "height": 40
+                  },
+                  "text": "Trader",
+                  "style": {
+                    "fontColor": "$FontColorGoldYellow",
+                    "pointSize": 26,
+                    "alignment": {
+                      "h": "left",
+                      "v": "top"
+                    },
+                    "options": {
+                      "lineWrap": true,
+                      "newlineHandling": "standard",
+                      "pipeCharacterBehavior": "handle"
+                    }
+                  }
+                }
+              },
+              {
+                "type": "TextBoxWidget",
+                "name": "MarketBid2State",
+                "fields": {
+                  "rect": {
+                    "x": 205,
+                    "y": 1125,
+                    "width": 540,
+                    "height": 38
+                  },
+                  "text": "Open offer",
+                  "style": {
+                    "fontColor": "$FontColorGoldYellow",
+                    "pointSize": 26,
+                    "alignment": {
+                      "h": "left",
+                      "v": "top"
+                    },
+                    "options": {
+                      "lineWrap": true,
+                      "newlineHandling": "standard",
+                      "pipeCharacterBehavior": "handle"
+                    }
+                  }
+                }
+              },
+              {
+                "type": "TextBoxWidget",
+                "name": "MarketBid2Price",
+                "fields": {
+                  "rect": {
+                    "x": 790,
+                    "y": 1075,
+                    "width": 900,
+                    "height": 94
+                  },
+                  "text": "Exact payment",
+                  "style": {
+                    "fontColor": "$FontColorGoldYellow",
+                    "pointSize": 26,
+                    "alignment": {
+                      "h": "left",
+                      "v": "top"
+                    },
+                    "options": {
+                      "lineWrap": true,
+                      "newlineHandling": "standard",
+                      "pipeCharacterBehavior": "handle"
+                    }
+                  }
+                }
+              },
+              {
+                "type": "ButtonWidget",
+                "name": "MarketBid2Button",
+                "fields": {
+                  "rect": {
+                    "x": 1755,
+                    "y": 1085,
+                    "width": 366,
+                    "height": 68
+                  },
+                  "filename": "..\\..\\..\\ReMoDDeD\\Panels\\Buttons\\ButtonMed_R",
+                  "pressedFrame": 1,
+                  "disabledFrame": 2,
+                  "hoveredFrame": 3,
+                  "onClickMessage": "BankPanelMessage:MarketBid2"
+                },
+                "children": [
+                  {
+                    "type": "TextBoxWidget",
+                    "name": "MarketBid2ButtonLabel",
+                    "fields": {
+                      "rect": {
+                        "x": 12,
+                        "y": 0,
+                        "width": 346,
+                        "height": 68
+                      },
+                      "text": "Review offer",
+                      "style": {
+                        "fontColor": "$FontColorLightGold",
+                        "pointSize": "$SmallPanelFontSize",
+                        "alignment": {
+                          "h": "center",
+                          "v": "center"
+                        },
+                        "options": {
+                          "lineWrap": true,
+                          "newlineHandling": "standard",
+                          "pipeCharacterBehavior": "handle"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "type": "Widget",
+            "name": "MarketBid3Card",
+            "fields": {
+              "rect": {
+                "x": 0,
+                "y": 0,
+                "width": 2250,
+                "height": 1635
+              },
+              "visible": false
+            },
+            "children": [
+              {
+                "type": "RectangleWidget",
+                "name": "MarketBid3Edge",
+                "fields": {
+                  "rect": {
+                    "x": 80,
+                    "y": 1200,
+                    "width": 2060,
+                    "height": 120
+                  },
+                  "color": [
+                    0.32,
+                    0.25,
+                    0.13,
+                    1
+                  ]
+                }
+              },
+              {
+                "type": "RectangleWidget",
+                "name": "MarketBid3Inset",
+                "fields": {
+                  "rect": {
+                    "x": 82,
+                    "y": 1202,
+                    "width": 2056,
+                    "height": 116
+                  },
+                  "color": [
+                    0.035,
+                    0.028,
+                    0.02,
+                    1
+                  ]
+                }
+              },
+              {
+                "type": "ImageWidget",
+                "name": "MarketBid3Image",
+                "fields": {
+                  "rect": {
+                    "x": 100,
+                    "y": 1222,
+                    "width": 72,
+                    "height": 72
+                  },
+                  "filename": "Blank"
+                }
+              },
+              {
+                "type": "TextBoxWidget",
+                "name": "MarketBid3Name",
+                "fields": {
+                  "rect": {
+                    "x": 205,
+                    "y": 1215,
+                    "width": 540,
+                    "height": 40
+                  },
+                  "text": "Trader",
+                  "style": {
+                    "fontColor": "$FontColorGoldYellow",
+                    "pointSize": 26,
+                    "alignment": {
+                      "h": "left",
+                      "v": "top"
+                    },
+                    "options": {
+                      "lineWrap": true,
+                      "newlineHandling": "standard",
+                      "pipeCharacterBehavior": "handle"
+                    }
+                  }
+                }
+              },
+              {
+                "type": "TextBoxWidget",
+                "name": "MarketBid3State",
+                "fields": {
+                  "rect": {
+                    "x": 205,
+                    "y": 1265,
+                    "width": 540,
+                    "height": 38
+                  },
+                  "text": "Open offer",
+                  "style": {
+                    "fontColor": "$FontColorGoldYellow",
+                    "pointSize": 26,
+                    "alignment": {
+                      "h": "left",
+                      "v": "top"
+                    },
+                    "options": {
+                      "lineWrap": true,
+                      "newlineHandling": "standard",
+                      "pipeCharacterBehavior": "handle"
+                    }
+                  }
+                }
+              },
+              {
+                "type": "TextBoxWidget",
+                "name": "MarketBid3Price",
+                "fields": {
+                  "rect": {
+                    "x": 790,
+                    "y": 1215,
+                    "width": 900,
+                    "height": 94
+                  },
+                  "text": "Exact payment",
+                  "style": {
+                    "fontColor": "$FontColorGoldYellow",
+                    "pointSize": 26,
+                    "alignment": {
+                      "h": "left",
+                      "v": "top"
+                    },
+                    "options": {
+                      "lineWrap": true,
+                      "newlineHandling": "standard",
+                      "pipeCharacterBehavior": "handle"
+                    }
+                  }
+                }
+              },
+              {
+                "type": "ButtonWidget",
+                "name": "MarketBid3Button",
+                "fields": {
+                  "rect": {
+                    "x": 1755,
+                    "y": 1225,
+                    "width": 366,
+                    "height": 68
+                  },
+                  "filename": "..\\..\\..\\ReMoDDeD\\Panels\\Buttons\\ButtonMed_R",
+                  "pressedFrame": 1,
+                  "disabledFrame": 2,
+                  "hoveredFrame": 3,
+                  "onClickMessage": "BankPanelMessage:MarketBid3"
+                },
+                "children": [
+                  {
+                    "type": "TextBoxWidget",
+                    "name": "MarketBid3ButtonLabel",
+                    "fields": {
+                      "rect": {
+                        "x": 12,
+                        "y": 0,
+                        "width": 346,
+                        "height": 68
+                      },
+                      "text": "Review offer",
+                      "style": {
+                        "fontColor": "$FontColorLightGold",
+                        "pointSize": "$SmallPanelFontSize",
+                        "alignment": {
+                          "h": "center",
+                          "v": "center"
+                        },
+                        "options": {
+                          "lineWrap": true,
+                          "newlineHandling": "standard",
+                          "pipeCharacterBehavior": "handle"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "type": "ButtonWidget",
+            "name": "MarketBackOffersButton",
+            "fields": {
+              "rect": {
+                "x": 80,
+                "y": 1390,
+                "width": 366,
+                "height": 68
+              },
+              "filename": "..\\..\\..\\ReMoDDeD\\Panels\\Buttons\\ButtonMed_R",
+              "pressedFrame": 1,
+              "disabledFrame": 2,
+              "hoveredFrame": 3,
+              "onClickMessage": "BankPanelMessage:MarketBackOffers"
+            },
+            "children": [
+              {
+                "type": "TextBoxWidget",
+                "name": "MarketBackOffersButtonLabel",
+                "fields": {
+                  "rect": {
+                    "x": 12,
+                    "y": 0,
+                    "width": 346,
+                    "height": 68
+                  },
+                  "text": "Back to item",
+                  "style": {
+                    "fontColor": "$FontColorLightGold",
+                    "pointSize": "$SmallPanelFontSize",
+                    "alignment": {
+                      "h": "center",
+                      "v": "center"
+                    },
+                    "options": {
+                      "lineWrap": true,
+                      "newlineHandling": "standard",
+                      "pipeCharacterBehavior": "handle"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "type": "ButtonWidget",
+            "name": "MarketOffersFirstButton",
+            "fields": {
+              "rect": {
+                "x": 610,
+                "y": 1390,
+                "width": 366,
+                "height": 68
+              },
+              "filename": "..\\..\\..\\ReMoDDeD\\Panels\\Buttons\\ButtonMed_R",
+              "pressedFrame": 1,
+              "disabledFrame": 2,
+              "hoveredFrame": 3,
+              "onClickMessage": "BankPanelMessage:MarketOffersFirst"
+            },
+            "children": [
+              {
+                "type": "TextBoxWidget",
+                "name": "MarketOffersFirstButtonLabel",
+                "fields": {
+                  "rect": {
+                    "x": 12,
+                    "y": 0,
+                    "width": 346,
+                    "height": 68
+                  },
+                  "text": "Newest offers",
+                  "style": {
+                    "fontColor": "$FontColorLightGold",
+                    "pointSize": "$SmallPanelFontSize",
+                    "alignment": {
+                      "h": "center",
+                      "v": "center"
+                    },
+                    "options": {
+                      "lineWrap": true,
+                      "newlineHandling": "standard",
+                      "pipeCharacterBehavior": "handle"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "type": "ButtonWidget",
+            "name": "MarketOffersNextButton",
+            "fields": {
+              "rect": {
+                "x": 1774,
+                "y": 1390,
+                "width": 366,
+                "height": 68
+              },
+              "filename": "..\\..\\..\\ReMoDDeD\\Panels\\Buttons\\ButtonMed_R",
+              "pressedFrame": 1,
+              "disabledFrame": 2,
+              "hoveredFrame": 3,
+              "onClickMessage": "BankPanelMessage:MarketOffersNext"
+            },
+            "children": [
+              {
+                "type": "TextBoxWidget",
+                "name": "MarketOffersNextButtonLabel",
+                "fields": {
+                  "rect": {
+                    "x": 12,
+                    "y": 0,
+                    "width": 346,
+                    "height": 68
+                  },
+                  "text": "Older offers",
+                  "style": {
+                    "fontColor": "$FontColorLightGold",
+                    "pointSize": "$SmallPanelFontSize",
+                    "alignment": {
+                      "h": "center",
+                      "v": "center"
+                    },
+                    "options": {
+                      "lineWrap": true,
+                      "newlineHandling": "standard",
+                      "pipeCharacterBehavior": "handle"
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "parent": "MarketSetupGroup",
+      "widget": {
+        "type": "TextBoxWidget",
+        "name": "MarketProfileTitle",
+        "fields": {
+          "rect": {
+            "x": 80,
+            "y": 365,
+            "width": 260,
+            "height": 40
+          },
+          "text": "Player name",
+          "style": {
+            "fontColor": "$FontColorGoldYellow",
+            "pointSize": 26,
+            "alignment": {
+              "h": "left",
+              "v": "top"
+            },
+            "options": {
+              "lineWrap": true,
+              "newlineHandling": "standard",
+              "pipeCharacterBehavior": "handle"
+            }
+          }
+        }
+      }
+    },
+    {
+      "parent": "MarketSetupGroup",
+      "widget": {
+        "type": "Widget",
+        "name": "MarketProfileNameField",
+        "fields": {
+          "rect": {
+            "x": 360,
+            "y": 350,
+            "width": 730,
+            "height": 66
+          }
+        },
+        "children": [
+          {
+            "type": "RectangleWidget",
+            "name": "MarketProfileNameBorder",
+            "fields": {
+              "rect": {
+                "x": 0,
+                "y": 0,
+                "width": 730,
+                "height": 66
+              },
+              "color": [
+                0.65,
+                0.48,
+                0.25,
+                1
+              ]
+            }
+          },
+          {
+            "type": "RectangleWidget",
+            "name": "MarketProfileNameRecess",
+            "fields": {
+              "rect": {
+                "x": 3,
+                "y": 3,
+                "width": 724,
+                "height": 60
+              },
+              "color": [
+                0.055,
+                0.045,
+                0.032,
+                1
+              ]
+            }
+          },
+          {
+            "type": "RectangleWidget",
+            "name": "MarketProfileNameUnderline",
+            "fields": {
+              "rect": {
+                "x": 10,
+                "y": 61,
+                "width": 710,
+                "height": 2
+              },
+              "color": [
+                0.9,
+                0.71,
+                0.39,
+                1
+              ]
+            }
+          },
+          {
+            "type": "InputTextBoxWidget",
+            "name": "MarketProfileName",
+            "fields": {
+              "rect": {
+                "x": 6,
+                "y": 5,
+                "width": 718,
+                "height": 56
+              },
+              "fontType": "Chat",
+              "maxStringLength": 15,
+              "backgroundColor": [
+                0,
+                0,
+                0,
+                0
+              ],
+              "text/rect": {
+                "x": 10,
+                "y": 0,
+                "width": 698,
+                "height": 56
+              },
+              "tooltipString": "Public player name (3-15 characters)",
+              "fontStyle": {
+                "fontColor": "$FontColorLightGold",
+                "pointSize": "$MediumFontSize",
+                "fontFace": "BlizzardGlobal",
+                "alignment": {
+                  "h": "left",
+                  "v": "center"
+                }
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "parent": "MarketSetupGroup",
+      "widget": {
+        "type": "ButtonWidget",
+        "name": "MarketSaveNameButton",
+        "fields": {
+          "rect": {
+            "x": 1140,
+            "y": 350,
+            "width": 366,
+            "height": 68
+          },
+          "filename": "..\\..\\..\\ReMoDDeD\\Panels\\Buttons\\ButtonMed_R",
+          "pressedFrame": 1,
+          "disabledFrame": 2,
+          "hoveredFrame": 3,
+          "onClickMessage": "BankPanelMessage:MarketSaveName"
+        },
+        "children": [
+          {
+            "type": "TextBoxWidget",
+            "name": "MarketSaveNameButtonLabel",
+            "fields": {
+              "rect": {
+                "x": 12,
+                "y": 0,
+                "width": 346,
+                "height": 68
+              },
+              "text": "Save name",
+              "style": {
+                "fontColor": "$FontColorLightGold",
+                "pointSize": "$SmallPanelFontSize",
+                "alignment": {
+                  "h": "center",
+                  "v": "center"
+                },
+                "options": {
+                  "lineWrap": true,
+                  "newlineHandling": "standard",
+                  "pipeCharacterBehavior": "handle"
+                }
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "parent": "MarketSetupGroup",
+      "widget": {
+        "type": "TextBoxWidget",
+        "name": "MarketProfileHint",
+        "fields": {
+          "rect": {
+            "x": 1570,
+            "y": 365,
+            "width": 570,
+            "height": 40
+          },
+          "text": "3-15 characters | same player ID",
+          "style": {
+            "fontColor": "$FontColorGoldYellow",
+            "pointSize": 26,
+            "alignment": {
+              "h": "left",
+              "v": "top"
+            },
+            "options": {
+              "lineWrap": true,
+              "newlineHandling": "standard",
+              "pipeCharacterBehavior": "handle"
+            }
+          }
+        }
+      }
+    }
+  ],
+  "fields": {
+    "MarketSearch": {
+      "rect": {
+        "x": 6,
+        "y": 5,
+        "width": 1888,
+        "height": 56
+      },
+      "fontType": "Chat",
+      "maxStringLength": 15,
+      "backgroundColor": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "text/rect": {
+        "x": 10,
+        "y": 0,
+        "width": 1868,
+        "height": 56
+      },
+      "tooltipString": "Search offered items or wanted payment; choose a scope below",
+      "fontStyle": {
+        "fontColor": "$FontColorLightGold",
+        "pointSize": "$MediumFontSize",
+        "fontFace": "BlizzardGlobal",
+        "alignment": {
+          "h": "left",
+          "v": "center"
+        }
+      }
+    },
+    "MarketAffordable": {
+      "rect": {
+        "x": 1450,
+        "y": 425,
+        "width": 472,
+        "height": 87
+      },
+      "filename": "..\\..\\..\\ReMoDDeD\\Panels\\Buttons\\ButtonMed_R",
+      "pressedFrame": 1,
+      "disabledFrame": 2,
+      "hoveredFrame": 3,
+      "onClickMessage": "BankPanelMessage:MarketAffordable"
+    }
+  }
+}

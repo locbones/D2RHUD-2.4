@@ -119,7 +119,7 @@ end
 package.loaded["lootfilter_config"] = nil
 local config = loadConfig("lootfilter_config.lua")
 assert(type(config) == "table", "lootfilter_config.lua must return a table")
-local version = "1.5.2"
+local version = "1.5.3"
 local mod = "RMD"
 for _, key in ipairs({"allowOverrides", "audioPlayback", "hide_mismatches", "strict"}) do
     assert(config[key] == nil or type(config[key]) == "boolean", key .. " must be boolean")
@@ -139,14 +139,14 @@ local qualityMap = { [1] = "Inferior", [2] = "Normal", [3] = "Superior", [4] = "
 local rarityMap = { [0] = "Normal", [1] = "Exceptional", [2] = "Elite" }
 local difficultyMap = { [0] = "Normal", [1] = "Nightmare", [2] = "Hell" }
 local locationMap = { onplayer = 0, equipped = 1 , onground = 3, dropping = 5, atvendor = "atvendor" }
-local colorMap = { white = "ÿc0", red = "ÿc1", green = "ÿc2", blue = "ÿc3", gold = "ÿc4", grey = "ÿc5", gray = "ÿc5", black = "ÿc6", tan = "ÿc7", orange = "ÿc8", yellow = "ÿc9", purple = "ÿc;", ["dark green"] = "ÿcA", turquoise = "ÿcN", pink = "ÿcO", lilac = "ÿcP" }
+local colorMap = { white = "\195\191c0", red = "\195\191c1", green = "\195\191c2", blue = "\195\191c3", gold = "\195\191c4", grey = "\195\191c5", gray = "\195\191c5", black = "\195\191c6", tan = "\195\191c7", orange = "\195\191c8", yellow = "\195\191c9", purple = "\195\191c;", ["dark green"] = "\195\191cA", turquoise = "\195\191cN", pink = "\195\191cO", lilac = "\195\191cP" }
 local colorMapLink = { white = "0", red = "1", green = "2", blue = "3", gold = "4", grey = "5", gray = "5", black = "6", tan = "7", orange = "8", yellow = "9", purple = ";", ["dark green"] = "A", turquoise = "N", pink = "O" }
-local ColorsOfTheRainbow = { "ÿc1", "ÿc2", "ÿc3", "ÿc4", "ÿc5", "ÿc7", "ÿc8", "ÿc9", "ÿc;", "ÿcA", "ÿcN", "ÿcO" }
-local FlameColors = { "ÿc1", "ÿc8", "ÿc5", "ÿcU" }
-local CandyColors = { "ÿcN", "ÿc3", "ÿc;", "ÿcO" }
-local OceanColors = { "ÿcN", "ÿc3", "ÿcT", "ÿcP" }
-local ChristmasColors = { "ÿc1", "ÿc2", "ÿcA", "ÿc7" }
-local ToxicColors = { "ÿc2", "ÿcA", "ÿc0" }
+local ColorsOfTheRainbow = { "\195\191c1", "\195\191c2", "\195\191c3", "\195\191c4", "\195\191c5", "\195\191c7", "\195\191c8", "\195\191c9", "\195\191c;", "\195\191cA", "\195\191cN", "\195\191cO" }
+local FlameColors = { "\195\191c1", "\195\191c8", "\195\191c5", "\195\191cU" }
+local CandyColors = { "\195\191cN", "\195\191c3", "\195\191c;", "\195\191cO" }
+local OceanColors = { "\195\191cN", "\195\191c3", "\195\191cT", "\195\191cP" }
+local ChristmasColors = { "\195\191c1", "\195\191c2", "\195\191cA", "\195\191c7" }
+local ToxicColors = { "\195\191c2", "\195\191cA", "\195\191c0" }
 
 RMDAreaIDs = {
     -- Act 1
@@ -338,7 +338,7 @@ local backgroundStyles = {
 
 -- Helper to remove color codes and split into itemType and itemName
 local function SplitItemName(Name)
-    local cleanName = Name:gsub("ÿc.", "")
+    local cleanName = Name:gsub("\195\191c.", "")
     local newlineIndex = cleanName:find("\n", 1, true)
     if newlineIndex then
         return cleanName:sub(1, newlineIndex), cleanName:sub(newlineIndex + 1)
@@ -481,7 +481,7 @@ local nameStyles = {
 
     RainbowStatic = function(Item, Name)
         local ColorsOfTheRainbowSize = #ColorsOfTheRainbow
-        local cleanName = Name:gsub("ÿc.", "")
+        local cleanName = Name:gsub("\195\191c.", "")
         local result = {}
         local offset = ((Item.ID * 2654435761) % 2 ^ 32) % ColorsOfTheRainbowSize
 
@@ -496,14 +496,14 @@ local nameStyles = {
     end,
 
     RainbowGroupStatic = function(Item, Name)
-        local cleanName = Name:gsub("ÿc.", "")
+        local cleanName = Name:gsub("\195\191c.", "")
         local colorIndex = ((Item.ID * 2654435761) % 2 ^ 32) % #ColorsOfTheRainbow + 1
         local color = ColorsOfTheRainbow[colorIndex]
         return color .. cleanName
     end,
 
     CottonCandyStatic = function(Item, Name)
-        local cleanName = Name:gsub("ÿc.", "")
+        local cleanName = Name:gsub("\195\191c.", "")
         local result = {}
         for i = 1, #cleanName do
             local colorIndex = (i % #CandyColors) + 1
@@ -513,7 +513,7 @@ local nameStyles = {
     end,
 
     FrostWaveStatic = function(Item, Name)
-        local cleanName = Name:gsub("ÿc.", "")
+        local cleanName = Name:gsub("\195\191c.", "")
         local result = {}
         for i = 1, #cleanName do
             local colorIndex = (i % #OceanColors) + 1
@@ -523,7 +523,7 @@ local nameStyles = {
     end,
 
     ToxicFogStatic = function(Item, Name)
-        local cleanName = Name:gsub("ÿc.", "")
+        local cleanName = Name:gsub("\195\191c.", "")
         local result = {}
         for i = 1, #cleanName do
             local colorIndex = (i % #ToxicColors) + 1
@@ -533,7 +533,7 @@ local nameStyles = {
     end,
 
     OpenFlamesStatic = function(Item, Name)
-        local cleanName = Name:gsub("ÿc.", "")
+        local cleanName = Name:gsub("\195\191c.", "")
         local result = {}
         for i = 1, #cleanName do
             local colorIndex = (i % #FlameColors) + 1
@@ -828,9 +828,10 @@ local function compileRule(raw, source, number)
     return compiled
 end
 
+local simulationEntries = {}
 local function compileRules(rules, source)
     assert(type(rules) == "table", source .. ": rules must be a table")
-    local compiled = {}
+    local compiled, entries = {}, {}
     for key in pairs(rules) do
         assert(type(key) == "number" and key >= 1 and key <= #rules and key % 1 == 0, source .. ": rules must be a dense list")
     end
@@ -840,7 +841,12 @@ local function compileRules(rules, source)
             diagnostics.disabled = diagnostics.disabled + 1
             report("errors", source .. " rule #" .. number .. ": " .. tostring(result))
         elseif result then compiled[#compiled + 1] = result; diagnostics.rules = diagnostics.rules + 1 end
+        entries[#entries + 1] = ok and result or {
+            source = source, number = number, skipped = ok and "disabled" or "invalid",
+            label = type(raw) == "table" and raw.label or nil, error = not ok and tostring(result) or nil,
+        }
     end
+    simulationEntries[source] = entries
     return compiled
 end
 
@@ -905,7 +911,9 @@ if debug then
     end
 end
 local debugCount = 0
+local simulationObserver
 local function trace(kind, compiled, ctx, reason)
+    if simulationObserver then simulationObserver(kind, compiled, reason) end
     if not debug or debugCount >= (tonumber(debug.limit) or 100) then return end
     if debug.code and debug.code ~= ctx.code then return end
     if debug.rule and tonumber(debug.rule) ~= compiled.number then return end
@@ -1056,4 +1064,85 @@ function ApplyFilter(Me, Item, Result, level)
     end
     -- Decide only after every applicable rule had a chance to match.
     if not matched and config.hide_mismatches and location == "onground" then Result.Hide = true end
+end
+
+-- Inspect the same evaluator used by real drops. The simulator owns its item,
+-- result and Lua state; observing a rule never changes its predicates/actions.
+function SimulateFilter(Me, Item, Result, level)
+    local selectedLevel = level or config.filter_level or 1
+    local report = { rules = {}, matched = false, audio = false, level = tonumber(selectedLevel) or 1 }
+    local positions = {}
+    local function describe(value, depth)
+        if type(value) ~= "table" then return tostring(value) end
+        if depth > 4 then return "..." end
+        local keys, parts = {}, {}
+        for key in pairs(value) do keys[#keys + 1] = key end
+        table.sort(keys, function(a,b) return tostring(a) < tostring(b) end)
+        for i, key in ipairs(keys) do
+            if i > 16 then parts[#parts + 1] = "..."; break end
+            parts[#parts + 1] = (type(key) == "number" and "" or tostring(key) .. "=") .. describe(value[key], depth + 1)
+        end
+        local meta = getmetatable(value)
+        return (meta and meta.__not and "NOT " or meta and meta.__or and "OR " or "") .. "{" .. table.concat(parts, ", ") .. "}"
+    end
+    local function append(entries)
+        for _, entry in ipairs(entries or {}) do
+            local rule = entry.rule
+            local row = { source = entry.source, number = entry.number, label = rule and rule.label or entry.label, actions = {}, conditions = {} }
+            if entry.skipped then row.status, row.reason = entry.skipped, entry.error or "Rule is disabled"
+            elseif entry.levels and not entry.levels(tonumber(selectedLevel)) then row.status, row.reason = "skipped", "filter_levels"
+            elseif not entry.codes(Item.Txt.Code) then row.status, row.reason = "skipped", "codes"
+            else row.status, row.reason = "not reached", "Not evaluated" end
+            if rule then
+                for _, key in ipairs({"codes", "filter_levels"}) do
+                    if rule[key] ~= nil then row.conditions[#row.conditions + 1] = {key, describe(rule[key], 0)} end
+                end
+                for _, key in ipairs(conditionNames) do
+                    if rule[key] ~= nil then row.conditions[#row.conditions + 1] = {key, describe(rule[key], 0)} end
+                end
+                for _, key in ipairs(actionNames) do
+                    if rule[key] ~= nil then row.actions[#row.actions + 1] = key .. (rule[key] == false and " = false" or "") end
+                end
+            end
+            report.rules[#report.rules + 1] = row
+            positions[entry] = #report.rules
+        end
+    end
+    append(simulationEntries.config)
+    -- Match rulesForLevel's override/fallback precedence exactly.
+    local key = tostring(selectedLevel)
+    if overrideLevels[key] then append(simulationEntries["override_rules.lua/" .. key] or simulationEntries["overrides.lua/" .. key])
+    elseif overrideLevels["level_" .. key] then append(simulationEntries["override_rules.lua/level_" .. key] or simulationEntries["overrides.lua/level_" .. key])
+    elseif overrideLevels.level_1 then append(simulationEntries["override_rules.lua/level_1"] or simulationEntries["overrides.lua/level_1"])
+    else append(simulationEntries["override_rules.lua"] or simulationEntries["overrides.lua"]) end
+    local previous, stopped = simulationObserver, nil
+    simulationObserver = function(kind, compiled, reason)
+        local position = positions[compiled]
+        if not position then return end
+        local row, rule = report.rules[position], compiled.rule
+        row.status, row.reason = kind == "matches" and "matched" or "mismatch", reason
+        if kind == "matches" then
+            report.matched = true
+            if config.audioPlayback and rule.audio then report.audio = true end
+        end
+        if (kind == "matches" and rule.hide) or (kind == "failures" and reason ~= "location" and rule.hide_mismatches) then
+            stopped = position
+            row.status = "hidden"
+            report.reason = (kind == "matches" and "Hidden by rule #" or "Hidden on mismatch by rule #") .. compiled.number .. (rule.label and (" (" .. rule.label .. ")") or "")
+        end
+    end
+    local ok, err = pcall(ApplyFilter, Me, Item, Result, selectedLevel)
+    simulationObserver = previous
+    if not ok then error(err) end
+    if stopped then
+        for i = stopped + 1, #report.rules do report.rules[i].status, report.rules[i].reason = "not reached", "An earlier rule hid the item" end
+    elseif not IsIdentified(Item.Data.Flags) and normalizeLocation(Item.Mode) ~= "onground" and Me and Me.ID ~= Item.Data.Owner and (Item.Data.Owner or 0) >= 450 then
+        report.reason = "Unidentified vendor items keep their native presentation"
+    elseif Result.Hide and not report.matched and config.hide_mismatches then
+        report.reason = "Hide unmatched ground items is enabled and no rule matched"
+    elseif not report.matched then report.reason = "No matching rules; the item keeps its original appearance"
+    else report.reason = "Visible after all applicable rules" end
+    report.hidden = Result.Hide == true
+    report.diagnostics = GetFilterDiagnostics()
+    return report
 end

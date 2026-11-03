@@ -218,6 +218,13 @@ static void RenderLootFilterEditor()
         ImGui::EndDisabled();
         ImGui::EndTabItem();
     }
+    if (HudText::BeginTabItem("Simulator")) {
+        try{
+            const auto candidate=sourceDirty?fullSource:!g_LootConfigDocument.error.empty()?g_LootConfigDocument.source:ComposeLootFilterConfig(selected,draftDirty?&draft:nullptr);
+            LootFilterConfig::Simulator::UI::Render(candidate,GetLootFilterBuilderCatalog(),GetLootFilterPreviewEngine(),GetLootFilterSimulatorOverrides());
+        }catch(const std::exception& error){HudText::TextWrapped("Unable to simulate this draft: %s",error.what());}
+        ImGui::EndTabItem();
+    }
     if (HudText::BeginTabItem("Styles")) {
         ImGui::BeginDisabled(!g_LootConfigDocument.error.empty() || sourceDirty);
         HudText::TextWrapped("Reusable styles supply actions. Rule values (including false) override a style. Use style = \"valuable\" in a rule.");

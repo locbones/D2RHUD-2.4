@@ -1,0 +1,14 @@
+const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/strict');
+const context=vm.createContext({window:{}});vm.runInContext(fs.readFileSync('tools/marketplace/server/public/market-experience.js','utf8'),context);
+const t=context.window.MarketRefine,catalog=JSON.parse(fs.readFileSync('tools/marketplace/server/public/assets/catalog.json','utf8'));
+const item={identified:true,ethereal:true,sockets:1,display:{saved_properties:[{id:39,value:20},{id:194,value:3},{id:39,value:100,list:'set'}],socketed_items:[{identified:true,display:{saved_properties:[{id:39,value:10}]}}]}};
+const row={item,price:[{kind:'gold',code:'gld',quantity:100}]},c={...t.defaults(),ethereal:1,sockets_min:3,stats:[{id:39,param:null,min:30,max:40}],cap:{code:'gld',quantity:100}};
+assert(t.matches(row,c));assert(!t.matches(row,{...c,ethereal:0}));assert(!t.matches(row,{...c,sockets_max:2}));assert(!t.matches(row,{...c,cap:{code:'r33',quantity:100}}));
+assert(!t.matches({...row,price:[...row.price,{code:'r33',quantity:1}]},c));assert(t.matches({...row,price:[{kind:'free'}]},c));
+assert.equal(t.property(item,{id:39,param:null}),30);assert.equal(t.property({...item,identified:false},{id:39,param:null}),null);
+assert(!t.matches({...row,item:{identified:true}},c));assert(!t.matches({...row,item:{...item,identified:false}},c));
+assert(t.matches({...row,item:{},bundle:{members:[{item}]}},c));
+assert.equal(t.property({display:{saved_properties:[{id:112,value:64}]}},{id:112,param:null},{stats:{112:{func:5}}}),50);
+assert.equal(t.property({display:{saved_properties:[{id:900,value:8}]}},{id:900,param:null},{stats:{900:{opBase:'level',opParam:3}}}),1);
+assert.equal(t.property({display:{saved_properties:[{id:303,value:2,param:384},{id:303,value:3,param:1}]}},{id:303,param:384}),2);
+console.log('Refinements: exact additive socket modifiers, set/unidentified exclusion, missing properties, skill parameters, per-level/scaled units, socket capacity, ethereal, exact-currency caps, free items and bundle membership passed.');

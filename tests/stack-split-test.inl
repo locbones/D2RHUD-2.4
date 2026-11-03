@@ -1,5 +1,7 @@
 bool splitTest=false,serializationFails=false,parseFails=false,loadFails=false;
 std::array<uint32_t,6> serializedStack{};
+std::array<std::array<uint8_t,0xe4>,3> splitTypes{};
+uintptr_t splitTypeTable=reinterpret_cast<uintptr_t>(splitTypes.data());uint64_t splitTypeCount=splitTypes.size();
 int __fastcall StackQuantity(Unit* item,int stat,uint16_t layer){assert(stat==70 && !layer);return Entry(item).quantity;}
 int __fastcall SerializeStack(Unit* item,ItemBits* bits,int saved,int children,int gamble){
     assert(saved==1 && !children && !gamble && bits->bits==32768*8 && !bits->bytes && !bits->bit);
@@ -24,9 +26,12 @@ void StackBindings(){
     bindings[0x1e5620]=reinterpret_cast<uintptr_t>(StackQuantity);bindings[0x207610]=reinterpret_cast<uintptr_t>(SerializeStack);
     bindings[0x204dc0]=reinterpret_cast<uintptr_t>(ParseStack);bindings[0x2f5770]=reinterpret_cast<uintptr_t>(LoadStack);
     bindings[0x209c60]=reinterpret_cast<uintptr_t>(StackMode);bindings[0x10e710]=reinterpret_cast<uintptr_t>(SendStack);
+    bindings[0x1c9fbf0]=reinterpret_cast<uintptr_t>(&splitTypeTable);bindings[0x1c9fbf8]=reinterpret_cast<uintptr_t>(&splitTypeCount);
 }
 Unit* PrepareSplit(int quantity=88,int page=0){
     Bind();StackBindings();Reset();splitTest=true;splitReady=true;serializationFails=parseFails=loadFails=false;
+    splitTypes={};splitTypeTable=reinterpret_cast<uintptr_t>(splitTypes.data());splitTypeCount=splitTypes.size();
+    const int16_t miscType=1;memcpy(table[2].data()+0x126,&miscType,sizeof(miscType));
     table[2][0x13a]=1;memcpy(table[2].data()+0x80,"Y20 ",4);auto source=Make(2);source->pItemData->pExtraData.pParentInv=&inv;source->pItemData->nPage=uint8_t(page);
     source->pItemData->dwQualityNo=6;Entry(source).quantity=quantity;acceptedX=4;acceptedY=3;return source;
 }
@@ -36,6 +41,31 @@ void FinishSplit(Unit* source,int amount){
     PacketHook(&game,&player,packet.data(),int(packet.size()));
 }
 void StackSplitContract(){
+    for(const char* code:{"aqv ","cqv ","jav ","Y20 "})for(int page:{0,3,4})for(bool secondary:{false,true}){
+        auto source=PrepareSplit(88,page);memcpy(table[2].data()+0x80,code,4);
+        const int16_t equipmentType=2;memcpy(table[2].data()+(secondary?0x128:0x126),&equipmentType,sizeof(equipmentType));
+        splitTypes[2][9]=1;splitTypes[2][10]=4;splitTypes[2][11]=5;
+        assert(!SplitEligible(&player,source)&&!SplitEligible(&player,source,true));
+        assert(!CanUseHook(source,1));UseHook(source,1);
+        assert(fallbackCalls==2&&!sends&&!lastCreated&&items.size()==1&&Entry(source).quantity==88&&splitView.phase==SplitView::Closed);
+        char text[1024]{};TooltipString footer{text,0,sizeof(text)-1};TooltipHook(&player,&footer,source);
+        assert(std::string(text)==nativeControls); // No misleading split action.
+        // A forged/stale Begin cannot bypass the same server-side exclusion.
+        splitExpectedGame=&game;splitView={SplitView::Waiting,1,player.dwUnitId,source->dwUnitId,88,GetTickCount64(),"stack",""};
+        auto begin=StackData::Encode({player.dwUnitId,source->dwUnitId,1,88,1,StackData::Begin});
+        PacketHook(&game,&player,begin.data(),int(begin.size()));
+        assert(!lastCreated&&items.size()==1&&Entry(source).quantity==88&&notifications.empty()&&splitView.phase==SplitView::Error);
+    }
+    for(size_t bodyField:{size_t(9),size_t(10),size_t(11)}){
+        auto source=PrepareSplit();splitTypes[1][bodyField]=1;assert(!SplitEligible(&player,source));
+    }
+    for(int invalid=0;invalid<3;++invalid){
+        auto source=PrepareSplit();
+        if(invalid==0)splitTypeTable=0;
+        if(invalid==1)splitTypeCount=0;
+        if(invalid==2){int16_t missing=3;memcpy(table[2].data()+0x126,&missing,2);}
+        assert(!SplitEligible(&player,source)&&!SplitEligible(&player,source,true));
+    }
     auto source=PrepareSplit();assert(CanUseHook(source,1));assert(!CanUseHook(source,2));UseHook(source,1);
     auto copy=lastCreated;assert(copy && splitView.phase==SplitView::Choosing && Entry(source).quantity==87 && Entry(copy).quantity==1);
     assert(splitView.iconCode=="Y20");
@@ -103,7 +133,7 @@ void StackSplitContract(){
     auto bytes=StackData::Encode({77,100,20,88,1,StackData::Finish});StackData::Request decoded;assert(StackData::Decode(bytes,decoded));
     for(int offset:{6,7,8,9,15,16,17,30,31,32,33,34,35}){auto bad=bytes;bad[offset]^=1;assert(!StackData::Decode(bad,decoded));}
     splitTest=false;Bind();Reset();
-    std::cout<<"Stack split: 88 -> 87+1 -> 68+20, identity/properties, personal inventory/cube/stash, no-room rollback, cancel, failure/replay/ownership gates and input-thread submission passed.\n";
+    std::cout<<"Stack split: equippable arrows/bolts/throwing/custom items retain native right-clicks and no split tooltip on all storage pages; client/server Begin rejection; ordinary 88 -> 87+1 -> 68+20, identity/properties, no-room rollback, cancel, failure/replay/ownership gates and input-thread submission passed.\n";
 }
 uintptr_t stackImage=0;Unit* nativeStackSource=nullptr;
 int __fastcall NativeStackZero(){return 0;}

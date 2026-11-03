@@ -19,7 +19,7 @@ inline void ColoredName(ImDrawList* draw,ImVec2 position,const std::string& text
         if(end<text.size()&&text[end]=='\n'){x=position.x;y+=ImGui::GetFontSize();++end;}i=end;
     }
 }
-inline void Card(size_t id,const Sample& sample,const Result& result,float width,const Catalog& catalog) {
+inline void Card(size_t id,const Sample& sample,const Result& result,float width,const Catalog& catalog,bool wholeFilter=false) {
     ImGui::PushID(int(id));const ImVec2 top=ImGui::GetCursorScreenPos();const float line=ImGui::GetTextLineHeight(),scale=line/18.f;
     const int nameLines=result.hidden?1:std::clamp(1+int(std::count(result.name.begin(),result.name.end(),'\n')),1,3);
     const float height=line*(5+nameLines)+32*scale;
@@ -53,7 +53,7 @@ inline void Card(size_t id,const Sample& sample,const Result& result,float width
     if(result.hidden)HudText::AddText(draw,ImVec2(labelMin.x+4,labelMin.y+4),IM_COL32(170,160,155,255),"Hidden");
     else ColoredName(draw,ImVec2(labelMin.x+4,labelMin.y+4),result.name,QualityColor(sample.quality));
     draw->PopClipRect();
-    const char* status=result.hidden?(result.matched?"Hidden by this rule":"Hidden on mismatch"):result.matched?"Matches this rule":"Unchanged / no match";
+    const char* status=wholeFilter?(result.hidden?"Hidden by filter":result.matched?"Matches filter rules":"Visible / no matching rule"):result.hidden?(result.matched?"Hidden by this rule":"Hidden on mismatch"):result.matched?"Matches this rule":"Unchanged / no match";
     ImU32 statusColor=result.hidden?IM_COL32(230,125,105,255):result.matched?IM_COL32(115,210,135,255):IM_COL32(145,145,140,255);
     draw->AddCircleFilled({top.x+17*scale,top.y+height-line*.5f-10*scale},3,statusColor);
     HudText::AddText(draw,ImVec2(top.x+28*scale,top.y+height-line-10*scale),statusColor,status);draw->PopClipRect();

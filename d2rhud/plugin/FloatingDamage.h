@@ -6,6 +6,8 @@
 #include <string>
 
 namespace FloatingDamage {
+// Render-thread boundary: discard gameplay feedback, preserving previews.
+void SetSession(uint64_t session);
 
 enum class Kind {
     Normal,
@@ -23,6 +25,7 @@ enum class Element {
 
 struct Config {
     bool enabled = true;
+    bool showDamageNumbers = true;
 
     float textSize = 38.0f;
     float criticalHitSize = 48.0f;
@@ -93,7 +96,7 @@ void LoadFromJson(const nlohmann::json& root);
 void SaveToJson(nlohmann::ordered_json& root);
 
 void QueueDamage(int amount, float screenX, float screenY, uint32_t unitType, uint32_t unitId, Kind kind, Element element = Element::Physical);
-void QueueGameDamage(int amount, float screenX, float screenY, uint32_t unitType, uint32_t unitId, Kind kind, Element element = Element::Physical);
+void QueueGameDamage(int amount, float screenX, float screenY, uint32_t unitType, uint32_t unitId, Kind kind, Element element = Element::Physical,uint64_t session=UINT64_MAX);
 void QueuePreviewAt(float screenX, float screenY, Kind kind);
 void QueuePreviewBurstAt(float screenX, float screenY);
 

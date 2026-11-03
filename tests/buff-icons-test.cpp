@@ -15,6 +15,9 @@ uint64_t D3D12::GetBuffIconAtlas(const std::string&, const BuffIcons::SpriteAtla
 
 int main(int argc, char** argv) {
     using namespace BuffIcons;
+    for(int tick=0;tick<10000;++tick)Update(nullptr,"RMD-MP",false);
+    assert(!SkillAssets().Busy()&&!SkillAssets().Value());
+    std::cout<<"10000 disabled buff updates: no asset worker.\n";
     constexpr uint8_t actualBonusCode[] = {0x40, 0x56, 0x41, 0x54, 0x41, 0x56, 0x48, 0x83, 0xec, 0x50};
     assert(IsSkillBonusFunction(actualBonusCode, sizeof(actualBonusCode)));
     assert(IsSkillBonusFunction(actualBonusCode + 1, sizeof(actualBonusCode) - 1));
@@ -35,8 +38,10 @@ int main(int argc, char** argv) {
         warmth.next = reinterpret_cast<uintptr_t>(&shield);
         uintptr_t first = reinterpret_cast<uintptr_t>(&warmth), list = reinterpret_cast<uintptr_t>(&first);
         std::memcpy(characterMemory.data() + 0x100, &list, sizeof(list));
-        database.skills[37] = {37, 0, "Warmth", "", {}};
-        database.skills[58] = {58, 0, "Energy Shield", "", {}};
+        auto fixtureDatabase=std::make_shared<Database>();
+        fixtureDatabase->skills[37] = {37, 0, "Warmth", "", {}};
+        fixtureDatabase->skills[58] = {58, 0, "Energy Shield", "", {}};
+        database=fixtureDatabase;
         auto choices = ReadAvailableSkills(reinterpret_cast<uintptr_t>(characterMemory.data()), [](int id, int level) { return LiveSkill{id, level}; });
         assert(choices.size() == 2 && choices[0].id == 58 && choices[1].id == 37);
         assert(choices[0].level == 20 && choices[1].level == 20);
@@ -136,7 +141,7 @@ int main(int argc, char** argv) {
         std::cout << "Loaded " << db.skills.size() << " state-bearing skills and " << db.atlases.size() << " original sprite atlases\n";
         if (argc > 2 && std::string(argv[2]) == "RMD-MP")
             assert(db.skills.at(138).sprite.find("ReMoDDeD/Panels/Skills/ST_Barbarian_SK") != std::string::npos);
-        database = std::move(db); loaded = true;
+        database = std::make_shared<const Database>(std::move(db)); loaded = true;
         available = {{138, 10, 10, true}};
         selectedStates = available;
         character = "Test:4";

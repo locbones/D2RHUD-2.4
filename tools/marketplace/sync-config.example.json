@@ -1,0 +1,6 @@
+{
+  "endpoint": "https://market.d2rmodding.com/index.php",
+  "player_id": "REPLACE_WITH_PAIRED_PLAYER_ID",
+  "token_env": "D2_MARKET_TOKEN",
+  "mod": "RMD-MP"
+}

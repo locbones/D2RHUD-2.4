@@ -7,6 +7,7 @@
 #include <cstring>
 #include <cwchar>
 #include <cstdio>
+#include "RuntimeDiagnostics.h"
 
 // Keep the faulting context, rather than a stack trace of the exception handler.
 // No heap dump or network upload: these files stay on the local computer.
@@ -60,6 +61,7 @@ inline LONG Handle(EXCEPTION_POINTERS* fault){
         Line(file,"D2RHUD crash UTC %04u-%02u-%02uT%02u:%02u:%02u pid=%lu thread=%lu build=%s %s\r\nexception=%08lX flags=%08lX\r\n",
             time.wYear,time.wMonth,time.wDay,time.wHour,time.wMinute,time.wSecond,GetCurrentProcessId(),GetCurrentThreadId(),__DATE__,__TIME__,e.ExceptionCode,e.ExceptionFlags);
         Address(file,"exception-address",reinterpret_cast<DWORD64>(e.ExceptionAddress));Address(file,"RIP",c.Rip);
+        RuntimeDiagnostics::WriteFaultContext(file);
         for(DWORD n=0;n<e.NumberParameters && n<EXCEPTION_MAXIMUM_PARAMETERS;++n)Line(file,"parameter[%lu]=%016llX\r\n",n,DWORD64(e.ExceptionInformation[n]));
         Line(file,"RAX=%016llX RBX=%016llX RCX=%016llX RDX=%016llX\r\nRSI=%016llX RDI=%016llX RBP=%016llX RSP=%016llX\r\nR8=%016llX R9=%016llX R10=%016llX R11=%016llX\r\nR12=%016llX R13=%016llX R14=%016llX R15=%016llX\r\n",
             c.Rax,c.Rbx,c.Rcx,c.Rdx,c.Rsi,c.Rdi,c.Rbp,c.Rsp,c.R8,c.R9,c.R10,c.R11,c.R12,c.R13,c.R14,c.R15);

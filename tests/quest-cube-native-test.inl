@@ -8,7 +8,7 @@ std::vector<Bytes> eventDefinitions;
 std::array<std::array<uint8_t,0x144>,512> costs{};
 std::array<Unit,2> units{};std::array<D2ItemDataStrc,2> metadata{};
 D2InventoryStrc inventory{};Unit owner{};Game game{};
-int hidden=7,playerStat=0,itemSpecial=5,statReads=0,baseReads=0;
+int hidden=7,playerStat=0,itemSpecial=5,quantity=2,statReads=0,baseReads=0;
 std::map<void*,int> serverPlayerStats;
 int phaseCreates=0,phaseSends=0;Unit phaseCube{};Unit* phaseCubeHead=&phaseCube;
 bool splitItemStats=false;int firstHidden=7,secondHidden=8,firstSpecial=6,secondSpecial=5;
@@ -16,6 +16,7 @@ template<class T>void Put(void* p,size_t offset,T value){memcpy(static_cast<uint
 uint32_t __fastcall Code(Unit* item){return QuestNative::Field<uint32_t>((eventDefinitions.empty()?definitions[item->dwClassId]:eventDefinitions.at(item->dwClassId)).data(),0x80);}
 int __fastcall Stat(void* stats,uint32_t key,void*){
     ++statReads;
+    if(key==(70u<<16))return quantity;
     if(splitItemStats && key==(398u<<16))return stats==reinterpret_cast<void*>(1)?firstHidden:secondHidden;
     if(splitItemStats && key==(474u<<16))return stats==reinterpret_cast<void*>(1)?firstSpecial:secondSpecial;if(key==(398u<<16))return hidden;if(key==(474u<<16))return itemSpecial;
     assert(key==(12u<<16) || key==(210u<<16));if(auto it=serverPlayerStats.find(stats);it!=serverPlayerStats.end())return it->second;return playerStat;
@@ -72,6 +73,26 @@ void Native(uint8_t* image){
             "1\t2\t18\t398\t7\t3\t12\t10\t18\t474\t5\t"+logic+"\tcap\n1\t2\t0\t\t\t\t\t\t\t\t\t\tcap\n1\t2\t0\t\t\t\t\t\t\t\t\t\tcap\n");
     };
     const auto extraRules=::testQuestRules;::testQuestRules.reset();SetExtendedConditions(true);
+    // Halloween's RNG item stat must AND with exact stack quantity. A stack
+    // larger than two must never fall through to the random unique recipe.
+    {
+        const auto savedRecipes=recipes;const auto savedPage=metadata[1].nPage;
+        recipes.assign(1,Make());recipes[0].header[0x10]=1;recipes[0].header[0x1b]=1;
+        memset(recipes[0].header.data()+0x1c,0,6*8);metadata[1].nPage=0;definitions[0][0x13a]=1;
+        Put(image,0x1ca0b18,recipes.data());Put(image,0x1ca0b20,uint64_t(recipes.size()));
+        sourceTable=ParseSource("enabled\tnuminputs\top\tparam\tvalue\top2\tparam2\tvalue2\toutput\n1\t1\t18\t398\t7\t18\t70\t2\tcap\n");
+        hidden=7;const auto untouched=recipes;
+        for(int count:{1,2,3,5,10,15,25,35,50,100,500}){
+            quantity=count;
+            assert(TryQuestMatch(&match,&game,&owner,output));
+            assert(match.matched==(count==2));
+            assert(!memcmp(untouched.data(),recipes.data(),sizeof(Recipe)));
+        }
+        quantity=2;hidden=8;assert(TryQuestMatch(&match,&game,&owner,output)&&!match.matched);
+        recipes=savedRecipes;metadata[1].nPage=savedPage;hidden=7;definitions[0][0x13a]=0;
+        Put(image,0x1ca0b18,recipes.data());Put(image,0x1ca0b20,uint64_t(recipes.size()));
+        std::cout<<"Native Halloween RNG+quantity AND rejects quantities 1, 3-500 and wrong RNG; accepts exactly two without changing recipes.\n";
+    }
     recipes[1].header[4]=recipes[2].header[4]=0;
     for(const char* logic:{"AND","OR",""})for(int mask=0;mask<8;++mask){
         setConditions(logic);hidden=(mask&1)?7:8;playerStat=(mask&2)?10:9;itemSpecial=(mask&4)?5:6;
@@ -140,6 +161,12 @@ void Native(uint8_t* image){
     serverPlayerStats[ownerStats.data()]=10;playerStat=0;assert(requestPhase(false)==4 && phaseSends==1 && !phaseCreates);
     assert(requestPhase(true)==0 && phaseCreates==1 && phaseSends==1);
     serverPlayerStats[ownerStats.data()]=9;assert(requestPhase(true)==1 && phaseCreates==1); // Recheck on commit.
+    setConditions("AND");sourceTable.conditions.at(0).tests[1]={18,70,2};sourceTable.conditions.at(0).tests[2]={};
+    definitions[0][0x13a]=1;hidden=7;quantity=5;phaseCreates=phaseSends=0;
+    assert(requestPhase(false)==1&&requestPhase(true)==1&&!phaseCreates&&!phaseSends);
+    quantity=2;assert(requestPhase(false)==4&&phaseSends==1&&!phaseCreates);
+    quantity=3;assert(requestPhase(true)==1&&!phaseCreates); // Quantity changed after prepare.
+    quantity=2;assert(requestPhase(true)==0&&phaseCreates==1);definitions[0][0x13a]=0;hidden=8;
     // Restore the entry detour now; the other fixture stubs are restored by
     // the enclosing harness after all native scanner cases have completed.
     memcpy(image+0x308840,QuestNative::original.data(),14);FlushInstructionCache(GetCurrentProcess(),image+0x308840,14);
@@ -196,15 +223,18 @@ void Native(uint8_t* image){
     const auto malformedSource=recipes;
     assert(TryQuestMatch(&match,&game,&owner,output)&&match.matched&&match.row==1);
     assert(!memcmp(malformedSource.data(),recipes.data(),recipes.size()*sizeof(Recipe)));
-    if(!eventTableFixture.empty()){
+    if(!eventTableFixture.empty()||!cornTableFixture.empty()){
+        const auto fixture=cornTableFixture.empty()?eventTableFixture:cornTableFixture;
         auto load=[&]<class T>(const char* name,std::vector<T>& rows){
-            std::ifstream file(eventTableFixture/name,std::ios::binary|std::ios::ate);assert(file);
+            std::ifstream file(fixture/name,std::ios::binary|std::ios::ate);assert(file);
             const auto bytes=file.tellg();file.seekg(0);uint32_t count=0;file.read(reinterpret_cast<char*>(&count),4);
             assert(count&&bytes==std::streamoff(4+size_t(count)*sizeof(T)));const auto start=rows.size();rows.resize(start+count);
             file.read(reinterpret_cast<char*>(rows.data()+start),size_t(count)*sizeof(T));assert(file);
         };
         load("weapons.bin",eventDefinitions);load("armor.bin",eventDefinitions);load("misc.bin",eventDefinitions);
         std::vector<Recipe> eventRecipes;load("cubemain.bin",eventRecipes);assert(eventRecipes.size()>298);
+        Put(image,0x1ca0390,eventDefinitions.data());Put(image,0x1ca0398,uint64_t(eventDefinitions.size()));
+        if(!eventTableFixture.empty()){
         const auto found=std::find_if(eventDefinitions.begin(),eventDefinitions.end(),[](const auto& row){return !memcmp(row.data()+0x80,"m01 ",4);});
         assert(found!=eventDefinitions.end());const auto mapItem=uint32_t(found-eventDefinitions.begin());
         assert(!UnrestrictedMapRecipe(eventRecipes[298]));
@@ -212,9 +242,40 @@ void Native(uint8_t* image){
         std::vector<Recipe> portal{eventRecipes[298]};
         for(uint32_t ordinary:{0u,1u,1544u,1545u}){units[0].dwClassId=ordinary;assert(!run(portal));}
         units[0].dwClassId=mapItem;assert(run(portal)&&match.row==0);
+        std::cout<<"Actual event BIN map recipe rejects ordinary items and existing m03/m04; accepts the appended m01 item.\n";
+        }
+        // Use the shipped event recipes and item definitions, including their
+        // exact BIN-only annotation companion, rather than synthetic rows.
+        if(!cornTableFixture.empty()){
+            const auto savedSource=sourceTable;const bool savedExtended=ExtendedConditionsEnabled();
+            std::ifstream file(cornTableFixture.parent_path().parent_path()/"D2RHUD/table-metadata.json",std::ios::binary);
+            assert(file);const auto document=nlohmann::json::parse(file);
+            const auto annotations=ParseSource(document.at("tables").at("cubemain").at("source").get<std::string>());
+            assert(annotations.rows==eventRecipes.size()&&!annotations.conditions.empty());
+            for(const auto& [index,condition]:annotations.conditions)assert(condition.valid&&condition.Matches(eventRecipes.at(index)));
+            const auto corn=std::find_if(eventDefinitions.begin(),eventDefinitions.end(),[](const auto& row){return !memcmp(row.data()+0x80,"Ev11",4);});
+            assert(corn!=eventDefinitions.end()&&(*corn)[0x13a]==1);
+            units[0].dwClassId=uint32_t(corn-eventDefinitions.begin());hidden=1;
+            std::vector<Recipe> cornRecipes;
+            for(size_t index:{13017u,13018u,13019u,13020u,13022u,13042u})cornRecipes.push_back(eventRecipes.at(index));
+            Put(image,0x1ca0b18,cornRecipes.data());Put(image,0x1ca0b20,uint64_t(cornRecipes.size()));
+            quantity=35;sourceTable={};SetExtendedConditions(true);
+            assert(!TryQuestMatch(&match,&game,&owner,output));assert(run(cornRecipes)&&match.row==5);
+            // Restoring op2's quantity rule prevents the observed fallback.
+            sourceTable.rows=cornRecipes.size();sourceTable.conditions.emplace(5,annotations.conditions.at(13042));
+            const std::map<int,int> expected{{100,0},{5,1},{10,2},{15,3},{50,4},{2,5}};
+            for(int count:{1,2,3,5,10,15,25,35,50,100,500}){
+                quantity=count;assert(TryQuestMatch(&match,&game,&owner,output));
+                assert(match.matched==expected.contains(count));
+                if(match.matched)assert(match.row==expected.at(count));
+            }
+            hidden=2;quantity=2;assert(TryQuestMatch(&match,&game,&owner,output)&&!match.matched);
+            sourceTable=savedSource;SetExtendedConditions(savedExtended);
+            Put(image,0x1ca0b18,recipes.data());Put(image,0x1ca0b20,uint64_t(recipes.size()));
+            std::cout<<"Shipped Halloween BIN recipes and companion: missing annotations reproduce the quantity-35 random unique; fixed recipes select RNG unique/gold/armor/bugged/organs/upgrade at exactly 2/5/10/15/50/100, reject other stacks/wrong RNG.\n";
+        }
         units[0].dwClassId=0;eventDefinitions.clear();
         Put(image,0x1ca0390,definitions.data());Put(image,0x1ca0398,uint64_t(definitions.size()));
-        std::cout<<"Actual event BIN map recipe rejects ordinary items and existing m03/m04; accepts the appended m01 item.\n";
     }
     metadata[1].nPage=3;
     recipes.assign(3,Make());recipes[2].header[4]=0;Put(image,0x1ca0b18,recipes.data());

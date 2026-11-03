@@ -305,7 +305,9 @@ void NativeSavedModifiers(uint8_t* image){
     std::cout<<"Real native serialization omits the old base-only selector and includes changed selectors from saved item modifiers.\n";
 }
 #include "cube-rune-bag-test.inl"
+#include "cube-bag-merge-test.inl"
 std::filesystem::path eventTableFixture;
+std::filesystem::path cornTableFixture;
 #include "quest-cube-native-test.inl"
 #include "quest-property-native-test.inl"
 #include "cube-useitem-test.inl"
@@ -365,7 +367,7 @@ void Executable(const std::filesystem::path& path){
         assert(!memcmp(&before,&itemData,sizeof(before)) && item.dwClassId==0);
     }
     installed=false;
-    NativeSavedModifiers(image);QuestPropertyNativeTest::Native(image);RuneBagTest::NativeOutputRefusal(image);
+    NativeSavedModifiers(image);QuestPropertyNativeTest::Native(image);RuneBagTest::NativeOutputRefusal(image);BagMergeTest::Native(image);
     testImage=0;VirtualFree(image,0,MEM_RELEASE);
     std::cout<<"All native cube signatures, MinHook lifecycle and actual native useitem parser/linker offsets passed in a private image.\n";
 }
@@ -388,8 +390,10 @@ void ConditionMetadata(const std::filesystem::path& excel){
     const auto header=text.substr(0,text.find('\n'));
     for(const char* column:{"op2","param2","value2","op3","param3","value3","oplogic"})assert(header.find(column)!=std::string::npos);
     std::ifstream binary(excel/"cubemain.bin",std::ios::binary);uint32_t rows=0;binary.read(reinterpret_cast<char*>(&rows),4);
-    const auto source=ParseSource(text);assert(source.rows==rows&&source.conditions.empty());
-    std::cout<<"Installed BIN metadata preserves all "<<rows<<" recipes and exposes seven blank extended-condition columns without changing current recipe behavior.\n";
+    const auto source=ParseSource(text);assert(source.rows==rows);
+    std::vector<Recipe> recipes(rows);binary.read(reinterpret_cast<char*>(recipes.data()),recipes.size()*sizeof(Recipe));assert(binary);
+    for(const auto& [index,conditions]:source.conditions)assert(conditions.valid&&conditions.Matches(recipes.at(index)));
+    std::cout<<"Installed BIN metadata preserves all "<<rows<<" recipes; every extended condition matches its compiled primary fields and input count.\n";
 }
 int main(int argc,char** argv){
     std::cout<<std::unitbuf;
@@ -399,7 +403,8 @@ int main(int argc,char** argv){
     for(const auto& text:{"useitem,vis=","useitem,vis=cap,visual=cap","usetype,vis=cap","useitem,vis=cap,qty=2","useitem,visual=\"bad"})assert(!Parse(text).valid);
     for(int kind=0;kind<3;++kind)for(int index:{0,4095}){Target target{kind,index};auto other=Target::Decode(target.Encode());assert(other.kind==kind && other.index==index);}
     if(argc>3)eventTableFixture=argv[3];
+    if(argc>4)cornTableFixture=argv[4];
     for(int n=1;n<=7;++n){const auto token=ParseUseItem("useitem"+std::to_string(n)+",eth");assert(token.present&&token.valid&&token.input==n&&token.native=="useitem,eth");}
     for(const char* token:{"useitem0","useitem8","useitem77","useitem2,useitem3"})assert(!ParseUseItem(token).valid);
-    ConditionParsing();Bind();Reset();CompiledVisualNames();Adapters();MapRecipes();RuneBagTest::Run();if(argc>2){RuneBagTest::LoadedTables(argv[2]);ConditionMetadata(argv[2]);}if(argc>1)Executable(argv[1]);
+    ConditionParsing();Bind();Reset();CompiledVisualNames();Adapters();MapRecipes();RuneBagTest::Run();BagMergeTest::Run();if(argc>2){RuneBagTest::LoadedTables(argv[2]);ConditionMetadata(argv[2]);}if(argc>1)Executable(argv[1]);
 }

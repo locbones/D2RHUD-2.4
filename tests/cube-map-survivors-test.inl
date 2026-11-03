@@ -77,8 +77,8 @@ void SurvivorsCombat(){
     run.census.Observe(99,false);game->dwGameFrame+=5;ProcessSurvivors(game,run,{&player});assert(!run.success && !run.clearedAt);run.census.Observe(99,true);
     game->dwGameFrame+=5;ProcessSurvivors(game,run,{&player});assert(!run.success && run.eventPhase==EventPhase::Active);
     for(uint8_t cls=1;cls<Survivors::Classes.size();++cls)assert(run.survival.builds.at(1000+cls).xp==cls && !run.survival.builds.at(1000+cls).kills);
-    game->dwGameFrame+=50;ProcessSurvivors(game,run,{&player});assert(run.success && run.eventPhase==EventPhase::Returning && run.returning.contains(55));
-    run.success=false;run.eventPhase=EventPhase::Active;run.phase=Phase::Running;game->dwGameFrame=100+600*25;
+    game->dwGameFrame+=250;ProcessSurvivors(game,run,{&player});assert(run.success && run.eventPhase==EventPhase::Returning && run.returning.contains(55));
+    run.success=false;run.clearedAt.reset();run.eventPhase=EventPhase::Active;run.phase=Phase::Running;game->dwGameFrame=100+600*25;
     ProcessSurvivors(game,run,{&player});assert(!run.success && run.timedOut && run.eventPhase==EventPhase::Returning);
     run.eventPhase=EventPhase::Active;run.phase=Phase::Running;run.timedOut=false;game->dwGameFrame=200;player.dwAnimMode=0;
     ProcessSurvivors(game,run,{&player});assert(run.eventPhase==EventPhase::Returning && !run.success);

@@ -1,7 +1,9 @@
+﻿#include "../RuntimeTelemetry.h"
 #include "HudText.h"
 #include "CubeMap.h"
 #include "CubeMapData.h"
 #include "CubeMapAutomapData.h"
+#include "DynamicAutomap.h"
 #include "CubeMapMonsterRevealData.h"
 #include "CubeMapNative.h"
 #include "CubeMapMonsterNative.h"
@@ -18,6 +20,8 @@
 #include "SummonPersistence.h"
 #include "CandyCornSave.h"
 #include "QuestJournal.h"
+#include "Inspect.h"
+#include "Spectate.h"
 #include "CubeVisual.h"
 #include "CompiledNames.h"
 #include "LegacyTransmogData.h"
@@ -799,6 +803,10 @@ void Sync(Game* game,Run& run,bool force=false){
         if(client->pGame!=game || client->dwClientState!=4)continue;
         auto player=Lookup(game,0,client->dwUnitGUID);
         Packet packet;packet.run=run.id;packet.sequence=run.sequence;packet.recipient=client->dwUnitGUID;packet.session=uint32_t(game->dwInitSeed);
+        if(run.clearedAt && run.census.Complete() && run.phase==Phase::Running){
+            const auto elapsed=game->dwGameFrame-*run.clearedAt;
+            if(elapsed<ClearReturnFrames)packet.returnSeconds=uint8_t((ClearReturnFrames-elapsed+24)/25);
+        }
         packet.active=run.phase!=Phase::Closed && player && Level(player)==run.level;
         if(run.event!=Event::None && run.returns.contains(packet.recipient)) {
             packet.event=run.event;packet.eventPhase=run.eventPhase;packet.die=run.die;
@@ -986,9 +994,9 @@ void UpdateClearTransition(Game* game,Run& run,bool scanMonsters){
         }
     }
     if(scanMonsters && complete && !run.clearedAt)run.clearedAt=game->dwGameFrame;
-    // Give delayed death spawns time to settle. Soul Surprise starts this
-    // delay only after its fragment has appeared and left the event floor.
-    if(run.event!=Event::Survivors && scanMonsters && complete && run.phase!=Phase::Returning && run.clearedAt && game->dwGameFrame-*run.clearedAt>=50){
+    // Allow ten seconds for loot collection and delayed death spawns. Soul
+    // Surprise starts this only after its fragment has left the event floor.
+    if(run.event!=Event::Survivors && scanMonsters && complete && run.phase!=Phase::Returning && run.clearedAt && game->dwGameFrame-*run.clearedAt>=ClearReturnFrames){
         run.phase=Phase::Returning;
         if(run.event!=Event::None){run.success=true;run.eventPhase=EventPhase::Returning;run.eventFrame=game->dwGameFrame;for(const auto& [id,p]:run.returns)run.returning.insert(id);}
         for(auto player:Players(game))if(Level(player)==run.level)run.returning.insert(player->dwUnitId);
@@ -997,6 +1005,7 @@ void UpdateClearTransition(Game* game,Run& run,bool scanMonsters){
     }
 }
 void Process(Game* game){
+    HudTelemetry::Scope measured(HudTelemetry::Feature::MapTick);
     std::lock_guard lock(serverMutex);auto& state=State(game);
     SendLayouts(game,state);
     ProcessTimedRewards(game,state);
@@ -1065,6 +1074,8 @@ void Process(Game* game){
     Sync(game,run);
 }
 void __fastcall TickHook(Game* game){
+    Inspect::Tick(game);
+    Spectate::Tick(game);
     if(installed.load() && game){
         std::lock_guard lock(serverMutex);auto run=Active(game);bool paused=false;
         if(run && run->event==Event::Survivors && run->eventPhase==EventPhase::Active)
@@ -1087,6 +1098,8 @@ void __fastcall DestroyHook(uint64_t id,Game* game){
     {std::lock_guard lock(layoutMutex);std::erase_if(serverLayoutSeeds,[&](const auto& entry){return entry.second.game==game;});}
     SummonPersistence::Destroyed(game);
     QuestJournal::Destroyed(game);
+    Inspect::Destroyed(game);
+    Spectate::Destroyed(game);
     originalDestroy(id,game);
 }
 void __fastcall SpawnPresetHook(Game* game,Room* room,void* preset){
@@ -1419,6 +1432,7 @@ bool Display(std::string& title,std::string& modifiers){
     const auto name=LocationName(packet.level);
     title=packet.event==Event::None ? std::string("Map - ")+(name ? name : std::to_string(packet.level)) : Info(packet.event).name;modifiers.clear();
     modifiers="Monster level: "+std::to_string(packet.monsterLevel)+"\n";
+    if(packet.returnSeconds)modifiers+="Returning to town in: "+std::to_string(packet.returnSeconds)+"s\n";
     if(packet.event==Event::None && packet.elitePacks)modifiers+="Champion/unique packs: "+std::to_string(packet.elitePacks)+"\n";
     if(packet.event!=Event::None){modifiers+=Info(packet.event).description;modifiers+='\n';}
     for(size_t i=0;i<packet.effects;++i) {
@@ -1612,7 +1626,8 @@ void Draw(float scale,bool clientReady){
             if(urgent)for(int n=4;n>0;--n)draw->AddRectFilled({p.x-(8+n*2)*scale,p.y-(4+n)*scale},{p.x+extent.x+(8+n*2)*scale,p.y+extent.y+(4+n)*scale},IM_COL32(160,0,0,int((12+10*sinf(float(GetTickCount64()%100000)/110))*n)),7*scale);
             HudText::AddText(draw,font,size,p,urgent ? IM_COL32(255,65,45,255) : IM_COL32(245,215,145,255),time);
         }
-        const auto text="Monsters remaining: "+std::to_string(remaining);
+        const auto text=packet.returnSeconds ? "Returning to town in: "+std::to_string(packet.returnSeconds)+"s"
+            : "Monsters remaining: "+std::to_string(remaining);
         auto& io=ImGui::GetIO();const float size=16*(std::max)(0.5f,scale);
         const auto font=EventFont(size);auto extent=HudText::CalcTextSizeA(font,size,FLT_MAX,0,text.c_str());
         const ImVec2 position{std::round((io.DisplaySize.x-extent.x)/2),std::round(io.DisplaySize.y*0.81f)};
@@ -1673,7 +1688,7 @@ bool Install(){
     bool ok=n==hooks.size();
     if(ok){for(auto hook:hooks)if(MH_QueueEnableHook(Native<void*>(hook))!=MH_OK)ok=false;ok=ok && MH_ApplyQueued()==MH_OK;}
     if(!ok){for(size_t i=0;i<n;++i){MH_DisableHook(Native<void*>(hooks[i]));MH_RemoveHook(Native<void*>(hooks[i]));}status.store("Cube map hook installation failed.");return false;}
-    installed.store(true);D2RHUD_CubeMapDiagnostics.installed=1;D2RHUD_CubeMapDiagnostics.survivorsEnabled=survivorsAvailable;CubeVisual::SetMapPrepare(Prepare);
+    installed.store(true);Inspect::SetAvailable(true);Spectate::SetAvailable(true);D2RHUD_CubeMapDiagnostics.installed=1;D2RHUD_CubeMapDiagnostics.survivorsEnabled=survivorsAvailable;CubeVisual::SetMapPrepare(Prepare);
     if(survivorsAvailable)status.store("Cube maps: map=<level ID> or map=zzz for random. Sanctuary Survivors: approach Charsi in Act 1.");
     else {
         std::snprintf(compatibilityStatus,sizeof(compatibilityStatus),"Cube maps available. Survivors unavailable: signature mismatch at D2R.exe+0x%x.",survivorsFailed);
@@ -1682,7 +1697,7 @@ bool Install(){
     return true;
 }
 void Uninstall(){
-    CubeVisual::SetMapPrepare(nullptr);if(!installed.exchange(false))return;
+    Inspect::SetAvailable(false);Spectate::SetAvailable(false);CubeVisual::SetMapPrepare(nullptr);if(!installed.exchange(false))return;
     D2RHUD_CubeMapDiagnostics.installed=0;
     D2RHUD_CubeMapDiagnostics.survivorsEnabled=0;
     std::vector<uint32_t> hooks{0x27e1d0u,0x3c1080u,0x2c35b0u,0x27c360u,0x2c5900u,0x28b920u,0x6c750u,0x85060u,0x2f8a60u,0x294e70u,0x294f40u,0x1e5440u,0x1e5590u,0x969f0u,0x93690u};

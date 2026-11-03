@@ -3,13 +3,14 @@
 #include <cstdint>
 #include <string>
 namespace TooltipText {
+void ResetSession(uint64_t session);
 constexpr size_t LegacyCapacity = 1024;
 constexpr size_t NativeCapacity = 16384;
 // Extra headroom also makes intermediate instruction-limit updates safe.
 constexpr size_t StorageCapacity = 32768;
 bool InstallLimits(); // Call only after the description detour has committed.
 bool LimitsExtended();
-void Remember(uint32_t unitId, const std::string& full);
+void Remember(uint32_t unitId, const std::string& full,uint64_t session=UINT64_MAX);
 std::string Expand(uint32_t unitId, const std::string& original);
 void SetViewport(float width, float height, float resolutionScale);
 void BeginPanel(uint32_t unitId, void* panel);

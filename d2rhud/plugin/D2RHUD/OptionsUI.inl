@@ -48,15 +48,24 @@ void ShowD2RHUDMenu()
             ImGui::SetScrollY(0);
         }
         auto values=[](){return std::make_tuple(
+            d2rHUDConfig.Inspect,d2rHUDConfig.InspectLabels,d2rHUDConfig.InspectIconHeight,d2rHUDConfig.InspectLabelSize,
             d2rHUDConfig.MonsterStatsDisplay,d2rHUDConfig.SunderedMonUMods,d2rHUDConfig.MinionEquality,
             d2rHUDConfig.GambleCostControl,d2rHUDConfig.CombatLog,d2rHUDConfig.TransmogVisuals,
             d2rHUDConfig.NoWidescreenBars,d2rHUDConfig.DisableRightClickItemPickup,d2rHUDConfig.QuantityRightClicks,
+            d2rHUDConfig.DynamicAutomap,d2rHUDConfig.DynamicAutomapInterval,
+            d2rHUDConfig.MercSellerUnlock,
+            d2rHUDConfig.MercIconsFix,
             d2rHUDConfig.MinimalistQuantityPopup,d2rHUDConfig.PersistentSummons,d2rHUDConfig.D3StyleWhirlwind,
             d2rHUDConfig.ExtendedItemcodes,d2rHUDConfig.ChatSounds,d2rHUDConfig.ChatSoundPath,d2rHUDConfig.FloatingDamage,
             d2rHUDConfig.HPRolloverMods,d2rHUDConfig.HPRolloverDifficulty,d2rHUDConfig.HPRolloverPercent,
-            d2rHUDConfig.SurvivorArena,d2rHUDConfig.ActVI,d2rHUDConfig.ExtendedCubeConditions,d2rHUDConfig.MultipleUseitemOutputs,d2rHUDConfig.MultipleUseitemInputs);};
+            d2rHUDConfig.SurvivorArena,d2rHUDConfig.ActVI,d2rHUDConfig.ExtendedCubeConditions,d2rHUDConfig.MultipleUseitemOutputs,d2rHUDConfig.MultipleUseitemInputs,d2rHUDConfig.BulkCubeOutputs,d2rHUDConfig.ExtendedCubeOutputs);};
         const auto before=values();
         auto applyAndSave=[&](){
+            Inspect::SetEnabled(d2rHUDConfig.Inspect);
+            DynamicAutomap::Configure(d2rHUDConfig.DynamicAutomap,d2rHUDConfig.DynamicAutomapInterval);
+            MercSeller::SetEnabled(d2rHUDConfig.MercSellerUnlock);
+            MercIcons::SetEnabled(d2rHUDConfig.MercIconsFix);
+            Inspect::SetAppearance({d2rHUDConfig.InspectLabels,d2rHUDConfig.InspectIconHeight,d2rHUDConfig.InspectLabelSize});
             cachedSettings.HPRollover=d2rHUDConfig.HPRolloverMods;
             cachedSettings.HPRolloverDiff=d2rHUDConfig.HPRolloverDifficulty;
             cachedSettings.HPRolloverAmt=d2rHUDConfig.HPRolloverPercent;
@@ -183,8 +192,66 @@ void ShowD2RHUDMenu()
                 }
             };
 
+        if(optionFilter.Visible(HudOptions::Category::Gameplay,"Spectate players","TCP/IP multiplayer party camera picture in picture sharing"))Spectate::DrawOptions();
+        if(optionFilter.Visible(HudOptions::Category::Gameplay,"Merc Seller Unlock","mercenary hireling NPC Seller Act IV hiring")){
+            ImGui::BeginDisabled(!MercSeller::Available());
+            drawCheckbox("Merc Seller Unlock", &d2rHUDConfig.MercSellerUnlock, "Merc Seller Unlock",
+                "Allows NPCs named in hireling.txt's Seller column to offer mercenaries, including Act IV sellers and custom NPCs. Reads the game's loaded TXT or BIN hireling table. Keeps native difficulty, Classic/Expansion, roster and purchase checks.",
+                "Defaults on. Reopen the NPC dialog after changing this option. TCP/IP requires the feature on both the client and host.", nullptr);
+            ImGui::EndDisabled();
+            if(ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))descriptionNote=MercSeller::Status();
+        }
+        if(optionFilter.Visible(HudOptions::Category::Gameplay,"Merc Icons Fix","mercenary hireling skilldesc HireableIconCel skill icons hiring panel")){
+            ImGui::BeginDisabled(!MercIcons::Available());
+            drawCheckbox("Merc Icons Fix", &d2rHUDConfig.MercIconsFix, "Merc Icons Fix",
+                "Uses HireableIconCel from skilldesc.txt for hireling skill icons in the hiring menu and mercenary panel, including all six skill slots. The value is a frame in the panel's hireling skill icon sprite; skills.txt's skilldesc link selects the description row.",
+                "Defaults on. Reopen the hireling panel after toggling. Blank or invalid values keep native icons. BIN-only releases use the existing exported table metadata. This is a client display option.", nullptr);
+            ImGui::EndDisabled();
+            if(ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))descriptionNote=MercIcons::Status();
+        }
+        if(optionFilter.Visible(HudOptions::Category::Items,"Inspect","players mercenaries summons equipment inventory charms town eye")){
+            drawCheckbox("Inspect", &d2rHUDConfig.Inspect, "Inspect",
+                "While in town, click the eye icon above another player, mercenary or allied summon. Displays equipped gear, both weapon sets and backpack contents in a read-only inventory panel.",
+                "Inspection closes when you leave town. TCP/IP requires an updated HUD on the host.", nullptr);
+            if(d2rHUDConfig.Inspect){
+                ImGui::Indent(18*menuScale);
+                drawCheckbox("Show Inspect labels", &d2rHUDConfig.InspectLabels, "Inspect labels",
+                    "Show a readable label beside each eye icon. Turn this off to display only the icons.",
+                    "Label visibility, size and icon height are saved for this mod.", nullptr);
+                ImGui::SetNextItemWidth(220*menuScale);
+                HudText::SliderInt("Eye icon height", &d2rHUDConfig.InspectIconHeight, 0, 240, "%d px");
+                if(ImGui::IsItemHovered()){
+                    descriptionTitle="Eye icon height";
+                    descriptionText="Move the eye icons higher above companions. Scales with your game resolution.";
+                    descriptionNote="Increase this if an icon overlaps a tall custom summon.";
+                }
+                if(d2rHUDConfig.InspectLabels){
+                    ImGui::SetNextItemWidth(220*menuScale);
+                    HudText::SliderInt("Inspect label size", &d2rHUDConfig.InspectLabelSize, 16, 40, "%d px");
+                }
+                ImGui::Unindent(18*menuScale);
+            }
+        }
         if (optionFilter.Visible(HudOptions::Category::Display,"Monster Stats Display","health resistance")) {
         drawCheckbox("Monster Stats Display", &d2rHUDConfig.MonsterStatsDisplay, "Monster Stats Display", "- Displays HP and Resistances of Monsters in real-time\n- Uses data retrieved directly from the game for accuracy\n- Values for -Enemy Resistance% (when applied by items) are not shown, they don't actually affect monsters\n\n", "This setting is best displayed using either of the Advanced Display Modes in D2RLAN", GetLockInfo(modName, &ModOverrideSettings::MonsterStatsDisplay));
+        }
+        if(optionFilter.Visible(HudOptions::Category::Display,"Dynamic Automap","monster CEL icons markers refresh interval map")){
+            ImGui::BeginDisabled(!DynamicAutomap::Available());
+            drawCheckbox("Dynamic Automap", &d2rHUDConfig.DynamicAutomap, "Dynamic Automap",
+                "Refreshes discovered monster CEL icons on the automap. Icons follow living monsters and disappear when they die or leave the client's loaded area. Terrain and object markers retain their normal behavior.",
+                "Defaults on. Works locally in offline and TCP/IP games; does not reveal undiscovered monsters.", nullptr);
+            if(d2rHUDConfig.DynamicAutomap){
+                ImGui::Indent(18*menuScale);
+                drawLabeledInput("Refresh interval",[&]{
+                    ImGui::SetNextItemWidth((std::max)(1.f,(std::min)(220*menuScale,ImGui::GetContentRegionAvail().x)));
+                    HudText::SliderInt("##DynamicAutomapInterval",&d2rHUDConfig.DynamicAutomapInterval,50,5000,"%d ms");
+                },"Automap refresh interval",
+                    "Time between monster icon updates, from 50 to 5000 milliseconds. Lower values update more frequently; higher values reduce scanning work.",
+                    "Default: 100 ms. Saved separately for each mod.",false);
+                ImGui::Unindent(18*menuScale);
+            }
+            ImGui::EndDisabled();
+            if(ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))descriptionNote=DynamicAutomap::Status();
         }
         if (optionFilter.Visible(HudOptions::Category::Gameplay,"Immunity Sunder","immune resistance pierce")) {
         if (drawCheckbox("Immunity Sunder", &d2rHUDConfig.SunderedMonUMods, "Immunity Sunder", "- Applies immunity pierce only to resistances of 100 or more\n- Includes unique modifiers and positive resistance bonuses\n- Stops immunity pierce at 99; auras and curses apply afterwards\n- TCP/IP uses the highest value per element among players in this game\n", "Requires mod files with immunity-pierce stats", GetLockInfo(modName, &ModOverrideSettings::SunderedMonUMods))) {
@@ -346,6 +413,16 @@ void ShowD2RHUDMenu()
                 "Adds useitem2 through useitem7 to select the corresponding recipe input column. Plain useitem selects input 1. Enable Useitem Multiple Outputs as well to use these commands in output b or output c.",
                 "Host setting. Compile indexed commands with the updated HUD. Applies immediately and saves automatically.",nullptr))CubeVisual::SetMultipleUseInputs(d2rHUDConfig.MultipleUseitemInputs);
         }
+        if(optionFilter.Visible(HudOptions::Category::Items,"Extended Outputs","cube cubemain output d e f g seven lvl plvl ilvl modifiers")){
+            if(drawCheckbox("Extended Outputs", &d2rHUDConfig.ExtendedCubeOutputs, "Extended Outputs",
+                "Adds output d through output g. Each supports its own d/e/f/g lvl, plvl, ilvl and mod 1 through mod 5 columns, including chance, param, min and max. Supports useitem and useitem1 through useitem7 with the matching useitem options; Bulk Cube Outputs also applies.",
+                "Host setting. Applies immediately and saves automatically. BIN releases need the exported cubemain source in data/D2RHUD/table-metadata.json.",nullptr))CubeVisual::SetExtendedOutputs(d2rHUDConfig.ExtendedCubeOutputs);
+        }
+        if(optionFilter.Visible(HudOptions::Category::Items,"Bulk Cube Outputs","cube cubemain qty quantity copies output b c space")){
+            if(drawCheckbox("Bulk Cube Outputs", &d2rHUDConfig.BulkCubeOutputs, "Bulk Cube Outputs",
+                "Makes qty=N in any cube output create N separate items when the result cannot stack. Stackable items keep native quantity handling. The complete batch must fit in the cube before ingredients are consumed. Socket-count commands keep their normal meaning.",
+                "Host setting. Applies immediately to TXT and BIN recipes and saves automatically.",nullptr))CubeVisual::SetBulkOutputs(d2rHUDConfig.BulkCubeOutputs);
+        }
         if (optionFilter.Visible(HudOptions::Category::Items,"Extended Cube Conditions","cubemain recipe op param value AND OR oplogic")) {
             if(drawCheckbox("Extended Cube Conditions", &d2rHUDConfig.ExtendedCubeConditions, "Extended Cube Conditions",
                 "Allows two extra cube recipe conditions: op2/param2/value2 and op3/param3/value3. Set oplogic to AND to require every active condition, or OR to require any active condition. Blank logic defaults to AND. Unused op slots are ignored.",
@@ -379,7 +456,7 @@ void ShowD2RHUDMenu()
 
         }
         if (optionFilter.Visible(HudOptions::Category::Display,"Floating Damage","DPS meter damage numbers")) {
-        if (drawCheckbox("Floating Damage", &d2rHUDConfig.FloatingDamage, "Floating Damage", "- Displays floating damage values above monsters\n- Coalesces rapid ticks (poison, fire, etc.)\n- Optional DPS meter with rolling window\n- Customize appearance in the Floating Damage menu\n\n", "Applies immediately and saves automatically. Appearance previews remain available while disabled.", GetLockInfo(modName, &ModOverrideSettings::FloatingDamage)))
+        if (drawCheckbox("Floating Damage", &d2rHUDConfig.FloatingDamage, "Floating Damage", "- Enables damage feedback and the rolling DPS meter\n- Choose floating numbers, DPS only, or both in Damage & DPS > Display\n- Coalesces rapid ticks (poison, fire, etc.)\n- Customize appearance in the Damage & DPS menu\n\n", "Applies immediately and saves automatically. Appearance previews remain available while disabled.", GetLockInfo(modName, &ModOverrideSettings::FloatingDamage)))
         {
             FloatingDamage::SetEnabled(d2rHUDConfig.FloatingDamage);
             settings.FloatingDamage = d2rHUDConfig.FloatingDamage;
