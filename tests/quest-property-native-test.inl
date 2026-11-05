@@ -1,6 +1,7 @@
 // Included by the private-image cube harness. Executes the shipped modern
 // property dispatcher/func1 and native saved-list addition/propagation.
 namespace QuestPropertyNativeTest {
+int legacyBagCalls=0;
 void Native(uint8_t* image) {
     const auto previousRules=::testQuestRules;const auto previousNotify=originalNotify;
     Reset();
@@ -8,8 +9,8 @@ void Native(uint8_t* image) {
     std::map<uint32_t,uint64_t> oldData;
     auto data=[&](uint32_t rva,uint64_t value){uint64_t old=0;memcpy(&old,image+rva,8);oldData.emplace(rva,old);memcpy(image+rva,&value,8);};
     auto stub=[&](uint32_t rva,auto fn){std::array<uint8_t,14> old{};memcpy(old.data(),image+rva,14);oldCode.emplace(rva,old);const uint8_t jump[]{0xff,0x25,0,0,0,0};memcpy(image+rva,jump,6);const auto target=reinterpret_cast<uintptr_t>(fn);memcpy(image+rva+6,&target,8);};
-    std::vector<std::array<uint8_t,0x144>> stats(100);
-    std::array<uint8_t,0x2e> propertyRow{};propertyRow[0x18]=1;
+    std::vector<std::array<uint8_t,0x144>> stats(512);
+    std::vector<std::array<uint8_t,0x2e>> propertyRows(264);auto& propertyRow=propertyRows[0];propertyRow[0x18]=1;
     std::array<SavedEntry,16> baseValues{},fullValues{},modValues{},playerValues{};
     std::array<uint8_t,0xb58> playerExtended{};
     auto vector=[&](uint8_t* list,size_t offset,auto& entries){auto address=reinterpret_cast<uintptr_t>(entries.data());uint64_t length=0,capacity=0x8000000000000010ULL;memcpy(list+offset,&address,8);memcpy(list+offset+8,&length,8);memcpy(list+offset+16,&capacity,8);};
@@ -20,7 +21,7 @@ void Native(uint8_t* image) {
     memcpy(extended.data()+0x58,&playerList,8);uint32_t playerFlags=0x80000000;memcpy(playerExtended.data()+0x1c,&playerFlags,4);
     const auto playerOwner=reinterpret_cast<uintptr_t>(&player);memcpy(playerExtended.data()+0x78,&playerOwner,8);
     data(0x1c9fb78,reinterpret_cast<uintptr_t>(stats.data()));data(0x1c9fb80,stats.size());
-    data(0x14bc568,reinterpret_cast<uintptr_t>(image+0x249b90));data(0x14bc5a0,reinterpret_cast<uintptr_t>(image+0x24a960));data(0x1c9ebc0,reinterpret_cast<uintptr_t>(&propertyRow));data(0x1c9ebc8,1);
+    data(0x14bc568,reinterpret_cast<uintptr_t>(image+0x249b90));data(0x14bc5a0,reinterpret_cast<uintptr_t>(image+0x24a960));data(0x1c9ebc0,reinterpret_cast<uintptr_t>(propertyRows.data()));data(0x1c9ebc8,propertyRows.size());
     stub(0x14383a0,&memmove);stub(0x1438100,&memset);stub(0x1434c50,Zero);
     // Select an already attached state-zero MAGIC list; the dispatcher, exact
     // property function, value shift, native additive setter and propagation run.
@@ -46,6 +47,34 @@ void Native(uint8_t* image) {
     assert(SavedStat(savedList.data(),96)==35);
     assert(std::any_of(playerValues.begin(),playerValues.end(),[](const auto& entry){return entry.key==(96u<<16)&&entry.value==35;}));
     propertyRow[0x18]=1;
+    // Reproduce the captured Vault-bag crash without jumping through the
+    // unrelated legacy table entry. The real native wrapper/getter must select
+    // legacy for format zero, then modern func17 after the targeted upgrade.
+    data(0x1852930+263*16,reinterpret_cast<uintptr_t>(+[](){++legacyBagCalls;}));
+    data(0x14bc5e8,reinterpret_cast<uintptr_t>(image+0x24b4d0));
+    propertyRows[263][0x18]=17;const uint16_t high=294;memcpy(propertyRows[263].data()+0x20,&high,2);
+    stats[high][8]=32;stats[high][0x15]=20;uint32_t pointBias=48575;memcpy(stats[high].data()+0x18,&pointBias,4);
+    SetSavedStat(savedList.data(),high,3);
+    using WrappedApply=void(__fastcall*)(int,Unit*,Unit*,void*,int,int,int,Property*,int,uint32_t,Unit*);
+    const auto wrapped=reinterpret_cast<WrappedApply>(image+0x248c00);
+    Property mal{263,0,-1,-1};legacyBagCalls=0;itemData.wItemFormat=0;
+    wrapped(7,nullptr,&item,nullptr,0,0,0,&mal,0,0x40,nullptr);
+    assert(legacyBagCalls==1&&SavedStat(savedList.data(),high)==3);
+    std::array<uint8_t,0x1b4> bagDefinition{};uint32_t bagCode=0x2031305a;memcpy(bagDefinition.data()+0x80,&bagCode,4);
+    data(0x1ca0390,reinterpret_cast<uintptr_t>(bagDefinition.data()));data(0x1ca0398,1);
+    D2InventoryStrc bagInventory{};bagInventory.dwSignature=0x1020304;bagInventory.pOwner=&player;bagInventory.pFirstItem=&item;player.pInventory=&bagInventory;
+    itemData.dwQualityNo=2;itemData.nPage=3;itemData.pExtraData.pParentInv=&bagInventory;
+    auto unchanged=itemData;unchanged.wItemFormat=StorageBagFormat::Current;
+    sourceMod="OtherMod";assert(!NormalizeStorageBagFormats(&player)&&!itemData.wItemFormat);
+    sourceMod="RMD-MP";itemData.nPage=0;assert(!NormalizeStorageBagFormats(&player)&&!itemData.wItemFormat);itemData.nPage=3;
+    assert(NormalizeStorageBagFormats(&player)==1&&itemData.wItemFormat==StorageBagFormat::Current);
+    assert(!memcmp(&unchanged,&itemData,sizeof(itemData))&&SavedStat(savedList.data(),high)==3);
+    assert(!NormalizeStorageBagFormats(&player));
+    wrapped(7,nullptr,&item,nullptr,0,0,0,&mal,0,0x40,nullptr);
+    assert(legacyBagCalls==1&&SavedStat(savedList.data(),high)==2);
+    itemData.wItemFormat=1;assert(!NormalizeStorageBagFormats(&player)&&itemData.wItemFormat==1);
+    sourceMod.clear();player.pInventory=nullptr;itemData.wItemFormat=0;
+    std::cout<<"Vault bag regression: native format-zero property dispatch reproduced; RMD cube upgrade changes only format; actual modern func17 extracts a Mal from 3 high rune points and retains 2.\n";
     // The production bonus adapter is exercised against actual native saved
     // modifier mutation and propagation, with only name parsing/notifications
     // replaced at their engine boundary.

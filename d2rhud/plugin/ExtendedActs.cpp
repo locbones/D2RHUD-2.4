@@ -5,6 +5,7 @@
 #include "ExtendedActsTransition.h"
 #include "ExtendedActsLevels.h"
 #include "ExtendedActsStrings.h"
+#include "ExtendedActsLayouts.h"
 #include "RestartGame.h"
 #include "LegacyTransmogData.h"
 #include "../Pattern.h"
@@ -244,6 +245,15 @@ bool SelectData(const std::filesystem::path& data,const nlohmann::json& config,b
                 if(old!=selected.archive)replacements.push_back({archive,old,*selected.archive});
             }
             if(before!=selected.text)replacements.push_back({target,before,selected.text});
+            continue;
+        }
+        if(layout){
+            const auto six=read(path(file.at("enabled"))),five=read(path(file.at("disabled")));
+            if(!MatchesDataHash(six,on)||!MatchesDataHash(five,off))throw std::runtime_error("Act VI template mismatch: "+relative);
+            std::string after;
+            try{after=LayoutEdits::Select(before,six,five,enabled);}
+            catch(const std::exception& error){throw std::runtime_error("Act VI layout is incompatible: "+relative+"; "+error.what());}
+            if(before!=after)replacements.push_back({target,before,std::move(after)});
             continue;
         }
         if(!MatchesDataHash(before,on) && !MatchesDataHash(before,off))throw std::runtime_error("Act VI target was edited: "+relative);

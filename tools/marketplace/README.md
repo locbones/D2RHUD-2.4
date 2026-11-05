@@ -368,6 +368,17 @@ Windows startup/recovery uses pythonw.exe and a console-free PowerShell child.
 The save helper also uses CREATE_NO_WINDOW. Startup diagnostics remain in
 `~/.d2r-marketplace/startup.log`; existing sync and worker logs are retained.
 
+For player troubleshooting, use **Pandemonium → Settings → Marketplace →
+Copy support report**. Send that one report instead of collecting individual
+status or log files. It combines installation and transfer state, native stash
+reload failures, automatic checks of every shared-stash page, launcher activity,
+and recent HUD/companion errors. Credentials and save contents are excluded;
+collection is read-only and runs only when requested. Repeated errors are
+condensed. New companion activity uses one tagged `diagnostics.log` with one
+size-limited previous log; old worker logs remain readable during upgrades.
+Recovery journals remain private internal state and should never be deleted as
+part of collecting a report.
+
 Player controls are shared by the HUD and website: edit the public name in
 Setup, search by seller, save individual trades or sellers, filter favorites,
 hide your own trades, or exclude trades with active offers from other bidders.

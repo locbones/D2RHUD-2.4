@@ -175,8 +175,11 @@ def main():
             page.write_bytes(b'legitimate native item movement after delivery')
             handles.append(shared(state / 'live.lock'))
             agent.fault = lambda stage: None
-            with a.lease(state / 'guard.lock'):
-                agent.recover()  # Must need no save lease and perform no page replay.
+            try:
+                agent.run()  # Applied recovery precedes the unrelated native gate.
+                raise AssertionError('Normal save access ignored the native lease')
+            except BlockingIOError:
+                pass
             close(handles.pop())
             assert not agent.pending.exists() and page.read_bytes() == b'legitimate native item movement after delivery'
             # Wake notifications eliminate the old 15-second close/reopen race.

@@ -60,15 +60,18 @@ trait MarketplaceModScopes {
         return ['mods'=>$rows,'versions'=>[['id'=>'2.4','available'=>true],['id'=>'3.x','available'=>false,'label'=>'Coming soon']]];
     }
     private array $identityDefinitions=[];
-    private function itemIdentity(string $hex,?string $scope=null): ?array {
+    private function identityDefinition(?string $scope=null): ?array {
         $name=$scope===null?$this->mod:(explode('|',$scope)[1]??'');
         if(!array_key_exists($name,$this->identityDefinitions)){
             $data=$this->run('SELECT identity_data FROM market_mods WHERE `mod`=?',[$name])->fetchColumn();
-            if(!$data&&$name==='RMD-MP')return SavedItemIdentity::read($hex);
+            if(!$data&&$name==='RMD-MP')return null;
             if(!$data)throw new MarketError(409,'Link this mod from Pandemonium to register its item definitions before trading.');
             $this->identityDefinitions[$name]=json_decode($data,true,512,JSON_THROW_ON_ERROR);
         }
-        return SavedItemIdentity::read($hex,$this->identityDefinitions[$name]);
+        return $this->identityDefinitions[$name];
+    }
+    private function itemIdentity(string $hex,?string $scope=null): ?array {
+        return SavedItemIdentity::read($hex,$this->identityDefinition($scope));
     }
     private function identityKey(string $hex,?string $scope=null): string {
         return $this->itemIdentity($hex,$scope)['key']??'bytes:'.hash('sha256',SavedItemIdentity::positionless($hex));

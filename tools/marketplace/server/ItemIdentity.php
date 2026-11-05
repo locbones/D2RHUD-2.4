@@ -46,6 +46,21 @@ final class SavedItemIdentity {
     public static function positionless(string $hex): string {
         $b=hex2bin($hex);for($bit=35;$bit<53&&$bit<strlen($b)*8;$bit++){$i=intdiv($bit,8);$b[$i]=chr(ord($b[$i])&~(1<<($bit%8)));}return bin2hex($b);
     }
+    public static function publicationMatchesSave(string $published,string $saved,?array $definitions=null): bool {
+        if($published===$saved)return true;
+        if(self::positionless($published)===self::positionless($saved))return true;
+        // Discovery can contain the native IFLAG_ITEM marker (bit 27) and a
+        // previous stash position. Neither changes the saved item. Require a
+        // real persistent identity to also ignore that marker, and equality
+        // of every remaining bit; seed
+        // alone must never make changed properties or a duplicate acceptable.
+        $a=self::read($published,$definitions);$b=self::read($saved,$definitions);
+        if(!$a||!$b||$a['key']===''||str_starts_with($a['key'],'bytes:')||$a['key']!==$b['key'])return false;
+        $normalize=static function(string $hex):string{
+            $bytes=hex2bin(self::positionless($hex));$bytes[3]=chr(ord($bytes[3])&~0x08);return bin2hex($bytes);
+        };
+        return $normalize($published)===$normalize($saved);
+    }
     public static function key(string $hex): string {return self::read($hex)['key']??'bytes:'.hash('sha256',self::positionless($hex));}
 }
 

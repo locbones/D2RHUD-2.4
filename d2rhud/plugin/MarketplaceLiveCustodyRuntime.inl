@@ -60,7 +60,7 @@ static void MarketplaceLiveRefreshTick() try {
     if(!MarketplaceLiveCursor())OnStashPageChanged(gLiveRefreshReturn-1);
 }catch(...){}
 
-static void MarketplaceLiveObserve(const char* event){
+static void MarketplaceLiveObserve(const char* event,uint32_t requestedPage){
     wchar_t profile[32768]{};const auto size=GetEnvironmentVariableW(L"USERPROFILE",profile,32768);
     if(!size||size>=32768)return;
     try{
@@ -69,7 +69,7 @@ static void MarketplaceLiveObserve(const char* event){
         const auto view=Marketplace::LiveCustody::window.Snapshot();
         const auto name=std::string_view(event).starts_with("native-hooks-")?L"live-native-hooks.json":L"live-native-status.json";
         Marketplace::LiveCustody::Write(root/name,{{"schema",1},{"event",event},{"tick",GetTickCount64()},
-            {"pid",GetCurrentProcessId()},{"page",gSelectedPage+1},{"enabled",view.enabled},{"parked",view.parked},{"status",view.status}},false);
+            {"requested_page",requestedPage},{"pid",GetCurrentProcessId()},{"page",gSelectedPage+1},{"enabled",view.enabled},{"parked",view.parked},{"status",view.status}},false);
     }catch(...){}
 }
 static bool MarketplaceLiveConfigure() try {

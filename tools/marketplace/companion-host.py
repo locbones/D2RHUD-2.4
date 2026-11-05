@@ -52,39 +52,46 @@ def record_alive(path):
         return False
 
 
-def log_line(path, line):
-    # Keep just the current and previous log; never accumulate timestamped logs.
+_log_lock = threading.Lock()
+
+
+def log_line(path, line, source='supervisor'):
+    # One bounded stream for all workers, tagged by mod and subsystem.
+    # Rotation and appends are serialized across drain/update threads.
     try:
-        if path.exists() and path.stat().st_size > 1024 * 1024:
-            os.replace(path, path.with_suffix('.previous.log'))
-        with path.open('a', encoding='utf-8') as stream:
-            stream.write(line)
+        with _log_lock:
+            if path.exists() and path.stat().st_size > 1024 * 1024:
+                os.replace(path, path.with_suffix('.previous.log'))
+            with path.open('a', encoding='utf-8') as stream:
+                stamp = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
+                for text in line.splitlines():
+                    stream.write(f'{stamp} [{source}] {text}\n')
     except OSError:
         pass
 
 
-def drain(stream, path):
+def drain(stream, path, source):
     try:
         for line in stream:
-            log_line(path, line)
+            log_line(path, line, source)
     finally:
         stream.close()
 
 
-def launch(config, profile, mode, runtime):
+def launch(config, profile, mode, runtime, diagnostics_root):
     root = Path(config['state_directory'])
     if mode == 'custody':
         script = runtime / 'custody-agent.py'
         arguments = [str(script), str(profile / 'custody-enrollment.json'), '--watch']
         record = root / 'worker.json'
-        log = root / 'worker.log'
+        log = diagnostics_root / 'diagnostics.log'
     else:
         script = runtime / 'sync-marketplace.py'
         arguments = [str(script), str(profile / 'sync-config.json'), config['save_directory'], '--watch']
         if mode == 'HC':
             arguments.append('--hardcore')
         record = profile / ('sync-' + mode + '.json')
-        log = profile / ('sync-' + mode + '.log')
+        log = diagnostics_root / 'diagnostics.log'
     if record_alive(record):
         return None
     env = dict(os.environ)
@@ -98,7 +105,7 @@ def launch(config, profile, mode, runtime):
     ticks = process_ticks(child.pid)
     atomic(record, {'pid': child.pid, 'started_ticks': str(ticks), 'script': str(script),
                     'entrypoint': str(script), 'mode': mode, 'managed': True})
-    threading.Thread(target=drain, args=(child.stdout, log), daemon=True).start()
+    threading.Thread(target=drain, args=(child.stdout, log, config.get('mod', 'RMD-MP') + '/' + mode), daemon=True).start()
     return child
 
 
@@ -132,7 +139,7 @@ def run(root, once=False):
             updater = runpy.run_path(str(Path(__file__).with_name('companion-update.py')))
             updater['check'](root, atomic, document)
         except Exception as error:
-            log_line(root / 'companion.log', 'Companion update deferred: ' + str(error)[:256] + '\n')
+            log_line(root / 'diagnostics.log', 'Companion update deferred: ' + str(error)[:256] + '\n')
     try:
         atomic(root / 'managed-host.json', {'pid': os.getpid(), 'started_ticks': str(process_ticks(os.getpid())), 'runtime': str(Path(__file__).resolve().parent)})
         while True:
@@ -165,13 +172,13 @@ def run(root, once=False):
                         key = (str(profile), mode)
                         child = children.get(key)
                         if child is None or child.poll() is not None:
-                            child = launch(config, profile, mode, profile_runtime)
+                            child = launch(config, profile, mode, profile_runtime, root)
                             if child is not None:
                                 children[key] = child
                     status.append({'mod': config.get('mod', 'RMD-MP'), 'profile': str(profile), 'running': True})
                 atomic(root / 'companion-status.json', {'schema': 1, 'at': int(time.time()), 'profiles': status})
             except (OSError, ValueError, KeyError) as error:
-                log_line(root / 'companion.log', str(error)[:512] + '\n')
+                log_line(root / 'diagnostics.log', str(error)[:512] + '\n')
             if once:
                 return 0
             time.sleep(2)
@@ -189,5 +196,5 @@ if __name__ == '__main__':
     try:
         raise SystemExit(run(args.root, args.once))
     except Exception as error:
-        log_line(args.root / 'companion.log', type(error).__name__ + ': ' + str(error)[:512] + '\n')
+        log_line(args.root / 'diagnostics.log', type(error).__name__ + ': ' + str(error)[:512] + '\n')
         raise SystemExit(1)

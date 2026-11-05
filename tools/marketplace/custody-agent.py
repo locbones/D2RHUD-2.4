@@ -1106,13 +1106,16 @@ class Agent:
 
     def run(self, preflight=False):
         with lease(self.root / "guard.lock"):
-            with self.save_access(pages=[]) as window:
-                live_mode = ("HC" if window["hardcore"] else "SC") if window else None
             rejected = {}
             try:
+                # A durable applied receipt only needs its cloud acknowledgement.
+                # Do not make that recovery wait for an unrelated loaded page or
+                # native read lease. Pre-write recovery retains its own write gate.
                 self.recover()
             except DepositRejected as error:
                 rejected['recovered'] = str(error)
+            with self.save_access(pages=[]) as window:
+                live_mode = ("HC" if window["hardcore"] else "SC") if window else None
             results = {}
             status_path = self.root / "status.json"
             warnings = io.document(status_path).get("delivery_warnings", {}) if status_path.exists() else {}

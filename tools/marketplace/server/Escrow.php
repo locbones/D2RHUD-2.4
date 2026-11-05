@@ -141,6 +141,9 @@ trait MarketplaceEscrow {
                         $v=$this->run('SELECT e.owner,e.scope,e.state,i.item_hex FROM escrow_items e JOIN items i ON i.id=e.item WHERE e.item=?',[$r['ledger_id']])->fetch();
                         if(!$v||$v['owner']!==$owner||$v['scope']!==$scope||$v['state']!=='delivered'||self::positionless($v['item_hex'])!==self::positionless($r['item_hex']))throw new MarketError(409,'Delivered item lineage does not match this owner and exact item. No save was changed.');
                     }
+                    // Resolve discovery differences before authorizing removal.
+                    // A rejected listing must leave the physical item untouched.
+                    foreach($items as $r)$this->depositPublication($owner,$scope,$r);
                     $packet=['items'=>$items,'balances'=>$balances];$kind='deposit';
                 }else{
                     $packet=$this->reserveClaim($owner,$scope,$id,$data);$proof=[];$kind='claim';
@@ -179,13 +182,32 @@ trait MarketplaceEscrow {
             return $this->ticket($this->run('SELECT * FROM custody_tickets WHERE id=?',[$id])->fetch());
         });
     }
+    private function depositPublication(string $owner,string $scope,array $r): ?array {
+        $key=hash('sha256',$r['page'].'|'.$r['tab'].'|'.$r['item_hex']);
+        $p=$this->run('SELECT * FROM published_items WHERE owner=? AND scope=? AND source_key=?',[$owner,$scope,$key])->fetch();
+        if(!$p){
+            $identity=$this->itemIdentity($r['item_hex'],$scope);
+            if($identity&&$identity['key']!==''&&!str_starts_with($identity['key'],'bytes:')){
+                $matches=$this->run('SELECT p.* FROM published_items p JOIN item_identities n ON n.item=p.item AND n.scope=p.scope WHERE p.owner=? AND p.scope=? AND n.identity_key=? ORDER BY p.expires DESC,p.listing',[$owner,$scope,$identity['key']])->fetchAll();
+                if(count(array_unique(array_column($matches,'item')))>1)throw new MarketError(409,'Ambiguous published item identity. Reconciliation is required before depositing.');
+                $p=$matches[0]??null;
+            }
+        }
+        if(!$p)return null;
+        $i=$this->run('SELECT owner,scope,item_hex FROM items WHERE id=?',[$p['item']])->fetch();
+        if(!$i||$i['owner']!==$owner||$i['scope']!==$scope||isset($r['ledger_id'])&&$r['ledger_id']!==$p['item'])throw new MarketError(409,'Published item ownership changed.');
+        $definitions=$this->identityDefinition($scope);
+        if(!SavedItemIdentity::publicationMatchesSave($i['item_hex'],$r['item_hex'],$definitions))throw new MarketError(409,'Published item contents changed. Refresh its listing before depositing.');
+        if(!isset($r['ledger_id'])&&$this->run('SELECT item FROM escrow_items WHERE item=?',[$p['item']])->fetch())throw new MarketError(409,'This item already entered Vault. Reconcile the local save.');
+        return $p;
+    }
     private function activateDeposit(string $owner,string $scope,string $receipt,array $packet): void {
         $actor=['id'=>$owner];
         foreach($packet['items'] as $r){
             $key=hash('sha256',$r['page'].'|'.$r['tab'].'|'.$r['item_hex']);
             $insert=$this->db->getAttribute(PDO::ATTR_DRIVER_NAME)==='mysql'?'INSERT IGNORE':'INSERT OR IGNORE';
             $this->run("$insert INTO custody_sources VALUES (?,?,?,?)",[$owner,$scope,$key,$receipt]);
-            $p=$this->run('SELECT * FROM published_items WHERE owner=? AND scope=? AND source_key=?',[$owner,$scope,$key])->fetch();
+            $p=$this->depositPublication($owner,$scope,$r);
             $lineage=$r['ledger_id']??null;$returning=null;
             if($lineage){
                 $returning=$this->run('SELECT e.*,i.item_hex FROM escrow_items e JOIN items i ON i.id=e.item WHERE e.item=?',[$lineage])->fetch();
@@ -193,11 +215,14 @@ trait MarketplaceEscrow {
             }
             $item=$lineage??($p?$p['item']:self::id());
             if($p){
-                if(!$lineage&&$this->run('SELECT item FROM escrow_items WHERE item=?',[$item])->fetch())throw new MarketError(409,'This item already entered Vault. Reconcile the local save.');
-                $i=$this->run('SELECT owner,item_hex FROM items WHERE id=?',[$p['item']])->fetch();if(!$i||$i['owner']!==$owner||$i['item_hex']!==$r['item_hex'])throw new MarketError(409,'Published item ownership changed.');
-                $this->invalidateOffers($p['listing'],$actor,'This item entered custody. Review and submit a funded offer.');
-                $this->run("UPDATE listings SET status='withdrawn',revision=revision+1 WHERE id=?",[$p['listing']]);
-                $this->run('DELETE FROM published_items WHERE listing=?',[$p['listing']]);
+                // Moving an item can leave older discovery positions pointing
+                // at the same ledger. Retire all of them, preserving history.
+                foreach($this->run('SELECT listing FROM published_items WHERE owner=? AND scope=? AND item=?',[$owner,$scope,$item])->fetchAll() as $prior){
+                    $this->invalidateOffers($prior['listing'],$actor,'This item entered custody. Review and submit a funded offer.');
+                    $this->run("UPDATE listings SET status='withdrawn',revision=revision+1 WHERE id=? AND status IN ('open','agreed')",[$prior['listing']]);
+                }
+                $this->run('DELETE FROM published_items WHERE owner=? AND scope=? AND item=?',[$owner,$scope,$item]);
+                $this->run('UPDATE items SET item_hex=? WHERE id=?',[$r['item_hex'],$item]);
             }elseif(!$returning){
                 // A delivered item can return to custody under its stable ledger ID.
                 // Explicit lineage is required; never merge by seed alone.

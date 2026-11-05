@@ -10,7 +10,9 @@ trait MarketplacePublication {
             $hex=self::text($data['item_hex']??null,65536);if(strlen($hex)<14||strlen($hex)%2||!preg_match('/^[0-9a-f]+$/D',$hex))throw new MarketError(422,'Invalid physical item bytes.');
             if(!isset($data['item_id'])){
                 $tab=self::number($data['tab']??null,1,7);self::number($data['page']??null,1,64);
-                $matches=$this->run('SELECT i.id FROM items i JOIN published_items p ON p.item=i.id WHERE i.item_hex=? AND p.owner=? AND p.scope=? AND p.tab=?',[$hex,$owner,$scope,$tab])->fetchAll();
+                $matches=$this->run('SELECT DISTINCT i.id FROM items i JOIN published_items p ON p.item=i.id WHERE i.item_hex=? AND p.owner=? AND p.scope=? AND p.tab=?',[$hex,$owner,$scope,$tab])->fetchAll();
+                if(!$matches&&($identity=$this->itemIdentity($hex,$scope))&&$identity['key']!==''&&!str_starts_with($identity['key'],'bytes:'))
+                    $matches=$this->run('SELECT DISTINCT p.item AS id FROM published_items p JOIN item_identities n ON n.item=p.item AND n.scope=p.scope WHERE p.owner=? AND p.scope=? AND n.identity_key=?',[$owner,$scope,$identity['key']])->fetchAll();
                 if(count($matches)>1)throw new MarketError(409,'Ambiguous physical item. Refresh before withdrawing it.');
                 $item=$matches[0]['id']??null;
             }else $item=self::ticketId($data['item_id']);
@@ -18,13 +20,13 @@ trait MarketplacePublication {
             $row=$this->run('SELECT owner,scope,item_hex FROM items WHERE id=?',[$item])->fetch();
             }
             if(!$row||$row['owner']!==$owner||$row['scope']!==$scope)throw new MarketError(404,'Physical item not found.');
-            if($row['item_hex']!==$hex)throw new MarketError(409,'The item changed. Refresh before withdrawing it.');
+            if(!SavedItemIdentity::publicationMatchesSave($row['item_hex'],$hex,$this->identityDefinition($scope)))throw new MarketError(409,'The item changed. Refresh before withdrawing it.');
             $held=$this->run('SELECT state FROM escrow_items WHERE item=?',[$item])->fetchColumn();
             if($held!==false&&$held!=='delivered')throw new MarketError(409,'This item is held in Vault. Use Return to delivery.');
             $listings=$this->run("SELECT id FROM listings WHERE item=? AND seller=? AND status IN ('open','agreed')",[$item,$owner])->fetchAll();
             foreach($listings as $listing){$this->invalidateOffers($listing['id'],$actor,'The seller withdrew this item before moving it.');$this->run("UPDATE listings SET status='withdrawn',revision=revision+1 WHERE id=?",[$listing['id']]);}
             $this->run('UPDATE published_items SET expires=0 WHERE item=? AND owner=? AND scope=?',[$item,$owner,$scope]);
-            foreach($this->run("SELECT id,packet FROM web_intents WHERE owner=? AND scope=? AND kind='price' AND status='queued'",[$owner,$scope])->fetchAll() as $intent){$packet=json_decode($intent['packet'],true,512,JSON_THROW_ON_ERROR);if(($packet['item_hex']??null)===$hex)$this->run("UPDATE web_intents SET status='failed',message=? WHERE id=?",['Item withdrawn before moving.',$intent['id']]);}
+            foreach($this->run("SELECT id,packet FROM web_intents WHERE owner=? AND scope=? AND kind='price' AND status='queued'",[$owner,$scope])->fetchAll() as $intent){$packet=json_decode($intent['packet'],true,512,JSON_THROW_ON_ERROR);if(isset($packet['item_hex'])&&SavedItemIdentity::publicationMatchesSave($packet['item_hex'],$hex,$this->identityDefinition($scope)))$this->run("UPDATE web_intents SET status='failed',message=? WHERE id=?",['Item withdrawn before moving.',$intent['id']]);}
             if($listings)$this->event($item,null,$actor,'withdrawn','Item withdrawn before moving; open offers cancelled.');
             $result=['withdrawn'=>true,'item_id'=>$item];$this->run('INSERT INTO commands VALUES (?,?,?,?)',[$owner,$id,$hash,self::json($result)]);return $result;
         });

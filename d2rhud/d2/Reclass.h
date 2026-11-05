@@ -160,7 +160,8 @@ public:
 	char pad_001C[24]; //0x001C
 	int32_t dwFileIndex; //0x0034
 	uint32_t dwItemLevel;
-	char pad_0038[6]; //0x0038
+	char pad_003C[4]; //0x003C
+	uint16_t wItemFormat; //0x0040
 	uint16_t wRarePrefix; //0x0042
 	uint16_t wRareSuffix; //0x0044
 	char pad_0046[2]; //0x0046

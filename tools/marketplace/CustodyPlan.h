@@ -3,6 +3,7 @@
 // to settle a sale. The workspace tool currently applies these to copies only.
 #include "../../d2rhud/plugin/MarketplaceWorkspace.h"
 #include "../../d2rhud/plugin/TableMetadata.h"
+#include "../../d2rhud/plugin/StorageBagFormat.h"
 
 namespace Marketplace::Custody {
 using Bytes=std::vector<uint8_t>;
@@ -123,7 +124,7 @@ inline SavedItem CurrencyBag(const Tables& tables,const std::vector<Requirement>
     auto def=std::find_if(tables.save.items.begin(),tables.save.items.end(),[](const auto& d){return std::string(d.code.data(),4)=="Z01 ";});
     Require(def!=tables.save.items.end()&&!def->armor&&!def->weapon&&!def->stackable&&!def->gold&&!def->tome&&!def->bodyPart&&!def->charm&&!def->questDifficulty,"This mod does not support currency bag parcels.");
     Bytes bytes;size_t pos=0;auto add=[&](uint32_t value,unsigned count){for(unsigned bit=0;bit<count;++bit){if(pos%8==0)bytes.push_back(0);bytes.back()|=uint8_t(((value>>bit)&1)<<(pos%8));++pos;}};
-    add(1u<<4,32);add(0,3);add(0,3);add(0,4);add(0,4);add(0,4);add(5,3);
+    add(1u<<4,32);add(StorageBagFormat::Current,3);add(0,3);add(0,4);add(0,4);add(0,4);add(5,3);
     for(unsigned char c:std::string("Z01 "))for(char bit:CandyCornSaveData::Detail::Codes[c])add(bit-'0',1);
     const auto uuid=Decode(identity);uint32_t seed=0;for(unsigned n=0;n<4;++n)seed|=uint32_t(uuid[n])<<(n*8);
     add(0,3);add(seed?seed:1,32);add(1,7);add(2,4);add(0,1);add(0,1);add(1,1);for(auto value:uuid)add(value,8);

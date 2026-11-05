@@ -78,6 +78,7 @@ int wmain(int argc,wchar_t** argv){
         {"currency_bag_id",parcelId},{"credit_balances",PriceJson({{"Z01","Gems",2,-1,25,-1,"bag","GB_Total"},{"Z01","Runes",2,-1,100,-1,"bag","RB_Low"}})}};
     const auto mint=Plan(parcelRequest,bagTables);const auto minted=ReadStash(DecodePage(mint.at("after_hex")),bagTables.save);
     assert(minted.size()==1&&minted[0].uuid==parcelId&&Balance(minted[0],"GB_Total")==25&&Balance(minted[0],"RB_Low")==100);
+    assert((C::Decode(minted[0].itemHex)[4]&7)==StorageBagFormat::Current);
     assert(mint.at("currency_bags").size()==1&&mint.at("delivered").empty()&&Plan(parcelRequest,bagTables)==mint);
     auto otherParcel=parcelRequest;otherParcel["currency_bag_id"]="abcdef0123456789abcdef0123456789";assert(Plan(otherParcel,bagTables).at("after_hex")!=mint.at("after_hex"));
     auto multiple=parcelRequest;multiple["credit_balances"][0]["quantity"]=9000;const auto many=Plan(multiple,bagTables);assert(many.at("currency_bags").size()==3);

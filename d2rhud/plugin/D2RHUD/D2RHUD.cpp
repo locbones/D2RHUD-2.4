@@ -450,6 +450,7 @@ static bool MarketplaceLiveAllowPage(uint32_t);
 static bool MarketplaceLivePreparePage(uint32_t);
 static int MarketplaceLiveSendFreshPage(uint32_t);
 static void MarketplaceLiveLoaded(uint32_t);
+static void MarketplaceLiveObserve(const char*,uint32_t requestedPage=0);
 static void MarketplaceLivePaint(void*);
 static void MarketplaceLiveSelectPage(void*);
 static void MarketplaceLivePollPage(void*);
@@ -698,6 +699,7 @@ static void MarketplaceLivePumpRequests(){
         MarketplaceLiveLoaded(gSelectedPage);
         if(!error.empty())Marketplace::LiveCustody::window.Error(error);
         if(!error.empty())MarketplaceStashNotice(error);
+        MarketplaceLiveObserve("page-load-rejected",*page+1);
         gMarketplacePageSwitching=false;return;
     }
     gMarketplacePreviousPage=gSelectedPage.load();gMarketplaceRollbackAttempted=false;gMarketplacePageRecovery=false;

@@ -3,6 +3,7 @@
 #include "CubeConditionNativeData.h"
 #include "CubeUseNativeData.h"
 #include "CubeBulkData.h"
+#include "StorageBagFormat.h"
 #include "CubeMapData.h"
 #include "LegacyTransmogData.h"
 #include "GameAssets.h"
@@ -342,8 +343,27 @@ template<class T>bool UnrestrictedMapRecipe(const T& recipe){
 #include "QuestCubeNative.inl"
 #include "QuestCubeRuntime.inl"
 #include "CubeBagMerge.inl"
+unsigned NormalizeStorageBagFormats(Unit* player){
+    if(!Equal(sourceMod,"RMD-MP")||!QuestNative::SafeInventory(player))return 0;
+    const auto items=RuneField<uint8_t*>(Native<void*>(0x1ca0390));
+    const auto count=RuneField<uint64_t>(Native<void*>(0x1ca0398));
+    if(!items||!count||count>65536)return 0;
+    unsigned changed=0;
+    for(auto item=player->pInventory->pFirstItem;item;item=item->pItemData->pExtraData.pNextItem){
+        auto data=item->pItemData;
+        if(data->nPage==3&&data->dwQualityNo==2&&!data->wItemFormat&&item->dwClassId<count&&
+           RuneField<uint32_t>(items+size_t(item->dwClassId)*0x1b4,0x80)==0x2031305au){
+            // Z01 is an RMD container, never a genuine pre-expansion item.
+            // Repair previously minted parcels in place without recreating
+            // the bag or changing its seed, UUID, balances or other modifiers.
+            data->wItemFormat=StorageBagFormat::Current;++changed;
+        }
+    }
+    return changed;
+}
 void CreateBody(Game* game,Unit* player,Recipe* recipe,Input* inputs) {
     if(!installed.load() || !recipe || !inputs) {DispatchCreate(game,player,recipe,inputs);return;}
+    NormalizeStorageBagFormats(player);
     if(CreateQuest(game,player,recipe,inputs))return;
     if(MergeStorageBags(game,player,recipe,inputs))return;
     if(!ExtendedUseActive() && DepositRunes(game,player,recipe,inputs))return;

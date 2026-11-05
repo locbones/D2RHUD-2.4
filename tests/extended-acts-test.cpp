@@ -108,6 +108,7 @@ void DataTests(){
 }
 #include "act6-level-edits-test.inl"
 #include "act6-string-edits-test.inl"
+#include "act6-layout-edits-test.inl"
 void FileConfigurationTests(bool txt){
     using namespace ExtendedActs;
     wchar_t executable[32768]{};assert(GetModuleFileNameW(nullptr,executable,DWORD(std::size(executable))));
@@ -184,7 +185,7 @@ void StartupDataTests(const char* sourcePath,bool gitLineEndings=false){
     // preserves that file and continues, including BIN-only and -txt launches.
     const auto controller=data/"global/ui/layouts/controller/questlogpanelexpansionhd.json";
     auto read=[](const std::filesystem::path& p){std::ifstream f(p,std::ios::binary);return std::string(std::istreambuf_iterator<char>(f),{});};
-    const auto originalController=read(controller);const auto customController=originalController+"\n ";
+    const auto originalController=read(controller);auto incompatible=LayoutEdits::Parse(originalController);incompatible["type"]="UnsupportedQuestPanel";const auto customController=incompatible.dump();
     {std::ofstream f(controller,std::ios::binary);f<<customController;}
     for(bool txt:{false,true}){
         assert(ConfigureData(data,config,false,txt,5)==Config::Disabled && !configured);
@@ -207,6 +208,7 @@ void StartupDataTests(const char* sourcePath,bool gitLineEndings=false){
     assert(ConfigureData(data,config,true,true,6)==Config::Enabled && !pendingRestart);check(true,true);
     assert(ConfigureData(data,config,false,true,6)==Config::Disabled && !pendingRestart);check(false,false);
     assert(ConfigureData(data,config,false,true,5)==Config::Disabled);check(false,false);
+    LayoutEditTests(data,config);
     LevelEditTests(data,config);check(false,false);
     StringEditTests(data,config,source);check(false,false);
     // Distribute only compiled tables and the existing JSON/layout assets.
@@ -240,10 +242,21 @@ void StartupDataTests(const char* sourcePath,bool gitLineEndings=false){
     }
     std::filesystem::rename(required.string()+".backup",required);
     assert(ConfigureData(data,config,true,false,6)==Config::Enabled && !pendingRestart && !compileText);
+    // Reproduce a six-act BIN launch after Pandemonium recolors the quest panel.
+    const auto originalQuest=read(required);auto themedQuest=LayoutEdits::Parse(originalQuest);
+    for(auto& child:themedQuest["children"])if(child.contains("fields")&&child["fields"].contains("filename")){
+        auto sprite=child["fields"]["filename"].get<std::string>();if(sprite.ends_with("_R")){sprite.back()='Y';child["fields"]["filename"]=sprite;}
+    }
+    const auto goldQuest=themedQuest.dump(2)+"\n";{std::ofstream f(required,std::ios::binary);f<<goldQuest;}
+    assert(ConfigureData(data,config,true,false,6)==Config::Enabled&&read(required)==goldQuest);
+    assert(ConfigureData(data,config,false,false,6)==Config::Disabled);
+    assert(LayoutEdits::Canonical(LayoutEdits::Parse(read(required)))==LayoutEdits::Canonical(LayoutEdits::Parse(read(data/"Pandemonium/ActVI/disabled/global/ui/layouts/questlogpanelexpansionhd.json"))));
+    {std::ofstream f(required,std::ios::binary);f<<originalQuest;}
+
     assert(ConfigureData(data,config,false,false,6)==Config::Disabled && !pendingRestart);
     assert(read(controller)==originalController);
     const auto sixController=read(controller);
-    {std::ofstream f(controller,std::ios::binary);f<<sixController<<"\n ";}
+    {auto incompatibleSix=LayoutEdits::Parse(sixController);incompatibleSix["type"]="UnsupportedQuestPanel";std::ofstream f(controller,std::ios::binary);f<<incompatibleSix.dump();}
     for(bool want:{false,true}){bool badLayout=false;try{ConfigureData(data,config,want,false,6);}catch(const std::exception& e){badLayout=std::string(e.what()).find("controller/questlogpanelexpansionhd.json")!=std::string::npos;}assert(badLayout);}
     {std::ofstream f(controller,std::ios::binary);f<<sixController;}
     bin("levels",0x184,248);bool bad=false;

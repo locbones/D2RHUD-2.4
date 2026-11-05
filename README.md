@@ -104,6 +104,10 @@ Changes since 1.7.9, including the accompanying marketplace and launcher updates
 - Added a large, centered gold reload notice and stopped unnecessary repeated stash refreshes.
 - Fixed stash pages flickering, appearing empty, or preventing page changes during marketplace updates.
 - Improved interrupted-transfer recovery to protect items and avoid repeating completed deliveries.
+- Start / repair now retries unfinished transfers after launcher updates and shows recovery errors; completed save writes no longer wait for stash access to confirm delivery.
+- Moving or sorting an item no longer causes false ownership errors during deposits, and its trade history stays attached.
+- Fixed Act VI startup rejecting quest and waypoint panels after changing UI colors or harmless file formatting.
+- Fixed a crash when extracting runes from Vault-created Storage Bags; existing affected bags are corrected when used in the cube.
 - Marketplace problems no longer prevent players from launching the game.
 - Trade notifications now focus on trades involving you, with a separate in-game notification volume control.
 - Added community gift bundles with announcements, claim messages, optional deadlines, and one claim per linked account.

@@ -196,6 +196,7 @@ def main():
                 bags = [i for i in rows['items'] if i['code'] == 'Z01']
                 assert len(bags) == 2 and rows['gold'] == 100
                 fresh = next(i for i in bags if i['item_uuid'])
+                assert bytes.fromhex(fresh['item_hex'])[4] & 7 == 5, 'Currency bag must use modern native property dispatch'
                 assert next(r['quantity'] for r in fresh['balances'] if r['stat'] == resource['stat']) == amount
                 assert all(r['quantity'] == 0 for r in fresh['balances'] if r['stat'] != resource['stat'])
                 assert a.io.document(agent.folder / 'MarketplaceReceipts_2.4_SC.json')['items']
