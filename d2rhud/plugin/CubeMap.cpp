@@ -221,7 +221,7 @@ struct GameState {
     uint32_t lastLayoutSent=0;
     uint32_t layoutEpoch=0;
     std::set<std::pair<uint32_t,uint32_t>> layoutResets;
-    std::map<uint32_t,std::map<Event,uint32_t>> timedRewards;
+    std::map<uint32_t,std::map<Event,RewardsData::Timer>> timedRewards;
     uint32_t rewardSequence=0,lastRewardSent=0;
     std::map<uint32_t,std::pair<int,uint32_t>> revealSent;
     uint32_t revealRevision=0,lastRevealSent=0;
@@ -796,7 +796,7 @@ void Sync(Game* game,Run& run,bool force=false){
     D2RHUD_CubeMapDiagnostics.level=run.level;
     D2RHUD_CubeMapDiagnostics.eventFailure=uint32_t(run.failure);
     if(run.event!=Event::None)D2RHUD_CubeMapDiagnostics.stage=9+uint32_t(run.eventPhase);
-    const auto markers=eventMap?EventMonsterMarkers(run):std::vector<AutomapData::Entry>{};
+    const auto markers=eventMap?EventMonsterMarkers(game,run):std::vector<AutomapData::Entry>{};
     if(eventMap && !++run.automapRevision)++run.automapRevision;
     auto client=game->pClientList;
     for(size_t n=0;client && n<64;++n,client=client->pNext) {
@@ -1113,7 +1113,12 @@ void __fastcall SpawnPresetHook(Game* game,Room* room,void* preset){
     if(game==rebuilding) {
         const auto run=Active(game);
         if(run && run->throne>=0 && Field<int>(preset,4)==run->throne){Set(preset,0x28,Field<uint32_t>(preset,0x28)|1u);return;}
-        if(run && !run->roster.empty() && RandomCandidate(Field<int>(preset,4))) {
+        const int id=Field<int>(preset,4);
+        // Ineligible random choices must not become an exemption for authored
+        // aquatic presets. Replace hostile terrain-dependent actors too, using
+        // the same safe roster; keep NPCs and ordinary-world restoration native.
+        if(run && run->level==Level(room) && !run->roster.empty() &&
+           (RandomCandidate(id) || (EncounterCandidate(id,true) && !TerrainIndependent(id)))) {
             std::array<uint8_t,0x30> copy{};memcpy(copy.data(),preset,copy.size());Set(copy.data(),4,RandomMonster(*run));
             originalSpawnPreset(game,room,copy.data());Set(preset,0x28,Field<uint32_t>(copy.data(),0x28));return;
         }

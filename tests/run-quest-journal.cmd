@@ -6,4 +6,8 @@ if not exist "%outputRoot%" mkdir "%outputRoot%"
 cl /nologo /std:c++latest /EHsc /O2 /MT /W4 /utf-8 /Fo"%outputRoot%\\" /Fe"%outputRoot%\quest-journal-test.exe" "%~dp0quest-journal-test.cpp"
 if errorlevel 1 exit /b 1
 "%outputRoot%\quest-journal-test.exe" %2 %3 %4
+if errorlevel 1 exit /b 1
+cl /nologo /std:c++latest /EHsc /O2 /MT /W4 /utf-8 /Fo"%outputRoot%\\" /Fe"%outputRoot%\quest-journal-progress-test.exe" "%~dp0quest-journal-progress-test.cpp"
+if errorlevel 1 exit /b 1
+"%outputRoot%\quest-journal-progress-test.exe"
 exit /b %errorlevel%

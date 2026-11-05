@@ -1,14 +1,14 @@
 // Exercise the shipped browser predicates with opposing barter directions.
 const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
 const source=fs.readFileSync('tools/marketplace/server/public/market.js','utf8');
-const names=['catalogName','isFree','definition','itemName','paymentDefinition','paymentName','searchWords','searchTextMatches','paymentOptions'];
+const names=['torchClassChoice','torchClassOf','torchClassName','catalogName','isFree','definition','itemName','paymentDefinition','paymentName','searchWords','searchTextMatches','paymentOptions'];
 const functions=names.map(name=>source.split('\n').find(line=>line.startsWith(`  function ${name}(`))).join('\n');
 const predicate=source.slice(source.indexOf('  function listingMatches('),source.indexOf('  function results('));
 const state={query:'zod rune',searchScope:'both',sellerQuery:'',sellerId:'',favorites:'all',hideOwn:false,hideOffers:false,quality:'',category:'',sort:'new',affordable:false,ready:false,
   catalog:{bases:{r33:{name:'Zod Rune',category:'misc'},rin:{name:'Ring',category:'jewellery'},gld:{name:'Gold',category:'misc'},Z01:{name:'Storage Bag',category:'misc'}},unique:{42:{name:'Stone of Jordan',code:'rin'}},set:{}}};
 const zod={code:'r33',quality:2,index:-1,quantity:40},ring={code:'rin',quality:7,index:42,quantity:1};
 state.snapshot={listings:[{id:'selling',seller:'Seller',item:zod,price:[ring],purchasable:true},{id:'buying',seller:'Buyer',item:ring,price:[zod],purchasable:true}]};
-const context=vm.createContext({state,window:{}});
+const context=vm.createContext({state,window:{},trading:{wantedRows:()=>[],matches:()=>true}});
 vm.runInContext(fs.readFileSync('tools/marketplace/server/public/market-experience.js','utf8'),context);
 context.experience={matches:row=>context.window.MarketRefine.matches(row,context.window.MarketRefine.defaults())};
 vm.runInContext(source.split('\n').find(line=>line.startsWith('  const bagNames='))+functions+predicate+';globalThis.rows=()=>filteredListings().map(r=>r.id).join(",");',context);

@@ -11,6 +11,13 @@ try {
     if(($_SERVER['HTTPS']??'')!=='on'&&getenv('D2_MARKET_LOCAL_TEST')!=='1')throw new MarketError(400,'HTTPS is required.');
     if(isset($_GET['environment'])&&$_GET['environment']!=='live')throw new MarketError(403,'Demo environments are available only in the owner browser workspace.');
     $service=market();$header=$_SERVER['HTTP_AUTHORIZATION']??$_SERVER['REDIRECT_HTTP_AUTHORIZATION']??'';
+    if(($_GET['action']??'')==='enroll'){
+        if($_SERVER['REQUEST_METHOD']!=='POST')throw new MarketError(405,'Use POST.');
+        if(!str_starts_with(strtolower($_SERVER['CONTENT_TYPE']??''),'application/json'))throw new MarketError(415,'Use JSON.');
+        $raw=file_get_contents('php://input',false,null,0,2097153);if(strlen($raw)>2097152)throw new MarketError(413,'Installation context too large.');
+        $data=json_decode($raw,true,32,JSON_THROW_ON_ERROR);if(!is_array($data))throw new MarketError(422,'Invalid installation context.');
+        echo json_encode($service->enrollInstallation($data,$_SERVER['REMOTE_ADDR']??'unknown'),JSON_THROW_ON_ERROR);exit;
+    }
     if(!preg_match('/^Bearer ([a-f0-9]{64})$/D',$header,$match))throw new MarketError(401,'Authentication required.');
     $action=$_GET['action']??'';$actor=$action==='custody'?$service->authAgent($match[1]):$service->auth($match[1]);$hc=$_GET['hardcore']??'0';if(!in_array($hc,['0','1'],true))throw new MarketError(422,'Invalid character mode.');
     $method=$_SERVER['REQUEST_METHOD'];$action=$_GET['action']??'';
@@ -24,7 +31,7 @@ try {
         $context=json_decode($raw?:'{}',true,32,JSON_THROW_ON_ERROR);if(!is_array($context))throw new MarketError(422,'Invalid link context.');
         $result=$service->browserTicket($actor,$context);
     }
-    elseif($method==='GET'&&$action==='sync')$result=$service->snapshot($actor,$hc==='1');
+    elseif($method==='GET'&&$action==='sync')$result=$service->snapshot($actor,$hc==='1',false,($_GET['torch_class']??'')==='1');
     elseif($method==='GET'&&$action==='inbox'){
         $after=$_GET['after']??'0';if(!preg_match('/^[0-9]{1,18}$/D',$after))throw new MarketError(422,'Invalid message cursor.');$filtered=($_GET['notification_filters']??'0')==='1';$result=$service->inbox($actor,(int)$after,$filtered?'game':'web',$filtered&&($_GET['preferences_only']??'0')==='1');
     }

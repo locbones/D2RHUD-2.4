@@ -115,8 +115,38 @@ inline void Debit(Page& page,const std::vector<Requirement>& price,const Setting
         Require(remaining==0,"The unpriced deposit cannot supply the complete payment.");if(r.kind!="item")parcel.balances.push_back(r);
     }
 }
+// Build a normal RMD currency container from the installed save definitions.
+// The claim ticket supplies its persisted UUID, so crash recovery recreates
+// exactly the same parcel rather than minting another identity.
+inline SavedItem CurrencyBag(const Tables& tables,const std::vector<Requirement>& balances,const std::string& identity){
+    Require(identity.size()==32&&identity.find_first_not_of("0123456789abcdef")==std::string::npos,"Invalid currency parcel identity.");
+    auto def=std::find_if(tables.save.items.begin(),tables.save.items.end(),[](const auto& d){return std::string(d.code.data(),4)=="Z01 ";});
+    Require(def!=tables.save.items.end()&&!def->armor&&!def->weapon&&!def->stackable&&!def->gold&&!def->tome&&!def->bodyPart&&!def->charm&&!def->questDifficulty,"This mod does not support currency bag parcels.");
+    Bytes bytes;size_t pos=0;auto add=[&](uint32_t value,unsigned count){for(unsigned bit=0;bit<count;++bit){if(pos%8==0)bytes.push_back(0);bytes.back()|=uint8_t(((value>>bit)&1)<<(pos%8));++pos;}};
+    add(1u<<4,32);add(0,3);add(0,3);add(0,4);add(0,4);add(0,4);add(5,3);
+    for(unsigned char c:std::string("Z01 "))for(char bit:CandyCornSaveData::Detail::Codes[c])add(bit-'0',1);
+    const auto uuid=Decode(identity);uint32_t seed=0;for(unsigned n=0;n<4;++n)seed|=uint32_t(uuid[n])<<(n*8);
+    add(0,3);add(seed?seed:1,32);add(1,7);add(2,4);add(0,1);add(0,1);add(1,1);for(auto value:uuid)add(value,8);
+    for(const auto& [symbol,id]:tables.save.bagStats){
+        const auto stat=CandyCornSaveData::Detail::Stat(tables.save,id);const auto maximum=BagMaximum(tables,symbol);uint64_t amount=0;
+        for(const auto& r:balances)if(r.kind=="bag"&&r.stat==symbol)amount+=r.quantity;
+        Require(amount<=maximum,"Currency parcel exceeds bag capacity.");const auto raw=int64_t(amount)+stat->saveAdd;
+        Require(id<511&&raw>=0&&uint64_t(raw)<(uint64_t(1)<<stat->saveBits),"Invalid currency parcel property.");add(id,9);add(uint32_t(raw),stat->saveBits);
+    }
+    for(const auto& r:balances)if(r.kind=="bag")Require(tables.save.bagStats.contains(r.stat),"Unknown currency parcel stat.");
+    add(511,9);while(pos%8)add(0,1);
+    auto item=ReadItem(bytes,tables.save,1);Require(item.uuid==identity&&item.code=="Z01"&&item.quality==2,"Currency parcel did not round-trip.");
+    for(const auto& r:balances)if(r.kind=="bag")Require(Balance(item,r.stat)==r.quantity,"Currency parcel balance did not round-trip.");return item;
+}
+inline unsigned CurrencyBagSlots(const Page& page,const Tables& tables){
+    if(!tables.sizes.contains("Z01"))return 0;const auto [w,h]=tables.sizes.at("Z01");if(!w||!h||w>16||h>13)return 0;
+    auto grid=Occupancy(page,tables);unsigned slots=0;for(unsigned tab=0;tab<7;++tab)for(unsigned y=0;y+h<=13;++y)for(unsigned x=0;x+w<=16;++x){
+        bool free=true;for(unsigned j=y;j<y+h;++j)for(unsigned i=x;i<x+w;++i)free=free&&!grid[tab][j*16+i];if(!free)continue;
+        ++slots;for(unsigned j=y;j<y+h;++j)for(unsigned i=x;i<x+w;++i)grid[tab][j*16+i]=true;
+    }return slots;
+}
 inline void Deliver(Page& page,const Parcel& parcel,const Settings& settings,const Tables& tables,uint32_t goldCap,Json* delivered=nullptr){
-    (void)settings; // Delivery is a distinct, unlisted route; deposit reservations do not apply here.
+    (void)settings; // Items and deliveries share a page. Occupancy includes every local item.
     auto grid=Occupancy(page,tables);
     for(const auto& original:parcel.items){const auto [w,h]=Size(original,tables);bool placed=false;
         for(unsigned tab=0;tab<7&&!placed;++tab)for(unsigned y=0;y+h<=13&&!placed;++y)for(unsigned x=0;x+w<=16&&!placed;++x){
@@ -145,13 +175,32 @@ inline Json ParcelJson(const Parcel& parcel){Json rows=Json::array();for(const a
 inline Json Plan(const Json& request,const Tables& tables){
     Require(request.at("schema")==1&&request.at("game_mode")=="2.4"&&request.at("mod")==tables.mod&&request.at("hardcore").is_boolean(),"Invalid custody simulation envelope.");
     const auto raw=DecodePage(request.at("source_hex").get<std::string>());
-    auto page=Read(raw,tables);Occupancy(page,tables);const auto settings=ReadSettings(request.at("settings"),tables.mod,request.at("hardcore").get<bool>());
+    auto page=Read(raw,tables);Occupancy(page,tables);auto settings=ReadSettings(request.at("settings"),tables.mod,request.at("hardcore").get<bool>());
+    const auto excluded=request.value("debit_exclude",Json::array());Require(excluded.is_array()&&excluded.size()<=4096,"Invalid protected currency parcels.");
+    for(const auto& row:excluded){const auto tab=unsigned(Integer(row.at("tab"),1,7));const auto hex=row.at("item_hex").get<std::string>();
+        const auto found=std::find_if(page.tabs[tab-1].begin(),page.tabs[tab-1].end(),[&](const auto& item){return item.itemHex==hex&&item.code=="Z01"&&item.quality==2;});
+        Require(found!=page.tabs[tab-1].end(),"Protected currency parcel changed.");settings.drafts.push_back({tab,hex,{}});
+    }
     Parcel removed;const auto selectors=request.value("take",Json::array());Require(selectors.is_array()&&selectors.size()<=512,"Too many selected items.");
     for(const auto& row:selectors){SavedItem item;item.tab=Integer(row.at("tab"),1,7);item.ordinal=Integer(row.at("ordinal"),1,4096);item.itemHex=row.at("item_hex").get<std::string>();TakeItem(page,item,removed);}
     if(request.contains("debit")&&!request.at("debit").empty())Debit(page,ReadPrice(request.at("debit")),settings,tables,removed);
     Parcel delivery;const auto credits=request.value("credit_items",Json::array());Require(credits.is_array()&&credits.size()<=512,"Too many delivery items.");for(const auto& row:credits)delivery.items.push_back(ReadItem(Decode(row.at("item_hex").get<std::string>()),tables.save,1));
     if(request.contains("credit_balances")&&!request.at("credit_balances").empty())delivery.balances=ReadPrice(request.at("credit_balances"));
+    const auto identity=request.value("currency_bag_id",std::string());Json bags=Json::array();
+    if(!identity.empty()&&std::any_of(delivery.balances.begin(),delivery.balances.end(),[](const auto& r){return r.kind=="bag";})){
+        auto remaining=delivery.balances;unsigned ordinal=0;Parcel parcel;
+        while(std::any_of(remaining.begin(),remaining.end(),[](const auto& r){return r.kind=="bag"&&r.quantity;})){
+            Require(ordinal<1456,"Too many currency parcel bags.");auto chunk=remaining;
+            for(size_t n=0;n<remaining.size();++n)if(remaining[n].kind=="bag"){
+                chunk[n].quantity=uint32_t((std::min)(uint64_t(remaining[n].quantity),BagMaximum(tables,remaining[n].stat)));Require(chunk[n].quantity||!remaining[n].quantity,"Currency bag cannot hold this resource.");remaining[n].quantity-=chunk[n].quantity;
+            }
+            std::erase_if(chunk,[](const auto& r){return r.kind!="bag"||!r.quantity;});
+            auto uuid=Decode(identity);const uint32_t index=ordinal++;for(unsigned n=0;n<4;++n)uuid[12+n]^=uint8_t(index>>(n*8));
+            parcel.items.push_back(CurrencyBag(tables,chunk,Hex(uuid)));
+        }
+        Json placed=Json::array();Deliver(page,parcel,settings,tables,0,&placed);bags=std::move(placed);std::erase_if(delivery.balances,[](const auto& r){return r.kind=="bag";});
+    }
     Json delivered=Json::array();Deliver(page,delivery,settings,tables,uint32_t(Integer(request.value("gold_cap",Json(0)),0,MaxResourceQuantity)),&delivered);
-    const auto after=Write(page,tables);return {{"schema",1},{"simulation",true},{"after_hex",Hex(after)},{"removed",ParcelJson(removed)},{"delivered",delivered},{"gold_before",Gold(Read(raw,tables))},{"gold_after",Gold(page)}};
+    const auto after=Write(page,tables);return {{"schema",1},{"simulation",true},{"after_hex",Hex(after)},{"removed",ParcelJson(removed)},{"delivered",delivered},{"currency_bags",bags},{"gold_before",Gold(Read(raw,tables))},{"gold_after",Gold(page)}};
 }
 }

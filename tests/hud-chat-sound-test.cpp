@@ -16,7 +16,7 @@
 namespace {
 std::atomic<uint64_t> clockNow{10000};
 std::vector<std::wstring> sounds, media;
-int beeps = 0, shells = 0, identityReads = 0;
+int beeps = 0, shells = 0, identityReads = 0, notificationCalls = 0, notificationVolume = -1;
 bool wavWorks = true, openWorks = true, playWorks = true;
 ULONGLONG WINAPI FixtureTime() { return clockNow.load(); }
 BOOL WINAPI FixturePlay(LPCWSTR path, HMODULE, DWORD flags) {
@@ -60,6 +60,8 @@ D2UnitStrc* GetClientPlayerUnit() { ++identityReads; return localUnit; }
 #undef mciSendStringW
 #undef ShellExecuteW
 #undef MessageBeep
+
+namespace HudSounds { void PlayNotification(const std::string&, int volume) { ++notificationCalls; notificationVolume=volume; } }
 
 namespace {
 std::string Utf8(const std::filesystem::path& path) {
@@ -214,24 +216,24 @@ void NativeTests(const std::filesystem::path& root) {
     const auto initialReads = identityReads;
     HudChat::Tick(100, true, true, "");
     Check(HudChat::Enabled() && identityReads == initialReads + 1, "native adapter obtains local client player identity");
-    const int initialBeeps = beeps;
+    const int initialBeeps = notificationCalls;
     HudChat::Observe("Remote", "Hello", UNIT_PLAYER, 42, true);
     HudChat::Tick(100, true, true, "");
-    Check(beeps == initialBeeps + 1, "eligible native alert uses system beep when no sounds exist");
+    Check(notificationCalls == initialBeeps + 1, "eligible alert requests volume-controlled playback without a system beep");
     for (int i = 0; i < 100; ++i) { ++clockNow; HudChat::Tick(100, true, true, ""); }
     Check(identityReads == initialReads + 1, "identity not looked up each frame");
     HudChat::Observe("Local", "Own message", UNIT_PLAYER, 7, true);
     HudChat::Tick(100, true, true, "");
-    Check(beeps == initialBeeps + 1, "own native chat suppressed");
+    Check(notificationCalls == initialBeeps + 1, "own native chat suppressed");
     localUnit = nullptr;
     auto slots = reinterpret_cast<D2ClientStrc**>(Memory() + 0x1d637f0);
     D2ClientStrc host{}, client{}; strcpy_s(host.szName, "Host"); strcpy_s(client.szName, "Local");
     slots[0] = &host; slots[2] = &client; *reinterpret_cast<int32_t*>(Memory()+0x1d442d8) = 2;
     clockNow += 1000; HudChat::Tick(101, true, true, "");
     HudChat::Observe("Host", "Joiner message", UNIT_PLAYER, 1, true); HudChat::Tick(101, true, true, "");
-    Check(beeps == initialBeeps + 2, "joiner fallback uses own client slot rather than host slot zero");
+    Check(notificationCalls == initialBeeps + 2, "joiner fallback uses own client slot rather than host slot zero");
     HudChat::Observe("Local", "Joiner own name"); HudChat::Tick(101, true, true, "");
-    Check(beeps == initialBeeps + 2, "joiner fallback suppresses own name");
+    Check(notificationCalls == initialBeeps + 2, "joiner fallback suppresses own name");
     slots[2] = nullptr;
     clockNow += 1000; HudChat::Tick(102, true, true, "");
     const auto missingReads = identityReads;
@@ -241,12 +243,12 @@ void NativeTests(const std::filesystem::path& root) {
     unit.pPlayerData = static_cast<D2PlayerDataStrc*>(noAccess); localUnit = &unit;
     clockNow += 1000; HudChat::Tick(103, true, true, "");
     HudChat::Observe("Remote", "Stale player-data pointer", UNIT_PLAYER, 42, true); HudChat::Tick(103, true, true, "");
-    Check(beeps == initialBeeps + 3, "unreadable native name safely falls back to unit identity");
+    Check(notificationCalls == initialBeeps + 3, "unreadable native name safely falls back to unit identity");
     const auto failedSound = root / "failed.wav"; File(failedSound);
     clockNow += 1000; wavWorks = false;
     HudChat::Observe("Remote", "Decoder failure", UNIT_PLAYER, 42, true);
     HudChat::Tick(103, true, true, Utf8(failedSound));
-    Check(beeps == initialBeeps + 4, "native audio failure falls back to system beep");
+    Check(notificationCalls == initialBeeps + 4, "custom sound uses the same volume-controlled notification path");
     wavWorks = true;
     HudChat::Tick(103, true, false, "");
     HudChat::Observe({static_cast<char*>(noAccess),64}, {static_cast<char*>(noAccess),256});
@@ -256,14 +258,21 @@ void NativeTests(const std::filesystem::path& root) {
     unit.pPlayerData = &data;
     clockNow += 1000;
     HudChat::Tick(0, true, true, "");
-    const auto beforeJoiner = beeps;
+    const auto beforeJoiner = notificationCalls;
     HudChat::Observe("Remote", "Joiner without host token", UNIT_PLAYER, 42, true);
     HudChat::Tick(0, true, true, "");
-    Check(HudChat::Enabled() && beeps == beforeJoiner + 1, "joiner notifications work with zero native session token");
+    Check(HudChat::Enabled() && notificationCalls == beforeJoiner + 1, "joiner notifications work with zero native session token");
     HudChat::Observe("Remote", "Leaving joiner session", UNIT_PLAYER, 42, true);
     HudChat::Tick(0, false, true, "");
     HudChat::Tick(0, true, true, "");
-    Check(beeps == beforeJoiner + 1, "explicit leave boundary clears zero-token joiner messages");
+    Check(notificationCalls == beforeJoiner + 1, "explicit leave boundary clears zero-token joiner messages");
+    Check(notificationVolume == 30 && beeps == 0, "quiet default gain reaches playback without system beep");
+    clockNow += 1000; HudChat::Observe("Remote", "Volume test", UNIT_PLAYER, 42, true);
+    HudChat::Tick(0, true, true, "", 7);
+    Check(notificationVolume == 7, "configured volume reaches chat and marketplace playback");
+    clockNow += 1000; HudChat::Observe("Remote", "Mute test", UNIT_PLAYER, 42, true);
+    HudChat::Tick(0, true, true, "", 0);
+    Check(notificationVolume == 0 && beeps == 0, "mute is passed through without a system beep fallback");
     VirtualFree(noAccess, 0, MEM_RELEASE); localUnit = nullptr;
 }
 }

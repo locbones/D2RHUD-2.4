@@ -14,38 +14,86 @@ try{
     if(!isset($_SESSION['csrf']))$_SESSION['csrf']=bin2hex(random_bytes(32));
     $m=market();$action=$_GET['action']??'snapshot';$method=$_SERVER['REQUEST_METHOD'];$hc=$_GET['hardcore']??'0';
     if(!in_array($hc,['0','1'],true))throw new MarketError(422,'Invalid character mode.');$hc=$hc==='1';
-    $actor=isset($_SESSION['actor'])?$m->browserActor($_SESSION['actor']):null;
+    $actor=null;
+    if(isset($_SESSION['actor'])){
+        try{$actor=$m->browserActor($_SESSION['actor']);}
+        catch(MarketError $e){
+            if($e->status!==401)throw $e;
+            session_regenerate_id(true);
+            $_SESSION=['csrf'=>bin2hex(random_bytes(32))];
+        }
+    }
     if($actor&&!hash_equals($m->browserSessionStamp($actor),$_SESSION['stamp']??'')){unset($_SESSION['actor']);$actor=null;}
-    $live=$m;$environment=$_GET['environment']??'live';if(!in_array($environment,['live','demo'],true))throw new MarketError(422,'Invalid marketplace environment.');
-    if($environment==='demo'&&!in_array($action,['owner-status','owner-command','link','unlink'],true)){$live->requireOwner($actor);$demoGate=MarketplaceDemo::gate(marketOwnerDirectory(),LOCK_SH);$m=MarketplaceDemo::open(marketOwnerDirectory(),$actor);}
-    if(!in_array($action,['link','unlink','markets','owner-status','owner-command'],true))$m=$m->selectMod($_GET['mod']??'RMD-MP',$_GET['version']??'2.4');
+    $live=$m;$authenticated=$actor;$impersonation=null;
+    if(isset($_SESSION['impersonation'])){
+        if($authenticated)$impersonation=$live->impersonationContext($authenticated,$_SESSION['impersonation']);
+        if(!$impersonation){unset($_SESSION['impersonation']);$_SESSION['csrf']=bin2hex(random_bytes(32));}
+        else $actor=$live->browserActor($impersonation['player']['id']);
+    }
+    $environment=$_GET['environment']??'live';if(!in_array($environment,['live','demo'],true))throw new MarketError(422,'Invalid marketplace environment.');
+    if($impersonation&&((str_starts_with($action,'owner-')&&$action!=='owner-impersonation')||in_array($action,['link','unlink'],true)||($environment==='demo'&&$action!=='owner-impersonation')))throw new MarketError(403,'Exit impersonation before using owner tools, demo mode or player linking.');
+    if($environment==='demo'&&!in_array($action,['owner-status','owner-command','owner-impersonation','owner-impersonation-history','link','unlink'],true)){$live->requireOwner($authenticated);$demoGate=MarketplaceDemo::gate(marketOwnerDirectory(),LOCK_SH);$m=MarketplaceDemo::open(marketOwnerDirectory(),$authenticated,$live);}
+    if(!in_array($action,['link','unlink','markets','owner-status','owner-command','owner-impersonation','owner-impersonation-history'],true))$m=$m->selectMod($_GET['mod']??'RMD-MP',$_GET['version']??'2.4');
     if($method==='POST'){
         if(!hash_equals($_SESSION['csrf'],$_SERVER['HTTP_X_CSRF_TOKEN']??''))throw new MarketError(403,'This page expired. Refresh before trying again.');
         if(!str_starts_with(strtolower($_SERVER['CONTENT_TYPE']??''),'application/json'))throw new MarketError(415,'Use JSON.');
         $raw=file_get_contents('php://input',false,null,0,32769);if(strlen($raw)>32768)throw new MarketError(413,'Request too large.');$data=json_decode($raw,true,32,JSON_THROW_ON_ERROR);if(!is_array($data))throw new MarketError(422,'Invalid request.');
-        if($action==='link'){
+        $exiting=$action==='owner-impersonation'&&($data['type']??'')==='stop';
+        if($impersonation&&$action==='command'&&!isset($_SERVER['HTTP_X_MARKET_ACTOR']))throw new MarketError(409,'Refresh this page to load the impersonation controls before acting.');
+        if(!$exiting&&isset($_SERVER['HTTP_X_MARKET_ACTOR'])&&($_SERVER['HTTP_X_MARKET_ACTOR']!==($actor['id']??'')))throw new MarketError(409,'The acting player changed in another tab. Refresh before continuing.');
+        if($action==='owner-impersonation'){
+            if(!$authenticated)throw new MarketError(401,'Link your owner player first.');
+            if(($data['type']??'')==='start'){
+                $live->requireOwner($authenticated);if($impersonation)throw new MarketError(409,'Exit the current impersonation before choosing another player.');if($environment!=='live')throw new MarketError(409,'Return to the live marketplace before impersonating a player.');
+                $selected=$live->selectMod($_GET['mod']??'RMD-MP',$_GET['version']??'2.4');$session=$selected->startImpersonation($authenticated,$data,$hc);
+                $impersonation=$live->impersonationContext($authenticated,$session['id']);if(!$impersonation)throw new MarketError(409,'This impersonation session has ended. Start a new session.');
+                $_SESSION['impersonation']=$session['id'];
+            }elseif(($data['type']??'')==='stop'){
+                if($impersonation)$live->stopImpersonation($authenticated,$impersonation['id']);unset($_SESSION['impersonation']);$impersonation=null;
+            }else throw new MarketError(422,'Choose start or stop.');
+            session_regenerate_id(true);$_SESSION['csrf']=bin2hex(random_bytes(32));$result=['impersonation'=>$impersonation,'csrf'=>$_SESSION['csrf']];
+        }elseif($action==='link'){
             $m->browserThrottle('ip:'.($_SERVER['REMOTE_ADDR']??''));
             $actor=$m->browserLink($data);session_regenerate_id(true);$_SESSION=['actor'=>$actor['id'],'stamp'=>$m->browserSessionStamp($actor),'csrf'=>bin2hex(random_bytes(32)),'expires'=>time()+7776000];$result=['self'=>$actor,'csrf'=>$_SESSION['csrf'],'mod'=>$actor['mod'],'game_mode'=>$actor['game_mode']];
         }elseif($action==='unlink'){
             $_SESSION=[];session_destroy();setcookie(session_name(),'', ['expires'=>1,'path'=>'/','secure'=>!$local,'httponly'=>true,'samesite'=>'Strict']);$result=['signed_out'=>true];
         }elseif($action==='owner-command'){
-            $live->requireOwner($actor);$result=$live->ownerCommand($actor,$data,marketOwnerDirectory(),fn()=>($data['type']??'')==='demo_generate'?MarketplaceDemo::generate($live,$actor,$data,marketOwnerDirectory()):MarketplaceDemo::clear($actor,$data,marketOwnerDirectory()));
+            $live->requireOwner($actor);if(in_array($data['type']??'',['campaign_create','campaign_close'],true)&&$environment!=='live')throw new MarketError(409,'Return to the live marketplace before publishing community gifts.');if(in_array($data['type']??'',['campaign_create','campaign_close'],true))$result=$live->selectMod($_GET['mod']??'RMD-MP',$_GET['version']??'2.4')->campaignOwnerCommand($actor,$data,$hc);else $result=$live->ownerCommand($actor,$data,marketOwnerDirectory(),fn()=>($data['type']??'')==='demo_generate'?MarketplaceDemo::generate($live,$actor,$data,marketOwnerDirectory()):MarketplaceDemo::clear($actor,$data,marketOwnerDirectory(),$live));
         }else{
             if(!$actor)throw new MarketError(401,'Link your player to trade.');
-            if($action==='command'){$result=$m->controlledRequest($actor,'command',$data,$hc,fn()=>$m->command($actor,$data,$hc));if($environment==='demo')MarketplaceDemo::respond($m,$actor,$data,$result);}
+            if($action==='command'){
+                $audit=$impersonation?$m->beginImpersonationAction($authenticated,$impersonation,$data,$hc):null;
+                try{$result=$m->controlledRequest($actor,'command',$data,$hc,fn()=>$m->command($actor,$data,$hc));}
+                catch(Throwable $e){if($audit)$m->finishImpersonationAction($authenticated,$audit,$e instanceof MarketError?$e->status:500,['error'=>$e instanceof MarketError?$e->getMessage():'The operation failed.']);throw $e;}
+                if($audit)$m->finishImpersonationAction($authenticated,$audit,200,$result);
+                if($environment==='demo')MarketplaceDemo::respond($m,$actor,$data,$result);
+            }
             else throw new MarketError(404,'Endpoint not found.');
         }
+    }elseif($method==='GET'&&$action==='owner-impersonation-history'){
+        $live->requireOwner($authenticated);$result=$live->impersonationHistory($authenticated,$_GET['id']??null);
+    }elseif($method==='GET'&&$action==='owner-gifts'){
+        if(!$actor)throw new MarketError(401,'Link your owner player first.');$result=$m->ownerGiftCampaigns($actor,$hc,$_GET['id']??null);
     }elseif($method==='GET'&&$action==='owner-status'){
-        $live->requireOwner($actor);$gate=MarketplaceDemo::gate(marketOwnerDirectory(),LOCK_SH);$result=$live->ownerStatus($actor)+['demo'=>MarketplaceDemo::status(marketOwnerDirectory(),$actor)];
-    }elseif($method==='GET'&&$action==='markets'){$result=$m->modDirectory($actor);$result['csrf']=$_SESSION['csrf'];$result['self']=$actor;}
+        $live->requireOwner($actor);$result=$live->ownerStatus($actor);
+        try{$gate=MarketplaceDemo::gate(marketOwnerDirectory(),LOCK_SH);$result['demo']=MarketplaceDemo::status(marketOwnerDirectory(),$actor,$live);}catch(Throwable $e){error_log('Marketplace demo status: '.$e->getMessage());$result['demo']=['available'=>false,'error'=>'The private demo is unavailable. Live owner tools are still available.'];}
+    }elseif($method==='GET'&&$action==='markets'){$result=$m->modDirectory($actor);$result['csrf']=$_SESSION['csrf'];$result['self']=$actor;$result['impersonation']=$impersonation;}
+    elseif($method==='GET'&&in_array($action,['owner-trades','owner-trade'],true)){
+        $live->requireOwner($actor);$query=$_GET;
+        foreach(['before_at','events_before'] as $key)if(isset($query[$key])){if(!preg_match('/^[0-9]{1,18}$/D',$query[$key]))throw new MarketError(422,'Invalid history cursor.');$query[$key]=(int)$query[$key];}
+        $result=$action==='owner-trades'?$m->ownerTrades($actor,$hc,$query):$m->ownerTrade($actor,$hc,$_GET['id']??'',$query);
+    }
     elseif($method==='GET'&&$action==='catalog'){$result=$m->browserCatalog();}
-    elseif($method==='GET'&&$action==='snapshot'){$result=$m->browserSnapshot($actor,$hc);$result['csrf']=$_SESSION['csrf'];$result['environment']=$environment;}
+    elseif($method==='GET'&&$action==='snapshot'){$result=$m->browserSnapshot($actor,$hc);$result['csrf']=$_SESSION['csrf'];$result['environment']=$environment;$result['impersonation']=$impersonation;if($impersonation)$result['owner_tools']=false;}
     elseif($method==='GET'&&in_array($action,['reports','report'],true)){
         if(!$actor)throw new MarketError(401,'Link your player to review reports.');$query=$_GET;if(isset($query['before'])){if(!preg_match('/^[0-9]{1,18}$/D',$query['before']))throw new MarketError(422,'Invalid report cursor.');$query['before']=(int)$query['before'];}
         $result=$action==='reports'?$m->moderationQueue($actor,$query):$m->moderationReport($actor,$_GET['id']??'');
     }
     elseif($method==='GET'&&$action==='activity'){if(!$actor)throw new MarketError(401,'Link your player to see activity.');$result=$m->activity($actor,$hc);}
     elseif($method==='GET'&&$action==='stats'){$result=$m->tradeStats($hc,$_GET);}
+    elseif($method==='GET'&&$action==='wanted'){$result=$m->wantedListings($hc,$_GET['id']??null);}
+    elseif($method==='GET'&&$action==='player-escrow'){$result=$m->publicEscrow($_GET['id']??'',$hc,$_GET['after']??'',$_GET['q']??'');}
+    elseif($method==='GET'&&$action==='trade-messages'){if(!$actor)throw new MarketError(401,'Link your player to read messages.');$before=$_GET['before']??(string)PHP_INT_MAX;if(!preg_match('/^[0-9]{1,19}$/D',$before))throw new MarketError(422,'Invalid message cursor.');$result=$m->tradeMessages($actor,$hc,$_GET['thread']??null,(int)$before);}
     elseif($method==='GET'&&$action==='players'){$result=$m->players($hc,$_GET);}
     elseif($method==='GET'&&$action==='player'){$result=$m->playerProfile($_GET['id']??'',$hc,$_GET['character']??null);}
     elseif($method==='GET'&&in_array($action,['inbox','messages'],true)){

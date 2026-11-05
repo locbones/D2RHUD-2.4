@@ -41,7 +41,7 @@ trait MarketplaceWallet {
                 foreach(json_decode($row['remaining'],true,512,JSON_THROW_ON_ERROR) as $r)$this->balance($owner,$scope,$r,$r['quantity'],'withdrawal_cancelled',$request);
                 $this->run("UPDATE wallet_withdrawals SET status='cancelled',revision=revision+1,message='',updated=? WHERE id=?",[time(),$request]);
                 $result=['withdrawal_id'=>$request,'status'=>'cancelled'];$this->settleReady($hc,null,$owner);
-            }else throw new MarketError(422,'Unknown wallet command.');
+            }else throw new MarketError(422,'Unknown Vault command.');
             $this->run('INSERT INTO commands VALUES (?,?,?,?)',[$owner,$id,$hash,self::json($result)]);return $result;
         });
     }

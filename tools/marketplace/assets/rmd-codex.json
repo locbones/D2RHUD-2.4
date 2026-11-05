@@ -1,0 +1,400 @@
+{
+  "schema": 1,
+  "mod": "RMD-MP",
+  "source": "Pandemonium/Filters/override_rules.lua",
+  "source_sha256": "f7a6f4de6b5f1cf60519689ddcf4d4e4b4e2053fafd346abf579a3a5fd96475a",
+  "items": [
+    {
+      "code": "a10",
+      "quality": 2,
+      "group": 1,
+      "part": "1",
+      "name": "Codex of Gluttony - Testament 1:1"
+    },
+    {
+      "code": "a11",
+      "quality": 2,
+      "group": 1,
+      "part": "2",
+      "name": "Codex of Gluttony - Testament 1:2"
+    },
+    {
+      "code": "a12",
+      "quality": 2,
+      "group": 1,
+      "part": "3",
+      "name": "Codex of Gluttony - Testament 1:3"
+    },
+    {
+      "code": "a13",
+      "quality": 2,
+      "group": 1,
+      "part": "4",
+      "name": "Codex of Gluttony - Testament 1:4"
+    },
+    {
+      "code": "a14",
+      "quality": 2,
+      "group": 1,
+      "part": "5",
+      "name": "Codex of Gluttony - Testament 1:5"
+    },
+    {
+      "code": "a15",
+      "quality": 2,
+      "group": 1,
+      "part": "6",
+      "name": "Codex of Gluttony - Testament 1:6"
+    },
+    {
+      "code": "a16",
+      "quality": 2,
+      "group": 1,
+      "part": "7",
+      "name": "Codex of Gluttony - Testament 1:7"
+    },
+    {
+      "code": "a17",
+      "quality": 2,
+      "group": 2,
+      "part": "1",
+      "name": "Codex of Lust - Testament 2:1"
+    },
+    {
+      "code": "a18",
+      "quality": 2,
+      "group": 2,
+      "part": "2",
+      "name": "Codex of Lust - Testament 2:2"
+    },
+    {
+      "code": "a19",
+      "quality": 2,
+      "group": 2,
+      "part": "3",
+      "name": "Codex of Lust - Testament 2:3"
+    },
+    {
+      "code": "a20",
+      "quality": 2,
+      "group": 2,
+      "part": "4",
+      "name": "Codex of Lust - Testament 2:4"
+    },
+    {
+      "code": "a21",
+      "quality": 2,
+      "group": 2,
+      "part": "5",
+      "name": "Codex of Lust - Testament 2:5"
+    },
+    {
+      "code": "a22",
+      "quality": 2,
+      "group": 2,
+      "part": "6",
+      "name": "Codex of Lust - Testament 2:6"
+    },
+    {
+      "code": "a23",
+      "quality": 2,
+      "group": 2,
+      "part": "7",
+      "name": "Codex of Lust - Testament 2:7"
+    },
+    {
+      "code": "a24",
+      "quality": 2,
+      "group": 3,
+      "part": "1",
+      "name": "Codex of Greed - Testament 3:1"
+    },
+    {
+      "code": "a25",
+      "quality": 2,
+      "group": 3,
+      "part": "2",
+      "name": "Codex of Greed - Testament 3:2"
+    },
+    {
+      "code": "a26",
+      "quality": 2,
+      "group": 3,
+      "part": "3",
+      "name": "Codex of Greed - Testament 3:3"
+    },
+    {
+      "code": "a27",
+      "quality": 2,
+      "group": 3,
+      "part": "4",
+      "name": "Codex of Greed - Testament 3:4"
+    },
+    {
+      "code": "a28",
+      "quality": 2,
+      "group": 3,
+      "part": "5",
+      "name": "Codex of Greed - Testament 3:5"
+    },
+    {
+      "code": "a29",
+      "quality": 2,
+      "group": 3,
+      "part": "6",
+      "name": "Codex of Greed - Testament 3:6"
+    },
+    {
+      "code": "a30",
+      "quality": 2,
+      "group": 3,
+      "part": "7",
+      "name": "Codex of Greed - Testament 3:7"
+    },
+    {
+      "code": "a31",
+      "quality": 2,
+      "group": 4,
+      "part": "1",
+      "name": "Codex of Wrath - Testament 4:1"
+    },
+    {
+      "code": "a32",
+      "quality": 2,
+      "group": 4,
+      "part": "2",
+      "name": "Codex of Wrath - Testament 4:2"
+    },
+    {
+      "code": "a33",
+      "quality": 2,
+      "group": 4,
+      "part": "3",
+      "name": "Codex of Wrath - Testament 4:3"
+    },
+    {
+      "code": "a34",
+      "quality": 2,
+      "group": 4,
+      "part": "4",
+      "name": "Codex of Wrath - Testament 4:4"
+    },
+    {
+      "code": "a35",
+      "quality": 2,
+      "group": 4,
+      "part": "5",
+      "name": "Codex of Wrath - Testament 4:5"
+    },
+    {
+      "code": "a36",
+      "quality": 2,
+      "group": 4,
+      "part": "6",
+      "name": "Codex of Wrath - Testament 4:6"
+    },
+    {
+      "code": "a37",
+      "quality": 2,
+      "group": 4,
+      "part": "7",
+      "name": "Codex of Wrath - Testament 4:7"
+    },
+    {
+      "code": "a38",
+      "quality": 2,
+      "group": 5,
+      "part": "1",
+      "name": "Codex of Sloth - Testament 5:1"
+    },
+    {
+      "code": "a39",
+      "quality": 2,
+      "group": 5,
+      "part": "2",
+      "name": "Codex of Sloth - Testament 5:2"
+    },
+    {
+      "code": "a40",
+      "quality": 2,
+      "group": 5,
+      "part": "3",
+      "name": "Codex of Sloth - Testament 5:3"
+    },
+    {
+      "code": "a41",
+      "quality": 2,
+      "group": 5,
+      "part": "4",
+      "name": "Codex of Sloth - Testament 5:4"
+    },
+    {
+      "code": "a42",
+      "quality": 2,
+      "group": 5,
+      "part": "5",
+      "name": "Codex of Sloth - Testament 5:5"
+    },
+    {
+      "code": "a43",
+      "quality": 2,
+      "group": 5,
+      "part": "6",
+      "name": "Codex of Sloth - Testament 5:6"
+    },
+    {
+      "code": "a44",
+      "quality": 2,
+      "group": 5,
+      "part": "7",
+      "name": "Codex of Sloth - Testament 5:7"
+    },
+    {
+      "code": "a45",
+      "quality": 2,
+      "group": 6,
+      "part": "1",
+      "name": "Codex of Vanity - Testament 6:1"
+    },
+    {
+      "code": "a46",
+      "quality": 2,
+      "group": 6,
+      "part": "2",
+      "name": "Codex of Vanity - Testament 6:2"
+    },
+    {
+      "code": "a47",
+      "quality": 2,
+      "group": 6,
+      "part": "3",
+      "name": "Codex of Vanity - Testament 6:3"
+    },
+    {
+      "code": "a48",
+      "quality": 2,
+      "group": 6,
+      "part": "4",
+      "name": "Codex of Vanity - Testament 6:4"
+    },
+    {
+      "code": "a49",
+      "quality": 2,
+      "group": 6,
+      "part": "5",
+      "name": "Codex of Vanity - Testament 6:5"
+    },
+    {
+      "code": "a50",
+      "quality": 2,
+      "group": 6,
+      "part": "6",
+      "name": "Codex of Vanity - Testament 6:6"
+    },
+    {
+      "code": "a51",
+      "quality": 2,
+      "group": 6,
+      "part": "7",
+      "name": "Codex of Vanity - Testament 6:7"
+    },
+    {
+      "code": "a52",
+      "quality": 2,
+      "group": 7,
+      "part": "1",
+      "name": "Codex of Hubris - Testament 7:1"
+    },
+    {
+      "code": "a53",
+      "quality": 2,
+      "group": 7,
+      "part": "2",
+      "name": "Codex of Hubris - Testament 7:2"
+    },
+    {
+      "code": "a54",
+      "quality": 2,
+      "group": 7,
+      "part": "3",
+      "name": "Codex of Hubris - Testament 7:3"
+    },
+    {
+      "code": "a55",
+      "quality": 2,
+      "group": 7,
+      "part": "4",
+      "name": "Codex of Hubris - Testament 7:4"
+    },
+    {
+      "code": "a56",
+      "quality": 2,
+      "group": 7,
+      "part": "5",
+      "name": "Codex of Hubris - Testament 7:5"
+    },
+    {
+      "code": "a57",
+      "quality": 2,
+      "group": 7,
+      "part": "6",
+      "name": "Codex of Hubris - Testament 7:6"
+    },
+    {
+      "code": "a58",
+      "quality": 2,
+      "group": 7,
+      "part": "7",
+      "name": "Codex of Hubris - Testament 7:7"
+    },
+    {
+      "code": "a59",
+      "quality": 7,
+      "group": 1,
+      "part": "Complete",
+      "name": "Gula's Testament of Gluttony - Complete Codex 1"
+    },
+    {
+      "code": "a60",
+      "quality": 7,
+      "group": 2,
+      "part": "Complete",
+      "name": "Luxuria's Testament of Lust - Complete Codex 2"
+    },
+    {
+      "code": "a61",
+      "quality": 7,
+      "group": 3,
+      "part": "Complete",
+      "name": "Avaritia's Testament of Greed - Complete Codex 3"
+    },
+    {
+      "code": "a62",
+      "quality": 7,
+      "group": 4,
+      "part": "Complete",
+      "name": "Ira's Testament of Wrath - Complete Codex 4"
+    },
+    {
+      "code": "a63",
+      "quality": 7,
+      "group": 5,
+      "part": "Complete",
+      "name": "Acedia's Testament of Sloth - Complete Codex 5"
+    },
+    {
+      "code": "a64",
+      "quality": 7,
+      "group": 6,
+      "part": "Complete",
+      "name": "Vanagloria's Testament of Vanity - Complete Codex 6"
+    },
+    {
+      "code": "a65",
+      "quality": 7,
+      "group": 7,
+      "part": "Complete",
+      "name": "Superbia's Testament of Hubris - Complete Codex 7"
+    }
+  ]
+}

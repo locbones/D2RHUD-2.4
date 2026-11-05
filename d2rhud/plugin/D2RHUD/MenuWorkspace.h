@@ -24,7 +24,7 @@ inline constexpr Entry Entries[]{
     {Page::Journal,"YOUR ADVENTURE","Quest Journal","Your objectives, progress and rewards."},
     {Page::Hotkeys,"SETUP","Hotkeys & Commands","Key bindings, custom commands and startup actions."},
     {Page::Appearance,"SETUP","Appearance","Themes, colors and panel artwork."},
-    {Page::Diagnostics,"SETUP","Diagnostics","Local support reports and optional performance counters."}
+    {Page::Diagnostics,"SETUP","Diagnostics","Record gameplay hitches and save local support reports."}
 };
 inline const Entry& Info(Page page){for(const auto& entry:Entries)if(entry.page==page)return entry;return Entries[0];}
 inline Page ValidPage(int page){return page>=0&&page<int(Page::Count)?Page(page):Page::Home;}

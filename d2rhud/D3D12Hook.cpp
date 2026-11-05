@@ -1,4 +1,4 @@
-#include "plugin/HUDControls.h"
+﻿#include "plugin/HUDControls.h"
 #include "D3D12Hook.h"
 #include "plugin/D2RHUD/HudCommands.h"
 #include "plugin/MarketplacePanel.h"
@@ -20,6 +20,8 @@
 #include <atomic>
 #include "resource.h"
 #include "ProcessLifetime.h"
+#include "HitchDiagnostics.h"
+#include "RuntimeTelemetry.h"
 #include "ThemeImageRequests.h"
 #include <d3d12.h>
 #include <dxgi1_4.h>
@@ -371,7 +373,7 @@ namespace D3D12 {
 			HANDLE evt = CreateEventEx(nullptr, nullptr, 0, EVENT_MODIFY_STATE | SYNCHRONIZE);
 			if (evt && SUCCEEDED(fence->SetEventOnCompletion(fenceVal, evt))) {
 				uploadQueue->Signal(fence, fenceVal);
-				WaitForSingleObject(evt, 5000);
+				{HudTelemetry::Scope measured(HudTelemetry::Feature::GpuWait);WaitForSingleObject(evt, 5000);}
 			}
 			if (evt) CloseHandle(evt);
 		}
@@ -485,7 +487,7 @@ namespace D3D12 {
         uploadQueue->ExecuteCommandLists(1, lists);
         const HRESULT signaled = uploadQueue->Signal(fence, 1);
         // Keep the staging buffer and command objects alive until the GPU finishes.
-        if (SUCCEEDED(signaled)) WaitForSingleObject(completed, INFINITE);
+        if (SUCCEEDED(signaled)){HudTelemetry::Scope measured(HudTelemetry::Feature::GpuWait);WaitForSingleObject(completed, INFINITE);}
         CloseHandle(completed);
         if (FAILED(signaled) || fence->GetCompletedValue() == UINT64_MAX) return false;
 
@@ -618,7 +620,7 @@ namespace D3D12 {
                 if(FAILED(device->CreateFence(0,D3D12_FENCE_FLAG_NONE,IID_PPV_ARGS(&fence))))return {};
                 HANDLE event=CreateEventW(nullptr,FALSE,FALSE,nullptr);if(!event)return {};
                 const bool queued=SUCCEEDED(fence->SetEventOnCompletion(1,event)) && SUCCEEDED(Graphics().queue->Signal(fence,1));
-                const bool complete=queued && WaitForSingleObject(event,5000)==WAIT_OBJECT_0 && fence->GetCompletedValue()!=UINT64_MAX;
+                const bool complete=[&]{HudTelemetry::Scope measured(HudTelemetry::Feature::GpuWait);return queued && WaitForSingleObject(event,5000)==WAIT_OBJECT_0 && fence->GetCompletedValue()!=UINT64_MAX;}();
                 CloseHandle(event);if(!complete)return {};
             }
             const auto& atlas=sprite->atlas;BuffAtlasTexture texture;
@@ -721,7 +723,7 @@ namespace D3D12 {
 			HANDLE evt = CreateEventEx(nullptr, nullptr, 0, EVENT_MODIFY_STATE | SYNCHRONIZE);
 			if (evt && SUCCEEDED(fence->SetEventOnCompletion(fenceVal, evt))) {
 				uploadQueue->Signal(fence, fenceVal);
-				WaitForSingleObject(evt, 5000);
+				{HudTelemetry::Scope measured(HudTelemetry::Feature::GpuWait);WaitForSingleObject(evt, 5000);}
 			}
 			if (evt) CloseHandle(evt);
 		}
@@ -983,8 +985,10 @@ namespace D3D12 {
 	}
 
     long __fastcall HookPresent(IDXGISwapChain3* pSwapChain, UINT SyncInterval, UINT Flags) {
+        HudHitches::Present capture(pSwapChain,(Flags&DXGI_PRESENT_TEST)!=0,Window);
         if (g_HooksReady.load(std::memory_order_acquire) && !(Flags & DXGI_PRESENT_TEST)) {
-            std::lock_guard<std::recursive_mutex> renderLock(g_RenderMutex);
+            std::unique_lock<std::recursive_mutex> renderLock(g_RenderMutex,std::defer_lock);
+            {HudTelemetry::Scope measured(HudTelemetry::Feature::RenderLock);renderLock.lock();}
             CComPtr<ID3D12CommandQueue> queue;
             if (g_UseSwapchainQueue) {
                 // Do not render another swapchain using the current chain's backbuffers.
@@ -1006,9 +1010,11 @@ namespace D3D12 {
                 std::lock_guard<std::mutex> queueLock(g_QueueMutex);
                 queue = Graphics().queue;
             }
-            if (queue) DrawPresent(pSwapChain, queue);
+            if (queue){HudTelemetry::Scope measured(HudTelemetry::Feature::PresentOverlay);DrawPresent(pSwapChain, queue);}
         }
         // Forward outside our locks. The driver may wait for another game thread.
+        capture.BeforeDriver();
+		HudTelemetry::Scope measured(HudTelemetry::Feature::PresentWait);
 		return OriginalPresent(pSwapChain, SyncInterval, Flags);
 	}
 
@@ -1296,6 +1302,7 @@ namespace D3D12 {
             return msg==WM_INPUT?DefWindowProcW(hWnd,msg,wParam,lParam):0;
         }
         if(HudCommands::HandleMessage(hWnd,msg,wParam,lParam))return 0;
+        if(Marketplace::Panel::StashSyncWindowInput(msg,wParam,lParam))return msg==WM_INPUT?DefWindowProcW(hWnd,msg,wParam,lParam):0;
         if(Marketplace::Panel::NativeWindowInput(msg,wParam,lParam))return msg==WM_INPUT?DefWindowProcW(hWnd,msg,wParam,lParam):0;
 		bool splitOutsideClick=false;
 		if(LegacyTransmog::SplitWindowMessage(hWnd,msg,wParam,lParam,&splitOutsideClick))return 0;

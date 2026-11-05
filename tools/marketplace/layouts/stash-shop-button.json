@@ -8,7 +8,7 @@
             "width": 117,
             "height": 116
         },
-        "filename": "..\\..\\..\\ReMoDDeD\\Panels\\Shop\\Shop_Button",
+        "filename": "..\\..\\..\\Pandemonium\\Marketplace\\MarketplaceButton",
         "pressedFrame": 1,
         "hoveredFrame": 2,
         "tooltipString": "Marketplace",

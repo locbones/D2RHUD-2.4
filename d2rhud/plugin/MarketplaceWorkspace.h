@@ -15,12 +15,8 @@ struct Listing {
     bool development=false;
     bool escrow=false;
     int offerCount=0,activeOfferCount=0,otherOfferCount=0;
+    std::string comment;
 };
-inline std::vector<uint8_t> Unhex(const std::string& value){
-    if(!ValidItemHex(value))throw std::runtime_error("Invalid marketplace item bytes.");
-    auto digit=[](char c){return c<='9'?c-'0':c-'a'+10;};std::vector<uint8_t> bytes;bytes.reserve(value.size()/2);
-    for(size_t i=0;i<value.size();i+=2)bytes.push_back(uint8_t(digit(value[i])*16+digit(value[i+1])));return bytes;
-}
 inline int64_t UnixNow(){return std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();}
 inline std::string SavedIdentity(const std::string& hex){auto bytes=Unhex(hex);if(bytes.size()<7)throw std::runtime_error("Invalid item identity bytes.");for(size_t bit=35;bit<53;++bit)bytes[bit/8]&=uint8_t(~(1u<<(bit%8)));return Hex(bytes);}
 inline SavedItem ReconcileLiveIdentity(SavedItem live,const std::vector<SavedItem>& saved,const SaveTables& tables){
@@ -51,6 +47,7 @@ inline Feed ReadFeed(const Json& source,const std::string& mod,bool hardcore,con
         if(!ValidIdentity(entry.seller)||!ValidIdentity(entry.id)||!ValidIdentity(entry.revision)||!ids.emplace(entry.seller,entry.id).second)
             throw std::runtime_error("Invalid or duplicate marketplace listing identity.");
         entry.item=ReadItem(Unhex(row.at("item_hex").get<std::string>()),tables,Integer(row.value("tab",Json(1)),1,7));
+        entry.comment=row.value("comment",std::string());if(!ValidListingComment(entry.comment))throw std::runtime_error("Invalid listing comment.");
         entry.price=ReadPrice(row.at("price"));entry.sellerId=row.value("seller_id",std::string());entry.itemId=row.value("item_id",std::string());entry.own=row.value("own",false);
         entry.escrow=row.value("custody",std::string())=="escrow";
         entry.offerCount=Integer(row.value("offer_count",Json(0)),0,INT32_MAX);entry.activeOfferCount=Integer(row.value("active_offer_count",Json(0)),0,INT32_MAX);entry.otherOfferCount=Integer(row.value("other_offer_count",Json(0)),0,INT32_MAX);
@@ -60,23 +57,23 @@ inline Feed ReadFeed(const Json& source,const std::string& mod,bool hardcore,con
     if(source.contains("escrow")){
         const auto& escrow=source.at("escrow");result.custodyEnabled=escrow.value("enrolled",false);
         const auto& items=escrow.at("items");const auto& balances=escrow.at("balances");
-        if(!items.is_array()||items.size()>4096||!balances.is_array()||balances.size()>32)throw std::runtime_error("Escrow cache exceeds its limits.");
+        if(!items.is_array()||items.size()>4096||!balances.is_array()||balances.size()>32)throw std::runtime_error("Vault cache exceeds its limits.");
         std::set<std::string> assets;
         for(const auto& r:items){auto item=ReadItem(Unhex(r.at("item_hex").get<std::string>()),tables,Integer(r.at("metadata").at("tab"),1,7));
             item.escrowId=ActivityText(r,"item",32);item.escrowState=ActivityText(r,"state",16);
-            if(!assets.insert(item.escrowId).second||!std::set<std::string>{"available","listed","claiming"}.contains(item.escrowState))throw std::runtime_error("Invalid escrow asset state.");
-            item.escrowDraft={item.tab,item.itemHex,{}};if(!r.at("metadata").at("price").empty())item.escrowDraft.price=ReadPrice(r.at("metadata").at("price"));
+            if(!assets.insert(item.escrowId).second||!std::set<std::string>{"available","listed","claiming"}.contains(item.escrowState))throw std::runtime_error("Invalid Vault asset state.");
+            item.escrowDraft={item.tab,item.itemHex,{}};item.escrowDraft.comment=r.at("metadata").value("comment",std::string());if(!r.at("metadata").at("price").empty())item.escrowDraft.price=ReadPrice(r.at("metadata").at("price"));
             if(item.escrowState=="available")result.escrowFunds.push_back(item.Payment());result.escrowItems.push_back(std::move(item));}
         for(const auto& r:balances){const auto kind=ActivityText(r,"kind",8);const auto stat=ActivityText(r,"stat",32,true);
-            if((kind!="gold"&&kind!="bag")||(kind=="gold"&&!stat.empty())||(kind=="bag"&&!tables.bagStats.contains(stat)))throw std::runtime_error("Invalid escrow balance type.");
-            if(!r.at("quantity").is_number_integer()||r.at("quantity").get<int64_t>()<1||r.at("quantity").get<int64_t>()>9000000000000000LL)throw std::runtime_error("Invalid escrow balance quantity.");
+            if((kind!="gold"&&kind!="bag")||(kind=="gold"&&!stat.empty())||(kind=="bag"&&!tables.bagStats.contains(stat)))throw std::runtime_error("Invalid Vault balance type.");
+            if(!r.at("quantity").is_number_integer()||r.at("quantity").get<int64_t>()<1||r.at("quantity").get<int64_t>()>9000000000000000LL)throw std::runtime_error("Invalid Vault balance quantity.");
             result.escrowFunds.push_back({kind=="gold"?"gld":"Z01",2,-1,uint32_t((std::min)(uint64_t(UINT32_MAX),r.at("quantity").get<uint64_t>())),true,false,kind,stat});}
         result.walletBalances=balances;
         if(escrow.contains("wallet")){
             const auto& wallet=escrow.at("wallet");
-            if(!wallet.is_object()||!wallet.at("withdrawals").is_array()||wallet.at("withdrawals").size()>64||!wallet.at("entries").is_array()||wallet.at("entries").size()>40)throw std::runtime_error("Invalid wallet activity cache.");
+            if(!wallet.is_object()||!wallet.at("withdrawals").is_array()||wallet.at("withdrawals").size()>64||!wallet.at("entries").is_array()||wallet.at("entries").size()>40)throw std::runtime_error("Invalid Vault activity cache.");
             for(const auto& r:wallet.at("withdrawals")){ActivityText(r,"id",32);const auto status=ActivityText(r,"status",16);if(!std::set<std::string>{"queued","delivering","completed","cancelled"}.contains(status))throw std::runtime_error("Invalid withdrawal state.");(void)ReadPrice(r.at("requested"));if(!r.at("remaining").empty())(void)ReadPrice(r.at("remaining"));ActivityText(r,"message",512,true);Integer(r.at("revision"),1,INT32_MAX);}
-            for(const auto& r:wallet.at("entries")){ActivityText(r,"kind",8);ActivityText(r,"stat",32,true);ActivityText(r,"action",32);if(!r.at("amount").is_number_integer()||!r.at("available").is_number_integer())throw std::runtime_error("Invalid wallet activity amount.");}
+            for(const auto& r:wallet.at("entries")){ActivityText(r,"kind",8);ActivityText(r,"stat",32,true);ActivityText(r,"action",32);if(!r.at("amount").is_number_integer()||!r.at("available").is_number_integer())throw std::runtime_error("Invalid Vault activity amount.");}
             result.wallet=wallet;
         }
         for(const auto& r:balances){if(!result.walletText.empty())result.walletText+='\n';std::string name=r.at("kind")=="gold"?"Gold":r.at("stat").get<std::string>();
@@ -131,7 +128,7 @@ inline void AppendOwnListings(Feed& feed,const std::vector<SavedItem>& inventory
 // counter-offer is accepted; a different bundle gets the asking terms back.
 inline bool SimulationAccepts(const std::vector<Requirement>& asking,const std::vector<Requirement>& proposed){
     if(!Validate(asking).empty()||!Validate(proposed).empty()||asking.size()!=proposed.size())return false;
-    for(const auto& a:asking)if(std::none_of(proposed.begin(),proposed.end(),[&](const auto& p){return a.kind==p.kind&&a.stat==p.stat&&a.code==p.code&&a.quality==p.quality&&a.index==p.index&&a.quantity==p.quantity&&a.ethereal==p.ethereal;}))return false;
+    for(const auto& a:asking)if(std::none_of(proposed.begin(),proposed.end(),[&](const auto& p){return a.kind==p.kind&&a.stat==p.stat&&a.code==p.code&&a.quality==p.quality&&a.index==p.index&&a.quantity==p.quantity&&a.ethereal==p.ethereal&&a.classId==p.classId;}))return false;
     return true;
 }
 struct WorkspaceSnapshot {
@@ -168,7 +165,7 @@ inline WorkspaceSnapshot ReadWorkspace(const std::filesystem::path& folder,const
     // The UI can replace the saved deposit with a newer live snapshot. Keep
     // hosted identities until it reconciles against that preferred inventory.
     AppendOwnListings(result.feed,result.deposit,settings,result.depositValid,true);
-    try{const auto path=folder/(hardcore?L"MarketplaceActivity_2.4_HC.json":L"MarketplaceActivity_2.4_SC.json");if(std::filesystem::exists(path)){const auto bytes=ReadFile(path,16*1024*1024);result.activity=ReadActivity(Json::parse(bytes.begin(),bytes.end()),mod,hardcore,UnixNow());}}
+    try{const auto path=folder/(hardcore?L"MarketplaceActivity_2.4_HC.json":L"MarketplaceActivity_2.4_SC.json");if(std::filesystem::exists(path)){const auto bytes=ReadFile(path,16*1024*1024);result.activity=ReadActivity(Json::parse(bytes.begin(),bytes.end()),mod,hardcore,UnixNow(),&tables);}}
     catch(const std::exception& e){result.activity={};result.activity.error=e.what();}
     return result;
 }

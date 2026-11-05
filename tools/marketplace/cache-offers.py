@@ -1,6 +1,6 @@
 """Assemble private read-only catalogue exports for the in-game draft browser.
 
-This is a local preview bridge, not an exchange, escrow service or purchase API.
+This is a local preview bridge, not an exchange, Vault service or purchase API.
 """
 import argparse
 import hashlib

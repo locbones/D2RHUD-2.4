@@ -79,7 +79,7 @@ inline void PresentSocial(State& state,Panel::NativeView& result){
     text("MarketHideOwnButtonLabel",state.hideOwn?"Hide my trades: On":"Hide my trades: Off");text("MarketHideOtherOffersButtonLabel",state.hideOtherOffers?"No competing offers: On":"No competing offers: Off");
     result.widgets.push_back({"MarketSellerSearch",state.sellerSearch,true,true,state.sellerRevision});
     result.choices.push_back({"MarketFavorites",state.favoriteFilter,state.filterRevision});
-    if(state.section==Section::Setup){show("MarketSetupIntro",false);result.widgets.push_back({"MarketProfileName",state.profileName,true,true,state.profileRevision});text("MarketProfileHint","3-15 characters | ID unchanged");}
+    if(state.section==Section::Setup){result.widgets.push_back({"MarketProfileName",state.profileName,true,true,state.profileRevision});text("MarketProfileHint","3-15 characters. Your player ID stays the same.");}
     if(detail&&state.marketSelection<int(state.snapshot.feed.listings.size())){const auto& l=state.snapshot.feed.listings[state.marketSelection];
         text("MarketFavoriteTradeButtonLabel",Favorite(state,"listing",l.id)?"Saved trade":"Save trade");text("MarketFavoriteSellerButtonLabel",Favorite(state,"seller",l.sellerId)?"Favorite seller":"Save seller");
         text("MarketViewOffersButtonLabel",std::to_string(l.activeOfferCount)+" active offers");}

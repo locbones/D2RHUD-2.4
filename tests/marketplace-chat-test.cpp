@@ -39,5 +39,7 @@ int wmain(int argc,wchar_t** argv){
     });assert(callbacks>0&&Json::parse(ReadSettingsFile(folder/L"MarketplaceChatSeen_2.4.json"))["through"]==3);
     message["seq"]=4;message["kind"]="trade";message["thread"]="";message["body"]="Gift received: 40 x Gold";cache["messages"].push_back(message);Put(folder/L"MarketplaceMessages_2.4_SC.json",cache);bridge.Tick(12000,print);
     assert(bridge.Outgoing("/mr Thank you for the gift"));out=Json::parse(ReadSettingsFile(path));assert(out["commands"].back()["type"]=="direct_message"&&out["commands"].back()["to"]=="bonesy");
-    std::cout<<"Native chat: private command routing, normal-packet passthrough, quoted names, UTF-8/color sanitization, direct/trade replies, cross-mode targets, durable incoming dedupe, native callback re-entrancy and display-before-ack, error/outbox cleanup and account isolation passed.\n";
+    message["seq"]=5;message["category"]="search";message["body"]="Saved search: 1 new listing";cache["messages"].push_back(message);Put(folder/L"MarketplaceMessages_2.4_SC.json",cache);bridge.Tick(13000,print);
+    assert(std::any_of(printed.begin(),printed.end(),[](const std::string& text){return text.starts_with("[Search] ")&&text.find("Saved search: 1 new listing")!=std::string::npos;}));
+    std::cout<<"Native chat: private commands, direct/trade replies, separate saved-search labels, durable dedupe, callback re-entrancy, display-before-ack and account isolation passed.\n";
 }

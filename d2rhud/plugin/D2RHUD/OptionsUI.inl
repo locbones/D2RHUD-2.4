@@ -54,7 +54,7 @@ void ShowD2RHUDMenu()
             d2rHUDConfig.NoWidescreenBars,d2rHUDConfig.DisableRightClickItemPickup,d2rHUDConfig.QuantityRightClicks,
             d2rHUDConfig.DynamicAutomap,d2rHUDConfig.DynamicAutomapInterval,
             d2rHUDConfig.MercSellerUnlock,
-            d2rHUDConfig.MercIconsFix,
+            d2rHUDConfig.MercIconsFix,d2rHUDConfig.MultipleAurasPerItem,
             d2rHUDConfig.MinimalistQuantityPopup,d2rHUDConfig.PersistentSummons,d2rHUDConfig.D3StyleWhirlwind,
             d2rHUDConfig.ExtendedItemcodes,d2rHUDConfig.ChatSounds,d2rHUDConfig.ChatSoundPath,d2rHUDConfig.FloatingDamage,
             d2rHUDConfig.HPRolloverMods,d2rHUDConfig.HPRolloverDifficulty,d2rHUDConfig.HPRolloverPercent,
@@ -65,6 +65,7 @@ void ShowD2RHUDMenu()
             DynamicAutomap::Configure(d2rHUDConfig.DynamicAutomap,d2rHUDConfig.DynamicAutomapInterval);
             MercSeller::SetEnabled(d2rHUDConfig.MercSellerUnlock);
             MercIcons::SetEnabled(d2rHUDConfig.MercIconsFix);
+            MultipleAuras::SetEnabled(d2rHUDConfig.MultipleAurasPerItem);
             Inspect::SetAppearance({d2rHUDConfig.InspectLabels,d2rHUDConfig.InspectIconHeight,d2rHUDConfig.InspectLabelSize});
             cachedSettings.HPRollover=d2rHUDConfig.HPRolloverMods;
             cachedSettings.HPRolloverDiff=d2rHUDConfig.HPRolloverDifficulty;
@@ -200,6 +201,14 @@ void ShowD2RHUDMenu()
                 "Defaults on. Reopen the NPC dialog after changing this option. TCP/IP requires the feature on both the client and host.", nullptr);
             ImGui::EndDisabled();
             if(ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))descriptionNote=MercSeller::Status();
+        }
+        if(optionFilter.Visible(HudOptions::Category::Gameplay,"Multiple Auras Per Item","aura timer item equipment monster monprop Paladin Soul Defiance clue tracker")){
+            ImGui::BeginDisabled(!MultipleAuras::Available());
+            drawCheckbox("Multiple Auras Per Item", &d2rHUDConfig.MultipleAurasPerItem, "Multiple Auras Per Item",
+                "Keeps each distinct item-granted aura active independently, including multiple auras on one item and monster properties such as the Paladin Soul. Preserves native aura levels, range and same-skill stacking rules.",
+                "Defaults on. Host-side gameplay option for offline and TCP/IP games. After changing it, start a new game, or re-equip the item and resummon affected companions to recreate their aura timers.", nullptr);
+            ImGui::EndDisabled();
+            if(ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))descriptionNote=MultipleAuras::Status();
         }
         if(optionFilter.Visible(HudOptions::Category::Gameplay,"Merc Icons Fix","mercenary hireling skilldesc HireableIconCel skill icons hiring panel")){
             ImGui::BeginDisabled(!MercIcons::Available());
@@ -429,10 +438,13 @@ void ShowD2RHUDMenu()
                 "Applies immediately. The TCP/IP host controls this option. BIN releases need the exported cubemain source in data/D2RHUD/table-metadata.json.", nullptr))
                 CubeVisual::SetExtendedConditions(d2rHUDConfig.ExtendedCubeConditions);
         }
-        if (optionFilter.Visible(HudOptions::Category::Sound,"Chat Sounds","Chat Sound notifications audio sound path")) {
+        if (optionFilter.Visible(HudOptions::Category::Sound,"Chat Sounds","Chat Sound notifications audio sound path volume marketplace trade")) {
         drawCheckbox("Chat Sounds", &d2rHUDConfig.ChatSounds, "Chat Sounds", "- Plays a notification sound when other players send chat\n- Does not play for your own messages\n- Controlled by D2RHUD options (not chat panel widget)\n\n", "Toggle this to enable or disable chat notification sounds", nullptr);
 
 
+        drawLabeledInput("Notification volume", [&]() {
+            ImGui::SliderInt("##notification-volume", &d2rHUDConfig.ChatNotificationVolume, 0, 100, "%d%%");
+        }, "Notification volume", "Controls chat and marketplace notification sounds only.\n0% mutes them. Windows and game audio levels stay unchanged.", "Use Play beside Chat Sound to preview the volume.", false, 35.0f, nullptr);
         bool chatSoundSelectionChanged = false;
         drawLabeledInput(
             "Chat Sound",
@@ -570,7 +582,7 @@ void ShowD2RHUDMenu()
                     ImGui::SetNextWindowPos(ImVec2(mouse.x+70.0f,mouse.y),ImGuiCond_Always);
                     ImGui::BeginTooltip();
                     ImGui::PushTextWrapPos(ImGui::GetCursorPos().x+440.0f*menuScale);
-                    HudText::TextUnformatted("Unfinished Workshop prototype. Baal unlocks Act VI; its final quest unlocks the next difficulty. Requires a matching compiled Act VI data pack (or -txt when compiling source tables). Full D2R restart required. Prototype content; use a separate test character.");
+                    HudText::TextUnformatted("Unfinished Workshop prototype. Baal unlocks Act VI; its final quest unlocks the next difficulty. Six-act compiled data supports this option on or off. When off, normal five-act progression and quest/waypoint panels are used. Full D2R restart required. Prototype content; use a separate test character.");
                     if(ExtendedActs::Requested()!=ExtendedActs::Active())HudText::TextUnformatted("Restart D2R to apply the selected option.");
                     ImGui::Separator();HudText::TextWrapped("%s",ExtendedActs::Status());
                     ImGui::PopTextWrapPos();ImGui::EndTooltip();

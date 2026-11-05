@@ -38,6 +38,7 @@ struct Config
     bool PersistentSummons = false;
     bool MercSellerUnlock = true;
     bool MercIconsFix = true;
+    bool MultipleAurasPerItem = true;
     bool MultipleUseitemOutputs = false;
     bool MultipleUseitemInputs = false;
     bool ExtendedCubeConditions = false;
@@ -58,6 +59,7 @@ struct Config
     bool ExtendedItemcodes = true;
     bool FloatingDamage = true;
     bool ChatSounds = true;
+    int ChatNotificationVolume = 30;
     std::string ChatSoundPath;
     std::vector<std::string> DLLsToLoad = { "D2RHUD.dll" };
     std::array<CameraPreset, 3> CameraPresets{};

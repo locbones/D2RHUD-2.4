@@ -53,6 +53,7 @@ trait MarketplaceEscrow {
         if(!is_string($value)||!preg_match('/^[a-f0-9]{32}$/D',$value))throw new MarketError(422,'Invalid custody transaction ID.');return $value;
     }
     private function custodyItem(array $r): array {
+        $comment=array_key_exists('comment',$r)?self::listingComment($r['comment']):null;
         $display=$this->displayItem($r);
         $hex=self::text($r['item_hex']??null,65536);
         if(strlen($hex)%2||strlen($hex)<14||!preg_match('/^[0-9a-f]+$/D',$hex))throw new MarketError(422,'Invalid custody item bytes.');
@@ -64,6 +65,7 @@ trait MarketplaceEscrow {
             'sockets'=>self::number($r['sockets']??0,0,6),'quantity'=>self::number($r['quantity']??null,1,511),
             'quantity_bit'=>self::number($r['quantity_bit']??-1,-1,262144),'tab'=>self::number($r['tab']??null,1,7),
             'page'=>self::number($r['page']??null,1,64),'price'=>isset($r['price'])?self::price($r['price']):[]];
+        if($comment!==null)$r['comment']=$comment;
         if($r['quantity_bit']!==-1){
             if($r['quality']!==2||$r['sockets']||$r['quantity_bit']+9>strlen($hex)*4||self::readBits($hex,$r['quantity_bit'],9)!==$r['quantity'])throw new MarketError(422,'Unsafe stack metadata.');
         }elseif($r['quantity']!==1)throw new MarketError(422,'Stack edit metadata is required.');
@@ -80,7 +82,7 @@ trait MarketplaceEscrow {
     private function balance(string $owner,string $scope,array $row,int $delta,string $action='adjustment',string $reference=''): void {
         $kind=$row['kind'];$stat=$row['stat']??'';
         $old=$this->run('SELECT quantity FROM escrow_balances WHERE owner=? AND scope=? AND kind=? AND stat=?',[$owner,$scope,$kind,$stat])->fetchColumn();
-        $amount=($old===false?0:(int)$old)+$delta;if($amount<0||$amount>9000000000000000)throw new MarketError(409,'Insufficient escrow balance or balance limit.');
+        $amount=($old===false?0:(int)$old)+$delta;if($amount<0||$amount>9000000000000000)throw new MarketError(409,'Insufficient Vault balance or balance limit.');
         if($old===false)$this->run('INSERT INTO escrow_balances VALUES (?,?,?,?,?)',[$owner,$scope,$kind,$stat,$amount]);
         else $this->run('UPDATE escrow_balances SET quantity=? WHERE owner=? AND scope=? AND kind=? AND stat=?',[$amount,$owner,$scope,$kind,$stat]);
         if($delta)$this->run('INSERT INTO wallet_entries (owner,scope,kind,stat,amount,available,action,reference,created) VALUES (?,?,?,?,?,?,?,?,?)',[$owner,$scope,$kind,$stat,$delta,$amount,$action,$reference,time()]);
@@ -94,6 +96,7 @@ trait MarketplaceEscrow {
         $out=[];foreach($rows as $r){$page=self::number($r['page']??null,1,64);if(isset($out[$page]))throw new MarketError(422,'Duplicate save page.');$out[$page]=['page'=>$page,'before'=>self::digest($r['before']??null),'after'=>self::digest($r['after']??null)];if($out[$page]['before']===$out[$page]['after'])throw new MarketError(422,'The custody save did not change.');}return array_values($out);
     }
     public function custody(array $agent,array $data,bool $hc): array {
+        if(($data['type']??'')==='catalog_refresh')return $this->refreshAgentCatalog($agent,$data);
         if(($data['type']??'')==='profile_sync')return $this->publishCharacter($agent,$data,$hc);
         if(($data['type']??'')==='profile_state')return ['linked'=>$this->profileAgent($agent,$data)];
         if(($data['type']??'')==='profile_manifest')return $this->characterManifest($agent,$data,$hc);
@@ -111,7 +114,7 @@ trait MarketplaceEscrow {
             if($type==='wallet_notice')return $this->walletNotice($owner,$scope,$data);
             // Read-only queue polling must not replace the private inventory
             // snapshot when the deposit page is currently loaded in the game.
-            if($type==='delivery_queue')return ['delivery_items'=>$this->requestedDeliveries($owner,$scope),'wallet_withdrawals'=>$this->walletRows($owner,$scope,true)];
+            if($type==='delivery_queue')return ['delivery_items'=>$this->requestedDeliveries($owner,$scope),'wallet_withdrawals'=>$this->walletRows($owner,$scope,true),'funding_requests'=>$this->fundingRequests($owner,$scope)];
             $old=$this->run('SELECT * FROM custody_tickets WHERE id=?',[$id])->fetch();
             if($old&&($old['owner']!==$owner||$old['scope']!==$scope||$old['agent']!==$agent['id']))throw new MarketError(404,'Custody transaction not found.');
             if($type==='status'){if(!$old)throw new MarketError(404,'Custody transaction not found.');return $this->ticket($old);}
@@ -126,6 +129,11 @@ trait MarketplaceEscrow {
                     if($balances)$balances=self::price($balances);foreach($balances as $b)if(!in_array($b['kind']??'item',['gold','bag'],true))throw new MarketError(422,'Use serialized items for item deposits.');
                     if(!$items&&!$balances)throw new MarketError(422,'Empty deposit.');
                     $pages=array_column($proof,'page');foreach($items as $item)if(!in_array($item['page'],$pages,true))throw new MarketError(422,'Item page has no save proof.');
+                    if(isset($data['funding_offer'])){
+                        $funding=self::ticketId($data['funding_offer']);$revision=self::number($data['funding_revision']??null,1,2147483647);$current=null;
+                        foreach($this->fundingRequests($owner,$scope) as $candidate)if($candidate['id']===$funding&&$candidate['revision']===$revision){$current=$candidate;break;}
+                        if(!$current)throw new MarketError(409,'The agreed trade changed before payment could be deposited. Your local items were not moved.');
+                    }
                     $this->reserveIdentities($owner,$scope,$id,$items);
                     // Validate every legacy explicit lineage before authorizing
                     // any save removal, even when no native UUID is available.
@@ -185,7 +193,7 @@ trait MarketplaceEscrow {
             }
             $item=$lineage??($p?$p['item']:self::id());
             if($p){
-                if(!$lineage&&$this->run('SELECT item FROM escrow_items WHERE item=?',[$item])->fetch())throw new MarketError(409,'This item already entered escrow. Reconcile the local save.');
+                if(!$lineage&&$this->run('SELECT item FROM escrow_items WHERE item=?',[$item])->fetch())throw new MarketError(409,'This item already entered Vault. Reconcile the local save.');
                 $i=$this->run('SELECT owner,item_hex FROM items WHERE id=?',[$p['item']])->fetch();if(!$i||$i['owner']!==$owner||$i['item_hex']!==$r['item_hex'])throw new MarketError(409,'Published item ownership changed.');
                 $this->invalidateOffers($p['listing'],$actor,'This item entered custody. Review and submit a funded offer.');
                 $this->run("UPDATE listings SET status='withdrawn',revision=revision+1 WHERE id=?",[$p['listing']]);
@@ -195,6 +203,7 @@ trait MarketplaceEscrow {
                 // Explicit lineage is required; never merge by seed alone.
                 $this->run('INSERT INTO items VALUES (?,?,?,?,?,?,?,?,?,?)',[$item,$scope,$r['saved_id'],$r['code'],$r['quality'],$r['index'],$r['ethereal'],$r['sockets'],$owner,$r['item_hex']]);
             }
+            if(array_key_exists('comment',$r))$r['comment_owner']=$owner;
             $state=$r['price']?'listed':'available';
             if($returning){$this->run('UPDATE escrow_items SET state=?,metadata=?,origin=? WHERE item=?',[$state,self::json($r),$receipt,$item]);$this->run('UPDATE items SET item_hex=? WHERE id=?',[$r['item_hex'],$item]);}
             else $this->run('INSERT INTO escrow_items VALUES (?,?,?,?,?,?)',[$item,$owner,$scope,$state,self::json($r),$receipt]);
@@ -202,9 +211,10 @@ trait MarketplaceEscrow {
                 $listing=$p?$p['listing']:self::id();
                 if($p)$this->run("UPDATE listings SET item=?,status='open',price=?,revision=revision+1 WHERE id=?",[$item,self::json($r['price']),$listing]);
                 else $this->run('INSERT INTO listings VALUES (?,?,?,?,?,?,?)',[$listing,$item,$owner,1,'open',self::json($r['price']),time()]);
+                $this->setListingComment($listing,$r['comment']??null);
             }
             $this->recordIdentity($item,$scope,$r['item_hex']);
-            $this->event($item,null,$actor,'escrow_deposit','Save removal acknowledged; item is held in escrow.',$r['price'],$owner);
+            $this->event($item,null,$actor,'escrow_deposit','Save removal acknowledged; item is held in Vault.',$r['price'],$owner);
         }
         foreach($packet['balances'] as $b)$this->balance($owner,$scope,$b,$b['quantity'],'deposit',$receipt);
     }
@@ -220,12 +230,15 @@ trait MarketplaceEscrow {
         }
         if(isset($data['balance_caps'])){$caps=[];foreach($data['balance_caps']?self::price($data['balance_caps']):[] as $r){if(!in_array($r['kind']??'item',['gold','bag'],true))throw new MarketError(422,'Delivery capacities must be resources.');$caps[$r['kind'].'|'.($r['stat']??'')]=$r['quantity'];}}
         $items=$this->run("SELECT e.item,i.item_hex FROM escrow_items e JOIN items i ON i.id=e.item WHERE e.owner=? AND e.scope=? AND e.state='available'$selector ORDER BY e.item LIMIT $limit",$args)->fetchAll();
-        foreach($items as $i)$this->run("UPDATE escrow_items SET state='claiming',origin=? WHERE item=?",[$id,$i['item']]);
+        foreach($items as $i){if(!$this->supportsEscrowItem($owner,$i['item']))throw new MarketError(409,'Update this mod before collecting this item: its saved definitions are not present in your installed version.');$this->run("UPDATE escrow_items SET state='claiming',origin=? WHERE item=?",[$id,$i['item']]);}
         $balances=[];
         foreach($this->run('SELECT kind,stat,quantity FROM escrow_balances WHERE owner=? AND scope=? AND quantity>0 ORDER BY kind,stat LIMIT 16',[$owner,$scope])->fetchAll() as $b){
             $q=min((int)$b['quantity'],2000000000,$caps===null?2000000000:($caps[$b['kind'].'|'.$b['stat']]??0));if(!$q)continue;$r=['kind'=>$b['kind'],'code'=>$b['kind']==='gold'?'gld':'Z01','label'=>$b['kind']==='gold'?'Gold':$b['stat'],'quality'=>2,'index'=>-1,'ethereal'=>-1,'quantity'=>$q];if($b['kind']==='bag')$r['stat']=$b['stat'];
+            if(!$this->supportsBalance($owner,$r))throw new MarketError(409,'Update this mod before collecting that bag resource.');
             $balances[]=$r;$this->balance($owner,$scope,$r,-$q,'delivery_reserved',$id);
         }
+        // Legacy companions recognize this internal empty-claim response.
+        // Player-facing views call the storage Vault; the wire sentinel stays stable.
         if(!$items&&!$balances)throw new MarketError(409,'No unlisted escrow assets are ready for delivery.');
         return ['items'=>$items,'balances'=>$balances];
     }
@@ -250,6 +263,7 @@ trait MarketplaceEscrow {
             $this->run("UPDATE escrow_items SET state='delivered',metadata=? WHERE item=?",[self::json($r),$d['item']]);
             $this->run('UPDATE items SET item_hex=? WHERE id=?',[$d['item_hex'],$d['item']]);
             $this->event($d['item'],null,['id'=>$owner],'delivered','Delivery save write acknowledged.');
+            $this->recordTradeDelivery($d['item'],$owner,$scope,$id);
         }
     }
     public function escrowCommand(array $actor,array $data,bool $hc): array {
@@ -274,12 +288,13 @@ trait MarketplaceEscrow {
                 if($type==='escrow_price'){
                     $price=self::price($data['price']??null);$listing=self::id();$this->run('INSERT INTO listings VALUES (?,?,?,?,?,?,?)',[$listing,$item,$owner,1,'open',self::json($price),time()]);$state='listed';$r=['listing_id'=>$listing];
                 }elseif($type==='escrow_return'){$state='available';$price=[];$r=['ready_for_delivery'=>true];}
-                else throw new MarketError(422,'Unknown escrow command.');
+                else throw new MarketError(422,'Unknown Vault command.');
                 $metadata=json_decode($e['metadata'],true,512,JSON_THROW_ON_ERROR);$metadata['price']=$price;
+                if($type==='escrow_price'){$metadata['comment']=array_key_exists('comment',$data)?self::listingComment($data['comment']):(($metadata['comment_owner']??'')===$owner?($metadata['comment']??''):'');$metadata['comment_owner']=$owner;$this->setListingComment($listing,$metadata['comment']);}
                 if($type==='escrow_return')$metadata['delivery_requested']=true;
                 else unset($metadata['delivery_requested']);
                 $this->run('UPDATE escrow_items SET state=?,metadata=? WHERE item=?',[$state,self::json($metadata),$item]);
-                $this->event($item,null,$actor,$state==='listed'?'price_changed':'unlisted',$state==='listed'?'Escrow asking price updated.':'Item queued for return.',$price,$owner);
+                $this->event($item,null,$actor,$state==='listed'?'price_changed':'unlisted',$state==='listed'?'Vault asking price updated.':'Item queued for return.',$price,$owner);
             }
             $this->settleReady($hc);$this->run('INSERT INTO commands VALUES (?,?,?,?)',[$owner,$id,$hash,self::json($r)]);return $r;
         });
@@ -287,7 +302,36 @@ trait MarketplaceEscrow {
     private static function samePrice(array $a,array $b): bool {
         $normalize=function($rows){$out=[];foreach($rows as $r){unset($r['label']);ksort($r);$out[]=self::json($r);}sort($out);return $out;};return $normalize($a)===$normalize($b);
     }
+    private function fundingRequests(string $owner,string $scope): array {
+        $result=[];
+        $rows=$this->run("SELECT o.*,l.price AS asking,l.status AS listing_status FROM offers o JOIN listings l ON l.id=o.listing JOIN escrow_items e ON e.item=l.item WHERE o.buyer=? AND e.scope=? AND e.state='listed' AND e.owner=o.seller AND o.status IN ('accepted','pending') ORDER BY o.created,o.id LIMIT 64",[$owner,$scope])->fetchAll();
+        $stock=$this->run("SELECT e.*,i.code,i.quality,i.item_index,i.ethereal FROM escrow_items e JOIN items i ON i.id=e.item WHERE e.owner=? AND e.scope=? AND e.state='available' ORDER BY e.item",[$owner,$scope])->fetchAll();
+        $classSupport=in_array('torch_class',json_decode($this->run('SELECT features FROM market_browser_features WHERE owner=? AND scope=?',[$owner,$scope])->fetchColumn()?:'[]',true),true);
+        foreach($rows as $o){$price=json_decode($o['price'],true,512,JSON_THROW_ON_ERROR);
+            if(!$classSupport&&self::hasClassPrice($price))continue;
+            if($o['status']==='pending'){
+                if(self::isOpen(json_decode($o['asking'],true,512,JSON_THROW_ON_ERROR)))continue;
+                $auto=$this->run('SELECT auto_trade FROM market_preferences WHERE owner=? AND scope=?',[$o['seller'],$scope])->fetchColumn();
+                if(!$auto||$o['proposer']!==$owner||$o['listing_status']!=='open'||!self::samePrice($price,json_decode($o['asking'],true,512,JSON_THROW_ON_ERROR)))continue;
+            }elseif($o['listing_status']!=='agreed')continue;
+            $needed=[];$used=[];
+            foreach($price as $r){
+                if(($r['kind']??'item')!=='item'){
+                    if(!in_array($r['kind'],['gold','bag'],true))continue;
+                    $have=(int)$this->run('SELECT quantity FROM escrow_balances WHERE owner=? AND scope=? AND kind=? AND stat=?',[$owner,$scope,$r['kind'],$r['stat']??''])->fetchColumn();
+                    if($have<$r['quantity']){$r['quantity']-=$have;$needed[]=$r;}continue;
+                }$remaining=$r['quantity'];
+                foreach($stock as $i){$m=json_decode($i['metadata'],true,512,JSON_THROW_ON_ERROR);
+                    if(isset($used[$i['item']])||!self::paymentClassMatches($r,$m)||!$m['identified']||$i['code']!==$r['code']||(int)$i['quality']!==$r['quality']||(int)$i['item_index']!==$r['index']||($r['ethereal']!==-1&&(int)$i['ethereal']!==$r['ethereal']))continue;
+                    $q=min($remaining,$m['quantity']);if($q!==$m['quantity']&&$m['quantity_bit']===-1)continue;$remaining-=$q;$used[$i['item']]=true;if(!$remaining)break;
+                }
+                if($remaining){$r['quantity']=$remaining;$needed[]=$r;}
+            }
+            if($needed)$result[]=['id'=>$o['id'],'revision'=>(int)$o['revision'],'price'=>$needed];
+        }return $result;
+    }
     private function allocation(string $buyer,string $scope,array $price): ?array {
+        if(self::isOpen($price))return null;
         $out=[];$used=[];
         foreach($price as $r){$remaining=$r['quantity'];
             if(($r['kind']??'')==='free')continue;
@@ -297,7 +341,7 @@ trait MarketplaceEscrow {
             }
             foreach($this->run("SELECT e.*,i.code,i.quality,i.item_index,i.ethereal FROM escrow_items e JOIN items i ON i.id=e.item WHERE e.owner=? AND e.scope=? AND e.state='available' ORDER BY e.item",[$buyer,$scope])->fetchAll() as $i){
                 $m=json_decode($i['metadata'],true,512,JSON_THROW_ON_ERROR);
-                if(isset($used[$i['item']])||!$m['identified']||$i['code']!==$r['code']||(int)$i['quality']!==$r['quality']||(int)$i['item_index']!==$r['index']||($r['ethereal']!==-1&&(int)$i['ethereal']!==$r['ethereal']))continue;
+                if(isset($used[$i['item']])||!self::paymentClassMatches($r,$m)||!$m['identified']||$i['code']!==$r['code']||(int)$i['quality']!==$r['quality']||(int)$i['item_index']!==$r['index']||($r['ethereal']!==-1&&(int)$i['ethereal']!==$r['ethereal']))continue;
                 $q=min($remaining,$m['quantity']);if($q!==$m['quantity']&&$m['quantity_bit']===-1)continue;
                 $out[]=['item'=>$i,'metadata'=>$m,'quantity'=>$q];$used[$i['item']]=true;$remaining-=$q;if(!$remaining)break;
             }
@@ -319,6 +363,7 @@ trait MarketplaceEscrow {
             if(!$current||$current['state']!=='listed'||$current['owner']!==$o['seller']||$status!==$o['status'])continue;
             $price=json_decode($o['price'],true,512,JSON_THROW_ON_ERROR);
             if($o['status']==='pending'){
+                if(self::isOpen(json_decode($o['asking'],true,512,JSON_THROW_ON_ERROR)))continue;
                 $auto=$this->run('SELECT auto_trade FROM market_preferences WHERE owner=? AND scope=?',[$o['seller'],$scope])->fetchColumn();
                 if((!$auto&&!self::isFree($price))||$o['proposer']!==$o['buyer']||$o['listing_status']!=='open'||!self::samePrice($price,json_decode($o['asking'],true,512,JSON_THROW_ON_ERROR)))continue;
             }elseif($o['listing_status']!=='agreed')continue;
@@ -326,9 +371,12 @@ trait MarketplaceEscrow {
             $allocation=$this->allocation($o['buyer'],$scope,$price);if($allocation===null)continue;
             $members=$this->bundleGoods($o['listing'],$o['item']);
             foreach($members as $member)if(!$this->run("SELECT e.item FROM escrow_items e JOIN items i ON i.id=e.item WHERE e.item=? AND e.owner=? AND i.owner=? AND e.scope=? AND e.state='listed'",[$member,$o['seller'],$o['seller'],$scope])->fetchColumn())continue 2;
+            foreach($members as $member)if(!$this->supportsEscrowItem($o['buyer'],$member))continue 2;
+            foreach($allocation as $a){if(isset($a['balance'])){if(!$this->supportsBalance($o['seller'],$a['balance']))continue 2;}elseif(!$this->supportsEscrowItem($o['seller'],$a['item']['item']))continue 2;}
             $receipt=self::id();
+            $this->run("UPDATE market_wanted SET status='fulfilled',revision=revision+1 WHERE id IN (SELECT wanted FROM market_wanted_offers WHERE offer=?) AND status='open'",[$o['id']]);
             foreach($allocation as $a){
-                if(isset($a['balance'])){$b=$a['balance'];$this->balance($o['buyer'],$scope,$b,-$b['quantity'],'trade_payment',$receipt);$this->balance($o['seller'],$scope,$b,$b['quantity'],'trade_proceeds',$receipt);continue;}
+                if(isset($a['balance'])){$b=$a['balance'];$this->balance($o['buyer'],$scope,$b,-$b['quantity'],'trade_payment',$receipt);$this->balance($o['seller'],$scope,$b,$b['quantity'],'trade_proceeds',$receipt);$this->recordTradeAsset($receipt,$scope,'payment',$o['buyer'],$o['seller'],null,$b);continue;}
                 $m=$a['metadata'];$item=$a['item']['item'];$q=$a['quantity'];
                 if($q<$m['quantity']){
                     $remaining=$m;$remaining['quantity']-=$q;$remaining['item_hex']=self::patchBits($m['item_hex'],$m['quantity_bit'],9,$remaining['quantity']);
@@ -349,17 +397,19 @@ trait MarketplaceEscrow {
                     $this->run('INSERT INTO items VALUES (?,?,?,?,?,?,?,?,?,?)',[$child,$scope,$m['saved_id'],$m['code'],$m['quality'],$m['index'],$m['ethereal'],$m['sockets'],$o['seller'],$m['item_hex']]);
                     $this->run('INSERT INTO escrow_items VALUES (?,?,?,?,?,?)',[$child,$o['seller'],$scope,'available',self::json($m),$receipt]);$this->recordIdentity($child,$scope,$m['item_hex']);$this->event($child,null,['id'=>$o['buyer']],'stack_split','Payment fragment split from ledger '.$item.'.',[],$o['buyer'],$o['seller']);
                 }else{$m['delivery_requested']=true;$this->run('UPDATE escrow_items SET owner=?,metadata=? WHERE item=?',[$o['seller'],self::json($m),$item]);$this->run('UPDATE items SET owner=? WHERE id=?',[$o['seller'],$item]);}
+                $this->recordTradeAsset($receipt,$scope,'payment',$o['buyer'],$o['seller'],$q<$a['metadata']['quantity']?$child:$item,[],$item);
             }
             foreach($members as $member){
                 $goods=json_decode($this->run("SELECT metadata FROM escrow_items WHERE item=?",[$member])->fetchColumn(),true,512,JSON_THROW_ON_ERROR);$goods['price']=[];$goods['delivery_requested']=true;
                 $this->run("UPDATE escrow_items SET owner=?,state='available',metadata=? WHERE item=?",[$o['buyer'],self::json($goods),$member]);$this->run('UPDATE items SET owner=? WHERE id=?',[$o['buyer'],$member]);
+                $this->recordTradeAsset($receipt,$scope,'goods',$o['seller'],$o['buyer'],$member);
                 if($member!==$o['item'])$this->event($member,$o['id'],['id'=>$o['seller']],'bundle_sale','Included in bundle settlement '.$receipt.'. Full price covers the entire bundle.',$price,$o['seller'],$o['buyer'],hash('sha256',$receipt.'|'.$member));
             }
             $this->run("UPDATE listings SET status='sold',revision=revision+1 WHERE id=?",[$o['listing']]);
             $this->invalidateOffers($o['listing'],['id'=>$o['seller']],'Another proposal completed this trade.',$o['id']);
             $this->run("UPDATE offers SET status='completed',revision=revision+1 WHERE id=?",[$o['id']]);
             $this->run('INSERT INTO settlements VALUES (?,?,?,?,?,?,?,?)',[$receipt,$o['id'],$scope,$o['seller'],$o['buyer'],$o['item'],self::json($price),time()]);
-            $this->event($o['item'],$o['id'],['id'=>$o['seller']],'completed_sale','Ownership and payment exchanged atomically in escrow. Switch away from the delivery page while the companion syncs, then switch back.',$price,$o['seller'],$o['buyer'],$receipt);
+            $this->event($o['item'],$o['id'],['id'=>$o['seller']],'completed_sale','Ownership and payment exchanged atomically in Vault. Switch away from the delivery page while the companion syncs, then switch back.',$price,$o['seller'],$o['buyer'],$receipt);
             --$budget;
             // Proceeds can fund another already-agreed trade even if that
             // recipient's computer is asleep. Drain those dependencies here.

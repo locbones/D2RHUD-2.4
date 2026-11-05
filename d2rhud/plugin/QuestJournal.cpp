@@ -1,6 +1,6 @@
 #include "QuestJournal.h"
 #include "QuestJournalData.h"
-#include "QuestJournalStorage.h"
+#include "QuestJournalProgressStore.h"
 #include "CubeMap.h"
 #include "CompiledNames.h"
 #include "../Pattern.h"
@@ -25,7 +25,7 @@ struct Session {
     std::string message;std::set<uint32_t> weapons;
 };
 std::mutex mutex,viewMutex,storageMutex;
-std::unique_ptr<Data::Store> clientStore;uint32_t storageSession=0,storageRecipient=0;std::map<Key,Session> sessions;std::map<Client*,Loaded> loading;
+std::unique_ptr<Data::ProgressStore> clientStore;uint32_t storageSession=0,storageRecipient=0;std::map<Key,Session> sessions;std::map<Client*,Loaded> loading;
 std::map<Game*,std::set<uint32_t>> killed;
 std::map<Game*,uint64_t> sent;std::filesystem::path directory;View clientView;uint64_t received=0;
 std::string configurationStatus="Quest journal has not been configured.";
@@ -70,7 +70,7 @@ bool Durable(const Session& s){
     return !s.awaiting&&!s.storageBlocked&&s.hasAcknowledgment&&saved.completed==s.state.completed&&
         saved.objectiveReady==s.state.objectiveReady&&saved.legacyClosed==s.state.legacyClosed&&saved.uncertain==s.state.uncertain;
 }
-void Send(Game* game,Session& s,const Rules& rules){
+void Send(Game* game,Session& s,const Rules& rules,bool checkpoint=false){
     auto client=Owner(game,s.player);if(!client)return;
     if(!s.awaiting&&s.published!=s.state){
         if(s.history.revision==UINT64_MAX){s.storageBlocked=true;Message(s,"Quest revision limit reached.");}
@@ -78,7 +78,7 @@ void Send(Game* game,Session& s,const Rules& rules){
     }
     Data::Packet packet;packet.recipient=s.player->dwUnitId;packet.session=s.epoch;packet.sequence=s.sequence;packet.definition=rules.digest;
     packet.count=uint8_t((std::max)(int(rules.quests.size()),s.state.completed));packet.completed=uint8_t(s.state.completed);packet.ready=s.state.objectiveReady;packet.kills=s.state.kills;packet.evidence=s.state.evidence;
-    packet.flags=uint8_t((s.blocked||s.storageBlocked||s.awaiting||s.state.uncertain?1:0)|(!s.state.legacyClosed&&!s.state.completed&&!s.state.objectiveReady&&!s.awaiting?2:0)|(s.dirty?4:0)|(s.state.uncertain?8:0)|(s.awaiting?16:0));
+    packet.flags=uint8_t((s.blocked||s.storageBlocked||s.awaiting||s.state.uncertain?1:0)|(!s.state.legacyClosed&&!s.state.completed&&!s.state.objectiveReady&&!s.awaiting?2:0)|(s.dirty?4:0)|(s.state.uncertain?8:0)|(s.awaiting?16:0)|(checkpoint?Data::SaveCheckpoint:0));
     if(packet.flags&2)packet.legacyCompleted=uint8_t(LegacyCompleted(s.player,packet.count));
     packet.revision=s.history.revision;packet.menus=s.state.menus;packet.classId=uint8_t(s.history.identity.classId);packet.characterFlags=uint8_t(s.history.identity.flags&0x24);
     packet.events=uint8_t((s.state.countess?1:0)|(s.state.thul?2:0)|(s.state.legacyClosed?4:0));
@@ -154,13 +154,16 @@ void Saved(Game* game,Unit* player,const uint8_t* bytes,size_t size){
     if(!game||!player)return;Data::Identity identity;Data::Checkpoint point;if(!Data::Header(bytes,size,identity,point))return;
     std::lock_guard lock(mutex);auto rules=definitions.load();auto it=sessions.find({game,player->dwUnitId});if(!rules||it==sessions.end()||it->second.player!=player)return;auto& s=it->second;
     if(!Data::SameCharacter(s.history.identity,identity))return;
-    // Queue the durable journal snapshot before the native character-save packets.
-    // The receiver flushes it synchronously before processing later game packets.
-    Send(game,s,*rules);
+    // Queue the journal snapshot before the native character-save packets.
+    // Claim/objective changes remain durable receiver barriers; counter-only
+    // checkpoints can finish in the background without changing reward gates.
+    // A native character save flushes counters too, even with a live client unit.
+    Send(game,s,*rules,true);
 }
 void Removed(Game* game,Unit* player){if(!player||player->dwUnitType)return;std::lock_guard lock(mutex);auto it=sessions.find({game,player->dwUnitId});if(it!=sessions.end()&&it->second.player==player)sessions.erase(it);}
 void Destroyed(Game* game){std::lock_guard lock(mutex);std::erase_if(sessions,[&](const auto& e){return e.first.first==game;});sent.erase(game);killed.erase(game);}
 void Tick(Game* game){
+    HudTelemetry::Scope timing(HudTelemetry::Feature::QuestJournalTick);
     if(!available||!game)return;auto rules=definitions.load();if(!rules||!rules->error.empty())return;
     std::lock_guard lock(mutex);auto now=GetTickCount64();auto& last=sent[game];if(last&&now-last<750)return;last=now;
     for(auto& [key,s]:sessions)if(key.first==game){Observe(game,s,*rules);Send(game,s,*rules);}
@@ -226,6 +229,7 @@ bool Command(Game* game,Unit* player,const uint8_t* bytes,size_t size){
     Send(game,s,*rules);sent.erase(game);return true;
 }
 bool Receive(const uint8_t* bytes,size_t size){
+    HudTelemetry::Scope timing(HudTelemetry::Feature::QuestJournalReceive);
     if(!definitions.load()||!bytes||size!=sizeof(Data::Packet))return false;Data::Packet packet;memcpy(&packet,bytes,size);
     if(packet.opcode==0x2b&&packet.magic==Data::Magic&&packet.operation==Data::Operation&&packet.version!=Data::Version){
         auto player=LocalPlayer();if(player&&player->dwUnitId==packet.recipient){
@@ -249,10 +253,10 @@ bool Receive(const uint8_t* bytes,size_t size){
         if(payload&&length<=command.padding.size())memcpy(command.padding.data(),payload,length);
         Native<void(__fastcall*)(void*,int)>(0x10dce0)(&command,sizeof(command));
     };
-    std::string error;bool stored=false;
+    std::string error;bool stored=false,pending=false;
     if(packet.flags&16){
         if(storageSession!=packet.session||storageRecipient!=packet.recipient||!clientStore){
-            clientStore.reset();auto store=std::make_unique<Data::Store>();
+            clientStore.reset();auto store=std::make_unique<Data::ProgressStore>();
             if(store->Open(directory,identity,error)){clientStore=std::move(store);storageSession=packet.session;storageRecipient=packet.recipient;}
         }
         if(clientStore){const auto transfer=Data::Pack(Data::Current(clientStore->history),clientStore->history.revision);reply(7,&transfer,sizeof(transfer));stored=true;}
@@ -260,15 +264,16 @@ bool Receive(const uint8_t* bytes,size_t size){
         if(storageSession!=packet.session||storageRecipient!=packet.recipient||!clientStore||!Data::SameCharacter(clientStore->history.identity,identity))return true;
         Data::State state{packet.completed,packet.ready!=0,(packet.events&4)!=0,(packet.flags&8)!=0,packet.kills,packet.evidence,(packet.events&1)!=0,(packet.events&2)!=0,packet.menus};
         if(packet.revision<clientStore->history.revision)return true;
-        stored=clientStore->Commit(state,packet.revision,error);
+        const auto result=clientStore->Update(state,packet.revision,error,final||(packet.flags&Data::SaveCheckpoint)!=0);
+        stored=result==Data::ProgressStore::Result::Stored;pending=result==Data::ProgressStore::Result::Pending;
         if(stored)reply(8,&packet.revision,sizeof(packet.revision));
     }
-    if(!stored)reply(9);
+    if(!stored&&!pending)reply(9);
     std::lock_guard lock(viewMutex);
     if(clientView.connected&&clientView.recipient==packet.recipient&&clientView.session==packet.session&&packet.sequence<clientView.sequence)return true;
     View view;view.connected=true;view.recipient=packet.recipient;view.session=packet.session;view.sequence=packet.sequence;view.completed=packet.completed;view.objectiveReady=packet.ready;
-    view.blocked=(packet.flags&1)!=0||!stored;view.legacyAvailable=(packet.flags&2)!=0;view.dirty=(packet.flags&4)!=0;view.legacyCompleted=packet.legacyCompleted;
-    view.character=packet.character;view.message=stored?packet.message:error;view.kills=packet.kills;view.evidence=packet.evidence;
+    view.blocked=(packet.flags&1)!=0||(!stored&&!pending);view.legacyAvailable=(packet.flags&2)!=0;view.dirty=(packet.flags&4)!=0;view.legacyCompleted=packet.legacyCompleted;
+    view.character=packet.character;view.message=(stored||pending)?packet.message:error;view.kills=packet.kills;view.evidence=packet.evidence;
     auto rules=definitions.load();if(!rules||!rules->error.empty()){view.blocked=true;view.message="Quest definitions are unavailable on this computer.";}
     clientView=std::move(view);received=GetTickCount64();return true;
 }

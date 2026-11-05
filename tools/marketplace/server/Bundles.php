@@ -23,7 +23,7 @@ trait MarketplaceBundles {
             $this->lockScope($hc);$scope=$this->scope($hc);$owner=$actor['id'];$id=self::ticketId($data['id']??null);$hash=hash('sha256',$scope.'|'.self::json($data));
             $old=$this->run('SELECT hash,result FROM commands WHERE actor=? AND id=?',[$owner,$id])->fetch();
             if($old){if(!hash_equals($old['hash'],$hash))throw new MarketError(409,'Bundle command ID reused.');return json_decode($old['result'],true,512,JSON_THROW_ON_ERROR);}
-            if($actor['role']!=='player')throw new MarketError(403,'Only a player can list escrow bundles.');
+            if($actor['role']!=='player')throw new MarketError(403,'Only a player can list Vault bundles.');
             if($data['type']==='bundle_dissolve'){
                 $listing=self::ticketId($data['listing_id']??null);
                 $l=$this->run('SELECT l.* FROM listings l JOIN market_bundles b ON b.listing=l.id JOIN items i ON i.id=l.item WHERE l.id=? AND i.scope=?',[$listing,$scope])->fetch();
@@ -34,14 +34,14 @@ trait MarketplaceBundles {
                 $result=['unbundled'=>true,'items'=>$members];
             }else{
                 $members=$data['items']??null;
-                if(!is_array($members)||!array_is_list($members)||count($members)<2||count($members)>16)throw new MarketError(422,'Choose 2 to 16 different escrow items.');
+                if(!is_array($members)||!array_is_list($members)||count($members)<2||count($members)>16)throw new MarketError(422,'Choose 2 to 16 different Vault items.');
                 $members=array_map(fn($v)=>self::ticketId($v),$members);if(count(array_unique($members))!==count($members))throw new MarketError(422,'Choose different items for the bundle.');$title=trim(self::text($data['title']??null,80));if($title==='')throw new MarketError(422,'Name your bundle.');$price=self::price($data['price']??null);$rows=[];
-                foreach($members as $item){$this->requireSingleItem($item);$r=$this->run("SELECT * FROM escrow_items WHERE item=? AND owner=? AND scope=? AND state IN ('available','listed')",[$item,$owner,$scope])->fetch();if(!$r)throw new MarketError(409,'Choose items currently held in your escrow.');
+                foreach($members as $item){$this->requireSingleItem($item);$r=$this->run("SELECT * FROM escrow_items WHERE item=? AND owner=? AND scope=? AND state IN ('available','listed')",[$item,$owner,$scope])->fetch();if(!$r)throw new MarketError(409,'Choose items currently held in your Vault.');
                     if($this->run("SELECT id FROM listings WHERE item=? AND status='agreed'",[$item])->fetchColumn())throw new MarketError(409,'An item already has agreed terms.');$rows[]=$r;}
                 $listing=self::id();
                 foreach($rows as $n=>$r){foreach($this->run("SELECT id FROM listings WHERE item=? AND status='open'",[$r['item']])->fetchAll() as $l){$this->invalidateOffers($l['id'],$actor,'The seller moved this item into a bundle.');$this->run("UPDATE listings SET status='withdrawn',revision=revision+1 WHERE id=?",[$l['id']]);}
                     $m=json_decode($r['metadata'],true,512,JSON_THROW_ON_ERROR);$m['price']=$n===0?$price:[];unset($m['delivery_requested']);$this->run("UPDATE escrow_items SET state='listed',metadata=? WHERE item=?",[self::json($m),$r['item']]);}
-                $this->run('INSERT INTO listings VALUES (?,?,?,?,?,?,?)',[$listing,$members[0],$owner,1,'open',self::json($price),time()]);$this->run('INSERT INTO market_bundles VALUES (?,?)',[$listing,$title]);
+                $this->run('INSERT INTO listings VALUES (?,?,?,?,?,?,?)',[$listing,$members[0],$owner,1,'open',self::json($price),time()]);$this->run('INSERT INTO market_bundles VALUES (?,?)',[$listing,$title]);$this->setListingComment($listing,array_key_exists('comment',$data)?self::listingComment($data['comment']):'');
                 foreach($members as $n=>$item)$this->run('INSERT INTO market_bundle_items VALUES (?,?,?)',[$listing,$item,$n]);
                 $this->event($members[0],null,$actor,'listed','Bundle: '.$title.' ('.count($members).' items).',$price,$owner);
                 $result=['listing_id'=>$listing,'items'=>$members];

@@ -4,7 +4,7 @@ declare(strict_types=1);
 // The real service tables are never read, migrated, or mutated by this suite.
 if(PHP_SAPI!=='cli')exit(1);
 final class ValidationPDO extends PDO {
-    public const TABLES=['actors','items','listings','offers','events','commands','inventory_sources','published_items','custody_agents','custody_serial','custody_tickets','escrow_items','escrow_balances','settlements','market_preferences','custody_sources','custody_catalogs','web_tickets','web_item_display','web_attempts','web_profiles','web_intents','item_identities','identity_reservations','market_names','market_favorites','market_bidder_aliases','market_public_offers','wallet_withdrawals','wallet_entries','market_players','market_characters','market_messages','market_message_reads','market_mods','market_memberships','market_ticket_scopes','market_scope_migrations','custody_agents_scoped','market_moderators','market_reports','market_report_events','market_owners','market_control','market_client_resets','market_owner_actions','market_bundles','market_bundle_items','market_searches','market_search_hits','market_search_notices','market_search_poll','market_notifications','market_player_controls','market_activity_reads','market_companion_seen'];
+    public const TABLES=['market_gift_campaigns','market_gift_claims','market_gift_notices','market_wanted','market_wanted_offers','market_browser_features','market_companion_versions','market_message_seen','market_trade_assets','market_catalog_families','market_catalog_versions','market_agent_catalogs','market_player_ids','market_profile_recoveries','market_installations','actors','items','listings','offers','events','commands','inventory_sources','published_items','custody_agents','custody_serial','custody_tickets','escrow_items','escrow_balances','settlements','market_preferences','custody_sources','custody_catalogs','web_tickets','web_item_display','web_attempts','web_profiles','web_intents','item_identities','identity_reservations','market_names','market_favorites','market_bidder_aliases','market_public_offers','wallet_withdrawals','wallet_entries','market_players','market_characters','market_messages','market_message_reads','market_mods','market_memberships','market_ticket_scopes','market_scope_migrations','custody_agents_scoped','market_moderators','market_reports','market_report_events','market_owners','market_control','market_client_resets','market_owner_actions','market_bundles','market_bundle_items','market_searches','market_search_hits','market_search_notices','market_search_poll','market_notifications','market_player_controls','market_activity_reads','market_companion_seen'];
     public function __construct(array $config,public string $prefix){if(!preg_match('/^validation_[a-f0-9]{12}_$/D',$prefix))throw new RuntimeException('Invalid validation namespace.');parent::__construct($config['dsn'],$config['username']??null,$config['password']??null);$this->setAttribute(PDO::ATTR_ERRMODE,PDO::ERRMODE_EXCEPTION);}
     private function rewritten(string $sql): string{return preg_replace_callback('/\b('.implode('|',self::TABLES).')\b/',fn($m)=>$this->prefix.$m[1],$sql);}
     public function exec(string $statement): int|false{return parent::exec($this->rewritten($statement));}
@@ -23,13 +23,25 @@ if(($argv[3]??'')==='worker'){
 $prefix='validation_'.bin2hex(random_bytes(6)).'_';$db=new ValidationPDO($config,$prefix);
 $report=['driver'=>$db->getAttribute(PDO::ATTR_DRIVER_NAME),'isolated_prefix'=>$prefix];$jobs=[];
 try{
-    if(in_array($argv[3]??'',['players','notifications','transfers','mods','moderation','owner','averages','web','item-names','experience','bundles'],true)){
+    if(in_array($argv[3]??'',['players','notifications','transfers','mods','moderation','owner','averages','web','item-names','experience','bundles','enrollment','player-identity','social','compatibility','owner-audit','impersonation','trading','torch','gifts'],true)){
         $suite=$argv[3];
         $fixture=$argv[4]??null;$argv=$fixture?[__FILE__,$fixture]:[__FILE__];
         $file=match($suite){'players'=>'players','notifications'=>'trade-notifications',default=>$suite};$code=file_get_contents(__DIR__.'/marketplace-'.$file.'-test.php');
         $code=str_replace(["<?php", "require __DIR__.'/../tools/marketplace/server/Market.php';", "new PDO('sqlite::memory:')"],['','', '$db'],$code);
         $code=str_replace("require __DIR__.'/../tools/marketplace/server/OwnerDemo.php';","require \$server.'/OwnerDemo.php';",$code);
         $code=str_replace("__DIR__.'/../tools/marketplace/server/item-identity.json'",var_export($server.'/item-identity.json',true),$code);eval($code);$report[$suite.'_domain']='passed';
+        if($suite==='gifts'){
+            $before=(int)$m->run('SELECT COUNT(*) FROM items WHERE owner=?',[$a['id']])->fetchColumn();$start=microtime(true)+1;$children=[];
+            for($n=0;$n<2;++$n){
+                $path=__DIR__.'/race-'.bin2hex(random_bytes(8)).'.json';$jobs[]=$path;
+                file_put_contents($path,json_encode(['prefix'=>$prefix,'owner'=>$a['id'],'start'=>$start,'command'=>['id'=>Market::id(),'type'=>'campaign_claim','campaign_id'=>$noExpiry['campaign_id']]],JSON_THROW_ON_ERROR));chmod($path,0600);
+                $process=proc_open([PHP_BINARY,__FILE__,$server,$configPath,'worker',$path],[0=>['pipe','r'],1=>['pipe','w'],2=>['pipe','w']],$pipes);if(!is_resource($process))throw new RuntimeException('Cannot start gift claim race.');fclose($pipes[0]);$children[]=[$process,$pipes];
+            }
+            $replays=[];foreach($children as [$process,$pipes]){$out=stream_get_contents($pipes[1]);$error=stream_get_contents($pipes[2]);fclose($pipes[1]);fclose($pipes[2]);if(proc_close($process)!==0)throw new RuntimeException('Gift worker failed: '.$error);$r=json_decode($out,true,512,JSON_THROW_ON_ERROR);check($r['status']===200);$replays[]=$r['result']['already_claimed'];}
+            sort($replays);check($replays===[false,true]);check((int)$m->run('SELECT COUNT(*) FROM items WHERE owner=?',[$a['id']])->fetchColumn()===$before+count($ids));
+            check((int)$m->run('SELECT COUNT(*) FROM market_gift_claims WHERE campaign=? AND owner=?',[$noExpiry['campaign_id'],$a['id']])->fetchColumn()===1);
+            $report['parallel_gift_claim']='one complete grant, one replay receipt; exactly one entitlement and one bundle';
+        }
         if($suite==='bundles'){
             $bundle=$m->command($seller,['id'=>Market::id(),'type'=>'bundle_create','title'=>'Concurrent free bundle','items'=>$ids,'price'=>Market::freePrice()],false);
             $before=(int)$m->run('SELECT COUNT(*) FROM settlements')->fetchColumn();$start=microtime(true)+1;$children=[];

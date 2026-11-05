@@ -31,6 +31,7 @@
 #include "plugin/QuestKillEvents.h"
 #include "plugin/D3Whirlwind.h"
 #include "plugin/SelectedAuras.h"
+#include "plugin/MultipleAuras.h"
 #include "plugin/WidescreenBars.h"
 #include "plugin/SunderSystem.h"
 #include "plugin/HellSpindle.h"
@@ -92,6 +93,7 @@ static void WriteFeatureStatus(HMODULE hud,const std::string& startupFailure) {
             << "No Widescreen Bars: " << WidescreenBars::Status() << '\n'
             << "Dynamic Automap: " << DynamicAutomap::Status() << '\n'
             << "Merc Seller Unlock: " << MercSeller::Status() << '\n'
+            << "Multiple auras: " << MultipleAuras::Status() << '\n'
             << "Merc Icons Fix: " << MercIcons::Status() << '\n'
             << "Loading performance: " << LoadingPerformance::Status() << '\n'
             << "Quest kills: " << QuestKillEvents::Status() << '\n'
@@ -196,6 +198,8 @@ DWORD WINAPI AttachThread(LPVOID lParam) {
     QuestJournal::SetAvailable(questKills&&questDefinitions&&questDefinitions->events&&questDefinitions->error.empty()&&CubeVisual::QuestJournalSupported()&&CubeMap::SummonLifecycleAvailable());
     RuntimeDiagnostics::SetStage("D3Whirlwind");
     D3Whirlwind::Install();
+    RuntimeDiagnostics::SetStage("MultipleAuras");
+    MultipleAuras::Install();
     RuntimeDiagnostics::SetStage("SelectedAuras");
     SelectedAuras::Install();
     RuntimeDiagnostics::SetStage("WidescreenBars");
@@ -263,6 +267,7 @@ BOOL APIENTRY DllMain( HMODULE hModule,
         if (lpReserved != nullptr) break;
         ExtendedActs::Uninstall();
         LoadingPerformance::Uninstall();
+        MultipleAuras::Uninstall();
         SelectedAuras::Uninstall();
         HUDControls::Uninstall();
         WidescreenBars::Uninstall();

@@ -4,42 +4,58 @@ declare(strict_types=1);
 // A private, separate SQLite database. No pairing or bearer endpoint points at
 // this database, so synthetic items can never enter a real save or public feed.
 final class MarketplaceDemo {
+    private const SCHEMA_VERSION=2026110402;
     public static function path(string $directory): string {return $directory.'/demo.sqlite';}
     public static function gate(string $directory,int $mode) {
         if(!is_dir($directory)&&!mkdir($directory,0700,true))throw new RuntimeException('Owner storage is unavailable.');
         $f=fopen($directory.'/demo.lock','c');if(!$f||!flock($f,$mode))throw new RuntimeException('Demo workspace is busy.');chmod($directory.'/demo.lock',0600);return $f;
     }
-    public static function open(string $directory,array $actor): Market {
+    public static function open(string $directory,array $actor,?Market $authority=null): Market {
+        if($authority)$authority->requireOwner($actor);
         if(!is_file(self::path($directory)))throw new MarketError(409,'Generate a demo environment first.');
-        $m=new Market(new PDO('sqlite:'.self::path($directory)));$m->requireOwner($actor);return $m;
+        $m=new Market(new PDO('sqlite:'.self::path($directory)));
+        if((int)$m->db->query('PRAGMA user_version')->fetchColumn()<self::SCHEMA_VERSION){$m->migrate();$m->db->exec('PRAGMA user_version='.self::SCHEMA_VERSION);}
+        // The live UID is authoritative after an account recovery. A private
+        // demo's cached owner must never revoke live owner access.
+        if($authority&&!$m->isOwner($actor))$m->transaction(function()use($m,$actor){
+            $old=$m->run('SELECT owner FROM market_owners WHERE community=?',[$m->community])->fetchColumn();
+            if(!$m->run('SELECT id FROM actors WHERE id=?',[$actor['id']])->fetchColumn())$m->run('INSERT INTO actors VALUES (?,?,?,?)',[$actor['id'],$actor['name'],hash('sha256',random_bytes(32)),'player']);
+            if($old)$m->run('UPDATE market_owners SET owner=? WHERE community=?',[$actor['id'],$m->community]);else $m->grantOwner($actor['id']);
+            $m->grantModerator($actor['id']);
+            $result=['previous_owner'=>$old?:null,'owner'=>$actor['id']];
+            $m->run('INSERT INTO market_owner_actions VALUES (?,?,?,?,?,?)',[Market::id(),$actor['id'],'owner_rebind',hash('sha256',json_encode($result)),json_encode($result),time()]);
+        });
+        $m->requireOwner($actor);return $m;
     }
-    public static function status(string $directory,array $actor): array {
+    public static function status(string $directory,array $actor,?Market $authority=null): array {
+        if($authority)$authority->requireOwner($actor);
         if(!is_file(self::path($directory)))return ['available'=>false];
-        $m=self::open($directory,$actor);
+        $m=self::open($directory,$actor,$authority);
         return ['available'=>true,'id'=>$m->controlState()['reset_id'],'players'=>(int)$m->run('SELECT COUNT(*) FROM actors')->fetchColumn(),'listings'=>(int)$m->run("SELECT COUNT(*) FROM listings WHERE status='open'")->fetchColumn(),'offers'=>(int)$m->run('SELECT COUNT(*) FROM offers')->fetchColumn(),'sales'=>(int)$m->run("SELECT COUNT(*) FROM events WHERE kind='completed_sale'")->fetchColumn()];
     }
     public static function generate(Market $live,array $actor,array $packet,string $directory): array {
         $live->requireOwner($actor);$gate=self::gate($directory,LOCK_EX);
         try{
-            $old=self::status($directory,$actor);if(($old['id']??'')===$packet['id'])return $old;
+            $old=self::status($directory,$actor,$live);if(($old['id']??'')===$packet['id'])return $old;
             if(($old['id']??'')!==($packet['expected_demo']??''))throw new MarketError(409,'The demo changed. Refresh owner tools first.');
             $size=$packet['size']??'busy';$sizes=['small'=>[24,100,80],'busy'=>[64,320,240],'festival'=>[100,600,480]];
             if(!isset($sizes[$size]))throw new MarketError(422,'Choose a demo size.');
             [$players,$listings,$sales]=$sizes[$size];$temporary=$directory.'/demo-'.bin2hex(random_bytes(8)).'.new';
             $m=new Market(new PDO('sqlite:'.$temporary));chmod($temporary,0600);$m->migrate();
+            $m->db->exec('PRAGMA user_version='.self::SCHEMA_VERSION);
             $m->run('INSERT INTO actors VALUES (?,?,?,?)',[$actor['id'],$actor['name'],hash('sha256',random_bytes(32)),'player']);$m->grantOwner($actor['id']);$m->grantModerator($actor['id']);
             $m->run('INSERT INTO market_memberships VALUES (?,?,?,?)',[$actor['id'],'RMD-MP','2.4',time()]);$m->run('INSERT INTO market_players VALUES (?,?)',[$actor['id'],time()]);
             $m->run('UPDATE market_control SET reset_id=?',[$packet['id']]);
             self::seed($m,$actor,$players,$listings,$sales);
             $m=null;
             if(!rename($temporary,self::path($directory)))throw new RuntimeException('Could not activate the demo.');chmod(self::path($directory),0600);
-            return self::status($directory,$actor);
+            return self::status($directory,$actor,$live);
         }finally{flock($gate,LOCK_UN);fclose($gate);if(isset($temporary)&&is_file($temporary))@unlink($temporary);}
     }
-    public static function clear(array $actor,array $packet,string $directory): array {
+    public static function clear(array $actor,array $packet,string $directory,?Market $authority=null): array {
         $gate=self::gate($directory,LOCK_EX);
         try{
-            $old=self::status($directory,$actor);if(!$old['available'])return ['cleared'=>true];
+            $old=self::status($directory,$actor,$authority);if(!$old['available'])return ['cleared'=>true];
             if(($packet['confirm']??'')!=='CLEAR DEMO'||($packet['expected_demo']??'')!==$old['id'])throw new MarketError(409,'Review the current demo and type CLEAR DEMO.');
             $backup=$directory.'/demo-cleared-'.$packet['id'].'.sqlite';
             if(!rename(self::path($directory),$backup))throw new RuntimeException('Could not archive the demo.');chmod($backup,0600);return ['cleared'=>true];

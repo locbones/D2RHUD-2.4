@@ -42,5 +42,5 @@ bool IsSystemFeedback(std::string_view message);
 bool Enabled();
 void Observe(std::string_view sender, std::string_view message,
              uint32_t type = UINT32_MAX, uint32_t id = UINT32_MAX, bool hasUnit = false);
-void Tick(uint64_t session, bool inGame, bool enabled, const std::string& soundPath);
+void Tick(uint64_t session, bool inGame, bool enabled, const std::string& soundPath, int volumePercent=30);
 }

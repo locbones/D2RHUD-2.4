@@ -53,6 +53,10 @@ using Screen=void(__fastcall*)(uint64_t);
 Screen originalScreen=nullptr;
 using Tile=void(__fastcall*)(void*,uint64_t,int,int,int,int);
 Tile originalTile=nullptr;
+using ActInfoMove=void(__fastcall*)(void*,void*);
+ActInfoMove originalActInfoMove=nullptr;
+bool disabledActHook=false;
+constexpr uint32_t ActInfoMoveRva=0x1e1560;
 constexpr std::array<uint32_t,6> Hooks{0x1531a0,0x147a70,0xc32320,0xc32560,0xb9a720,0x26e880};
 std::mutex transitionMutex;
 Transition::Flow transition;
@@ -180,8 +184,12 @@ void ValidateCompiledActs(const std::filesystem::path& data,uint64_t loadedActs,
         return bytes;
     };
     const auto acts=read("actinfo",0x8c);uint32_t count=0;memcpy(&count,acts.data(),4);
-    if(count!=loadedActs)throw std::runtime_error("ActInfo.bin does not match the native loaded act count");
-    for(size_t i=0;i<count;++i){uint32_t id=0;memcpy(&id,acts.data()+4+i*0x8c,4);if(id!=i+1)throw std::runtime_error("Compiled ActInfo order is invalid");}
+    // The TXT act column is a row key, not a serialized field. Compiled
+    // records begin with town (then start), both resolved level IDs. Checking
+    // these against 1..6 incorrectly rejects every valid six-act BIN package.
+    const std::array<uint32_t,6> towns{1,40,75,103,109,uint32_t(areas.front())};
+    if(count!=loadedActs || count!=towns.size())throw std::runtime_error("ActInfo.bin does not match the native loaded act count");
+    for(size_t i=0;i<count;++i){uint32_t town=0;memcpy(&town,acts.data()+4+i*0x8c,4);if(town!=towns[i])throw std::runtime_error("Compiled ActInfo town/order is invalid");}
     const auto levels=read("levels",0x184);memcpy(&count,levels.data(),4);
     for(size_t n=0;n<areas.size();++n){
         if(size_t(areas[n])>=count)throw std::runtime_error("Compiled Act VI level is missing");
@@ -271,21 +279,19 @@ Config ConfigureRequiredData(const std::filesystem::path& data,const nlohmann::j
         for(const char* field:{"title","objective","completed"})if(text[q].at(field).get<int>()<1 || text[q].at(field).get<int>()>=65535)throw std::runtime_error("Invalid Act VI string ID");
         labels[q]={uint16_t(text[q]["title"].get<int>()),uint16_t(text[q]["objective"].get<int>()),uint16_t(text[q]["completed"].get<int>())};
     }
-    // The startup injector pauses at States, after ActInfo has compiled. Match
-    // the current process to its loaded tables, not the next launch's checkbox.
-    const bool running=loadedActs ? loadedActs==6 : want;
+    // At the paused startup gate a disabled selection hides the final ActInfo
+    // record from the native engine (Install commits that size change). The
+    // allocation and BIN stay intact, so a later launch can enable it again.
+    const bool running=want && (!loadedActs || loadedActs==6);
     if(!txt){
         // An already compiled package can run without any authoring TXT
-        // templates. The loaded tables determine this process's native mode.
-        // Switching modes still needs a matching five/six-act BIN package;
-        // never pretend that changing a checkbox changes compiled tables.
+        // templates. A six-act package supports either selection: off uses
+        // five native records and unmodified five-act progression/UI.
         if(!loadedActs)throw std::runtime_error("Native ActInfo is not available for compiled-data validation");
         if(running)ValidateCompiledActs(data,loadedActs,levels);
         if(!SelectData(data,config,running,true,DataGroup::Layouts))throw std::runtime_error("Act VI layout selection could not be written");
         configuredData=data;configuredManifest=config;configured=true;compileText=false;pendingRestart=running!=want;
-        if(pendingRestart)ConfigurationMessage(running ?
-            "Act VI remains active: this package contains six-act BIN tables. Install the five-act compiled package to disable it after restarting." :
-            "Act VI requested, but this package contains five-act BIN tables. Install the six-act compiled package and restart to activate it.");
+        if(pendingRestart)ConfigurationMessage("Act VI requested, but this package contains only five-act BIN tables. Six-act data is required to enable it.");
         else ConfigurationMessage(running ? "Act VI uses the validated six-act BIN package; TXT compilation is not required." : "Act VI disabled. Five-act BIN progression is active.");
         return running?Config::Enabled:Config::Disabled;
     }
@@ -312,10 +318,10 @@ Config ConfigureRequiredData(const std::filesystem::path& data,const nlohmann::j
     return Config::Enabled;
 }
 Config OptionalDataFailure(bool want,bool txt,uint64_t loadedActs,const std::string& reason){
-    // A checkbox cannot turn six compiled acts back into five in this process.
-    // Those tables still require the complete native/UI integration to load.
-    // Conversely a saved preference cannot activate Act VI in a five-act BIN
-    // package. Its unused manifest must not prevent that game from starting.
+    // A six-row startup must finish validating/selecting its UI before either
+    // enabling the integration or reducing the native vector to five records.
+    // Unused optional-data errors can only be tolerated for an already
+    // five-act startup; a preference alone cannot supply a sixth record.
     if(loadedActs!=5 || (want && txt))throw std::runtime_error(reason);
     configured=false;configuredManifest={};configuredData.clear();compileText=txt;pendingRestart=want;
     ConfigurationMessage(std::string(want ?
@@ -369,6 +375,44 @@ bool Supported() {
         std::vector<uint8_t> bytes(signature.size);SIZE_T n=0;
         if(!ReadProcessMemory(GetCurrentProcess(),At<void*>(signature.rva),bytes.data(),bytes.size(),&n) || n!=bytes.size() || LegacyTransmog::Data::Hash(bytes)!=signature.hash)return false;
     }return true;
+}
+void __fastcall FinishDisabledActInfo(void* destination,void* source) {
+    originalActInfoMove(destination,source);
+    if(destination==At<void*>(0x1c9ea80)){
+        InterlockedCompareExchange64(At<volatile LONG64*>(0x1c9ea88),5,6);
+        message="Act VI disabled. Five-act native progression and quest/waypoint panels are active.";
+    }
+}
+bool DisableLoadedAct() {
+    const auto count=Field<uint64_t>(At<void*>(0x1c9ea88));
+    if(count==5)return true;
+    if(disabledActHook)return true;
+    const auto fail=[](std::string reason){ConfigurationMessage("Act VI disable failed: "+reason);return false;};
+    if(count!=6 || installed.load())return fail("unexpected native act count or six-act hooks are already active");
+    const auto gameState=Field<uint8_t>(At<void*>(0x1dc76f8));
+    if(gameState!=0)return fail("not at a fresh startup gate (game state "+std::to_string(gameState)+")");
+    if(!Supported())return fail("native executable contracts do not match");
+    // At the States gate ActInfo can still be a zero-filled allocation made
+    // by ActCode. Its later compiler replaces the whole vector, including
+    // size. Clamp after that native move, not just the temporary allocation.
+    const auto table=Field<uint8_t*>(At<void*>(0x1c9ea80));
+    const auto capacity=Field<uint64_t>(At<void*>(0x1c9ea90)) & 0x7fffffffffffffffULL;
+    if(!table || capacity<6)return fail("ActInfo allocation is missing or too small (capacity "+std::to_string(capacity)+")");
+    constexpr std::array<uint8_t,19> expected{0x48,0x89,0x74,0x24,0x20,0x41,0x56,0x48,0x83,0xec,0x20,0x48,0x83,0x7a,0x10,0x00,0x48,0x8b,0xf1};
+    std::array<uint8_t,19> actual{};SIZE_T read=0;
+    if(!ReadProcessMemory(GetCurrentProcess(),At<void*>(ActInfoMoveRva),actual.data(),actual.size(),&read) || read!=actual.size() || actual!=expected)return fail("ActInfo finalizer signature does not match");
+    const auto init=MH_Initialize();if(init!=MH_OK && init!=MH_ERROR_ALREADY_INITIALIZED)return fail("native hook initialization failed");
+    if(MH_CreateHook(At<void*>(ActInfoMoveRva),reinterpret_cast<void*>(&FinishDisabledActInfo),reinterpret_cast<void**>(&originalActInfoMove))!=MH_OK)return fail("ActInfo finalizer hook could not be created");
+    if(MH_EnableHook(At<void*>(ActInfoMoveRva))!=MH_OK){MH_RemoveHook(At<void*>(ActInfoMoveRva));originalActInfoMove=nullptr;return fail("ActInfo finalizer hook could not be enabled");}
+    disabledActHook=true;
+    HMODULE pinned=nullptr;GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS|GET_MODULE_HANDLE_EX_FLAG_PIN,reinterpret_cast<LPCWSTR>(&Install),&pinned);
+    // Also support a fully populated table if the injector arrives later.
+    const auto currentTable=Field<uint8_t*>(At<void*>(0x1c9ea80));
+    constexpr std::array<uint32_t,5> towns{1,40,75,103,109};
+    bool populated=currentTable!=nullptr;for(size_t i=0;populated && i<towns.size();++i)populated&=Field<uint32_t>(currentTable+i*0x8c)==towns[i];
+    if(populated)InterlockedCompareExchange64(At<volatile LONG64*>(0x1c9ea88),5,6);
+    else message="Act VI disabled; five-act startup is armed for ActInfo finalization.";
+    return true;
 }
 bool Write(uint32_t rva,std::span<const uint8_t> bytes) {
     DWORD before=0;auto where=At<void*>(rva);
@@ -424,13 +468,15 @@ bool Activate() {
 }
 bool Install() {
     if(installed.load())return true;
-    const auto config=Configure();if(config==Config::Disabled)return true;
+    const auto config=Configure();if(config==Config::Disabled){
+        if(configured && !requested.load() && Field<uint64_t>(At<void*>(0x1c9ea88))==6 && !DisableLoadedAct()){
+            return false;
+        }
+        return true;
+    }
     if(config==Config::NeedsText){message="Act VI unavailable: launch the prototype with -txt to compile all six-act tables.";return false;}
     if(config!=Config::Enabled)return false;
     const bool ready=Activate();
-    if(ready && pendingRestart)message=compileText ?
-        "Act VI remains active for this process. Fully restart D2R to apply the disabled option." :
-        "Act VI remains active: this package contains six-act BIN tables. Install the five-act compiled package and restart to disable it.";
     return ready;
 }
 void Tick(D2GameStrc* game) {
@@ -476,7 +522,12 @@ void Tick(D2GameStrc* game) {
         }
     }
 }
-void Uninstall(){if(!installed.load() || Field<uint64_t>(At<void*>(0x1c9ea88)))return;CubeMap::SetActTick(nullptr);CubeMap::SetActTown(0);Release();installed=false;}
+void Uninstall(){
+    if(Field<uint64_t>(At<void*>(0x1c9ea88)))return;
+    if(disabledActHook){MH_DisableHook(At<void*>(ActInfoMoveRva));MH_RemoveHook(At<void*>(ActInfoMoveRva));disabledActHook=false;originalActInfoMove=nullptr;}
+    if(!installed.load())return;
+    CubeMap::SetActTick(nullptr);CubeMap::SetActTown(0);Release();installed=false;
+}
 const char* Status(){return message.load();}
 void SetRequested(bool value){
     std::lock_guard lock(selectionMutex);
@@ -484,8 +535,8 @@ void SetRequested(bool value){
     try{
         if(!compileText){
             pendingRestart=(Field<uint64_t>(At<void*>(0x1c9ea88))==6)!=value;
-            message=pendingRestart ? "Act VI preference saved. Install matching five/six-act BIN tables and restart to change the compiled act count." :
-                value ? "Act VI preference matches the loaded six-act BIN package." : "Act VI disabled. Five-act BIN progression is active.";
+            message=pendingRestart ? "Act VI preference saved. Fully restart D2R to apply it; six-act BINs support both on and off." :
+                value ? "Act VI enabled for this process." : "Act VI disabled. Five-act BIN progression is active.";
             return;
         }
         // Tables/strings are startup resources; prepare them now, while leaving

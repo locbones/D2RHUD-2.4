@@ -35,7 +35,7 @@ $loser=$propose($c,$listed,99)['offer_id'];
 $m->command($s,['id'=>Market::id(),'type'=>'preferences','auto_trade'=>true],false);
 $win=$propose($b,$listed)['offer_id'];
 foreach([$s,$b] as $actor){$rows=$messages($actor,$win);check(count(array_filter($rows,fn($r)=>str_starts_with($r['body'],'Trade completed:')))===1);check(!array_filter($rows,fn($r)=>str_starts_with($r['body'],'Offer closed:')));}
-check(str_contains($last($s,$win)['body'],'payment is available in escrow'));check($last($s,$win)['sender']===$b['id']);check($last($b,$win)['sender']===$s['id']);
+check(str_contains($last($s,$win)['body'],'payment is available in Vault'));check($last($s,$win)['sender']===$b['id']);check($last($b,$win)['sender']===$s['id']);
 check(str_starts_with($last($c,$loser)['body'],'Offer closed:'));check((int)$m->run('SELECT COUNT(*) FROM settlements')->fetchColumn()===1);
 $ticket=Market::id();$claim=$call($ba,['id'=>$ticket,'type'=>'claim_prepare']);check(count($claim['packet']['items'])===1);
 $placed=[['item'=>$listed['item_id'],'item_hex'=>$item['item_hex']]];$call($ba,['id'=>$ticket,'type'=>'write_authorize','pages'=>$pages,'delivered'=>$placed]);
@@ -49,3 +49,13 @@ check(str_starts_with($last($b,$stale)['body'],'Offer closed:'));check(str_conta
 check($m->inbox($outsider)['messages']===[]);
 foreach($m->inbox($b)['messages'] as $row)check($row['kind']==='trade'&&str_ends_with($row['scope'],'|SC'));
 echo "Trade notifications: labeled offers/counters/messages, accept/decline/withdraw, superseded and repriced terms, both-party automatic completion, guarded delivery, private recipients, reply targets, retry dedupe and no false winner cancellation passed.\n";
+
+// Listing publication alone never notifies the other participants or outsiders.
+$before=(int)$m->run('SELECT COUNT(*) FROM market_messages')->fetchColumn();
+$item['item_hex']=str_repeat('ce',24);$deposit($sa,[$item]);
+check((int)$m->run('SELECT COUNT(*) FROM market_messages')->fetchColumn()===$before);
+check($m->notificationSettings($outsider['id'])===['game_direct'=>true,'game_trade'=>true,'game_search'=>false]);
+// A misrouted thread must be suppressed even if its message recipient is set incorrectly.
+$m->run('INSERT INTO market_messages (id,sender,recipient,scope,kind,thread,body,created) VALUES (?,?,?,?,?,?,?,?)',[Market::id(),$s['id'],$outsider['id'],'tcpip|RMD-MP|2.4|SC','trade',$win,'Unrelated trade',time()]);
+check($m->inbox($outsider,0,'game')['messages']===[]);
+echo "Trade alert privacy: publication is silent, discovery is opt-in, unrelated threads suppressed.\n";

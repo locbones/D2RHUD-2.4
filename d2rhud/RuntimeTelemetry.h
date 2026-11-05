@@ -10,8 +10,13 @@
 #include "ProcessLifetime.h"
 
 namespace HudTelemetry {
-enum class Feature : uint8_t { None,Frame,Menu,Combat,MonsterStats,Buffs,StatRanges,MapTick,LootFilter,AssetRead,BackgroundWork,Camera,Commands,Whirlwind,RunTracker,SpectateTransport,SpectateEncode,SpectateDecode,Count };
-inline constexpr const char* Names[]{"Unattributed","HUD frame","HUD menus","Combat feedback","Monster overlay","Buff icons","Item stat ranges","Map/event tick","Loot filter","Asset file access","Background work","Camera","Queued commands","D3 Whirlwind","Run Tracker","Spectate transport","Spectate encode","Spectate decode"};
+enum class Feature : uint8_t { None,Frame,Menu,Combat,MonsterStats,Buffs,StatRanges,MapTick,LootFilter,AssetRead,BackgroundWork,Camera,Commands,Whirlwind,RunTracker,SpectateTransport,SpectateEncode,SpectateDecode,Marketplace,StashNative,StashSwitch,MarketplaceScan,MarketplaceSync,Inspect,Preparation,Grail,PresentOverlay,PresentWait,RenderLock,GpuWait,MarketplaceChatMailbox,MarketplacePresence,QuestJournalStore,QuestJournalReceive,QuestJournalTick,WhirlwindClient,WhirlwindInput,Count };
+inline constexpr const char* Names[]{"Unattributed","HUD frame","HUD menus","Combat feedback","Monster overlay","Buff icons","Item stat ranges","Map/event tick","Loot filter","Asset file access","Background work","Camera","Queued commands","D3 Whirlwind","Run Tracker","Spectate transport","Spectate encode","Spectate decode","Marketplace UI/chat","Native stash draw (game + HUD)","Stash page switch","Marketplace live item scan","Marketplace live handoff","Item inspection","HUD preparation","Grail/filter startup","HUD overlay submission","DXGI Present wait (wall)","HUD render lock wait","HUD GPU fence wait","Marketplace chat mailbox (window thread)","Marketplace presence I/O (worker)","Quest journal durable I/O (worker)","Quest journal receive/commit barrier","Quest journal observation/send","Whirlwind client simulation","Whirlwind input/interaction"};
+static_assert(std::size(Names)==size_t(Feature::Count));
+using TraceSink=void(*)(uint64_t,Feature,int64_t,int64_t,uint32_t) noexcept;
+inline std::atomic<TraceSink> traceSink{nullptr};
+inline std::atomic<uint64_t> traceGeneration{0};
+inline uint64_t SetTraceSink(TraceSink sink){traceSink.store(sink,std::memory_order_release);return traceGeneration.fetch_add(1,std::memory_order_acq_rel)+1;}
 inline thread_local Feature activeFeature=Feature::None;
 class FeatureScope {
     Feature previous_;
@@ -49,14 +54,18 @@ class Scope {
     Feature id_;
     std::shared_ptr<Bank> bank_;
     int64_t started_=0,frequency_=0;
+    TraceSink sink_=nullptr;uint64_t generation_=0;uint32_t thread_=0;
 public:
     explicit Scope(Feature id):feature_(id),id_(id){
-        if(!Enabled())return;
-        auto& runtime=State();bank_=runtime.bank.load();frequency_=runtime.frequency;
-        LARGE_INTEGER now{};if(frequency_>0 && QueryPerformanceCounter(&now))started_=now.QuadPart;else bank_.reset();
+        sink_=traceSink.load(std::memory_order_acquire);const bool counters=Enabled();if(!counters&&!sink_)return;
+        auto& runtime=State();if(counters)bank_=runtime.bank.load();frequency_=runtime.frequency;
+        if(sink_){generation_=traceGeneration.load(std::memory_order_acquire);thread_=GetCurrentThreadId();}
+        LARGE_INTEGER now{};if(frequency_>0 && QueryPerformanceCounter(&now))started_=now.QuadPart;else{bank_.reset();sink_=nullptr;}
     }
-    ~Scope(){if(bank_){LARGE_INTEGER now{};if(QueryPerformanceCounter(&now) && now.QuadPart>=started_)
-        bank_->counters[size_t(id_)].Add(uint64_t((static_cast<long double>(now.QuadPart-started_)*1000000000.L)/frequency_));}}
+    ~Scope(){if(bank_||sink_){LARGE_INTEGER now{};if(QueryPerformanceCounter(&now) && now.QuadPart>=started_){
+        if(bank_)bank_->counters[size_t(id_)].Add(uint64_t((static_cast<long double>(now.QuadPart-started_)*1000000000.L)/frequency_));
+        if(sink_)sink_(generation_,id_,started_,now.QuadPart,thread_);
+    }}}
     Scope(const Scope&)=delete;
 };
 struct Sample {uint64_t calls=0,totalNs=0,maximumNs=0,p95UpperNs=0;};

@@ -7,9 +7,8 @@ trait MarketplaceTransfers {
     public static function freePrice(): array {return [['kind'=>'free','code'=>'free','label'=>'Free','quality'=>2,'index'=>-1,'ethereal'=>-1,'quantity'=>1]];}
     private static function isFree(array $price): bool {return count($price)===1&&($price[0]['kind']??'')==='free';}
     private function giftRecipient(string $to,string $owner): array {
-        $rows=$this->run("SELECT a.id,a.name FROM actors a JOIN market_players p ON p.owner=a.id WHERE a.role='player' AND a.id=?",[$to])->fetchAll();
-        if(!$rows)$rows=$this->run("SELECT a.id,a.name FROM actors a JOIN market_players p ON p.owner=a.id WHERE a.role='player' AND LOWER(a.name)=LOWER(?) LIMIT 2",[$to])->fetchAll();
-        if(count($rows)!==1)throw new MarketError(422,'Choose one linked player by exact name or player ID.');
+        $rows=[$this->resolveLinkedPlayer($to)];
+        if($this->browserActor($rows[0]['id'])['role']!=='player')throw new MarketError(422,'Choose a real player to receive the gift.');
         $this->requireMod($rows[0]['id']);
         if($rows[0]['id']===$owner)throw new MarketError(422,'Choose another player to receive the gift.');return $rows[0];
     }
@@ -25,7 +24,7 @@ trait MarketplaceTransfers {
             if($data['type']==='gift_recipient')$result=['recipient_id'=>$to,'recipient_name'=>$recipient['name']];
             elseif($data['type']==='gift_item'){
                 $item=self::ticketId($data['item_id']??null);$this->requireSingleItem($item);$e=$this->run('SELECT state FROM escrow_items WHERE item=? AND owner=? AND scope=?',[$item,$owner,$scope])->fetch();
-                if(!$e||!in_array($e['state'],['available','listed'],true))throw new MarketError(409,'Only an available item held in your escrow can be gifted.');
+                if(!$e||!in_array($e['state'],['available','listed'],true))throw new MarketError(409,'Only an available item held in your Vault can be gifted.');
                 foreach($this->run("SELECT id FROM listings WHERE item=? AND status IN ('open','agreed')",[$item])->fetchAll() as $l){$this->invalidateOffers($l['id'],$actor,'The seller gifted this item to another player.');$this->run("UPDATE listings SET status='withdrawn',revision=revision+1 WHERE id=?",[$l['id']]);}
                 // A private, already agreed free transfer uses the same atomic
                 // settlement and delivery journal as paid trades.
@@ -39,7 +38,7 @@ trait MarketplaceTransfers {
                 $result=['gift_id'=>$id,'offer_id'=>$id,'recipient'=>$to,'status'=>'completed'];
             }else{
                 $rows=self::price($data['balances']??null);
-                foreach($rows as $r){if(!in_array($r['kind']??'item',['gold','bag'],true))throw new MarketError(422,'Choose gold or bag contents to gift.');$this->balance($owner,$scope,$r,-$r['quantity'],'gift_sent',$id);$this->balance($to,$scope,$r,$r['quantity'],'gift_received',$id);}
+                foreach($rows as $r){if(!$this->supportsBalance($to,$r))throw new MarketError(409,'The recipient must update this mod to receive that bag resource.');if(!in_array($r['kind']??'item',['gold','bag'],true))throw new MarketError(422,'Choose gold or bag contents to gift.');$this->balance($owner,$scope,$r,-$r['quantity'],'gift_sent',$id);$this->balance($to,$scope,$r,$r['quantity'],'gift_received',$id);}
                 $terms=implode(' + ',array_map(fn($r)=>$r['quantity'].' × '.$r['label'],$rows));
                 foreach([$owner,$to] as $who){$sender=$who===$owner?$to:$owner;$body=($who===$owner?'Gift sent to '.$recipient['name']:'Gift received').': '.$terms.($message!==''?' — '.$message:'');$body=substr($body,0,4096);while(!preg_match('//u',$body))$body=substr($body,0,-1);
                     $this->run('INSERT INTO market_messages (id,sender,recipient,scope,kind,thread,body,created) VALUES (?,?,?,?,?,?,?,?)',[hash('md5',$id.'|'.$who),$sender,$who,$scope,'trade','',$body,time()]);}

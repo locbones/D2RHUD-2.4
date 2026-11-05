@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include "QuestJournal.h"
 #include "SummonPersistenceData.h"
 #include <algorithm>
@@ -236,6 +236,9 @@ inline bool AtomicWrite(const std::filesystem::path& path,const History& h,std::
 }
 inline constexpr uint64_t Magic=0xDEADBEEFDEADBEEF;
 inline constexpr uint8_t Operation=7,Version=3;
+// Optional save checkpoint. Older receivers ignore this packet and continue
+// receiving ordinary periodic snapshots; packet size/version are unchanged.
+inline constexpr uint8_t SaveCheckpoint=32;
 #pragma pack(push,1)
 struct Packet {
     uint8_t opcode=0x2b;uint64_t magic=Magic;uint8_t operation=Operation,version=Version;
@@ -253,5 +256,5 @@ inline std::optional<State> Unpack(const Transfer& p){
     State s{p.completed,p.ready!=0,p.legacyClosed!=0,p.uncertain!=0,p.kills,p.evidence,p.countess!=0,p.thul!=0,p.menus};
     if(p.ready>1||p.legacyClosed>1||p.uncertain>1||p.countess>1||p.thul>1||p.menus>127||!Valid(s,MaxQuests))return {};return s;
 }
-inline bool Valid(const Packet& p){return p.opcode==0x2b&&p.magic==Magic&&p.operation==Operation&&p.version==Version&&p.count&&p.count<=MaxQuests&&p.completed<=p.count&&p.ready<=1&&(!p.ready||p.completed<p.count)&&!(p.flags&~31)&&p.legacyCompleted<=p.count&&p.menus<=127&&!(p.events&~7)&&!(p.characterFlags&~0x24)&&p.character[0]&&!p.character[60]&&!p.message[83];}
+inline bool Valid(const Packet& p){return p.opcode==0x2b&&p.magic==Magic&&p.operation==Operation&&p.version==Version&&p.count&&p.count<=MaxQuests&&p.completed<=p.count&&p.ready<=1&&(!p.ready||p.completed<p.count)&&!(p.flags&~63)&&p.legacyCompleted<=p.count&&p.menus<=127&&!(p.events&~7)&&!(p.characterFlags&~0x24)&&p.character[0]&&!p.character[60]&&!p.message[83];}
 }

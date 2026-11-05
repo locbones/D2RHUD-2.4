@@ -45,7 +45,20 @@ static void DestroyText(void* widget){
     const auto pointer=Marketplace::NativePanel::Field<void*>(widget,0x88);assert(nativeTextAllocations.erase(pointer)==1);assert(HeapFree(GetProcessHeap(),0,pointer));
 }
 int main(){
+    Marketplace::Panel::stashSyncing=true;
+    assert(Marketplace::Panel::StashSyncWindowInput(WM_LBUTTONDOWN,0,0));
+    assert(Marketplace::Panel::StashSyncWindowInput(WM_RBUTTONUP,0,0));
+    assert(Marketplace::Panel::StashSyncWindowInput(WM_KEYDOWN,VK_RETURN,0));
+    assert(!Marketplace::Panel::StashSyncWindowInput(WM_KEYDOWN,VK_ESCAPE,0));
+    assert(!Marketplace::Panel::StashSyncWindowInput(WM_SYSKEYDOWN,VK_F4,0));
+    Marketplace::Panel::stashSyncing=false;
+
     using namespace Marketplace;
+    {Panel::Frame captured;captured.owner=7;captured.page=17;captured.tab=3;captured.tick=GetTickCount64();Panel::Publish(captured);
+        Panel::NativeView workspace;workspace.open=true;workspace.section=2;Panel::Present(workspace);
+        CaptureMarketplacePanel(nullptr,true); // A native page switch is a pause, not a close.
+        const auto paused=Panel::Current();assert(paused.suspended&&paused.owner==7&&paused.page==17&&Panel::Presentation().open&&Panel::Presentation().section==2);
+        Panel::Publish(captured);assert(!Panel::Current().suspended);Panel::Hide();}
     std::array<uint8_t,0x600> grid{},tabs{},image{},pages{},row{};
     gridWidget=grid.data();widgets={{"grid",grid.data()},{"BankTabs",tabs.data()},{"BankPages",pages.data()}};
     void* children[]{image.data()};const char* name="Image3";

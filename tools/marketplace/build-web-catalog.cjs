@@ -1,6 +1,7 @@
 // Reuse the community wiki's public art, names and game string definitions.
 // Run: node build-web-catalog.cjs WIKI_ROOT [OUTPUT_ASSETS]
 const fs=require('fs'),path=require('path');
+const codex=require('./assets/rmd-codex.json');
 const wiki=path.resolve(process.argv[2]);
 const out=path.resolve(process.argv[3]||path.join(__dirname,'server/public/assets'));
 const s=require(path.join(wiki,'scripts/items/source.cjs'));
@@ -53,6 +54,7 @@ s.tables.monstats.forEach((r,i)=>{catalog.monsters[s.get(r,'*hcIdx')||i]=s.name(
 catalog.monsterTypes={};s.table('montype').forEach((r,i)=>{const name=s.lookup(r.strplur)?.text||r.type.replace(/_/g,' ');if(name)catalog.monsterTypes[i]=name.replace(/^./,c=>c.toUpperCase());});
 catalog.classes=s.tables.charstats.map(row=>row.class);
 s.tables.charstats.forEach((row,i)=>{for(let n=1;n<=3;n++)catalog.tabs[i*8+n-1]=s.lookup(s.get(row,`StrSkillTab${n}`))?.text||'';});
+for(const r of codex.items){const rows=r.quality===2?[catalog.bases[r.code]]:Object.values(catalog.unique).filter(d=>d.code===r.code);for(const d of rows)if(d){d.original_name=d.name;d.name=r.name;}}
 fs.writeFileSync(path.join(out,'catalog.json'),JSON.stringify(catalog));
 for(const file of ['forge-sigil.svg','infernal-forge.webp','inter.woff2','cinzel.woff2','Inter-OFL.txt','Cinzel-OFL.txt'])fs.copyFileSync(path.join(wiki,'theme/assets',file),path.join(out,file));
 const gameFont=path.join(s.roots.mod,'hd/ui/fonts/exocetblizzardot-medium.otf');

@@ -24,17 +24,40 @@ struct Item {
     std::vector<uint8_t> bytes;
     unsigned tab=0;
 };
+struct PageHighlight {Rect row,clip;unsigned page=0;};
 struct Frame {
     uint64_t tick=0;
     uint32_t owner=0;
     unsigned page=1,tab=0;
     bool hardcore=false,cursorOccupied=false;
     Rect grid;
+    PageHighlight marketChoice;
     Item hovered,pinned;
+    std::vector<Item> cells; // Value-only occupied cell snapshots, amortized on native paint.
     std::string error;
     std::string syncStatus;
+    bool suspended=false;
 };
 struct Pin {uint32_t unit=0,seed=0,owner=0;unsigned page=0,tab=0;bool hardcore=false;};
+inline std::atomic<bool> stashSyncing{false};
+// Shortcut sessions retain the bank lifecycle but paint only the marketplace.
+inline std::atomic<bool> standaloneMarket{false};
+inline std::atomic<unsigned> marketPage{0};
+inline std::atomic<uint64_t> stashLastInput{0};
+// Value-only input observation. Never touch game pointers on the window thread.
+inline bool StashSyncWindowInput(UINT message,WPARAM key,LPARAM param){
+    const auto now=GetTickCount64();
+    if(stashSyncing.load()){
+        if(message==WM_LBUTTONDOWN||message==WM_LBUTTONUP||message==WM_LBUTTONDBLCLK||message==WM_RBUTTONDOWN||message==WM_RBUTTONUP||message==WM_RBUTTONDBLCLK||message==WM_MOUSEWHEEL)return true;
+        if(message==WM_INPUT){RAWINPUT raw{};UINT size=sizeof(raw);if(GetRawInputData(reinterpret_cast<HRAWINPUT>(param),RID_INPUT,&raw,&size,sizeof(RAWINPUTHEADER))!=UINT(-1)&&raw.header.dwType==RIM_TYPEMOUSE&&raw.data.mouse.usButtonFlags)return true;}
+        // Escape, Alt+F4 and gameplay keys retain their normal behavior.
+        return (message==WM_KEYDOWN||message==WM_KEYUP||message==WM_CHAR)&&key==VK_RETURN;
+    }
+    if(message==WM_LBUTTONUP||message==WM_RBUTTONUP||(message==WM_KEYUP&&key==VK_RETURN)){
+        stashLastInput=now;
+    }else if(message==WM_KEYDOWN||message==WM_CHAR||message==WM_LBUTTONDOWN||message==WM_RBUTTONDOWN)stashLastInput=now;
+    return false;
+}
 inline std::mutex mutex;
 inline Frame frame;
 struct WithdrawalWatch {unsigned tab=0;std::string savedHex,liveHex;};
@@ -67,7 +90,7 @@ inline std::atomic<bool> dismiss{false};
 // carries commands, input values and presentation only, never widget pointers.
 constexpr uint64_t MessageHash(std::string_view value){uint64_t h=14695981039346656037ULL;for(unsigned char c:value){h^=c;h*=1099511628211ULL;}return h;}
 inline const std::vector<std::string>& NativeCommands(){
-    static const auto names=[](){std::vector<std::string> result={"MarketFilterOpen","MarketFilterBack","MarketFilterApply","MarketFilterReset","MarketTermsPrev","MarketTermsNext","MarketFullPrice","MarketFreePrice","MarketGiftItem","MarketGiftBack","MarketGiftSubmit","MarketOpen","MarketClose","MarketWithdrawForMove","MarketKeepListing","MarketBrowse","MarketItems","MarketAgreements","MarketSetup","MarketRefresh","MarketSort","MarketQuality","MarketTab","MarketPriced","MarketAffordable","MarketPrev","MarketNext","MarketPrice","MarketReturn","MarketWallet","MarketConfirm","MarketSavePrice","MarketRemovePrice","MarketCancelPrice","MarketAddPayment","MarketPaymentPrev","MarketPaymentNext","MarketPricePrev","MarketPriceNext","MarketSaveSetup","MarketReload","MarketEnabled","MarketAuto","MarketDepositCurrent","MarketWithdrawCurrent","MarketInspectSelected","MarketCounter"};
+    static const auto names=[](){std::vector<std::string> result={"MarketCampaignOpen","MarketCampaignBack","MarketCampaignPrev","MarketCampaignNext","MarketCampaignItemsPrev","MarketCampaignItemsNext","MarketCampaignClaim","MarketFilterOpen","MarketFilterBack","MarketFilterApply","MarketFilterReset","MarketTermsPrev","MarketTermsNext","MarketFullPrice","MarketFreePrice","MarketGiftItem","MarketGiftBack","MarketGiftSubmit","MarketOpen","MarketClose","MarketWithdrawForMove","MarketKeepListing","MarketBrowse","MarketItems","MarketAgreements","MarketSetup","MarketRefresh","MarketSort","MarketQuality","MarketTab","MarketPriced","MarketAffordable","MarketPrev","MarketNext","MarketPrice","MarketReturn","MarketWallet","MarketConfirm","MarketSavePrice","MarketRemovePrice","MarketCancelPrice","MarketAddPayment","MarketPaymentPrev","MarketPaymentNext","MarketPricePrev","MarketPriceNext","MarketSaveSetup","MarketReload","MarketEnabled","MarketAuto","MarketDepositCurrent","MarketWithdrawCurrent","MarketInspectSelected","MarketCounter"};
         for(auto prefix:{"MarketCard","MarketAgreement","MarketInspect"})for(int i=0;i<6;++i)result.push_back(std::string(prefix)+std::to_string(i));
         for(auto prefix:{"MarketPayment","MarketEth","MarketRemove","MarketWalletGift"})for(int i=0;i<4;++i)result.push_back(std::string(prefix)+std::to_string(i));
         for(const auto* command:{"MarketWalletBack","MarketWalletPrev","MarketWalletNext","MarketWalletSubmit","MarketWalletAction0","MarketWalletAction1","MarketWalletAction2","MarketWalletAction3","MarketHideOwn","MarketHideOtherOffers","MarketSaveName","MarketFavoriteTrade","MarketFavoriteSeller","MarketSellerTrades","MarketViewOffers","MarketBackOffers","MarketOffersFirst","MarketOffersNext","MarketOffersRefresh","MarketBid0","MarketBid1","MarketBid2","MarketBid3","MarketHistory","MarketThreadHistory","MarketBackHistory","MarketHistoryPrev","MarketHistoryNext","MarketReviewOffer","MarketSendMessage","MarketLogPrev","MarketLogNext","MarketApplyOfferAction","MarketBackReceipt","MarketBackList","MarketReceiptPrev","MarketReceiptNext","MarketAcceptOffer","MarketRejectOffer","MarketWithdrawOffer","MarketCounterOffer"})result.push_back(command);
@@ -116,6 +139,9 @@ inline auto ReadNativeInputs(){std::lock_guard lock(mutex);return nativeInputs;}
 inline auto TakeNativeActions(){std::lock_guard lock(mutex);auto next=std::move(nativeActions);nativeActions.clear();return next;}
 inline bool Fresh(uint64_t now,uint64_t then){return then&&now>=then&&now-then<250;}
 inline void Publish(Frame next){std::lock_guard lock(mutex);frame=std::move(next);}
+// Known capture gaps are not a stash-close event. Keep the workspace/session
+// while switching pages, serializing a scan, or temporarily losing focus.
+inline void SuspendCapture(){std::lock_guard lock(mutex);frame.suspended=true;frame.tick=GetTickCount64();}
 inline Frame Current(){std::lock_guard lock(mutex);return frame;}
 inline Pin Pinned(){std::lock_guard lock(mutex);return pin;}
 inline void SetPin(Pin next){std::lock_guard lock(mutex);pin=next;}

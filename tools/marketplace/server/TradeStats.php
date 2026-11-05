@@ -8,7 +8,7 @@ trait MarketplaceTradeStats {
         foreach($rows as $sale){
             $price=json_decode($sale['price'],true,512,JSON_THROW_ON_ERROR);
             if(self::isFree($price)){++$free;continue;}
-            $identity=fn($r)=>[$r['kind']??'item',$r['code'],$r['quality'],$r['index'],$r['ethereal'],$r['stat']??''];
+            $identity=fn($r)=>[$r['kind']??'item',$r['code'],$r['quality'],$r['index'],$r['ethereal'],$r['stat']??'',$r['class_id']??-1];
             usort($price,fn($a,$b)=>$identity($a)<=>$identity($b));$key=self::json(array_map($identity,$price));
             if(!isset($groups[$key]))$groups[$key]=['sales'=>0,'price'=>array_map(fn($r)=>array_replace($r,['quantity'=>0]),$price),'last_at'=>(int)$sale['at'],'samples'=>array_fill(0,count($price),[])];
             ++$groups[$key]['sales'];foreach($price as $i=>$r){$groups[$key]['price'][$i]['quantity']+=$r['quantity'];$groups[$key]['samples'][$i][]=$r['quantity'];}
@@ -30,11 +30,11 @@ trait MarketplaceTradeStats {
             foreach($counts as &$n)$n=(int)$n;unset($n);
             $names=$this->actorNames();
             $recent=$this->run('SELECT e.seq,e.item,e.at,e.price,e.seller'.$from.' ORDER BY e.at DESC,e.seq DESC LIMIT 10',$args)->fetchAll();
-            foreach($recent as &$row){$row['at']=(int)$row['at'];$row['price']=json_decode($row['price'],true,512,JSON_THROW_ON_ERROR);$row['seller_name']=$names[$row['seller']]??'Player';$row['item']=$this->statsItem($row['item']);unset($row['seq']);}unset($row);
+            foreach($recent as &$row){$row['at']=(int)$row['at'];$row['price']=json_decode($row['price'],true,512,JSON_THROW_ON_ERROR);$row['seller_player_id']=$this->publicPlayerId($row['seller']);$row['seller_name']=$names[$row['seller']]??'Player';$row['item']=$this->statsItem($row['item']);unset($row['seq']);}unset($row);
             $popular=$this->run('SELECT i.code,i.quality,i.item_index,COUNT(*) AS trades,MAX(e.seq) AS last_seq'.$from.' GROUP BY i.code,i.quality,i.item_index ORDER BY trades DESC,last_seq DESC LIMIT 8',$args)->fetchAll();
             foreach($popular as &$row){$id=$this->run('SELECT item FROM events WHERE seq=?',[$row['last_seq']])->fetchColumn();$row=['trades'=>(int)$row['trades'],'item'=>$this->statsItem($id)];}unset($row);
             $sellers=$this->run('SELECT e.seller,COUNT(*) AS trades,MAX(e.at) AS last_sale'.$from.' GROUP BY e.seller ORDER BY trades DESC,last_sale DESC,e.seller LIMIT 8',$args)->fetchAll();
-            foreach($sellers as &$row){$row=['id'=>$row['seller'],'name'=>$names[$row['seller']]??'Player','trades'=>(int)$row['trades'],'active_listings'=>(int)$this->run('SELECT COUNT(*)'.$active.' AND l.seller=?',[$scope,$now,$row['seller']])->fetchColumn()];}unset($row);
+            foreach($sellers as &$row){$row=['id'=>$row['seller'],'player_id'=>$this->publicPlayerId($row['seller']),'name'=>$names[$row['seller']]??'Player','trades'=>(int)$row['trades'],'active_listings'=>(int)$this->run('SELECT COUNT(*)'.$active.' AND l.seller=?',[$scope,$now,$row['seller']])->fetchColumn()];}unset($row);
             return ['window'=>$window,'since'=>$since,'generated_at'=>$now,'mod'=>$this->mod,'game_mode'=>'2.4','hardcore'=>$hardcore,'summary'=>$counts,'recent'=>$recent,'popular'=>$popular,'sellers'=>$sellers];
         });
     }

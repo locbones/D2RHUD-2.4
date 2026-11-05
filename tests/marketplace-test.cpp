@@ -32,6 +32,9 @@ std::vector<uint8_t> Tab(const std::vector<std::vector<uint8_t>>& items){
 std::vector<uint8_t> Page(){std::vector<uint8_t> bytes;for(unsigned tab=0;tab<7;++tab){const auto part=tab==2?Tab({Unique(true),Rune(4)}):Tab({});bytes.insert(bytes.end(),part.begin(),part.end());}return bytes;}
 SaveTables Tables(){SaveTables t;t.items={{{'r','3','3',' '}},{{'r','i','n',' '}}};t.stats.resize(512);t.stats[39]={8,0,0,10,true};t.stats[194]={4,0,0,0,true};return t;}
 void Prices(){
+    const std::vector<Requirement> open={{"open","Open to Offers",2,-1,1,-1,"open",{}}};
+    assert(IsOpen(ReadPrice(PriceJson(open)))&&!CanPay(open,{}));auto invalidOpen=open;invalidOpen[0].quantity=2;assert(!Validate(invalidOpen).empty());
+    invalidOpen=open;invalidOpen.push_back({"gld","Gold",2,-1,1,-1,"gold",{}});assert(!Validate(invalidOpen).empty());
     const std::vector<Requirement> price={{"rin","Unique A",7,42,1,-1},{"rin","Unique B",7,43,1,-1},{"r33","Zod Rune",2,-1,40,-1}};
     assert(Validate(price).empty());assert(ReadPrice(PriceJson(price)).size()==3);
     std::vector<PaymentItem> payment={{"rin",7,42,1,true,false},{"rin",7,43,1,true,true},{"r33 ",2,-1,40,true,false}};
@@ -43,6 +46,31 @@ void Prices(){
     auto json=PriceJson(price);json[0]["quantity"]=1.5;Refuses([&]{ReadPrice(json);});json[0]["quantity"]=uint64_t(-1);Refuses([&]{ReadPrice(json);});
     auto overlap=std::vector<Requirement>{{"rin","A",7,42,1,-1},{"rin","A",7,42,1,0}};assert(!Validate(overlap).empty());
     overlap[0].ethereal=1;assert(Validate(overlap).empty());assert(!CanPay({},payment));
+    for(unsigned cls=0;cls<7;++cls){
+        Writer w;w.Add(1u<<4,32);w.Add(0,3);w.Add(0,3);w.Add(0,4);w.Add(0,4);w.Add(0,4);w.Add(5,3);w.Code("cm2 ");
+        w.Add(0,3);w.Add(0x13572468+cls,32);w.Add(99,7);w.Add(7,4);w.Add(0,1);w.Add(0,1);w.Add(556,12);w.Add(0,1);
+        w.Add(83,9);w.Add(cls,3);w.Add(3,3);w.Add(511,9);w.Align();
+        auto t=Tables();t.items.push_back({{'c','m','2',' '}});std::sort(t.items.begin(),t.items.end(),[](const auto& a,const auto& b){return a.code<b.code;});t.stats[83]={3,3,0,0,true};
+        const auto parsed=ReadItem(w.bytes,t,1);assert(parsed.Payment().classId==int(cls)&&parsed.itemHex==Hex(w.bytes));
+    }
+    Requirement torch{"cm2","Hellfire Torch",7,556,1,-1};torch.classId=1;
+    assert(ReadPrice(PriceJson({torch}))[0].classId==1&&RequirementName(torch)=="Hellfire Torch (Sorceress)");
+    assert(!PriceJson({price.back()})[0].contains("class_id"));
+    SavedItem rolled;rolled.code="cm2";rolled.quality=7;rolled.index=556;rolled.flags=1u<<4;
+    rolled.properties={{{"id",83},{"param",2},{"value",3},{"list","base"}}};
+    assert(!CanPay({torch},{rolled.Payment()}));rolled.properties[0]["param"]=1;assert(CanPay({torch},{rolled.Payment()}));
+    auto necro=torch;necro.classId=2;assert(Validate({torch,necro}).empty());
+    assert(!CanPay({torch,necro},{rolled.Payment()}));auto necroRoll=rolled;necroRoll.properties[0]["param"]=2;
+    assert(CanPay({torch,necro},{rolled.Payment(),necroRoll.Payment()}));
+    auto anyTorch=torch;anyTorch.classId=-1;assert(!Validate({anyTorch,torch}).empty());assert(!Validate({torch,torch}).empty());
+    assert(CanPay({anyTorch},{necroRoll.Payment()}));
+    rolled.properties[0]["list"]="set";assert(!CanPay({torch},{rolled.Payment()}));
+    rolled.properties[0]["list"]="base";rolled.properties[0]["value"]=0;assert(!CanPay({torch},{rolled.Payment()}));
+    rolled.properties[0]["value"]=3;rolled.properties.push_back({{"id",83},{"param",2},{"value",3},{"list","base"}});assert(!CanPay({torch},{rolled.Payment()}));
+    rolled.code="rin";assert(rolled.Payment().classId==-1);rolled.code="cm2";
+    auto badClass=PriceJson({torch});for(auto value:{Json(7),Json(-2),Json(true),Json(1.5),Json("1")}){badClass[0]["class_id"]=value;Refuses([&]{ReadPrice(badClass);});}
+    auto badTorch=torch;badTorch.code="rin";assert(!Validate({badTorch}).empty());
+    assert(SimulationAccepts({torch},{torch})&&!SimulationAccepts({torch},{necro}));
     std::cout<<"Exact unique IDs, AND bundles, 40-unit stacks, ethereal/identified rules and malformed/overlapping prices passed.\n";
 }
 void Resources(){
@@ -120,10 +148,10 @@ void Workspace(){
     auto changed=listing;changed.revision="revision-2";assert(!SameTerms(agreement,changed));changed=listing;changed.price[0].quantity=2;assert(!SameTerms(agreement,changed));
     auto settings=Settings{};settings.enabled=true;settings.autoTrade=true;settings.page=17;settings.withdrawPage=18;settings.agreements={agreement};
     const auto document=SettingsJson(settings,"MarketplaceFixture",false);const auto back=ReadSettings(document,"MarketplaceFixture",false);
-    assert(back.autoTrade&&back.withdrawPage==18&&back.agreements.size()==1&&SameTerms(back.agreements[0],listing));
+    assert(back.autoTrade&&back.withdrawPage==17&&back.agreements.size()==1&&SameTerms(back.agreements[0],listing));
     auto old=document;old.erase("withdraw_page");old.erase("auto_trade");old.erase("agreements");const auto legacy=ReadSettings(old,"MarketplaceFixture",false);
-    assert(legacy.withdrawPage==2&&!legacy.autoTrade&&legacy.agreements.empty());
-    auto bad=document;bad["withdraw_page"]=17;Refuses([&]{ReadSettings(bad,"MarketplaceFixture",false);});
+    assert(legacy.withdrawPage==17&&!legacy.autoTrade&&legacy.agreements.empty());
+    auto bad=document;bad["withdraw_page"]=17;assert(ReadSettings(bad,"MarketplaceFixture",false).withdrawPage==17);
     bad=document;bad["auto_trade"]=1;Refuses([&]{ReadSettings(bad,"MarketplaceFixture",false);});
     bad=document;bad["agreements"].push_back(bad["agreements"][0]);Refuses([&]{ReadSettings(bad,"MarketplaceFixture",false);});
     bad=source;bad["listings"].push_back(bad["listings"][0]);Refuses([&]{ReadFeed(bad,"MarketplaceFixture",false,Tables(),UnixNow());});

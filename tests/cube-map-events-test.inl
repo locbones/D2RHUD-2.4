@@ -51,12 +51,16 @@ void EventSynchronization(){
     // temporarily has no ready unit. Their run and resources must survive.
     assert(ProcessEvent(game,run,state) && state.run && run.eventPhase==EventPhase::WaitingTown);
     eventClients[0].dwClientState=eventClients[1].dwClientState=4;assert(command(&eventPlayers[1]));
+    GrantTimedReward(game,55,Event::TreasureTrove);GrantTimedReward(game,55,Event::GoldenGoose);GrantTimedReward(game,55,Event::PlentifulPirating);
     assert(ProcessEvent(game,run,state) && run.eventPhase==EventPhase::Ceremony);
+    for(const auto& [event,timer]:state.timedRewards.at(55))assert(timer.pausedAt==game->dwGameFrame);
     for(const auto& p:eventPackets){assert(Data::Valid(p) && p.run==123 && p.event==Event::Trial && p.die==6 && !p.reward);}
     game->dwGameFrame+=CeremonyFrames-1;assert(ProcessEvent(game,run,state) && run.eventPhase==EventPhase::Ceremony);
     ++game->dwGameFrame;assert(ProcessEvent(game,run,state) && run.eventPhase==EventPhase::Briefing);
     game->dwGameFrame+=BriefingFrames-1;assert(ProcessEvent(game,run,state) && run.eventPhase==EventPhase::Briefing);
-    run.event=Event::GoblinGrotto;run.eventPhase=EventPhase::Active;run.phase=Phase::Running;run.level=39;run.eventStarted=game->dwGameFrame;run.census.ready=run.census.entered=true;run.census.Observe(1,false);
+    for(const auto& [event,timer]:state.timedRewards.at(55))assert(timer.RemainingAt(game->dwGameFrame,event)==RewardsData::DurationSeconds(event));
+    run.event=Event::GoblinGrotto;run.eventPhase=EventPhase::Active;ProcessTimedRewards(game,state);
+    for(const auto& [event,timer]:state.timedRewards.at(55))assert(!timer.pausedAt);run.phase=Phase::Running;run.level=39;run.eventStarted=game->dwGameFrame;run.census.ready=run.census.entered=true;run.census.Observe(1,false);
     game->dwGameFrame+=1499;assert(!ProcessEvent(game,run,state) && run.eventPhase==EventPhase::Active);
     ++game->dwGameFrame;assert(!ProcessEvent(game,run,state) && run.eventPhase==EventPhase::Returning && run.timedOut && !run.success && run.returning==std::set<uint32_t>({55,56}) && run.rewards.empty());
     // Trial's requested five-minute duration uses the same authoritative deadline.
@@ -64,7 +68,10 @@ void EventSynchronization(){
     assert(Info(Event::Trial).seconds==300);
     game->dwGameFrame+=7499;assert(!ProcessEvent(game,run,state) && run.eventPhase==EventPhase::Active);
     ++game->dwGameFrame;assert(!ProcessEvent(game,run,state) && run.eventPhase==EventPhase::Returning && run.timedOut && !run.success);
+    run.eventPhase=EventPhase::Briefing;ProcessTimedRewards(game,state);
+    for(const auto& [event,timer]:state.timedRewards.at(55))assert(timer.pausedAt);
     game->pClientList=nullptr;assert(ProcessEvent(game,run,state) && !state.run);
+    for(const auto& [event,timer]:state.timedRewards.at(55))assert(!timer.pausedAt);
     games.clear();populationCode=nullptr;installed=false;
     std::cout<<"Shared event waits for both authenticated participants, survives simultaneous act loading, rejects stale/foreign readiness and presents a full ten-second briefing.\n";
 }

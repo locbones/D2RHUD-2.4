@@ -1,7 +1,7 @@
 const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/strict');
 const catalog=JSON.parse(fs.readFileSync('tools/marketplace/server/public/assets/catalog.json','utf8'));
 const source=fs.readFileSync('tools/marketplace/server/public/market.js','utf8');
-const functions=['catalogName','definition','itemName'].map(name=>source.split('\n').find(line=>line.startsWith(`  function ${name}(`))).join('\n');
+const functions=['torchClassChoice','torchClassOf','torchClassName','catalogName','definition','itemName'].map(name=>source.split('\n').find(line=>line.startsWith(`  function ${name}(`))).join('\n');
 const ctx=vm.createContext({state:{catalog}});vm.runInContext(functions+';this.subject={definition,itemName};',ctx);
 const {itemName,definition}=ctx.subject;
 assert.equal(itemName({code:'rin',quality:4,name_ids:{magic_prefix:1,magic_suffix:1}}),'Blessed Ring of Absorption');

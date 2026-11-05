@@ -68,6 +68,21 @@ int wmain(int argc,wchar_t** argv){
     Debit(bagPage,{{"Z01","Gems",2,-1,25,-1,"bag","GB_Total"}},settings,bagTables,gems);assert(Balance(bagPage.tabs[0][0],"GB_Total")==15);
     settings.drafts={{1,bagPage.tabs[0][0].itemHex,{{"r33","Zod",2,-1,1,-1}}}}; // Same bytes on a deposit page cannot reserve a delivery bag.
     Deliver(bagPage,gems,settings,bagTables,0);assert(bagPage.tabs[0][0].itemHex==savedBag.itemHex);
+    // Single-page delivery creates its own currency bag, with no pre-existing
+    // container, a stable claim UUID and only the requested currency amounts.
+    Settings onePage;onePage.enabled=true;onePage.page=onePage.withdrawPage=11;
+    const auto oneJson=SettingsJson(onePage,"RMD-MP",false);assert(oneJson.at("withdraw_page")==11&&ReadSettings(oneJson,"RMD-MP",false).withdrawPage==11);
+    auto parcelPage=Read(raw,tables);for(auto& rows:parcelPage.tabs)rows.clear();
+    const auto parcelBefore=Write(parcelPage,bagTables);const std::string parcelId="0123456789abcdef0123456789abcdef";
+    Json parcelRequest={{"schema",1},{"game_mode","2.4"},{"mod","RMD-MP"},{"hardcore",false},{"settings",oneJson},{"source_hex",Hex(parcelBefore)},
+        {"currency_bag_id",parcelId},{"credit_balances",PriceJson({{"Z01","Gems",2,-1,25,-1,"bag","GB_Total"},{"Z01","Runes",2,-1,100,-1,"bag","RB_Low"}})}};
+    const auto mint=Plan(parcelRequest,bagTables);const auto minted=ReadStash(DecodePage(mint.at("after_hex")),bagTables.save);
+    assert(minted.size()==1&&minted[0].uuid==parcelId&&Balance(minted[0],"GB_Total")==25&&Balance(minted[0],"RB_Low")==100);
+    assert(mint.at("currency_bags").size()==1&&mint.at("delivered").empty()&&Plan(parcelRequest,bagTables)==mint);
+    auto otherParcel=parcelRequest;otherParcel["currency_bag_id"]="abcdef0123456789abcdef0123456789";assert(Plan(otherParcel,bagTables).at("after_hex")!=mint.at("after_hex"));
+    auto multiple=parcelRequest;multiple["credit_balances"][0]["quantity"]=9000;const auto many=Plan(multiple,bagTables);assert(many.at("currency_bags").size()==3);
+    uint64_t total=0;std::set<std::string> parcelUuids;for(const auto& row:many.at("currency_bags")){const auto bag=ReadItem(C::Decode(row.at("item_hex")),bagTables.save,1);total+=Balance(bag,"GB_Total");assert(parcelUuids.insert(bag.uuid).second);}assert(total==9000&&Plan(multiple,bagTables)==many);
+    auto excessive=parcelRequest;excessive["credit_balances"][0]["quantity"]=uint64_t(MaxResourceQuantity)+1;Refuses([&]{Plan(excessive,bagTables);});
     std::vector<std::vector<uint8_t>> packed;for(unsigned y=0;y<13;++y)for(unsigned x=0;x<16;++x){auto b=Rune();Bits(b,42,4,x);Bits(b,46,4,y);packed.push_back(b);}
     Bytes full;for(unsigned n=0;n<7;++n){const auto tab=Tab(packed);full.insert(full.end(),tab.begin(),tab.end());}
     auto fullPage=Read(full,tables);Refuses([&]{Deliver(fullPage,item,settings,tables,0);});assert(Write(fullPage,tables)==full);

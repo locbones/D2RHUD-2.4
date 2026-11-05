@@ -1,5 +1,6 @@
 #include "RuntimeDiagnostics.h"
 #include "RuntimeTelemetry.h"
+#include "HitchDiagnostics.h"
 #include "SessionEpoch.h"
 #include "plugin/HudText.h"
 #include "plugin/Inspect.h"
@@ -12,6 +13,7 @@
 #include <vector>
 #pragma comment(lib,"bcrypt.lib")
 #pragma comment(lib,"version.lib")
+#pragma comment(lib,"shell32.lib")
 
 namespace RuntimeDiagnostics {
 namespace {
@@ -91,10 +93,50 @@ std::filesystem::path SaveSupportReport(){
     swprintf_s(name,L"report-%04u%02u%02u-%02u%02u%02u-%lu-%u.txt",t.wYear,t.wMonth,t.wDay,t.wHour,t.wMinute,t.wSecond,GetCurrentProcessId(),++serial);
     const auto path=directory/name;std::ofstream out(path,std::ios::binary);
     out<<"D2RHUD local support report (UTC)\n"<<IdentityText()<<"Startup stage: "<<stage.load()<<"\nSession generation: "<<HudSession::Current()<<"\n\n"<<PerformanceText()<<"\nInspect native hover: "<<Inspect::SelectionStatus()<<"\nInspect last world scan: "<<Inspect::WorldStatus()<<'\n';
+    const auto hitch=HudHitches::Snapshot();out<<"\nHitch recorder: "<<hitch.status<<"\nLast hitch report: "<<Utf8(hitch.report)<<'\n';
     for(const wchar_t* file:{L"feature-status.txt",L"launch-diagnostics.json",L"crash.log",L"map-events.log",L"spectate.log"})AppendFile(out,folder/file);
     out.flush();if(!out)throw std::runtime_error("Could not write support report.");return path;
 }
 void DrawPanel(){
+    HudText::SeparatorText("Hitch recorder");
+    HudText::TextWrapped("1. Start a capture.  2. Close the HUD menu and play until it hitches.  3. Send the saved JSON report. Captures stop and save automatically.");
+    auto capture=HudHitches::Snapshot();
+    static int threshold=1,duration=1;
+    if(!capture.recording&&!capture.saving){
+        HudText::TextUnformatted("Hitch threshold");ImGui::SameLine();ImGui::SetNextItemWidth(130);ImGui::Combo("##hitch-threshold",&threshold,"33 ms\0 50 ms\0 100 ms\0 200 ms\0");
+        ImGui::SameLine();HudText::TextUnformatted("Capture length");ImGui::SameLine();ImGui::SetNextItemWidth(130);ImGui::Combo("##hitch-duration",&duration,"2 minutes\0 5 minutes\0 10 minutes\0");
+        if(HudText::Button("Start hitch capture")){
+            constexpr double limits[]{33,50,100,200};constexpr unsigned seconds[]{120,300,600};
+            if(!HudHitches::Start({limits[threshold],seconds[duration]},folder/L"Support",IdentityText()))status="Could not start hitch capture.";
+            capture=HudHitches::Snapshot();
+        }
+    }else if(capture.recording){
+        HudText::Text("Recording | %.0f seconds remaining",capture.remaining);
+        if(HudText::Button("Stop and save capture"))HudHitches::Stop();
+    }else HudText::TextUnformatted("Saving capture in the background...");
+    if(!capture.status.empty())HudText::TextWrapped("%s",capture.status.c_str());
+    if(capture.graphCount){
+        const auto& summary=capture.summary;
+        if(summary.frames)HudText::Text("%llu gameplay hitches | worst %.1f ms | average %.1f ms | p95 <= %.1f ms",summary.hitches,summary.maximumMs,summary.Mean(),summary.P95Upper());
+        else HudText::TextWrapped("No gameplay-only samples yet. Close the HUD menu and play to include gameplay in this capture.");
+        HudText::Text("All contexts: %llu pauses over %.0f ms | worst %.1f ms",summary.allHitches,capture.options.thresholdMs,summary.allMaximumMs);
+        if(capture.graphCount){ImGui::PlotLines("Frame time (ms)",capture.graph.data(),capture.graphCount,0,nullptr,0,FLT_MAX,ImVec2(0,80));}
+        HudText::TextWrapped("Loading, HUD-menu, unfocused and session-transition intervals are excluded from the hitch count. The graph also includes those intervals.");
+        if(!capture.worst.empty()&&ImGui::BeginTable("hitch-worst",5,ImGuiTableFlags_RowBg|ImGuiTableFlags_BordersInnerH)){
+            for(const char* name:{"Worst frame","HUD overlay","Present wait","Render CPU","At (seconds)"})ImGui::TableSetupColumn(name);ImGui::TableHeadersRow();
+            for(size_t i=0;i<(std::min)(size_t(6),capture.worst.size());++i){const auto& f=capture.worst[i];ImGui::TableNextRow();ImGui::TableNextColumn();HudText::Text("%.1f ms",f.intervalMs);ImGui::TableNextColumn();HudText::Text("%.1f ms",f.hudMs);ImGui::TableNextColumn();HudText::Text("%.1f ms",f.presentMs);ImGui::TableNextColumn();HudText::Text("%.1f ms",f.threadCpuMs);ImGui::TableNextColumn();HudText::Text("%.1f",double(f.at-capture.start)/double(capture.frequency));}
+            ImGui::EndTable();
+        }
+    }
+    if(capture.dropped||capture.overwritten)HudText::TextWrapped("Some trace history was dropped or overwritten. The report records its limits; session hitch totals are retained.");
+    if(!capture.report.empty()){
+        HudText::TextWrapped("Report: %s",Utf8(capture.report.filename()).c_str());
+        if(HudText::Button("Open report folder"))ShellExecuteW(nullptr,L"open",capture.report.parent_path().c_str(),nullptr,nullptr,SW_SHOWNORMAL);
+        ImGui::SameLine();if(HudText::Button("Copy report path"))ImGui::SetClipboardText(Utf8(capture.report).c_str());
+    }
+    HudText::TextWrapped("Captures frame cadence, selected HUD timings, render-thread CPU, process CPU/memory/I/O and system CPU. Present wall time is not a GPU timer. No saves, chat or credentials are collected or uploaded.");
+    ImGui::Spacing();
+    if(!ImGui::CollapsingHeader("Support report and advanced counters"))return;
     HudText::TextWrapped("Inspect native hover: %s",Inspect::SelectionStatus());
     HudText::TextWrapped("Inspect last world scan: %s",Inspect::WorldStatus());
     HudText::TextWrapped("Save a local report with versions, installation hashes, feature status and recent failures. Character saves are not included.");

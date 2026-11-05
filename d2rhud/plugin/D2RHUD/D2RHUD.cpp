@@ -1,5 +1,7 @@
 ﻿#include "../../RuntimeDiagnostics.h"
 #include "../../RuntimeTelemetry.h"
+#include "../../HitchDiagnostics.h"
+#include "../../SessionEpoch.h"
 #include "../TooltipText.h"
 #include "../RunTracker.h"
 #include "../Inspect.h"
@@ -51,6 +53,7 @@
 #include "../QuestJournalClient.h"
 #include "../D3Whirlwind.h"
 #include "../SelectedAuras.h"
+#include "../MultipleAuras.h"
 #include "../States512.h"
 #include "../SunderSystem.h"
 #include "../WidescreenBars.h"
@@ -61,6 +64,7 @@
 #include "../CandyCornSaveUI.h"
 #include "../MarketplacePanel.h"
 #include "../MarketplaceLiveCustody.h"
+#include "../MarketplacePageRequests.h"
 #include <imgui.h>
 #include "../ItemFilter/LootFilterEditorText.h"
 #include "../ItemFilter/LuaConfigIO.h"
@@ -355,7 +359,8 @@ enum SharedStashPhase : uint8_t {
     SaveCompleted,
     OldSharedStashFreed,
     NewSharedStashLoadedAndAttachMessagesSent,
-    NewSharedStashUnitsCreated
+    NewSharedStashUnitsCreated,
+    SharedStashLoadFailed
 };
 
 struct CCMD_STASH_PAGE_CHANGE : CCMD_CUSTOM {
@@ -427,9 +432,18 @@ static D2ClientStrc** gpClientList = reinterpret_cast<D2ClientStrc**>(Pattern::A
 static D2Widget** gpPanelManager = reinterpret_cast<D2Widget**>(Pattern::Address(0x1d7c4e8));
 
 
-static uint32_t gSelectedPage = 0;
+static std::atomic<uint32_t> gSelectedPage{0};
 static std::atomic<bool> gMarketplacePageSwitching{false};
 static std::atomic<int> gMarketplacePagePhase{-1};
+static Marketplace::PageRequests gMarketplacePageRequests;
+static Marketplace::PageSelection gMarketplacePageSelection;
+static std::atomic<uint32_t> gMarketplacePreviousPage{0};
+static std::atomic<bool> gMarketplacePageRecovery{false};
+static std::atomic<bool> gMarketplaceRollbackAttempted{false};
+static void MarketplaceLivePumpRequests();
+static void MarketplaceLiveRecoverPage();
+static bool MarketplaceLiveCursor();
+static void MarketplaceStashNotice(const std::string&);
 using MarketplaceBankLifecycle=void(__fastcall*)(void*);
 static MarketplaceBankLifecycle oMarketplaceBankOpen=nullptr,oMarketplaceBankClose=nullptr;
 static bool MarketplaceLiveAllowPage(uint32_t);
@@ -437,8 +451,13 @@ static bool MarketplaceLivePreparePage(uint32_t);
 static int MarketplaceLiveSendFreshPage(uint32_t);
 static void MarketplaceLiveLoaded(uint32_t);
 static void MarketplaceLivePaint(void*);
+static void MarketplaceLiveSelectPage(void*);
+static void MarketplaceLivePollPage(void*);
+static void MarketplaceLiveRefreshTick();
+static int MarketplaceLiveReloadTab(uint32_t);
 static void CaptureMarketplacePanel(void*,bool);
 static void UpdateMarketplaceWidgets(void*);
+static bool DrawStandaloneMarketplace(void*);
 static bool DispatchMarketplaceInput(void*,uint64_t,void*);
 static bool InspectMarketplaceItem(void*,uint64_t,uint64_t);
 
@@ -497,45 +516,62 @@ void __fastcall SCMD_SendSharedStashMessage(D2ClientStrc* pClient, SharedStashPh
 void __fastcall SCMD_HandleSharedStashMessage(SCMD_STASH_PAGE_CHANGE* pData) {
     // Only the acknowledged, currently requested page may open a live window.
     // A delayed/duplicate packet from an earlier switch must not release it.
-    if(!pData||pData->nPage>=64||!gMarketplacePageSwitching.load()||pData->nPage!=gSelectedPage||int(pData->nPhase)!=gMarketplacePagePhase.load())return;
+    if(!pData||pData->nPage>=64||!gMarketplacePageSwitching.load()||pData->nPage!=gSelectedPage||
+        (int(pData->nPhase)!=gMarketplacePagePhase.load()&&!(pData->nPhase==SharedStashLoadFailed&&gMarketplacePagePhase.load()==NewSharedStashUnitsCreated)))return;
     switch (pData->nPhase) {
     case SaveStarted:
         std::cout << "Client saved" << std::endl;
         CCMD_SendSharedStashMessage(SaveCompleted, pData->nPage);
         break;
     case OldSharedStashFreed:
-        gMarketplacePagePhase=NewSharedStashUnitsCreated;
         std::cout << "Sending new shared stash to server" << std::endl;
         UpdateStashFileName(pData->nPage);
         {
             const auto fresh=MarketplaceLiveSendFreshPage(pData->nPage);
-            if(fresh<0)return;
+            if(fresh<0){gMarketplacePageRecovery=true;MarketplaceLiveRecoverPage();return;}
             if(!fresh)reinterpret_cast<void(__fastcall*)()>(Pattern::Address(0x10e080))(); // CLIENT_ReadSaveAndSend_D2CLTSYS_OPENCHAR()
         }
+        gMarketplacePagePhase=NewSharedStashUnitsCreated;
         CCMD_SendSharedStashMessage(NewSharedStashLoadedAndAttachMessagesSent, pData->nPage);
         break;
+    case SharedStashLoadFailed:
+        if(gMarketplaceRollbackAttempted.load()){
+            Marketplace::LiveCustody::window.Error("The stash could not be restored. Leave and rejoin the game; existing save files were preserved.");
+            MarketplaceStashNotice("Stash restore failed. Leave and rejoin the game; existing save files were preserved.");
+            break;
+        }
+        gMarketplacePageRecovery=true;
+        Marketplace::LiveCustody::window.Error("Stash reload failed. Restoring the previous page...");
+        MarketplaceStashNotice("That stash page could not load. Restoring the previous page...");
+        MarketplaceLiveRecoverPage();
+        break;
     case NewSharedStashUnitsCreated:
+        gMarketplacePageRecovery=false;
         gMarketplacePagePhase=-1;
-        gMarketplacePageSwitching=false;
         MarketplaceLiveLoaded(pData->nPage);
         std::cout << "New shared stash units created" << std::endl;
         auto pBankPanel = WidgetFindChild(*gpPanelManager, "BankExpansionLayout");
         if (pBankPanel) {
             std::cout << "Selecting tab" << std::endl;
-            int32_t nSelectedTab = 0;   //This doesnt really seem to matter...
+            int32_t nSelectedTab = MarketplaceLiveReloadTab(pData->nPage);
             Message m = {
                 "BankPanelMessage"_hash64,
                 "SelectTab"_hash64,
                 (uint64_t)&nSelectedTab
             };
             BankPanelMessage(pBankPanel, m);
+            MarketplaceLiveSelectPage(pBankPanel);
         }
+        gMarketplacePageSwitching=false;
+        MarketplaceLivePumpRequests();
         break;
     }
 }
 
 int64_t __fastcall CCMD_HandleSharedStashMessage(D2GameStrc* pGame, D2UnitStrc* pUnit, CCMD_STASH_PAGE_CHANGE* pData) {
+    if(!pGame||!pUnit||!pUnit->pPlayerData||!pData||pData->nPage>=64)return 1;
     auto pClient = pUnit->pPlayerData->pClient;
+    if(!pClient||pClient->pGame!=pGame||pClient->pPlayer!=pUnit)return 1;
     switch (pData->nPhase) {
     case PageChanged:
         // First server packet
@@ -558,6 +594,9 @@ int64_t __fastcall CCMD_HandleSharedStashMessage(D2GameStrc* pGame, D2UnitStrc* 
         reinterpret_cast<void(__fastcall*)(D2ClientStrc*)>(Pattern::Address(0x2a08a0))(pClient); // CLIENTS_FreeSaveHeader
         if (stashResult) {
             std::cerr << "Shared stash page load failed: " << stashResult << std::endl;
+            // Never save a partially parsed destination over the intact file.
+            reinterpret_cast<void(__fastcall*)(D2GameStrc*,D2UnitStrc*)>(Pattern::Address(0x28bf00))(pGame,pUnit);
+            SCMD_SendSharedStashMessage(pClient,SharedStashLoadFailed,pData->nPage);
             return 1;
         }
         SCMD_SendSharedStashMessage(pClient, NewSharedStashUnitsCreated, pData->nPage);
@@ -637,15 +676,38 @@ void __fastcall GenerateSharedStash() {
 }
 
 void OnStashPageChanged(uint32_t nSelectedPage) {
-    if(nSelectedPage>=64||gMarketplacePageSwitching.load()||!MarketplaceLiveAllowPage(nSelectedPage)||!MarketplaceLivePreparePage(nSelectedPage))return;
-    gMarketplacePageSwitching=true;
-    gMarketplacePagePhase=OldSharedStashFreed;
-    std::cout << "Sending CCMD_STASH_PAGE_CHANGE" << std::endl;
-    gSelectedPage = nSelectedPage;
-    CCMD_SendSharedStashMessage(PageChanged, nSelectedPage);
+    if(Marketplace::Panel::stashSyncing.load()){
+        const auto target=Marketplace::LiveCustody::window.RefreshPage(),park=Marketplace::LiveCustody::window.Snapshot().parking;
+        if(nSelectedPage+1!=target&&nSelectedPage+1!=park)return;
+    }
+    gMarketplacePageRequests.Request(nSelectedPage);
+    MarketplaceLivePumpRequests();
+}
+
+static void MarketplaceLivePumpRequests(){
+    HudTelemetry::Scope measured(HudTelemetry::Feature::StashSwitch);
+    bool idle=false;
+    if(!gMarketplacePageSwitching.compare_exchange_strong(idle,true))return;
+    const auto page=gMarketplacePageRequests.Take(gSelectedPage,GetTickCount64());
+    if(!page){gMarketplacePageSwitching=false;return;}
+    if(MarketplaceLiveCursor()||!MarketplaceLiveAllowPage(*page)){
+        gMarketplacePageRequests.Defer(*page,GetTickCount64());gMarketplacePageSwitching=false;return;
+    }
+    if(!MarketplaceLivePreparePage(*page)){
+        const auto error=Marketplace::LiveCustody::window.Snapshot().status;
+        MarketplaceLiveLoaded(gSelectedPage);
+        if(!error.empty())Marketplace::LiveCustody::window.Error(error);
+        if(!error.empty())MarketplaceStashNotice(error);
+        gMarketplacePageSwitching=false;return;
+    }
+    gMarketplacePreviousPage=gSelectedPage.load();gMarketplaceRollbackAttempted=false;gMarketplacePageRecovery=false;
+    gMarketplacePagePhase=OldSharedStashFreed;gSelectedPage=*page;
+    CCMD_SendSharedStashMessage(PageChanged,*page);
 }
 
 static void* __fastcall HookedMarketplaceBankMessage(void* widget,Message& message){
+    if((Marketplace::Panel::stashSyncing.load()||
+        (Marketplace::Panel::standaloneMarket.load()&&!Marketplace::Panel::NativeOpen()))&&message.o1==0x4ae067c6248b6042ULL)return widget;
     static_assert(Marketplace::Panel::MessageHash("BankPanelMessage")=="BankPanelMessage"_hash64);
     if(WidgetFindChild(widget,"MarketplaceWorkspace")){
         if(gMarketplacePageSwitching.load()&&message.o1==0x4ae067c6248b6042ULL)return widget;
@@ -655,20 +717,15 @@ static void* __fastcall HookedMarketplaceBankMessage(void* widget,Message& messa
 }
 
 void __fastcall HookedBankPanelDraw(D2BankPanelWidget* pBankPanel) {
+    HudTelemetry::Scope measured(HudTelemetry::Feature::StashNative);
     RunTracker::StashVisible();
+    MarketplaceLivePollPage(pBankPanel);
     MarketplaceLivePaint(pBankPanel);
+    MarketplaceLiveSelectPage(pBankPanel);
     UpdateMarketplaceWidgets(pBankPanel);
-    oBankPanelDraw(pBankPanel);
-    //todo hook OnSelectionChange for widget?
-    auto pBankPages = WidgetFindChild(pBankPanel, "BankPages");
-    if (pBankPages) {
-        auto nSelectedPage = *(uint32_t*)((int64_t)pBankPages + 0x178C);
-        if (nSelectedPage != gSelectedPage) {
-            OnStashPageChanged(nSelectedPage);
-            if(nSelectedPage!=gSelectedPage){SIZE_T count=0;WriteProcessMemory(GetCurrentProcess(),static_cast<uint8_t*>(pBankPages)+0x178C,&gSelectedPage,sizeof(gSelectedPage),&count);}
-        }
-    }
-    CaptureMarketplacePanel(pBankPanel,gMarketplacePageSwitching.load());
+    if(!DrawStandaloneMarketplace(pBankPanel))oBankPanelDraw(pBankPanel);
+    MarketplaceLivePollPage(pBankPanel);
+    CaptureMarketplacePanel(pBankPanel,gMarketplacePageSwitching.load()||Marketplace::Panel::stashSyncing.load());
 }
 
 #pragma endregion
@@ -735,22 +792,6 @@ std::string Trim(const std::string& str)
     return (first == std::string::npos || last == std::string::npos) ? "" : str.substr(first, last - first + 1);
 }
 
-void WriteToDebugLog(const std::string& message) {
-    const std::string logDirectory = "../Launcher/";
-    if (!std::filesystem::exists(logDirectory)) {
-        std::filesystem::create_directories(logDirectory);
-    }
-    const std::string logFilePath = logDirectory + "D2RHUD_Logs.txt";
-
-    std::ofstream logFile(logFilePath, std::ios::app);
-    if (logFile.is_open()) {
-        std::time_t now = std::time(nullptr);
-        std::tm* localTime = std::localtime(&now);
-        logFile << "[" << std::put_time(localTime, "%a %b %d %T %Y") << "] " << message << std::endl;
-
-        logFile.close();
-    }
-}
 #pragma endregion
 
 #pragma region Startup Options Control
@@ -1018,28 +1059,23 @@ static void QueueSaveAndExit(uint64_t context) {
 }
 
 void __fastcall GameMenuOnClickHandlerHook(uint64_t a1, Widget* pWidget) {
-    WriteToDebugLog("GameMenuOnClickHandlerHook called");
 
     if (!pWidget) {
-        WriteToDebugLog("pWidget is null. Exiting function.");
         return;
     }
 
     if (pWidget->hash == RestartGame::MessageHash) {
         if (!exitQueued && RestartGame::Request()) QueueSaveAndExit(a1);
-        WriteToDebugLog(RestartGame::Status());
         return;
     }
     if (pWidget->hash == SaveAndExitButtonHash) {
         if (exitQueued) return;
         RestartGame::Cancel();
-        WriteToDebugLog("Save and Exit button detected. Executing save command");
         QueueSaveAndExit(a1);
         return;
     }
 
     mainMenuClickHandlerOrig(a1, pWidget);
-    WriteToDebugLog("Original handler executed");
 }
 #pragma endregion
 
@@ -1354,51 +1390,6 @@ namespace {
 #pragma endregion
 
 #pragma region - Helper Functions
-
-static void LogDebug(const std::string& msg)
-{
-    std::ofstream log("debug_log.txt", std::ios::app);
-    if (!log.is_open())
-        return;
-
-    log << msg << "\n";
-}
-
-void LogSpawnDebug(const char* fmt, ...)
-{
-    std::lock_guard<std::mutex> lock(g_LogMutex);
-
-    FILE* f = fopen("spawn_debug.log", "a");
-    if (!f)
-        return;
-
-    // Timestamp
-    std::time_t t = std::time(nullptr);
-    std::tm tmBuf{};
-#ifdef _WIN32
-    localtime_s(&tmBuf, &t);
-#else
-    tmBuf = *std::localtime(&t);
-#endif
-
-    fprintf(f, "[%04d-%02d-%02d %02d:%02d:%02d] ",
-        tmBuf.tm_year + 1900,
-        tmBuf.tm_mon + 1,
-        tmBuf.tm_mday,
-        tmBuf.tm_hour,
-        tmBuf.tm_min,
-        tmBuf.tm_sec);
-
-    // Format the message
-    va_list args;
-    va_start(args, fmt);
-    vfprintf(f, fmt, args);
-    va_end(args);
-
-    fprintf(f, "\n");
-
-    fclose(f);
-}
 
 int32_t __fastcall MONSTERUNIQUE_GetSuperUniqueBossHcIdx(D2GameStrc* pGame, D2UnitStrc* pUnit)
 {
@@ -1952,7 +1943,6 @@ MonsterTreasureResult GetMonsterTreasure(const std::vector<MonsterTreasureClass>
     MonsterTreasureResult result{ -1, -1 };
 
     if (rowIndex >= monsters.size()) {
-        LogDebug("Error: Row index out of range");
         return result;
     }
 
@@ -1960,8 +1950,6 @@ MonsterTreasureResult GetMonsterTreasure(const std::vector<MonsterTreasureClass>
     std::string treasureClassValue;
     std::string tcCheck;
 
-    LogDebug(std::format("---------------------\nMonster: {}", m.MonsterName));
-    LogDebug(std::format("Monstats Row: {}, Difficulty: {}", rowIndex, diff));
 
     if (rowIndex >= 410)
         rowIndex++;
@@ -1996,9 +1984,6 @@ MonsterTreasureResult GetMonsterTreasure(const std::vector<MonsterTreasureClass>
         }
     }
 
-    LogDebug(std::format("Treasure Class: {}", tcCheck));
-    LogDebug(std::format("TZ Treasure Class: {}", treasureClassValue));
-    LogDebug(std::format("Base TC Row: {}, Terror TC Row: {}", result.tcCheckIndex, result.treasureIndex));
 
     return result;
 }
@@ -2016,8 +2001,6 @@ MonsterTreasureResult GetMonsterTreasureSU(const std::vector<MonsterTreasureClas
     std::string treasureClassValue;
     std::string tcCheck;
 
-    LogDebug(std::format("---------------------\nSuperUnique: {}", m.BaseMonster));
-    LogDebug(std::format("GetMonsterTreasureSU called with: rowIndex={}", rowIndex));
 
     if (diff == 0) {
         tcCheck = m.TCChecker1;
@@ -2049,9 +2032,6 @@ MonsterTreasureResult GetMonsterTreasureSU(const std::vector<MonsterTreasureClas
         }
     }
 
-    LogDebug(std::format("SU Treasure Class: {}", tcCheck));
-    LogDebug(std::format("SU TZ Treasure Class: {}", treasureClassValue));
-    LogDebug(std::format("SuperUniques Base TC Row: {}, SuperUniques Terror TC Row: {}", result.tcCheckIndex, result.treasureIndex));
 
     return result;
 }
@@ -3670,10 +3650,7 @@ static bool DrawChatSoundSelector(float menuScale)
         else if (currentIdx > 0 && currentIdx <= static_cast<int>(soundFiles.size()))
             path = soundFiles[static_cast<size_t>(currentIdx - 1)].first;
 
-        if (!path.empty())
-            PlaySoundFile(path);
-        else
-            MessageBeep(MB_OK);
+        HudSounds::PlayNotification(path, d2rHUDConfig.ChatNotificationVolume);
     }
 
     if (customMode)
@@ -3971,6 +3948,7 @@ static void ApplyFeaturePreferences()
     SummonPersistence::SetEnabled(d2rHUDConfig.PersistentSummons);
     MercSeller::SetEnabled(d2rHUDConfig.MercSellerUnlock);
     MercIcons::SetEnabled(d2rHUDConfig.MercIconsFix);
+    MultipleAuras::SetEnabled(d2rHUDConfig.MultipleAurasPerItem);
     D3Whirlwind::SetEnabled(d2rHUDConfig.D3StyleWhirlwind);
     WidescreenBars::SetEnabled(d2rHUDConfig.NoWidescreenBars);
     DynamicAutomap::Configure(d2rHUDConfig.DynamicAutomap, d2rHUDConfig.DynamicAutomapInterval);
@@ -5406,6 +5384,7 @@ void ShowHotkeyMenu()
             "Force Save",
             "Open Cube Panel",
             "Open Quest Journal",
+            "Open Marketplace",
             "Remove Ground Items",
             "Reset Skills",
             "Reset Stats",
@@ -5437,6 +5416,7 @@ void ShowHotkeyMenu()
 
             ImGui::AlignTextToFramePadding();
             HudText::Text("%s:", name.c_str());
+            if(name=="Open Marketplace"&&ImGui::IsItemHovered())ImGui::SetTooltip("Open the marketplace directly from gameplay. Escape returns to your previous panels.");
             ImGui::SameLine();
 
             // --- Capture multi-key input if this hotkey is active ---
@@ -6938,9 +6918,11 @@ void ShowSettingsPanel()
 #include "../MarketplaceUI.inl"
 #include "../MarketplaceNative.inl"
 #include "../MarketplaceLiveCustodyRuntime.inl"
+#include "../MarketplaceHotkeyNative.inl"
 #include "../MarketplaceChat.h"
 #include "../../CrashDiagnostics.h"
 static Marketplace::Chat::Bridge gMarketplaceChat;
+static void MarketplaceStashNotice(const std::string& text){gMarketplaceChat.Notify(text);}
 static bool gMarketplaceChatHooked=false;
 static bool gMarketplaceChatSubmitHooked=false;
 static std::atomic<bool> gMarketplaceChatCloseInput{false};
@@ -6976,11 +6958,15 @@ static void __fastcall HookedMarketplaceQueuePacket(void* packet,int32_t size){
 static constexpr UINT_PTR kMarketplaceChatTimerId=0x4D434854;
 static std::atomic<bool> gMarketplaceChatScheduled{false};
 static VOID CALLBACK MarketplaceChatWindowTick(HWND hwnd,UINT,UINT_PTR timer,DWORD){
+    HudTelemetry::Scope measured(HudTelemetry::Feature::MarketplaceChatMailbox);
     if(timer!=kMarketplaceChatTimerId)return;
     KillTimer(hwnd,kMarketplaceChatTimerId);
     gMarketplaceChatScheduled=false;
     if(modName!="RMD-MP"||GetClientStatus()!=1)return;
     const auto now=GetTickCount64();
+    MarketplaceLiveRefreshTick();
+    MarketplaceLiveContinueClosed();
+    MarketplaceLivePumpRequests(); // Deferred page changes also progress while the stash is closed.
     if(gMarketplaceChatCloseInput.exchange(false)){
         uint8_t open=0;
         if(Marketplace::NativePanel::Read(reinterpret_cast<void*>(Pattern::Address(0x1d53fb8+5)),open)&&open)
@@ -6999,7 +6985,7 @@ static VOID CALLBACK MarketplaceChatWindowTick(HWND hwnd,UINT,UINT_PTR timer,DWO
         ChatOptionalStruct optional{};
         oChatManager_PushChatEntry(manager,message,4,false,type,optional,optional,optional,optional);
         CrashDiagnostics::Event("market-chat-after-print",0,0,0);
-        if(text.starts_with("[Message]")||text.starts_with("[Trade]"))HudChat::Observe("Marketplace",text.c_str(),0,0,false);
+        if(text.starts_with("[Message]")||text.starts_with("[Trade]")||text.starts_with("[Search]"))HudChat::Observe("Marketplace",text.c_str(),0,0,false);
     });
 }
 static void MarketplaceChatTick(){
@@ -7019,7 +7005,7 @@ static void MarketplaceChatTick(){
         }
     }
     static uint64_t configured=0;const auto now=GetTickCount64();
-    if(now>=configured+2000){configured=now;try{
+    if(now>=configured+5000){configured=now;try{
         wchar_t profile[32768]{};const auto size=GetEnvironmentVariableW(L"USERPROFILE",profile,32768);
         if(size&&size<32768){const auto cfg=Marketplace::LiveCustody::Read(std::filesystem::path(profile)/L".d2r-marketplace/custody-enrollment.json");
             const auto saves=std::filesystem::path(GetSavePath())/L"Diablo II Resurrected"/L"Mods"/L"RMD-MP";
@@ -7287,14 +7273,12 @@ void __fastcall HookedDropTCTest(D2GameStrc* pGame, D2UnitStrc* pMonster, D2Unit
     if (CubeMap::Drop(pGame,pMonster,pPlayer,nTCId,nQuality,nItemLevel,a7,ppItems,pnItemsDropped,nMaxItems,oDropTCTest)) return;
     if (isTerrorized == false || CubeMap::IsMapMonster(pGame, pMonster))
     {
-        LogDebug("debug logging: {}\n---------------------\n");
         oDropTCTest(pGame, pMonster, pPlayer, nTCId, nQuality, nItemLevel, a7, ppItems, pnItemsDropped, nMaxItems);
         return;
     }
     else
         ForceTCDrops(pGame, pMonster, pPlayer, nTCId, nQuality, nItemLevel, a7, ppItems, pnItemsDropped, nMaxItems);
 
-    LogDebug("debug logging: {}\n---------------------\n");
 }
 
 static bool g_ChatManagerHookInstalled = false;
@@ -7465,8 +7449,9 @@ static HudHooks::Installer& AutomapTextHooks()
 
 void D2RHUD::OnDraw() {
     HudTelemetry::Scope measured(HudTelemetry::Feature::Frame);
-    const auto frame=HudFrame::Capture();
+    const auto frame=[]{HudTelemetry::Scope measured(HudTelemetry::Feature::Preparation);return HudFrame::Capture();}();
     const int clientStatus=frame.status;
+    HudHitches::SetContext(clientStatus,frame.loading,showMainMenu,Marketplace::Panel::NativeOpen(),gSelectedPage+1,HudSession::Current());
     WidescreenBars::SetInGame(clientStatus == 1);
     SelectedAuras::Update();
     D2GameStrc* pGame = nullptr;
@@ -7502,7 +7487,7 @@ void D2RHUD::OnDraw() {
     Inspect::ClientTick(frame,commandSession);
     Spectate::ClientTick(frame,commandSession);
     HudCamera::Tick(frame,showCameraMenu);
-    HudChat::Tick(commandSession, clientStatus == 1, d2rHUDConfig.ChatSounds, d2rHUDConfig.ChatSoundPath);
+    HudChat::Tick(commandSession, clientStatus == 1, d2rHUDConfig.ChatSounds, d2rHUDConfig.ChatSoundPath, d2rHUDConfig.ChatNotificationVolume);
     PollLootFilterUpdate();
     CandyCornSave::DrawNotification();
     HUDControls::Tick();
@@ -7512,7 +7497,7 @@ void D2RHUD::OnDraw() {
         if (saveGrail && !showMainMenu) SaveFullGrailConfig(configFilePath, false);
     }
 
-    MarketplaceChatTick();
+    {HudTelemetry::Scope measured(HudTelemetry::Feature::Marketplace);MarketplaceChatTick();}
 
     if (!menuClickHookInstalled && TryInstallHooks(CoreHooks()))
     {
@@ -7619,8 +7604,9 @@ void D2RHUD::OnDraw() {
         if(clientStatus==1 && !IsAnyMenuOpen() && !Marketplace::Panel::NativeOpen())Inspect::DrawEyes();
         Inspect::Draw();
     }
-    MarketplaceLiveTick(clientStatus==1);
-    Marketplace::UI::DrawStash(clientStatus==1&&!showMainMenu&&!IsAnyMenuOpen());
+    {HudTelemetry::Scope measured(HudTelemetry::Feature::MarketplaceSync);MarketplaceLiveTick(clientStatus==1);}
+    MarketplaceHotkeyTick(clientStatus==1,showMainMenu||IsAnyMenuOpen()||ImGui::GetIO().WantTextInput||Spectate::BlocksGameInput());
+    {HudTelemetry::Scope measured(HudTelemetry::Feature::Marketplace);Marketplace::UI::DrawStash(clientStatus==1&&!showMainMenu&&!IsAnyMenuOpen());}
     D3Whirlwind::SetInputBlocked(clientStatus != 1 || Spectate::BlocksGameInput() || showMainMenu || IsAnyMenuOpen() ||
         Marketplace::Panel::NativeOpen() || ImGui::GetIO().WantCaptureMouse || ImGui::GetIO().WantTextInput);
     if(!Marketplace::Panel::NativeOpen())StatRanges::Render(GetMenuScaleFactor());
@@ -7642,6 +7628,7 @@ void D2RHUD::OnDraw() {
 
     if (configLoaded && settingsLoaded && !grailLoaded && IsPlayerInGame())
     {
+        HudTelemetry::Scope measured(HudTelemetry::Feature::Grail);
         LoadAllItemData();
         ScanStashPages();
         g_GrailRevision++;
@@ -7784,6 +7771,10 @@ bool D2RHUD::OnKeyPressed(short key)
         !*reinterpret_cast<const uint8_t*>(Pattern::Address(0x1d53fb8 + 5)))
         if (auto kb = FindKeybind("Open Quest Journal"))
             CheckAndAddMatch(kb->first, 0, []() { QuestJournal::ClientUI::Hotkey(); });
+
+    if (!showMainMenu && !IsAnyMenuOpen() && !ImGui::GetIO().WantTextInput && !Spectate::BlocksGameInput())
+        if (auto kb = FindKeybind("Open Marketplace"))
+            CheckAndAddMatch(kb->first, 0, []() { Marketplace::Hotkey::Request(); });
 
     if (auto kb = FindKeybind("Open Cube Panel"))
     {

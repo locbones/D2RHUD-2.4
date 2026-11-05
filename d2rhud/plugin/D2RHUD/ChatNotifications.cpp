@@ -140,7 +140,7 @@ bool Enabled() { return State().inbox.Enabled(); }
 void Observe(std::string_view sender, std::string_view message, uint32_t type, uint32_t id, bool hasUnit) {
     State().inbox.Submit(sender, message, type, id, hasUnit);
 }
-void Tick(uint64_t session, bool inGame, bool enabled, const std::string& soundPath) {
+void Tick(uint64_t session, bool inGame, bool enabled, const std::string& soundPath, int volumePercent) {
     auto& state = State();
     // Joiners must not depend on a host/session token being populated. Native
     // in-game status supplies the enter/leave boundary even when that token is zero.
@@ -153,7 +153,7 @@ void Tick(uint64_t session, bool inGame, bool enabled, const std::string& soundP
     if (changed || refresh) state.inbox.SetContext(session, enabled, state.identity);
     if (state.inbox.TakeAlert(now)) {
         const auto path = HudSounds::Resolve(soundPath);
-        if (path.empty() || !HudSounds::PlayFile(path)) HudSounds::Beep();
+        HudSounds::PlayNotification(path, volumePercent);
     }
 }
 }

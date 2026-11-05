@@ -1,6 +1,7 @@
 // Included by D2RHUD.cpp after its native widget/player helpers. All calls run
 // within the existing bank-panel paint hook; nothing is inserted into inventory.
 #include <set>
+#include "../RuntimeTelemetry.h"
 namespace Marketplace::NativePanel {
 template<class T>bool Read(const void* source,T& result){SIZE_T count=0;return source&&ReadProcessMemory(GetCurrentProcess(),source,&result,sizeof(T),&count)&&count==sizeof(T);}
 template<class T>T Field(const void* source,size_t offset=0){T result{};if(source)Read(static_cast<const uint8_t*>(source)+offset,result);return result;}
@@ -215,6 +216,11 @@ inline Panel::Frame Capture(void* panel,unsigned page,bool hardcore,D2UnitStrc* 
     const auto count=Field<uint32_t>(reinterpret_cast<void*>(Pattern::Address(0x1ca0398)));
     if(!table||count>100000)return {};
     const auto pin=Panel::Pinned();size_t visited=0;
+    static uint32_t cacheOwner=0;static unsigned cachePage=0,cacheTab=0;static uint64_t cacheInput=0;
+    static std::map<uint64_t,std::vector<uint8_t>> cellBytes;
+    const auto input=Panel::stashLastInput.load();
+    if(cacheOwner!=view.owner||cachePage!=page||cacheTab!=view.tab||cacheInput!=input||cellBytes.size()>1024){cellBytes.clear();cacheOwner=view.owner;cachePage=page;cacheTab=view.tab;cacheInput=input;}
+    unsigned cellBudget=4;
     for(unsigned bucket=0;bucket<128;++bucket){
         auto unit=Field<D2UnitStrc*>(reinterpret_cast<void*>(Pattern::Address(0x1d442e0+4*0x400)),bucket*sizeof(void*));
         while(unit&&++visited<=20000){
@@ -231,7 +237,13 @@ inline Panel::Frame Capture(void* panel,unsigned page,bool hardcore,D2UnitStrc* 
                     const bool hovered=item.rect.Contains(float(mouse.x)/width,float(mouse.y)/height);
                     const bool pinned=Panel::Matches(pin,view)&&pin.unit==item.unit&&pin.seed==item.seed;
                     if(hovered||pinned){Serialize(unit,item);if(item.bytes.empty())view.error="This item could not be read safely.";}
-                    if(hovered)view.hovered=item;if(pinned)view.pinned=std::move(item);
+                    if(hovered)view.hovered=item;if(pinned)view.pinned=item;
+                    if(!Panel::NativeOpen()&&page==Panel::marketPage.load()){
+                        const auto key=(uint64_t(item.unit)<<32)|item.seed;auto found=cellBytes.find(key);
+                        if(found==cellBytes.end()&&cellBudget){--cellBudget;if(item.bytes.empty())Serialize(unit,item);if(!item.bytes.empty())found=cellBytes.emplace(key,item.bytes).first;}
+                        if(found!=cellBytes.end())item.bytes=found->second;
+                        item.tab=view.tab;view.cells.push_back(std::move(item));
+                    }
                 }
             }
             if(next==unit)return {};unit=next;
@@ -241,7 +253,9 @@ inline Panel::Frame Capture(void* panel,unsigned page,bool hardcore,D2UnitStrc* 
     return view;
 }
 }
+#include "MarketplaceShortcutDisplay.inl"
 #include "MarketplaceNativeDropdowns.inl"
+#include "MarketplaceNativePageGlow.inl"
 #include "MarketplaceNativeImages.inl"
 #include "MarketplaceNativeLinks.inl"
 #include "MarketplaceNativeText.inl"
@@ -302,7 +316,7 @@ static void UpdateMarketplaceWidgets(void* panel){
     Panel::NativeChoices(std::move(choices));
     ReplayKeyboard(root);
     std::map<std::string,Panel::NativeInput> inputs;
-    for(const auto name:{"MarketSearch","MarketSellerSearch","MarketProfileName","MarketWalletAmount","PaymentSearch","DepositPage","WithdrawPage","SellerPage","Quantity0","Quantity1","Quantity2","Quantity3","MarketOfferMessage"}){
+    for(const auto name:{"MarketSearch","MarketSellerSearch","MarketProfileName","MarketListingComment","MarketWalletAmount","PaymentSearch","DepositPage","WithdrawPage","SellerPage","Quantity0","Quantity1","Quantity2","Quantity3","MarketOfferMessage"}){
         auto widget=WidgetFindChild(root,name);if(!widget)continue;
         if(!view.open||!VisibleIn(widget,root)){buffers[name].revision=0;continue;}
         const auto length=Field<uint64_t>(widget,0x528),capacity=Field<uint64_t>(widget,0x530);
@@ -317,16 +331,19 @@ static void UpdateMarketplaceWidgets(void* panel){
     Panel::NativeInputs(std::move(inputs));
 }
 static void CaptureMarketplacePanel(void* panel,bool switching){
-    if(switching){Marketplace::Panel::Publish({});return;}
+    if(switching){Marketplace::Panel::SuspendCapture();return;}
     HWND window=GetForegroundWindow();DWORD process=0;GetWindowThreadProcessId(window,&process);
     RECT client{};POINT mouse{};
     if(process!=GetCurrentProcessId()||!GetClientRect(window,&client)||!GetCursorPos(&mouse)||!ScreenToClient(window,&mouse)){
-        Marketplace::Panel::Publish({});return;
+        Marketplace::Panel::SuspendCapture();return;
     }
     auto view=Marketplace::NativePanel::Capture(panel,gSelectedPage+1,IsHardcore(),GetClientPlayerUnit(),client.right,client.bottom,mouse);
+    if(view.owner)view.marketChoice=Marketplace::NativePanel::MarketPageHighlight(panel,client.right,client.bottom);
     view.syncStatus=Marketplace::LiveCustody::window.Snapshot().status;
     const auto request=Marketplace::Panel::PendingScan();
     if(request.sequence&&request.owner==view.owner&&request.page==view.page&&request.hardcore==view.hardcore&&view.tab&&!view.cursorOccupied){
+        HudTelemetry::Scope measured(HudTelemetry::Feature::MarketplaceScan);
+        Marketplace::Panel::SuspendCapture();
         const auto save=Marketplace::NativePanel::SerializerSupported()?reinterpret_cast<Marketplace::NativePanel::SaveItem>(Pattern::Address(0x207610)):nullptr;
         Marketplace::Panel::PublishScan(Marketplace::NativePanel::CaptureDeposit(GetClientPlayerUnit(),request,save));
     }

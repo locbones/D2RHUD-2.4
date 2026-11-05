@@ -18,8 +18,12 @@ std::vector<std::string> GameAssets::ReadTableNames(const std::string&,bool){ret
 GameAssets::TableFiles GameAssets::ReadTable(const std::string&,bool){return {};}
 #include "../d2rhud/plugin/MarketplaceUI.inl"
 
-int wmain(int argc,wchar_t** argv){
+#undef assert
+#define assert(value) do{if(!(value))throw std::runtime_error("Marketplace UI check at line "+std::to_string(__LINE__)+": " #value);}while(false)
+int wmain(int argc,wchar_t** argv)try{
     assert(argc==2||argc==3);savedFolder=std::filesystem::path(argv[1]).wstring();
+    for(const auto& ref:Marketplace::CodexReferences){assert(Marketplace::CodexName("RMD-MP",ref.code,ref.quality,"Original")==ref.name);assert(Marketplace::CodexName("OtherMod",ref.code,ref.quality,"Original")=="Original");}
+    assert(Marketplace::ValidListingComment("A short public note"));assert(!Marketplace::ValidListingComment(std::string(241,'x')));assert(!Marketplace::ValidListingComment("bad\ncomment"));
     fixtureCatalog.loaded=true;fixtureCatalog.items={{"Zod Rune","r33"},{"Ring","rin"}};
     fixtureCatalog.bases["r33"].name="Zod Rune";fixtureCatalog.bases["rin"].name="Ring";
     fixtureCatalog.namedItems={{"Stone of Jordan","rin","Unique",42},{"Bul-Kathos' Wedding Band","rin","Unique",43}};
@@ -40,8 +44,25 @@ int wmain(int argc,wchar_t** argv){
     Marketplace::UI::Save(state,modName);
     Marketplace::Panel::Frame native;native.owner=7;native.page=17;native.tab=3;native.grid={.05f,.2f,.7f,.9f};
     ImGui::CreateContext();auto& io=ImGui::GetIO();io.IniFilename=nullptr;io.DisplaySize={1280,1000};io.DeltaTime=1.f/60;io.Fonts->Build();io.Fonts->SetTexID(1);
+    // The market page remains identifiable while viewing another stash page.
+    // Reuse the actual delivered-item border; no window or input capture added.
+    {
+        Marketplace::Settings settings;settings.enabled=true;settings.page=11;
+        Marketplace::Panel::Frame picker;picker.page=2;picker.marketChoice={{.1f,.2f,.5f,.24f},{.1f,.1f,.5f,.5f},11};
+        auto paint=[&](bool open=false){ImGui::NewFrame();Marketplace::CellBorders::MarketPage(settings,picker,open);ImGui::Render();return ImGui::GetDrawData()->TotalVtxCount;};
+        assert(paint()>0);bool green=false;
+        for(int n=0;n<ImGui::GetDrawData()->CmdListsCount;++n)for(const auto& v:ImGui::GetDrawData()->CmdLists[n]->VtxBuffer){
+            if((v.col&0x00ffffff)==(IM_COL32(85,190,95,0)&0x00ffffff))green=true;
+            assert(v.pos.x>=picker.marketChoice.row.left*io.DisplaySize.x&&v.pos.x<=picker.marketChoice.row.right*io.DisplaySize.x);
+            assert(v.pos.y>=picker.marketChoice.row.top*io.DisplaySize.y&&v.pos.y<=picker.marketChoice.row.bottom*io.DisplaySize.y);
+        }
+        assert(green&&!io.WantCaptureMouse&&!io.WantCaptureKeyboard);
+        settings.page=12;assert(!paint());settings.page=11;settings.enabled=false;assert(!paint());settings.enabled=true;
+        picker.suspended=true;assert(!paint());picker.suspended=false;assert(!paint(true));picker.marketChoice.page=0;assert(!paint());
+    }
+
     std::set<std::string> widgetNames;
-    auto layout=Json::parse(ReadFile(std::filesystem::path(__FILE__).parent_path().parent_path()/"tools/marketplace/layouts/marketplace-workspace.json",1024*1024));
+    auto layout=Json::parse(ReadFile(std::filesystem::path(__FILE__).parent_path().parent_path()/"tools/marketplace/layouts/marketplace-workspace.json",2*1024*1024));
     auto collect=[&](auto&& self,const Json& node)->void{
         const auto name=node.at("name").get<std::string>();assert(widgetNames.insert(name).second);
         if(name.ends_with("Field")){
@@ -87,7 +108,10 @@ int wmain(int argc,wchar_t** argv){
             const auto type=node.at("type").get<std::string>();
             if(type=="ButtonWidget"||type=="InputTextBoxWidget"||type=="TabBarWidget"||type=="TextBoxWidget"||type=="TextBoxWithLinksWidget"||type=="DropdownListWidget"){
                 const auto w=r.value("width",0.f)*scale,h=r.value("height",0.f)*scale;
-                assert(w>0&&h>0&&x>=0&&y>=0&&x+w<=2250&&y+h<=1635);controls.push_back({name,path,x,y,w,h});
+                // Match InfoBGW_R's visible artwork, not its transparent padding.
+                if(!(w>0&&h>0&&x>=10&&y>=60&&x+w<=2238&&y+h<=1558)){
+                    std::cerr<<"Control outside panel artwork: "<<name<<" "<<x<<","<<y<<" "<<w<<"x"<<h<<"\n";assert(false);
+                }controls.push_back({name,path,x,y,w,h});
             }
             if(node.contains("children"))for(const auto& child:node.at("children"))self(self,child,x,y,visible,path,scale);
         };visit(visit,layout,0,0,true,"",1);
@@ -169,7 +193,28 @@ int wmain(int argc,wchar_t** argv){
     assert(state.snapshot.deposit.front().itemHex==savedRing.itemHex);
     command("MarketAffordable");assert(state.affordableOnly);command("MarketCard0");command("MarketConfirm");assert(state.settings.agreements.size()==1);
     command("MarketAgreements");Marketplace::Panel::NativeChoices({{"MarketActivityType",{1,state.filterRevision}}});frame();Marketplace::Panel::NativeChoices({});command("MarketCard0");command("MarketConfirm");assert(state.settings.agreements.empty());
-    command("MarketItems");command("MarketFilterOpen");previewFrame("own-filters");command("MarketFilterApply");assert(!state.filtersOpen);assert(state.ownSelection==-1&&Marketplace::Panel::Presentation().section==1);command("MarketCard0");command("MarketPrice");assert(state.editing);
+    command("MarketItems");command("MarketFilterOpen");previewFrame("own-filters");command("MarketFilterApply");assert(!state.filtersOpen);assert(state.ownSelection==-1&&Marketplace::Panel::Presentation().section==1);command("MarketCard0");
+    { // Background captures keep item details/history, even when rows reorder.
+        const auto selected=Marketplace::UI::OwnItems(state)[state.ownSelection].itemHex;
+        state.historyOpen=true;state.historyOffset=0;
+        state.liveRequest=Marketplace::Panel::RequestScan(native.owner,native.page,native.hardcore);
+        const auto late=Marketplace::Panel::PendingScan();Marketplace::Panel::PublishScan({late,{rune,ring,added},{}});frame();
+        assert(state.ownSelection>=0&&Marketplace::UI::OwnItems(state)[state.ownSelection].itemHex==selected);
+        assert(state.open&&state.historyOpen&&!presented("MarketCollection").visible);
+        state.historyOpen=false;state.historyOffset=0;
+        auto replacement=state.snapshot;std::reverse(replacement.deposit.begin(),replacement.deposit.end());
+        state.liveDeposit=false;std::promise<Marketplace::UI::SnapshotResult> disk;state.scanning=disk.get_future();
+        disk.set_value({replacement,state.generation});frame();
+        assert(state.ownSelection>=0&&Marketplace::UI::OwnItems(state)[state.ownSelection].itemHex==selected);
+    }
+    command("MarketPrice");assert(state.editing);
+    { // Alt-tab, native page switching and long serialization suspend capture;
+      // they must not be mistaken for the player closing the stash.
+        const auto selected=state.selected.itemHex;Marketplace::Panel::SuspendCapture();
+        ImGui::NewFrame();Marketplace::UI::DrawStash();ImGui::Render();
+        assert(state.open&&state.editing&&state.selected.itemHex==selected);
+        frame();assert(state.open&&state.editing&&state.selected.itemHex==selected);
+    }
     { // A delayed live scan can reorder rows while the player is entering a price.
         const auto edited=state.selected.itemHex;
         state.liveRequest=Marketplace::Panel::RequestScan(native.owner,native.page,native.hardcore);
@@ -189,6 +234,15 @@ int wmain(int argc,wchar_t** argv){
     input("PaymentSearch","no-such-item");assert(presented("MarketPaymentCount").text.find("No matches")!=std::string::npos);
     input("PaymentSearch","Zod");assert(presented("MarketPaymentCount").text.find("Choose one")!=std::string::npos);
     command("MarketPayment0");assert(presented("MarketDetailTitle").text.find("STEP 2")!=std::string::npos&&presented("MarketSavePriceButton").visible);
+    {
+        const auto original=state.price;state.price={{"cm2","Hellfire Torch",7,556,1,-1}};++state.priceRevision;frame();
+        assert(presented("MarketTorchClass0").visible&&!presented("MarketEth0").visible);
+        Marketplace::Panel::NativeChoices({{"MarketTorchClass0",{2,state.priceRevision}}});frame();Marketplace::Panel::NativeChoices({});
+        assert(state.price[0].classId==1&&Marketplace::UI::MenuBundle(state.price).find("Sorceress")!=std::string::npos);
+        previewFrame("torch-class-price");
+        Marketplace::Panel::NativeChoices({{"MarketTorchClass0",{3,state.priceRevision-1}}});frame();Marketplace::Panel::NativeChoices({});assert(state.price[0].classId==1);
+        state.price=original;++state.priceRevision;frame();
+    }
     previewFrame("price-review");
     input("Quantity0","40");
     command("MarketAddPayment");input("PaymentSearch","Stone");command("MarketPayment0");
@@ -235,14 +289,25 @@ int wmain(int argc,wchar_t** argv){
     command("MarketPrice");command("MarketAddPayment");input("PaymentSearch","Zod");command("MarketPayment0");input("Quantity0","0");command("MarketSavePrice");assert(state.editing&&state.settings.drafts.empty());
     input("Quantity0","40");const auto original=state.original;SaveSettingsFile(state.path,original,original+" ");command("MarketSavePrice");
     assert(!state.editing&&state.settings.drafts.size()==1&&state.settings.drafts.front().price.front().quantity==40);
+    { // Disabled deposits still allow price drafts without admitting any goods.
+        state.settings.enabled=false;Marketplace::UI::Save(state,modName);Marketplace::UI::RefreshListings(state);frame();
+        assert(presented("MarketPriceButton").visible&&presented("MarketItemExtra").text.find("Deposit disabled")!=std::string::npos);
+        command("MarketPrice");assert(state.editing);input("Quantity0","41");command("MarketSavePrice");
+        assert(!state.editing&&!state.settings.enabled&&state.settings.drafts.front().price.front().quantity==41);
+        const auto disabled=ReadSettings(Json::parse(ReadSettingsFile(state.path)),modName,false);
+        assert(!disabled.enabled&&disabled.drafts.front().price.front().quantity==41);
+        assert(state.status.find("Enable your deposit")!=std::string::npos);
+        for(const auto& listing:state.snapshot.feed.listings)assert(!listing.own);
+        state.settings.enabled=true;
+    }
     state.settings.drafts.clear();Marketplace::UI::Save(state,modName);Marketplace::UI::RefreshListings(state);
     command("MarketCancelPrice");command("MarketSetup");command("MarketReload");wait();
-    input("DepositPage","17");input("WithdrawPage","18");command("MarketAuto");command("MarketSaveSetup");
-    saved=ReadSettings(Json::parse(ReadSettingsFile(state.path)),modName,false);assert(saved.autoTrade&&saved.withdrawPage==18&&saved.page==17);
+    input("DepositPage","17");command("MarketAuto");command("MarketSaveSetup");
+    saved=ReadSettings(Json::parse(ReadSettingsFile(state.path)),modName,false);assert(saved.autoTrade&&saved.withdrawPage==17&&saved.page==17);
     assert(!presented("MarketRefreshButton").visible&&!presented("MarketReloadButton").visible);previewFrame("compact-setup-saved");
     command("MarketAuto");assert(presented("MarketReloadButton").visible);previewFrame("compact-setup-editing");command("MarketAuto");
-    const auto before=state.original;input("DepositPage","18");command("MarketSaveSetup");assert(state.original==before);
-    assert(presented("MarketRouteNotice").text.find("different pages")!=std::string::npos);previewFrame("compact-setup-error");
+    const auto before=state.original;input("DepositPage","0");command("MarketSaveSetup");assert(state.original==before);
+    assert(presented("MarketRouteNotice").text.find("1 to 64")!=std::string::npos);previewFrame("compact-setup-error");
     input("DepositPage","65");command("MarketSaveSetup");assert(state.original==before&&presented("MarketRouteNotice").text.find("1 to 64")!=std::string::npos);
     input("DepositPage","17");command("MarketBrowse");input("MarketSearch","no-match");assert(Marketplace::UI::MenuRows(state,fixtureCatalog).empty());
     input("MarketSearch","Zod");assert(!Marketplace::UI::MenuRows(state,fixtureCatalog).empty());
@@ -298,6 +363,15 @@ int wmain(int argc,wchar_t** argv){
     state.snapshot.activity.self=remote.buyer;state.snapshot.activity.name="Buyer";state.snapshot.activity.expires=UnixNow()+3600;state.snapshot.activity.threads={remote};++state.activityGeneration;
     command("MarketAgreements");command("MarketCard0");assert(presented("MarketAcceptOfferButton").visible&&presented("MarketCounterOfferButton").visible&&!presented("MarketWithdrawOfferButton").visible);previewFrame("incoming-offer");command("MarketAcceptOffer");assert(!state.local.commands.empty()&&state.local.commands.back()["type"]=="accept"&&state.local.commands.back()["expected_revision"]==3);
     assert(Marketplace::UI::Threads(state).front().status=="pending"&&!presented("MarketApplyOfferActionButton").visible&&state.snapshot.activity.sales.size()==2); // Queued approval is not server acceptance or a sale.
+    { // An unrelated late deposit capture must not dismiss a conversation/reply.
+        const auto id=Marketplace::UI::Threads(state)[state.marketSelection].id;
+        state.message="unfinished reply";++state.messageRevision;
+        state.liveRequest=Marketplace::Panel::RequestScan(native.owner,native.page,native.hardcore);
+        const auto late=Marketplace::Panel::PendingScan();Marketplace::Panel::PublishScan({late,{rune,ring,added},{}});frame();
+        assert(state.marketSelection>=0&&Marketplace::UI::Threads(state)[state.marketSelection].id==id);
+        assert(state.message=="unfinished reply"&&!presented("MarketCollection").visible);
+        state.message.clear();++state.messageRevision;
+    }
     const auto commandId=state.local.commands.back()["id"].get<std::string>();state.snapshot.activity.results[commandId]={{"offer_id",remote.id},{"status","accepted"}};state.snapshot.activity.threads[0].status="accepted";state.snapshot.activity.threads[0].revision=4;++state.activityGeneration;frame();
     assert(Marketplace::UI::Threads(state).front().status=="accepted"&&state.snapshot.activity.sales.size()==2);
     assert(!presented("MarketAcceptOfferButton").visible&&!presented("MarketRejectOfferButton").visible&&!presented("MarketCounterOfferButton").visible);previewFrame("agreed-offer");
@@ -310,9 +384,17 @@ int wmain(int argc,wchar_t** argv){
         state.snapshot.feed=ReadFeed(doc,"MarketplaceFixture",false,Tables(),UnixNow());state.snapshot.deposit.clear();state.search.clear();++state.searchRevision;
         assert(CanPay({{"gld","Gold",2,-1,10000000,-1,"gold"}},Spendable({},state.settings,0,&state.snapshot.feed)));
         state.quality=state.tabFilter=state.sort=0;state.pricedOnly=false;
-        command("MarketItems");state.ownSelection=int(state.snapshot.deposit.size());frame();assert(presented("MarketReturnButton").visible&&presented("MarketItemExtra").text.find("escrow")!=std::string::npos);previewFrame("escrow-item");
+        command("MarketItems");state.ownSelection=int(state.snapshot.deposit.size());frame();assert(presented("MarketReturnButton").visible&&presented("MarketItemExtra").text.find("Vault")!=std::string::npos);previewFrame("escrow-item");
         assert(Marketplace::UI::ActivityLedgerId(state)==std::string(32,'a'));
         const auto count=state.local.commands.size();command("MarketReturn");assert(state.local.commands.size()==count+1&&state.local.commands.back()["type"]=="escrow_return");
+        assert(state.status.find("page "+std::to_string(state.settings.withdrawPage))!=std::string::npos&&state.status.find("refreshes automatically")!=std::string::npos);
+        command("MarketItems");assert(presented("MarketVaultNavigation").visible);
+        Marketplace::Panel::NativeChoices({{"MarketVaultView",{1,state.walletRevision}}});frame();Marketplace::Panel::NativeChoices({});
+        assert(state.walletOpen&&state.walletMode==0&&presented("MarketVaultNavigation").visible&&presented("MarketWalletTitle").text=="VAULT | GOLD & RESOURCES");
+        Marketplace::Panel::NativeChoices({{"MarketVaultView",{3,state.walletRevision}}});frame();Marketplace::Panel::NativeChoices({});
+        assert(state.walletOpen&&state.walletMode==2);
+        Marketplace::Panel::NativeChoices({{"MarketVaultView",{0,state.walletRevision}}});frame();Marketplace::Panel::NativeChoices({});
+        assert(!state.walletOpen&&presented("MarketVaultNavigation").visible);
         command("MarketWallet");assert(presented("MarketWalletGroup").visible&&!presented("MarketListGroup").visible&&presented("MarketWalletRow0Detail").text.find("15000000")!=std::string::npos);previewFrame("escrow-wallet");
         const auto walletCommands=state.local.commands.size();state.snapshot.activity.self=std::string(32,'e');
         command("MarketWalletAction0");assert(state.walletForm&&!state.walletReview);input("MarketWalletAmount","0");command("MarketWalletSubmit");assert(!state.walletReview&&state.local.commands.size()==walletCommands);
@@ -351,7 +433,7 @@ int wmain(int argc,wchar_t** argv){
         Marketplace::UI::State writer;writer.path=folder/L"queued-price"/L"Marketplace_2.4_SC.json";std::filesystem::create_directories(writer.path.parent_path());
         writer.valid=writer.open=writer.editing=true;writer.section=Marketplace::UI::Section::Items;writer.ownSelection=0;writer.settings.enabled=true;writer.settings.page=17;
         writer.tables=Tables();writer.selected=ReadItem(Unique(),writer.tables,3);writer.snapshot.deposit={writer.selected};writer.snapshot.depositValid=true;
-        writer.price={{"gld","Gold",2,-1,1234,-1,"gold"}};Marketplace::UI::Save(writer,modName);
+        writer.listingComment="Looking for Codex of Gluttony - Testament 1:3";writer.price={{"gld","Gold",2,-1,1234,-1,"gold"}};Marketplace::UI::Save(writer,modName);
         const auto domain=Marketplace::Panel::MessageHash("BankPanelMessage");
         auto saveClose=[&]{Marketplace::Panel::NativeInputs({});Marketplace::Panel::NativeChoices({});Marketplace::Panel::Present({true});
             assert(Marketplace::Panel::NativeMessage(domain,Marketplace::Panel::MessageHash("MarketSavePrice")));
@@ -360,7 +442,7 @@ int wmain(int argc,wchar_t** argv){
         saveClose();assert(!writer.open&&!writer.editing);
         Marketplace::UI::Load(writer,modName);assert(writer.settings.drafts.size()==1&&writer.settings.drafts[0].price[0].quantity==1234);
         const auto published=Json::parse(ReadSettingsFile(writer.path.parent_path()/L"MarketplacePublish_2.4_SC.json"));
-        assert(published["items"].size()==1&&published["items"][0]["price"][0]["quantity"]==1234);
+        assert(published["items"].size()==1&&published["items"][0]["price"][0]["quantity"]==1234);assert(published["items"][0]["comment"]==writer.listingComment&&writer.settings.drafts[0].comment==writer.listingComment);
         // A companion's unrelated preference/price change is retained, without rejecting this edit.
         auto external=writer.settings;external.autoTrade=true;external.drafts.push_back({3,Hex(Rune()),{{"gld","Gold",2,-1,222,-1,"gold"}}});
         SaveSettingsFile(writer.path,writer.original,SettingsJson(external,modName,false).dump());
@@ -452,6 +534,51 @@ int wmain(int argc,wchar_t** argv){
         gift.snapshot.activity.results[gift.transferPending]={{"error","Recipient is no longer available"}};PollTransfers(gift);assert(gift.status=="Recipient is no longer available");
         Close(gift);assert(!gift.transferOpen);assert(ActivityTerms(FreePrice())=="Free | no payment required");assert(IsFree(ReadPrice(PriceJson(FreePrice())))&&CanPay(FreePrice(),{}));
     }
+    {using namespace Marketplace;using namespace Marketplace::UI;
+        const auto before=state.snapshot.activity;const auto savedNamedItems=fixtureCatalog.namedItems;fixtureCatalog.namedItems[0].label=std::string(120,'W');const auto wasValid=state.valid;state.valid=false;state.snapshot.activity.gifts.clear();state.snapshot.activity.self=std::string(32,'b');state.localValid=true;
+        GiftCampaign gift;gift.id=std::string(32,'a');gift.title=std::string(80,'W');gift.from="Community Owner";gift.announcement=std::string(512,'W');gift.claimable=true;gift.expires=UnixNow()+86400;
+        for(int i=0;i<6;++i)gift.items.push_back(ReadItem(i%2?Rune():Unique(),Tables(),1));
+        state.snapshot.activity.gifts={gift,gift};state.snapshot.activity.gifts[1].id=std::string(32,'c');state.snapshot.activity.gifts[1].title="A second community gift";
+        state.refresh=false;state.socialPoll=UINT64_MAX;state.campaignId=gift.id;
+        command("MarketCampaignOpen");assert(state.campaignOpen&&presented("MarketCampaignBadge").visible&&presented("MarketCampaignBadgeGlow").visible);previewFrame("community-gift-bundle");
+        assert(Panel::Presentation().previews.size()==4);command("MarketCampaignItemsNext");assert(state.campaignItemOffset==4&&Panel::Presentation().previews.size()==2);previewFrame("community-gift-more-items");command("MarketCampaignItemsPrev");
+        std::reverse(state.snapshot.activity.gifts.begin(),state.snapshot.activity.gifts.end());frame();assert(state.campaignId==gift.id);command("MarketCampaignNext");assert(state.campaignId!=gift.id);command("MarketCampaignPrev");assert(state.campaignId==gift.id);
+        const auto count=state.local.commands.size();command("MarketCampaignClaim");assert(state.local.commands.size()==count+1&&!state.campaignPending.empty());const auto pending=state.campaignPending;command("MarketCampaignClaim");assert(state.local.commands.size()==count+1);previewFrame("community-gift-claiming");
+        state.snapshot.activity.results[pending]={{"claimed",true},{"message",std::string(1800,'W')}};PollCampaigns(state);state.refresh=false;frame();assert(state.campaignPending.empty()&&state.receiptOpen&&presented("MarketReceiptPanel").visible);previewFrame("community-gift-receipt");
+        command("MarketReceiptNext");assert(state.receiptPage==1);command("MarketBackReceipt");assert(state.campaignOpen&&!state.receiptOpen);
+        for(auto& g:state.snapshot.activity.gifts){g.claimed=true;g.claimable=false;g.message="Thank you for playing!";}frame();assert(!presented("MarketCampaignBadgeGlow").visible);command("MarketCampaignClaim");assert(state.receiptOpen&&state.local.commands.size()==count+1);command("MarketBackReceipt");command("MarketCampaignBack");assert(!state.campaignOpen);
+        command("MarketCampaignOpen");command("MarketBrowse");assert(!state.campaignOpen);state.snapshot.activity=before;fixtureCatalog.namedItems=savedNamedItems;state.valid=wasValid;state.campaignId.clear();
+    }
+    {
+        const auto notice=Json::parse(ReadFile(L"tools/marketplace/layouts/stash-sync-mask.json"));
+        assert(notice.at("type")=="Widget"&&!notice.at("fields").contains("color")&&notice.at("children").size()==2);
+        const auto& backdrop=notice.at("children")[0].at("fields");const auto& label=notice.at("children")[1].at("fields");
+        assert(backdrop.at("anchor").at("x")==.5&&backdrop.at("anchor").at("y")==.5&&backdrop.at("color")[3].get<double>()>.9);
+        assert(label.at("anchor").at("y")==.5&&label.at("style").at("pointSize")==64&&label.at("style").at("fontColor")=="$FontColorGoldYellow");
+    }
+    // Cell glows are the only additional drawing on a closed marketplace.
+    // Receipt loading is asynchronous; neither path creates an ImGui window.
+    {
+        auto borderSettings=state.settings;borderSettings.enabled=true;borderSettings.page=borderSettings.withdrawPage=17;borderSettings.drafts.clear();
+        auto cellFrame=native;cellFrame.page=17;cellFrame.cursorOccupied=false;cellFrame.grid={.1f,.1f,.9f,.9f};
+        Marketplace::Panel::Item cell;cell.unit=123;cell.seed=456;cell.tab=3;cell.rect={.2f,.2f,.3f,.4f};cell.bytes=Unique();cellFrame.cells={cell};
+        const auto green=IM_COL32(100,180,110,115),red=IM_COL32(190,85,70,100);
+        for(bool received:{true,false}){
+            const auto dir=folder/(received?L"green-cells":L"red-cells");std::filesystem::create_directories(dir);
+            SaveSettingsFile(dir/L"MarketplaceReceipts_2.4_SC.json","",Json{{"schema",1},{"mod",modName},{"hardcore",false},{"items",received?Json::array({Hex(Unique())}):Json::array()}}.dump());
+            bool found=false;for(int retry=0;retry<100&&!found;++retry){
+                ImGui::NewFrame();Marketplace::CellBorders::Draw(dir/L"Marketplace_2.4_SC.json",borderSettings,cellFrame,Tables(),false);ImGui::Render();
+                bool edge=false,glow=false,clear=false;for(int list=0;list<ImGui::GetDrawData()->CmdListsCount;++list)for(const auto& vertex:ImGui::GetDrawData()->CmdLists[list]->VtxBuffer){
+                    if(vertex.col==(received?green:red))edge=true;
+                    if(vertex.col==(received?IM_COL32(85,190,95,125):IM_COL32(200,65,50,115)))glow=true;
+                    if((vertex.col>>IM_COL32_A_SHIFT)==0)clear=true;
+                }found=edge&&glow&&clear;
+                if(!found)Sleep(5);
+            }assert(found);
+            borderSettings.drafts={{3,Hex(Unique()),{{"r33","Zod Rune",2,-1,1,-1}}}};
+            ImGui::NewFrame();Marketplace::CellBorders::Draw(dir/L"Marketplace_2.4_SC.json",borderSettings,cellFrame,Tables(),false);ImGui::Render();assert(ImGui::GetDrawData()->TotalVtxCount==0);borderSettings.drafts.clear();
+        }
+    }
     ImGui::DestroyContext();
     {using namespace Marketplace;using namespace Marketplace::UI;State reset;reset.path=folder/L"reset-case"/L"Marketplace_2.4_SC.json";std::filesystem::create_directories(reset.path.parent_path());
         reset.valid=reset.open=true;reset.settings=state.settings;reset.settings.enabled=true;reset.settings.drafts={{3,Hex(Unique()),{{"r33","Zod Rune",2,-1,1,-1}}}};Save(reset,modName);
@@ -460,5 +587,6 @@ int wmain(int argc,wchar_t** argv){
         PollMarketplaceReset(reset);assert(reset.open&&reset.valid&&!reset.settings.enabled&&reset.settings.drafts.empty()&&reset.resetId==std::string(32,'f'));
         const auto generation=reset.generation;reset.resetPoll=0;PollMarketplaceReset(reset);assert(reset.generation==generation);}
     if(argc==3){const auto actual=Json::parse(ReadFile(std::filesystem::path(argv[2])/"global/ui/layouts/bankexpansionlayouthd.json",4*1024*1024));bool hasShop=false,workspace=false;for(const auto& child:actual.at("children")){if(child.at("name")=="MarketplaceShop"){assert(child==shop);hasShop=true;}if(child.at("name")=="MarketplaceWorkspace"){assert(child==layout);workspace=true;}}assert(hasShop&&workspace);}
-    std::cout<<"JSON-native marketplace: four native tabs, visible control bounds/non-overlap across sections and price/picker states, persistent item details, stock close routing, complete bindings, zero ImGui vertices, durable same-tick Save/Close, saved/live scan ordering, edit preservation, concurrent price merging/conflicts, prices, retired seller migration, counter-offers, agreements and compact setup passed.\n";return 0;
-}
+    state.open=state.editing=true;Panel::SuspendCapture();Marketplace::UI::DrawStash(false);assert(!state.open&&!state.editing&&!Panel::NativeOpen()); // Leaving gameplay still closes a suspended workspace.
+    std::cout<<"JSON-native marketplace: four native tabs, control bounds/non-overlap, persistent details/history/conversations across reordered background scans, temporary capture suspension and explicit close, delivery-page guidance, stock close routing, zero ImGui vertices, same-tick Save/Close, price drafts/conflicts, counter-offers, agreements and compact setup passed.\n";return 0;
+}catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}

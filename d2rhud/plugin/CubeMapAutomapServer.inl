@@ -1,3 +1,24 @@
+// Build once per outgoing snapshot, never once per monster. The same native
+// pet registry is used by summon persistence and player equipment inspection;
+// class IDs/alignment alone cannot identify revived or custom mod summons.
+std::set<uint32_t> MapCompanionIds(Game* game){
+    std::set<uint32_t> result;
+    const int types=Field<int>(Native<void*>(0x1c9fbd0),0);
+    if(!game || types<1 || types>1024)return result;
+    for(auto player:Players(game)){
+        const auto list=Field<void*>(player->pPlayerData,0x98);
+        const auto entries=Field<uint8_t*>(list,0);if(!entries)continue;
+        size_t visited=0;std::set<void*> seen;
+        for(int type=1;type<types && visited<4096;++type){
+            auto node=Field<void*>(entries,size_t(type)*0x10);
+            while(node && visited++<4096 && seen.insert(node).second){
+                const auto flags=Field<uint32_t>(node,0),id=Field<uint32_t>(node,4);
+                if(!(flags&1) && id && id!=UINT32_MAX)result.insert(id);
+                node=Field<void*>(node,0x18);
+            }
+        }
+    }return result;
+}
 // All rooms are pinned/active before this snapshot. Read their tiles without
 // setting the native revealed bit or advancing the game's automap RNG.
 void BuildEventAutomap(Run& run){
@@ -43,14 +64,16 @@ void BuildEventAutomap(Run& run){
     }
     for(const auto& [group,y,x,cel]:cells)run.automapCells.push_back({cel,x,y,group});
 }
-std::vector<AutomapData::Entry> EventMonsterMarkers(const Run& run){
+std::vector<AutomapData::Entry> EventMonsterMarkers(Game* game,const Run& run){
     using namespace AutomapData;
-    std::vector<Entry> result;std::set<uint32_t> seen;
+    std::vector<Entry> result;std::set<uint32_t> seen;const auto companions=MapCompanionIds(game);
     for(const auto& pin:run.pins)for(auto unit:RoomUnits(Field<Room*>(pin.room,0x58))){
-        if(!RunMonster(unit,run) || Dead(unit) || !unit->pDynamicPath || !seen.insert(unit->dwUnitId).second)continue;
+        if(!unit || unit->dwUnitType!=1 || Dead(unit) || !unit->pDynamicPath || !seen.insert(unit->dwUnitId).second)continue;
+        const bool companion=companions.contains(unit->dwUnitId);
+        if(!companion && !RunMonster(unit,run))continue;
         // Match the native unit marker's cached isometric coordinates exactly.
         const int x=Field<int>(unit->pDynamicPath,8)/10+1,y=Field<int>(unit->pDynamicPath,12)/10-3;
-        const auto kind=run.event==Event::Survivors && unit->dwUnitId==run.survival.boss ? uint8_t(3) :
+        const auto kind=companion ? CompanionKind : run.event==Event::Survivors && unit->dwUnitId==run.survival.boss ? uint8_t(3) :
             run.event==Event::Survivors && run.survival.elites.contains(unit->dwUnitId) ? uint8_t(1) :
             MonsterKind(unit->pMonsterData->nTypeFlag,(unit->pMonsterData->pMonstatsTxt->dwMonStatsFlags&(1u<<6))!=0,run.event==Event::Trial && run.objectives.contains(unit->dwUnitId));
         result.push_back({unit->dwUnitId,x,y,kind});if(result.size()==MaxMonsters)return result;
@@ -61,7 +84,7 @@ void SendAutomap(Client* client,const Packet& state,AutomapData::Stream stream,u
     for(size_t offset=0;;offset+=EntriesPerPacket){
         Wire packet;packet.run=state.run;packet.session=state.session;packet.recipient=state.recipient;packet.level=state.level;
         packet.stream=stream;packet.revision=revision;packet.total=uint32_t(entries.size());packet.offset=uint32_t(offset);
-        packet.count=uint8_t(std::min<size_t>(EntriesPerPacket,entries.size()-offset));std::copy_n(entries.begin()+offset,packet.count,packet.entries.begin());
+        packet.count=uint8_t(std::min<size_t>(EntriesPerPacket,entries.size()-offset));EncodeMarkers(packet,entries,offset);
         void* range[]{&packet,reinterpret_cast<uint8_t*>(&packet)+sizeof(packet)};
         Native<void(__fastcall*)(void*,uint32_t,void**)>(0x422ac0)(Native<void*>(0x18682b0),client->dwClientId,range);
         if(offset+packet.count==entries.size())break;

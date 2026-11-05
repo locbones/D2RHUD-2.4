@@ -1,0 +1,211 @@
+{
+  "fields": {
+    "MarketDepositHelp": {
+      "rect": {
+        "x": 275,
+        "y": 548,
+        "width": 770,
+        "height": 50
+      },
+      "text": "Sales, unlisted items and deliveries",
+      "style": {
+        "fontColor": "$FontColorBeige",
+        "pointSize": 24,
+        "alignment": {
+          "h": "left",
+          "v": "top"
+        },
+        "options": {
+          "lineWrap": true,
+          "newlineHandling": "standard",
+          "pipeCharacterBehavior": "handle"
+        }
+      }
+    },
+    "MarketDepositTitle": {
+      "rect": {
+        "x": 275,
+        "y": 478,
+        "width": 770,
+        "height": 50
+      },
+      "text": "MARKET PAGE",
+      "style": {
+        "fontColor": "$FontColorGoldYellow",
+        "pointSize": 28,
+        "alignment": {
+          "h": "left",
+          "v": "top"
+        },
+        "options": {
+          "lineWrap": true,
+          "newlineHandling": "standard",
+          "pipeCharacterBehavior": "handle"
+        }
+      }
+    },
+    "MarketGoldHelp": {
+      "rect": {
+        "x": 580,
+        "y": 822,
+        "width": 1560,
+        "height": 56
+      },
+      "text": "Gold stored in your market page",
+      "style": {
+        "fontColor": "$FontColorBeige",
+        "pointSize": 24,
+        "alignment": {
+          "h": "left",
+          "v": "top"
+        },
+        "options": {
+          "lineWrap": true,
+          "newlineHandling": "standard",
+          "pipeCharacterBehavior": "handle"
+        }
+      }
+    },
+    "MarketTradingHelp": {
+      "rect": {
+        "x": 220,
+        "y": 933,
+        "width": 1400,
+        "height": 40
+      },
+      "text": "Publish priced items; sync gold and bag currencies",
+      "style": {
+        "fontColor": "$FontColorBeige",
+        "pointSize": 24,
+        "alignment": {
+          "h": "left",
+          "v": "top"
+        },
+        "options": {
+          "lineWrap": true,
+          "newlineHandling": "standard",
+          "pipeCharacterBehavior": "handle"
+        }
+      }
+    },
+    "MarketWithdrawHelp": {
+      "rect": {
+        "x": 1180,
+        "y": 548,
+        "width": 900,
+        "height": 50
+      },
+      "text": "Priced items move into your Vault.",
+      "style": {
+        "fontColor": "$FontColorBeige",
+        "pointSize": 24,
+        "alignment": {
+          "h": "left",
+          "v": "top"
+        },
+        "options": {
+          "lineWrap": true,
+          "newlineHandling": "standard",
+          "pipeCharacterBehavior": "handle"
+        }
+      }
+    },
+    "MarketWithdrawTitle": {
+      "rect": {
+        "x": 1180,
+        "y": 478,
+        "width": 900,
+        "height": 50
+      },
+      "text": "AT A GLANCE",
+      "style": {
+        "fontColor": "$FontColorGoldYellow",
+        "pointSize": 28,
+        "alignment": {
+          "h": "left",
+          "v": "top"
+        },
+        "options": {
+          "lineWrap": true,
+          "newlineHandling": "standard",
+          "pipeCharacterBehavior": "handle"
+        }
+      }
+    }
+  },
+  "remove": [
+    "WithdrawPage",
+    "WithdrawPageField",
+    "WithdrawPageBorder",
+    "MarketWithdrawRouteWellInset",
+    "MarketWithdrawRouteDivider",
+    "MarketWithdrawRouteWellEdge",
+    "MarketWithdrawRouteIcon",
+    "MarketWithdrawPageTitle",
+    "WithdrawPageRecess",
+    "MarketSetupIntro",
+    "MarketWithdrawCurrent",
+    "MarketWithdrawCurrentLabel",
+    "WithdrawPageUnderline"
+  ],
+  "upsert": [
+    {
+      "parent": "MarketSetupGroup",
+      "widget": {
+        "type": "TextBoxWidget",
+        "name": "MarketUnlistedLegend",
+        "fields": {
+          "rect": {
+            "x": 1180,
+            "y": 630,
+            "width": 900,
+            "height": 45
+          },
+          "text": "Red border: unlisted, stays here",
+          "style": {
+            "fontColor": "$FontColorRed",
+            "pointSize": 24,
+            "alignment": {
+              "h": "left",
+              "v": "top"
+            },
+            "options": {
+              "lineWrap": true,
+              "newlineHandling": "standard",
+              "pipeCharacterBehavior": "handle"
+            }
+          }
+        }
+      }
+    },
+    {
+      "parent": "MarketSetupGroup",
+      "widget": {
+        "type": "TextBoxWidget",
+        "name": "MarketDeliveredLegend",
+        "fields": {
+          "rect": {
+            "x": 1180,
+            "y": 695,
+            "width": 900,
+            "height": 45
+          },
+          "text": "Green border: received delivery",
+          "style": {
+            "fontColor": "$FontColorGreen",
+            "pointSize": 24,
+            "alignment": {
+              "h": "left",
+              "v": "top"
+            },
+            "options": {
+              "lineWrap": true,
+              "newlineHandling": "standard",
+              "pipeCharacterBehavior": "handle"
+            }
+          }
+        }
+      }
+    }
+  ]
+}

@@ -17,3 +17,20 @@ dialog{color:var(--text);background:#15100d;border:1px solid #85603d;border-radi
 .link-remember{display:flex;gap:10px;align-items:center;margin:25px 0 0!important;border-top:1px solid var(--line);padding-top:21px;font-size:11px!important}.link-remember svg{color:var(--green);width:16px}.code-input{text-transform:uppercase;letter-spacing:2px;font-size:15px}
 
 .identity-code{font-family:monospace;overflow-wrap:anywhere;user-select:text}
+
+/* Stable identity stays compact beside the editable display name. */
+.player-id{display:inline-block;color:var(--muted,#ac9573);font:10px/1.3 ui-monospace,SFMono-Regular,Consolas,monospace;letter-spacing:.015em;white-space:nowrap;vertical-align:baseline;opacity:.85}
+.compact-seller .player-id{font-size:9px;margin-left:3px}
+.profile-player-id{font-size:12px;color:var(--muted,#ac9573)}
+.profile-player-id strong{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;user-select:all}
+
+.compact-seller:has(.player-id){display:flex;align-items:center;gap:4px}
+.compact-seller .player-display-name{min-width:0;overflow:hidden;text-overflow:ellipsis}
+.compact-seller .player-id{flex-shrink:0}
+
+.market-cell-key{display:inline-block;width:.9rem;height:.9rem;vertical-align:-.1rem;margin-right:.4rem;border:1px solid}.market-cell-key.unlisted{border-color:#a54f46;box-shadow:0 0 4px #a54f4633}.market-cell-key.delivered{border-color:#6d9c67;box-shadow:0 0 4px #6d9c6733}
+
+/* One Vault for items and currency. */
+.vault-navigation{margin:0 0 1.25rem;gap:.5rem}.vault-navigation a{display:inline-flex;align-items:center;gap:.45rem;padding:.65rem 1rem;border:1px solid var(--border,#493820);color:var(--muted,#b5a48c);text-decoration:none}.vault-navigation a.active{color:var(--gold,#e9bd70);background:#2b2116;border-color:#98703a}.vault-navigation svg{width:1rem;height:1rem}
+
+.payment-class.field{margin:12px 0 0;max-width:250px}.payment-class.field>span{font-size:11px}.payment-quantity{flex-wrap:wrap}

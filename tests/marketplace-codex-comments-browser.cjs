@@ -1,0 +1,47 @@
+const {chromium}=require('../build-marketplace/browser-check/node_modules/playwright');
+const assert=require('node:assert/strict'),fs=require('node:fs');
+(async()=>{
+  const f=JSON.parse(fs.readFileSync(process.env.VAULT_SEARCH_FIXTURE,'utf8')),origin=process.env.VAULT_SEARCH_ORIGIN;
+  const browser=await chromium.launch({channel:'msedge',headless:true});
+  try{
+    const page=await browser.newPage({viewport:{width:1440,height:1050}}),errors=[];
+    page.on('pageerror',error=>errors.push(error.message));
+    await page.goto(origin);await page.locator('#listing-search').waitFor();
+    await page.locator('#account-control button').click();await page.locator('[name=code]').fill(f.seller_code);await page.locator('#code-form button').click();
+    await page.waitForFunction(()=>!document.querySelector('#modal').open);
+    const snapshot=await (await page.request.get(origin+'/web.php?action=snapshot')).json();
+    const own=snapshot.escrow.items.find(r=>r.state==='available');assert(own);
+    await page.goto(origin+'/#item/'+own.item_id);await page.locator('[data-action=set-price]').click();
+    while(await page.locator('[data-action=remove-payment]').count())await page.locator('[data-action=remove-payment]').first().click();
+    await page.locator('#payment-search').fill('Testament 1:3');
+    await page.locator('[data-action=add-payment]').filter({hasText:'Codex of Gluttony - Testament 1:3'}).click();
+    assert((await page.locator('#selected-payments').textContent()).includes('Testament 1:3'));
+    const note='Looking for this exact chapter. <img src=x onerror="window.badNote=true">';
+    await page.locator('#listing-comment').fill(note);await page.locator('[data-action=save-price]').click();
+    assert((await page.locator('#modal').textContent()).includes(note));
+    await page.locator('[data-action=edit-price]').click();assert.equal(await page.locator('#listing-comment').inputValue(),note);
+    await page.screenshot({path:'build-marketplace/codex-comment-editor.png',fullPage:true});
+    await page.locator('[data-action=save-price]').click();await page.locator('[data-action=confirm-price]').click();await page.waitForFunction(()=>!document.querySelector('#modal').open);
+    const updated=await (await page.request.get(origin+'/web.php?action=snapshot')).json(),listing=updated.listings.find(r=>r.item_id===own.item_id);
+    assert.equal(listing.comment,note);assert.equal(listing.price[0].code,'a12');
+    const guest=await browser.newPage({viewport:{width:390,height:844}});guest.on('pageerror',error=>errors.push(error.message));
+    await guest.goto(origin+'/#listing/'+listing.id);await guest.locator('.detail-price .listing-comment').waitFor();
+    assert((await guest.locator('.listing-comment').textContent()).includes(note));
+    assert.equal(await guest.evaluate(()=>window.badNote),undefined);assert.equal(await guest.locator('.listing-comment img').count(),0);
+    assert(await guest.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));
+    await guest.screenshot({path:'build-marketplace/codex-comment-detail-mobile.png',fullPage:true});
+    await page.goto(origin+'/#browse');await page.locator('#listing-search').fill('Testament 1:3');
+    await page.locator('.listing-comment-icon').filter({has:page.locator('svg')}).first().waitFor();
+    await page.locator('[data-trading=create]').click();await page.locator('#wanted-search').fill('Codex Gluttony 1:3');
+    await page.locator('[data-trading=target]').filter({hasText:'Codex of Gluttony - Testament 1:3'}).click();
+    await page.locator('#wanted-form [name=terms][value=message]').check();await page.locator('#wanted-form button[type=submit]').click();
+    await page.locator('[data-trading=publish-contact]').click();await page.waitForFunction(()=>!document.querySelector('#modal').open);
+    const wanted=await (await page.request.get(origin+'/web.php?action=snapshot')).json();assert(wanted.wanted.some(w=>w.wanted.code==='a12'));
+    await page.goto(origin+'/#item/'+own.item_id);await page.locator('[data-action=set-price]').click();
+    assert.equal(await page.locator('#listing-comment').inputValue(),note);
+    await page.locator('#price-mode').selectOption('free');assert(await page.locator('#listing-comment').isVisible());
+    await page.locator('#listing-comment').fill('');await page.locator('[data-action=save-price]').click();await page.locator('[data-action=confirm-price]').click();await page.waitForFunction(()=>!document.querySelector('#modal').open);
+    const cleared=await (await page.request.get(origin+'/web.php?action=snapshot')).json();assert.equal(cleared.listings.find(r=>r.item_id===own.item_id).comment,'');
+    assert.deepEqual(errors,[]);console.log('PASS browser: exact Codex payment/WTB choices, listing comment edit/review/persistence, compact indicator, free-price clearing, escaped HTML and mobile detail layout.');
+  }finally{await browser.close();}
+})().catch(error=>{console.error(error);process.exitCode=1;});

@@ -4,7 +4,7 @@ const snippet=source.slice(source.indexOf('  function averagePriceText('),source
 const summary={days:30,sales:8,free_sales:1,truncated:true,other_groups:1,groups:[{sales:4,price:[{kind:'gold',code:'gld',label:'Gold',quantity:458333.333333}]},{sales:3,price:[{code:'r33',label:'Zod <Rune>',quantity:1.333333}]}]};
 let target={hidden:true,isConnected:true,innerHTML:''},query,fail=false;
 const context=vm.createContext({$:()=>target,paymentName:p=>p.label,icon:()=>'',request:async(action,data,q)=>{query=q;if(fail)throw new Error('Offline');return {averages:summary};}});
-vm.runInContext(source.split('\n').filter(line=>/^  const (esc|number)=/.test(line)||['isFree','priceText'].some(n=>line.startsWith('  function '+n+'('))).join('\n')+'\n'+snippet+';this.load=loadSaleGuide;',context);
+vm.runInContext(source.split('\n').filter(line=>/^  const (esc|number)=/.test(line)||['isOpen','isFree','priceText'].some(n=>line.startsWith('  function '+n+'('))).join('\n')+'\n'+snippet+';this.load=loadSaleGuide;',context);
 (async()=>{
   const item={code:'rin',quality:7,index:42,ethereal:false,sockets:0};await context.load(item);
   assert.equal(query.similar,'1');assert.equal(query.averages,'1');assert(!target.hidden);

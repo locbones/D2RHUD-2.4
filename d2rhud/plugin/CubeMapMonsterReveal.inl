@@ -8,10 +8,8 @@ uint16_t MonsterRevealLease(Game* game,GameState& state,Unit* player,uint32_t& m
     if(!player || player->dwUnitType!=0 || Dead(player) || level<=0 || level>=1024 || Town(level))return 0;
     uint32_t remaining=0;
     if(const auto participant=state.timedRewards.find(TimedRewardOwner(game,player));participant!=state.timedRewards.end())
-        for(const auto [event,start]:participant->second){
-            const uint32_t duration=RewardsData::DurationSeconds(event)*25,elapsed=game->dwGameFrame-start;
-            if(elapsed<duration)remaining=(std::max)(remaining,(duration-elapsed)*40);
-        }
+        for(const auto& [event,timer]:participant->second)
+            remaining=(std::max)(remaining,timer.FramesAt(game->dwGameFrame,event)*40);
     if(remaining)return uint16_t(std::min<uint32_t>(MonsterRevealData::LeaseMilliseconds,remaining));
     const auto run=state.run.get();
     if(run && run->event==Event::None && run->id && run->level==level && run->phase!=Phase::Preparing && run->phase!=Phase::Closed){
@@ -19,13 +17,17 @@ uint16_t MonsterRevealLease(Game* game,GameState& state,Unit* player,uint32_t& m
     }
     return 0; // Special event arenas already use their scoped automap stream.
 }
-std::vector<AutomapData::Entry> RevealMonsterMarkers(Game* game,int level,const Run* run){
+std::vector<AutomapData::Entry> RevealMonsterMarkers(Game* game,int level,const Run* run,const std::set<uint32_t>* knownCompanions=nullptr){
     std::vector<AutomapData::Entry> result;std::set<uint32_t> seen;
+    const auto captured=knownCompanions?std::set<uint32_t>{}:MapCompanionIds(game);
+    const auto& companions=knownCompanions?*knownCompanions:captured;
     const auto add=[&](Unit* unit){
-        if(result.size()>=AutomapData::MaxMonsters || !Monster(unit,false) || Dead(unit) || !unit->pDynamicPath ||
+        if(result.size()>=AutomapData::MaxMonsters || !unit || unit->dwUnitType!=1 || Dead(unit) || !unit->pDynamicPath ||
            Level(unit)!=level || !seen.insert(unit->dwUnitId).second)return;
+        const bool companion=companions.contains(unit->dwUnitId);
+        if(!companion && !Monster(unit,false))return;
         result.push_back({unit->dwUnitId,Field<int>(unit->pDynamicPath,8)/10+1,Field<int>(unit->pDynamicPath,12)/10-3,
-            AutomapData::MonsterKind(unit->pMonsterData->nTypeFlag,(unit->pMonsterData->pMonstatsTxt->dwMonStatsFlags&(1u<<6))!=0,false)});
+            companion?AutomapData::CompanionKind:AutomapData::MonsterKind(unit->pMonsterData->nTypeFlag,(unit->pMonsterData->pMonstatsTxt->dwMonStatsFlags&(1u<<6))!=0,false)});
     };
     // Include distant map rooms, not just the client's network activation area.
     if(run && run->level==level)for(const auto& pin:run->pins)for(auto unit:RoomUnits(Field<Room*>(pin.room,0x58)))add(unit);
@@ -39,6 +41,7 @@ void ProcessMonsterReveal(Game* game,GameState& state){
     const bool due=game->dwGameFrame-state.lastRevealSent>=5;
     if(due)state.lastRevealSent=game->dwGameFrame;
     std::map<int,std::vector<AutomapData::Entry>> markers;std::set<uint32_t> connected;
+    std::optional<std::set<uint32_t>> companions;
     size_t count=0;
     for(auto client=game->pClientList;client && count++<64;client=client->pNext){
         if(client->pGame!=game || client->dwClientState!=4)continue;
@@ -51,14 +54,17 @@ void ProcessMonsterReveal(Game* game,GameState& state){
         if(level<=0 || level>=1024){state.revealSent.erase(player->dwUnitId);continue;}
         if(!++state.revealRevision)++state.revealRevision;
         std::vector<AutomapData::Entry> empty;
-        if(lease && !markers.contains(level))markers.emplace(level,RevealMonsterMarkers(game,level,state.run.get()));
+        if(lease && !markers.contains(level)){
+            if(!companions)companions=MapCompanionIds(game);
+            markers.emplace(level,RevealMonsterMarkers(game,level,state.run.get(),&*companions));
+        }
         const auto& entries=lease?markers.at(level):empty;
         Native<void(__fastcall*)(Client*)>(0x2d0130)(client);
         for(size_t offset=0;;offset+=AutomapData::EntriesPerPacket){
             MonsterRevealData::Wire packet;packet.session=uint32_t(game->dwInitSeed);packet.epoch=state.layoutEpoch;
             packet.recipient=player->dwUnitId;packet.revision=state.revealRevision;packet.run=mapRun;packet.level=uint16_t(level);packet.lease=lease;
             packet.total=uint32_t(entries.size());packet.offset=uint32_t(offset);
-            packet.count=uint8_t(std::min<size_t>(AutomapData::EntriesPerPacket,entries.size()-offset));std::copy_n(entries.begin()+offset,packet.count,packet.entries.begin());
+            packet.count=uint8_t(std::min<size_t>(AutomapData::EntriesPerPacket,entries.size()-offset));AutomapData::EncodeMarkers(packet,entries,offset);
             void* range[]{&packet,reinterpret_cast<uint8_t*>(&packet)+sizeof(packet)};
             Native<void(__fastcall*)(void*,uint32_t,void**)>(0x422ac0)(Native<void*>(0x18682b0),client->dwClientId,range);
             if(offset+packet.count==entries.size())break;

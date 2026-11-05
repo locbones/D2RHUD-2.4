@@ -32,8 +32,9 @@ inline std::vector<std::string> ActivityPages(const std::string& value){
 }
 inline std::string ActivityNumber(int64_t value){auto text=std::to_string(value);for(int i=int(text.size())-3;i>0;i-=3)text.insert(i,",");return text;}
 inline std::string ActivityTerms(const std::vector<Requirement>& price){
+    if(IsOpen(price))return "Open to Offers | seller approval required";
     if(IsFree(price))return "Free | no payment required";if(price.empty())return "No payment set";std::string out;
-    for(size_t i=0;i<(std::min)(price.size(),size_t(2));++i){if(i)out+=" + ";out+=ActivityNumber(price[i].quantity)+" x "+(price[i].kind=="gold"?"Gold":price[i].label);}
+    for(size_t i=0;i<(std::min)(price.size(),size_t(2));++i){if(i)out+=" + ";out+=ActivityNumber(price[i].quantity)+" x "+(price[i].kind=="gold"?"Gold":TradeRequirementName(price[i]));}
     if(price.size()>2)out+=" + "+std::to_string(price.size()-2)+" more";return ShortActivity(out,110);
 }
 inline std::string ActivityKind(const std::string& kind){
@@ -123,7 +124,7 @@ inline void PresentActivity(State& state,Panel::NativeView& result){
         const auto self=state.snapshot.activity.self.empty()?"local-player":state.snapshot.activity.self;const bool mine=t.proposer==self;
         const bool pending=PendingCommand(state,t.id);
         text("MarketThreadState",pending?"Sending your response...":t.status=="pending"?(mine?"Waiting for their reply":"Your turn to respond"):ActivityKind(t.status));
-        text("MarketThreadTerms",t.price.empty()?"No payment set":CompactActivity(ActivityNumber(t.price[0].quantity)+" x "+(t.price[0].kind=="gold"?"Gold":t.price[0].label),50,1)+(t.price.size()>1?" + "+std::to_string(t.price.size()-1)+" more":""));
+        text("MarketThreadTerms",t.price.empty()?"No payment set":CompactActivity(ActivityNumber(t.price[0].quantity)+" x "+(t.price[0].kind=="gold"?"Gold":TradeRequirementName(t.price[0])),50,1)+(t.price.size()>1?" + "+std::to_string(t.price.size()-1)+" more":""));
         const auto& payment=t.price.empty()?Requirement{}:t.price[0];
         const auto art=payment.kind=="gold"?ItemVisuals::Visual{"items/custom/gold_m",1,1}:state.visuals.Resolve(payment.code,payment.quality,payment.index);
         result.images.push_back({"MarketThreadPaymentImage",art.filename,74,70,bool(art)});

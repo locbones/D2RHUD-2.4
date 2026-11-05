@@ -9,6 +9,7 @@ try {
         'pair-agent'=>(new Market($m->db,$m->community,Market::modName($argv[4]??$m->mod)))->pairAgent($argv[2]??'', $argv[3]??''),
         'owner'=>$m->grantOwner($argv[2]??''),
         'moderator'=>$m->grantModerator($argv[2]??''),
+        'retire-player'=>$m->retirePlayer($argv[2]??'', $argv[3]??'', $argv[4]??''),
         'web-code'=>$m->browserTicket($m->browserActor($argv[2]??'')),
         'user'=>$m->user($argv[2]??'', $argv[3]??'player'),
         'import-listing'=>$m->listing(['id'=>'operator','role'=>'admin'],json_decode(file_get_contents($argv[2]),true,512,JSON_THROW_ON_ERROR),($argv[3]??'SC')==='HC'),

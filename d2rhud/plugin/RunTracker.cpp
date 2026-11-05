@@ -66,6 +66,11 @@ void Collect(){
     auto& s=State();for(auto& run:s.recorder.completed){Queue(run);s.history.insert(s.history.begin(),std::move(run));}s.recorder.completed.clear();
     if(s.history.size()>size_t(s.recorder.settings.historyLimit))s.history.resize(s.recorder.settings.historyLimit);
 }
+void Checkpoint(uint64_t now){
+    auto& s=State();
+    if(now<s.lastSave)s.lastSave=now;
+    if(s.recorder.current&&now-s.lastSave>=10000){Queue(*s.recorder.current);s.lastSave=now;}
+}
 void PumpIO(uint64_t now){
     auto& s=State();
     if(auto completed=s.io.Poll()){
@@ -137,7 +142,7 @@ void Tick(const HudFrame::Context& context,uint64_t epoch,const std::string& mod
     // Missing transient native details during loading do not erase identity.
     const auto& previous=s.recorder.Context();if(epoch==previous.epoch){if(f.character.empty())f.character=previous.character;if(!f.area){f.area=previous.area;f.areaName=previous.areaName;f.town=previous.town;}if(f.difficulty<0)f.difficulty=previous.difficulty;}
     s.recorder.Tick(std::move(f));
-    Collect();if(s.recorder.current&&now-s.lastSave>=5000){Queue(*s.recorder.current);s.lastSave=now;}PumpIO(now);
+    Collect();Checkpoint(now);PumpIO(now);
 }
 
 #include "RunTrackerUI.inl"

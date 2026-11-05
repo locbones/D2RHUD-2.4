@@ -30,10 +30,16 @@ check($l['id']===$legacy['id']&&$l['item_id']===$legacy['item_id']);check($m->ru
 $proposal=fn($actor,$listing,$price)=>$m->command($actor,['id'=>Market::id(),'type'=>'propose','listing_id'=>$listing['id'],'listing_revision'=>(int)$listing['revision'],'price'=>$price],false);
 $offer=$proposal($b,$l,$gold);$m->command($s,['id'=>Market::id(),'type'=>'accept','offer_id'=>$offer['offer_id'],'expected_revision'=>1],false);
 check($m->snapshot($b,false)['offers'][0]['status']==='accepted'&&$m->snapshot($b,false)['history']===[]);
+$funding=$call($ba,['id'=>Market::id(),'type'=>'delivery_queue'])['funding_requests'];check(count($funding)===1&&$funding[0]['id']===$offer['offer_id']&&$funding[0]['revision']===2&&$funding[0]['price']==$gold);
+$staleFunding=['id'=>Market::id(),'type'=>'deposit_prepare','funding_offer'=>$offer['offer_id'],'funding_revision'=>1,'items'=>[],'balances'=>$gold,'pages'=>$page];
+refuses(fn()=>$call($ba,$staleFunding),409);refuses(fn()=>$call($ba,['id'=>$staleFunding['id'],'type'=>'status']),404);
+
 $deposit($ba,[],$gold);$snap=$m->snapshot($b,false);check($snap['offers'][0]['status']==='completed'&&count($snap['history'])===1);
 check($m->run('SELECT owner FROM items WHERE id=?',[$l['item_id']])->fetchColumn()===$b['id']);
 check($m->snapshot($s,false)['escrow']['balances'][0]['quantity']===1000);
 check($m->snapshot($b,false)['escrow']['balances']===[]);
+$staleFunding['id']=Market::id();$staleFunding['funding_revision']=2;refuses(fn()=>$call($ba,$staleFunding),409);
+
 // Claim reservations remove assets from spendable funds, and failed capacity can cancel before authorization.
 $claim=Market::id();$r=$call($ba,['id'=>$claim,'type'=>'claim_prepare']);check(count($r['packet']['items'])===1);
 check($m->snapshot($b,false)['escrow']['items'][0]['state']==='claiming');

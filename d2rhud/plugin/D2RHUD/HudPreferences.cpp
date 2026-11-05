@@ -57,6 +57,7 @@ constexpr BoolField BooleanFields[]{
     {"PersistentSummons", &Config::PersistentSummons},
     {"MercSellerUnlock", &Config::MercSellerUnlock},
     {"MercIconsFix", &Config::MercIconsFix},
+    {"MultipleAurasPerItem", &Config::MultipleAurasPerItem},
     {"ActVI", &Config::ActVI},
     {"SurvivorArena", &Config::SurvivorArena},
     {"D3StyleWhirlwind", &Config::D3StyleWhirlwind},
@@ -102,6 +103,7 @@ void Load(Config& config, const HudConfig::Json& document, bool rmdDefaults) {
     config.PlayerNameColor = Text(document, "Player Name Color", config.PlayerNameColor);
     config.MessageColor = Text(document, "Message Color", config.MessageColor);
     config.ChatSoundPath = Text(document, "ChatSoundPath", config.ChatSoundPath);
+    config.ChatNotificationVolume = std::clamp(Integer(document, "ChatNotificationVolume", config.ChatNotificationVolume), 0, 100);
     config.CameraLastPresetIndex = Integer(document, "CameraLastPresetIndex", config.CameraLastPresetIndex);
     if (config.CameraLastPresetIndex < 0 || config.CameraLastPresetIndex > 3)
         config.CameraLastPresetIndex = 0;
@@ -139,6 +141,7 @@ void Save(const Config& config, HudConfig::Json& document) {
     document["Player Name Color"] = config.PlayerNameColor;
     document["Message Color"] = config.MessageColor;
     document["ChatSoundPath"] = config.ChatSoundPath;
+    document["ChatNotificationVolume"] = std::clamp(config.ChatNotificationVolume, 0, 100);
     document["DLLsToLoad"] = config.DLLsToLoad;
     document["CameraLastPresetIndex"] = config.CameraLastPresetIndex;
     auto& presets = document["CameraPresets"];

@@ -69,6 +69,9 @@ tests\run-marketplace-native.cmd "%TEMP%\d2rhud-marketplace-native-tests"
 Optionally append a compiled Excel directory and save directory for a read-only
 audit of real 2.4 stash pages. See [marketplace setup](../tools/marketplace/README.md).
 The UI fixture checks the JSON-native command/input protocol, four sections,
+stable item/history/conversation selection across reordered background scans,
+capture suspension during temporary native gaps without losing price drafts,
+explicit closure on leaving gameplay, and delivery-page guidance,
 pricing/search, affordability, agreements and setup, with zero marketplace ImGui
 vertices and complete JSON binding coverage. Optionally pass a mod data directory
 to verify installed native controls. The adapter checks ownership, seven-tab
@@ -149,6 +152,10 @@ terrain-independent random rosters, custom/inherited aquatic monster rows,
 spawn and secondary-minion dependencies, recursive families and safe flying
 monsters. Optional compiled tables are read into private copies to test actual
 BIN-only rosters and verify the original files remain unchanged.
+Preset-spawn regressions cover Swampy Pit levels 1-3 and Act III Sewers level 2,
+including safe replacements, untouched source IDs/flags, ordinary restoration,
+other-level activations, NPCs/allies and authored event objectives. The regression
+fails on the old preset bypass and also runs against the compiled aquatic rows.
 
 `run-quest-journal.cmd <output> <cubemain.txt> <quests.json> [existing-journal-folder]`
 simulates a host and independent client storage folders. It checks immediate
@@ -157,6 +164,12 @@ guest recovery, old timestamp/checksum histories and definition drift, all 45
 reward gates, bounded file counts across repeated starts, writer conflicts,
 stale/forged commands and recovery after a failed write. Optional existing
 journals are replayed through isolated copies and verified unchanged.
+  Counter-only snapshots use one background writer and one coalesced pending
+  state. A blocked-storage fixture checks responsive input/destruction, writer
+  lease lifetime, failure/retry and no premature ACK. Objective, reward, evidence
+  and save-and-exit barriers retain flushed atomic writes before acknowledging.
+  Simulated continuous updates verify ten-second deadlines, idle write suppression,
+  clock rollback and a native save checkpoint while the client unit is still live.
 
 `run-hud-localization.cmd <output>` tests every bundled language pack, unsafe
 format rejection, English fallback, stable control IDs across languages,
@@ -192,6 +205,19 @@ endings against the original Windows manifest hashes; content edits still fail.
 Startup-loader tests verify feature-specific rejection reasons,
 initialization-stage timeouts, diagnostic exports and older-DLL fallback. A
 BIN-only Act VI fixture skips the separate TXT package-authoring check.
+`extended-acts-test.exe --compiled-data-test <six-act-mod-data>` validates actual
+game-produced ActInfo/Levels BINs and rejects swapped records, invalid towns,
+counts, truncation, level IDs, act indices and waypoint positions. ActInfo's
+first compiled field is the town level ID; the TXT act key is not serialized.
+Unrelated compiled level settings remain editable.
+Both selections are replayed against the current package's layouts. Off selects
+five-act layouts and does not install Act VI patches. Native replay verifies
+the guarded startup reduction of ActInfo size from six to five, unchanged
+record bytes/capacity, restored Baal progression in all three difficulties,
+saved-act fallback, and refusal during a live game or with invalid contracts.
+Disabled startup also replays ActCode's zero-filled placeholder followed by the
+original native ActInfo vector move. The five-act limit is applied after that
+replacement, while unrelated vector moves retain their original size.
 
 The `generate-*.py` scripts regenerate native compatibility headers from a
 matching executable. These tools require Python with `pefile` and `capstone`.
@@ -394,11 +420,18 @@ The agent HTTP test also returns a real serialized item without a launch marker,
 checks its native properties, retains wallet gold and verifies no repeat delivery.
 
 Live stash handoff: `tests\run-marketplace-live-window.cmd GAME_EXE` checks the installed PE's exact callback bytes/vtable slots and native
-parking acknowledgement, cursor safety, short writer gate, pending-page freeze
-and unrelated-page navigation. `python tests/marketplace-live-agent-test.py`
+parking acknowledgement, cursor safety, short writer gate, per-page pending
+fences, automatic viewed-page refresh request/receipt/session validation,
+selected-tab preservation and navigation after a durable local receipt. `run-marketplace-reload.cmd`
+compiles the production client/server handlers against native-call stubs to
+exercise queued selections, stale control highlights after deferred switches,
+page clicks during loading, cursor/lease retries, delayed acknowledgements,
+preflight refusal and parse-error rollback without saving partial pages.
+`python tests/marketplace-live-agent-test.py`
 checks real Windows process identities/leases, heartbeat expiration, route and
 mode isolation, multiple-game refusal, immediate named-event wake and a
-reopen racing cloud authorization. The HTTP agent test also deposits gold and
+reopen racing cloud authorization, plus remote-commit retry after legitimate
+native edits to an already delivered page. The HTTP agent test also deposits gold and
 returns a serialized ring while an owned disposable D2R-named process stays
 alive, preserving wallet funds, item properties and exactly-once recovery.
 
@@ -451,6 +484,9 @@ Player profiles and native messaging:
 
 - `marketplace-character-profile-test.py HELPER MOD_DATA SAVE_FOLDER` checks
   immutable character parsing, checksum/truncation refusal and stash exclusion.
+- `marketplace-message-read-ui-test.js` checks automatic direct, self and trade
+  read receipts, unrelated unread messages, offline retry, hidden tabs and stale
+  inbox responses. The live browser fixture also checks the visible badge.
 - `marketplace-players-test.php PROFILE_FIXTURE` checks public code-linked
   characters and private direct/trade messages, idempotency and mode ownership.
   The prefixed MySQL harness accepts `players PROFILE_FIXTURE` after its normal
@@ -460,6 +496,14 @@ Player profiles and native messaging:
   retention, manifest removal, bounded offline backlog and cross-mode replies.
 - `run-marketplace-chat.cmd` checks command parsing, packet pass-through,
   durable display dedupe, callback re-entry and acknowledgement after display.
+  Its presence tests inject a blocked storage writer and verify that mailbox
+  ticks, commands and destruction still return, that only the latest queued
+  heartbeat is retained, and that reset/failure retry remains safe. The expiring
+  presence file uses atomic cached replacement without `FlushFileBuffers` or
+  `MOVEFILE_WRITE_THROUGH`; transactional sidecars retain their durable writes.
+  The cache fixture checks one content read over sixty unchanged mailbox polls,
+  prompt updates, multi-tick message draining, malformed-content backoff,
+  transient read recovery, timestamp-preserving edits and account/mode changes.
 - `marketplace-chat-native-test.py D2R_EXE` audits installed native entry contracts
   offline. The live presentation check must also run outside Present: the captured
   UI/font resource deadlock is documented in `native-chat-evidence.md`.
@@ -847,6 +891,26 @@ off by default; enabled counters report inclusive wall time, so nested rows
 overlap. Neither component tests nor startup timings establish gameplay FPS.
 Pandemonium Core tests also cover launcher reports for failures before HUD load.
 
+`run-hitch-diagnostics.cmd <output>` verifies bounded chronological buffers,
+percentiles and gameplay exclusions, a real timed stall attributed to the
+previous frame, concurrent feature spans with counters disabled, auxiliary/test
+swapchain exclusion, asynchronous export, auto-stop, file errors and repeat
+captures. The recorder is off by default; Start captures for 2, 5 or 10 minutes
+with a configurable hitch threshold, or Stop and save ends early. Keep D2R
+running until it finishes saving. The JSON report in
+`%LOCALAPPDATA%\D2RHUD\Support` contains a summary, retained frames, worst hitches,
+250 ms process/system samples and Chrome/Perfetto-compatible `traceEvents`.
+Share that one file for investigation. It contains no save data, chat or
+credentials, and nothing is uploaded automatically. Frame cadence and Present
+wall time are not GPU execution or network latency measurements. Nested spans
+overlap. Short spans are filtered and bounded buffers report dropped/overwritten
+history; missing presentation samples do not count as gameplay hitches. Tests
+validate instrumentation and simulated stalls, not a player's actual root cause.
+All-context pause counts and the frame graph remain visible for menu-only
+captures, alongside separate gameplay counts. Native chat window callbacks and
+background presence I/O have separate trace labels so they cannot hide behind
+short Present/HUD frame timings.
+
 ## Optional Run Tracker
 
 `run-run-tracker.cmd <output>` exercises deterministic town/loading/manual pause
@@ -936,3 +1000,23 @@ textured/moving synthetic scene end to end, including encode/decode, bandwidth
 and latency, against the previous JPEG encoder retained only in the test tree.
 These are synthetic local measurements, not remote gameplay guarantees.
 No tests send desktop input, start D2R, or write another process's memory.
+
+- `marketplace-impersonation-test.php` verifies owner UID authorization, moderator/name refusal, target isolation, expiry/revocation, idempotent session records and redacted operator audit. The prefixed MySQL runner accepts `impersonation`.
+- `marketplace-impersonation-http-test.py PHP` exercises real browser session/CSRF rotation, target setup/escrow return/message commands, original-account restoration, expiry and stale/legacy browser write guards against disposable SQLite data.
+- `marketplace-impersonation-ui-preview.py PHP` starts an isolated real HTTP owner/player fixture with large gold balances for testing the review dialog, banner, wallet, exit and recent-session audit.
+
+`marketplace-single-page-test.py PHP HELPER MOD_DATA PAGE_FIXTURE` runs the real HTTP service against isolated saves. It covers migration, priced-only ordinary deposits, agreed barter funding, same-page delivery, six interruption boundaries, gold retention and fresh UUID currency bags without re-deposit loops. The original `marketplace-agent-test.py` CLI delegates to this contract. Native UI checks also assert subtle red/green cell outlines and no outlines on priced items.
+
+`marketplace-torch-test.php` simulates class-specific barter settlement, missing/wrong/ambiguous/unidentified rolls, funding capability gates, WTB responses, counters, notifications, history and legacy HUD isolation in disposable SQLite. `marketplace-torch-test.js` covers readable class labels, class-specific affordability and price identities, and conditional editor controls. The native marketplace data/UI suites cover round trips, distinct class bundles, strict inputs and the real JSON dropdown with stale-choice protection.
+# Multiple item and monster-property auras
+
+Run `tests\run-multiple-auras.cmd <output-directory> <D2R.exe>` from an x64 MSVC
+developer prompt. The suite maps the supplied executable privately; it never
+launches or modifies the installed game. It executes the shipped aura
+activation and periodic deletion loops with the production call adapters,
+using a bounded event-destructor test double. It covers distinct same-source
+auras, different source items, monster-property key-zero behavior, disabling,
+non-aura events, scoped removal, nested/thread-local contexts, all nine native
+call-site guards, partial-install refusal, detach/reinstall and RX relay pages.
+Native aura stat calculations and full multiplayer/gameplay rendering still
+require in-game acceptance testing.

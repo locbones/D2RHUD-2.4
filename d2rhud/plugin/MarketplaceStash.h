@@ -64,7 +64,17 @@ struct SavedItem {
     std::vector<PaymentItem> balances;
     std::string escrowId,escrowState,ledgerId;
     Draft escrowDraft;
-    PaymentItem Payment() const {return {code,quality,index,quantity,bool(flags&(1u<<4)),bool(flags&(1u<<22))};}
+    PaymentItem Payment() const {
+        PaymentItem result{code,quality,index,quantity,bool(flags&(1u<<4)),bool(flags&(1u<<22))};
+        if(code!="cm2"||quality!=7)return result;
+        // Stat 83 is the native STAT_ITEM_ADDCLASSSKILLS. Only the root
+        // item's base list counts; socket children cannot supply this roll.
+        int found=-1;
+        for(const auto& p:properties)if(p.value("id",-1)==83&&p.value("list",std::string("base"))=="base"&&p.value("value",int64_t(0))>0){
+            const auto id=p.value("param",-1);if(id<0||id>6||(found>=0&&found!=id)){found=-1;break;}found=id;
+        }
+        result.classId=found;return result;
+    }
     Json ToJson() const {
         return {{"tab",tab},{"ordinal",ordinal},{"x",x},{"y",y},{"container",container},{"flags",flags},{"saved_id",id},
             {"quantity",quantity},{"quality",quality},{"index",index},{"level",level},{"picture",picture},{"code",code},{"item_uuid",uuid},

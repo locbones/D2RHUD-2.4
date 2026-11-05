@@ -43,8 +43,11 @@ with tempfile.TemporaryDirectory(prefix='market-agent-failure-') as temporary:
         deadline = time.monotonic() + 10
         while time.monotonic() < deadline:
             status = a.io.document(state / 'status.json')
-            if status.get('error'):
-                break
+            result_path = state / 'live-result.json'
+            if status.get('error') and result_path.exists():
+                result = a.io.document(result_path)
+                if result.get('error') == status['error']:
+                    break
             assert process.poll() is None, 'The watch loop crashed instead of reporting verification failure'
             time.sleep(.05)
         assert 'revalidate custody' in status.get('error', ''), status

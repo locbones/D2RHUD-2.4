@@ -185,6 +185,7 @@ bool Holding(Game* game, Unit* unit, ServerChannel& channel) {
         channel.seed == uint32_t(game->dwInitSeed) && channel.lease.Active(GetTickCount64());
 }
 int __fastcall ServerStartHook(Game* game, Unit* unit, int id, int level) {
+    HudTelemetry::Scope timing(HudTelemetry::Feature::Whirlwind);
     const int result = originalServerStart(game, unit, id, level);
     if (result && ready.load() && enabled.load() && game && Alive(unit)) {
         auto skill = Skill(unit);
@@ -232,6 +233,7 @@ int __fastcall ServerMoveHook(Game* game, Unit* unit) {
     return originalServerMove(game, unit);
 }
 int __fastcall ClientStartHook(Unit* unit, int id) {
+    HudTelemetry::Scope timing(HudTelemetry::Feature::WhirlwindClient);
     // Ordinary Assassin WW can arrive here with a prepared client sequence
     // while the local server is still spinning. Mask only that client's
     // state-54 start gate for this one native call, then restore it.
@@ -256,10 +258,12 @@ int __fastcall ClientStartHook(Unit* unit, int id) {
     return result;
 }
 int __fastcall ClientDoHook(Unit* unit, int id) {
+    HudTelemetry::Scope timing(HudTelemetry::Feature::WhirlwindClient);
     if (client.active && client.player == unit) Held(unit);
     return originalClientDo(unit, id);
 }
 int __fastcall ClientMoveHook(Unit* unit, bool advance) {
+    HudTelemetry::Scope timing(HudTelemetry::Feature::WhirlwindClient);
     if (Held(unit)) {
         if (Data::Stationary(Position(unit), client.cursor)) {
             client.steered = false;
@@ -270,6 +274,7 @@ int __fastcall ClientMoveHook(Unit* unit, bool advance) {
     return originalClientMove(unit, advance);
 }
 void __fastcall ClientActionHook(int action, Unit* unit, int type, int id) {
+    HudTelemetry::Scope timing(HudTelemetry::Feature::WhirlwindInput);
     // Native held-button repeats predict a new cast and can finish the current
     // skill before discovering Whirlwind is already running. Keep the active
     // channel and let Held() publish its current cursor instead of recasting.
@@ -285,6 +290,7 @@ void __fastcall ClientActionHook(int action, Unit* unit, int type, int id) {
     if (!clientActionDepth && client.active && client.player == unit && client.pending) SendControl(true);
 }
 int __fastcall ClientInteractionHook(Unit* unit,int action,int x,int y,uint16_t modifiers) {
+    HudTelemetry::Scope timing(HudTelemetry::Feature::WhirlwindInput);
     // This shared input hook remains installed with Whirlwind disabled. Reject
     // only right-button ground-item interaction, before native walk/pickup
     // scheduling; release messages and auto-gold keep their ordinary paths.
@@ -315,6 +321,7 @@ int __fastcall ItemDisabledHook(Unit* item){
     return originalItemDisabled(item);
 }
 int __fastcall DispatcherHook(Game* game, Unit* unit, const void* bytes, int size) {
+    HudTelemetry::Scope timing(HudTelemetry::Feature::WhirlwindInput);
     if (bytes && size >= 10 && size <= 512 && Data::Ours({static_cast<const uint8_t*>(bytes), size_t(size)})) {
         if (size != sizeof(Data::Command)) return 1;
         Data::Command command; memcpy(&command, bytes, sizeof(command));

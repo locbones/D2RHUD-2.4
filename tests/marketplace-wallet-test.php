@@ -23,8 +23,8 @@ $call($ba,['type'=>'web_sync','settings'=>$privateSettings,'inventory'=>[$privat
 $profileBefore=$m->run('SELECT * FROM web_profiles WHERE owner=?',[$buyer['id']])->fetch();
 $queue=$call($ba,['id'=>Market::id(),'type'=>'delivery_queue']);check(count($queue['wallet_withdrawals'])===1&&$queue['wallet_withdrawals'][0]['id']===$requestId);
 check($m->run('SELECT * FROM web_profiles WHERE owner=?',[$buyer['id']])->fetch()===$profileBefore);
-check($call($oa,['id'=>Market::id(),'type'=>'delivery_queue'])===['delivery_items'=>[],'wallet_withdrawals'=>[]]);
-check($call($ba,['id'=>Market::id(),'type'=>'delivery_queue'],true)===['delivery_items'=>[],'wallet_withdrawals'=>[]]);
+check($call($oa,['id'=>Market::id(),'type'=>'delivery_queue'])===['delivery_items'=>[],'wallet_withdrawals'=>[],'funding_requests'=>[]]);
+check($call($ba,['id'=>Market::id(),'type'=>'delivery_queue'],true)===['delivery_items'=>[],'wallet_withdrawals'=>[],'funding_requests'=>[]]);
 refuses(fn()=>$m->custody($ba,['id'=>Market::id(),'type'=>'delivery_queue','catalog'=>str_repeat('f',64)],false),409);
 check($balance($buyer,'gold')===3000&&$balance($buyer,'bag')===60);
 refuses(fn()=>$withdraw($buyer,[$gold(3001)]),409);refuses(fn()=>$withdraw($buyer,[$gold(1),$bag(61)]),409);check($balance($buyer,'gold')===3000);

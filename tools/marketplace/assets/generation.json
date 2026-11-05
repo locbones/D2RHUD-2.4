@@ -1,0 +1,7 @@
+{
+  "tool": "built-in image_gen.imagegen",
+  "output": "marketplace-button-source.png",
+  "transparent_background": true,
+  "reference": "RMD-MP Shop_Button.sprite, decoded first frame for style reference",
+  "prompt": "Create a production UI bitmap asset for a Diablo II Resurrected dark fantasy mod: one SQUARE MARKETPLACE BUTTON, no text, no letters. Reference is the attached/available small portal-button image: copy its visual language of a chunky aged gold square outer frame with engraved corner flourishes, layered dark iron/stone inset, tactile hand-painted game UI craftsmanship. Replace the red portal entirely with a clearly readable merchant/exchange emblem: a small antique golden balance scale above two or three gold coins, with a deep burgundy-black inset. Strong simple silhouette recognizable at only 58 pixels on screen. Exact straight-on orthographic UI icon, no perspective, no surrounding scene, no huge shadow, no extra objects. Full button should nearly fill the square with a tiny transparent margin at the corners. Moderate highlights, subdued dark fantasy palette, weathered metallic materials, crisp legible contours. The frame should remain visually consistent with the reference's gold edging and charcoal bevels. No portal, no glowing red oval, no modern flat vector aesthetic. One button only, centered, transparent outside its square frame."
+}

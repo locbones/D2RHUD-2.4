@@ -20,7 +20,13 @@ trait MarketplaceExperience {
     private function companionSeen(string $owner,string $scope): int {return (int)$this->run('SELECT seen FROM market_companion_seen WHERE owner=? AND scope=?',[$owner,$scope])->fetchColumn();}
     public function notificationSettings(string $owner): array {
         $r=$this->run('SELECT settings FROM market_notifications WHERE owner=?',[$owner])->fetchColumn();
-        return ($r?json_decode($r,true,512,JSON_THROW_ON_ERROR):[])+['game_direct'=>true,'game_trade'=>true,'game_search'=>true];
+        // Older clients enabled listing discovery along with trade alerts by
+        // default. Require an explicit choice in the clarified controls.
+        $stored=$r?json_decode($r,true,512,JSON_THROW_ON_ERROR):[];
+        $defaults=['game_direct'=>true,'game_trade'=>true,'game_search'=>false];
+        $settings=array_intersect_key($stored,$defaults)+$defaults;
+        if(!($stored['search_opt_in']??false))$settings['game_search']=false;
+        return $settings;
     }
     private function communicationBlocked(string $a,string $b): bool {
         return (bool)$this->run('SELECT owner FROM market_player_controls WHERE blocked=1 AND ((owner=? AND target=?) OR (owner=? AND target=?))',[$a,$b,$b,$a])->fetchColumn();
@@ -65,7 +71,7 @@ trait MarketplaceExperience {
         foreach($meaningful?:$words as $word)if(!str_contains($haystack,$word))return false;return true;
     }
     private function searchMatches(array $r,array $c,string $owner,array $catalog,string $scope): bool {
-        if($r['seller_id']===$owner&&$c['hideOwn']||$c['ready']&&!$r['purchasable']||$c['free']&&!self::isFree($r['price'])||$c['seller']!==''&&stripos($r['seller'],$c['seller'])===false||$c['hideOffers']&&$r['other_offer_count'])return false;
+        if($r['seller_id']===$owner&&$c['hideOwn']||$c['ready']&&!$r['purchasable']||$c['free']&&!self::isFree($r['price'])||$c['seller']!==''&&stripos($r['seller'].' '.($r['seller_player_id']??$this->publicPlayerId($r['seller_id'])),$c['seller'])===false||$c['hideOffers']&&$r['other_offer_count'])return false;
         if($c['cap']!==null&&!self::isFree($r['price'])){if(count($r['price'])!==1||$r['price'][0]['code']!==$c['cap']['code']||$r['price'][0]['quantity']>$c['cap']['quantity'])return false;}
         if(($c['affordable']??false)&&$this->allocation($owner,$scope,$r['price'])===null)return false;
         if(($c['favorites']??'all')!=='all'&&!$this->run('SELECT target FROM market_favorites WHERE owner=? AND scope=? AND kind=? AND target=?',[$owner,$scope,$c['favorites']==='trades'?'listing':'seller',$c['favorites']==='trades'?$r['id']:$r['seller_id']])->fetchColumn())return false;
@@ -80,7 +86,7 @@ trait MarketplaceExperience {
             $b=$catalog['bases'][$item['code']]??[];
             if($c['quality']!==''&&(int)$c['quality']!==$item['quality']||$c['category']!==''&&$c['category']!==($b['category']??''))return false;
             $name=$this->notificationItemName(['code'=>$item['code'],'quality'=>$item['quality'],'item_index'=>$item['index'],'item_hex'=>$item['_hex']??'','name_ids'=>$item['name_ids']??[]]);
-            if($c['q']!==''&&!self::searchTextMatches(implode(' ',[$name,$b['name']??'',$item['code'],$b['type']??'',$label,$r['bundle_title']??'']),$c['q'])&&!self::searchTextMatches($r['seller'],$c['q']))return false;
+            if($c['q']!==''&&!self::searchTextMatches(implode(' ',[$name,$b['name']??'',$item['code'],$b['type']??'',($item['class_id']??-1)>=0?($catalog['classes'][$item['class_id']]??''):'',$label,$r['bundle_title']??'']),$c['q'])&&!self::searchTextMatches($r['seller'],$c['q']))return false;
             return true;
         };
         foreach($r['members']??[$r['item']] as $item)if($c['searchScope']!=='wanted'&&$match($item))return true;
@@ -126,7 +132,7 @@ trait MarketplaceExperience {
                 case 'search_delete':
                     $search=self::ticketId($data['search_id']??null);if(!$this->run('SELECT id FROM market_searches WHERE id=? AND owner=? AND scope=?',[$search,$owner,$scope])->fetchColumn())throw new MarketError(404,'Saved search not found.');$this->run('DELETE FROM market_search_hits WHERE search=?',[$search]);$this->run('DELETE FROM market_searches WHERE id=?',[$search]);$result=['removed'=>true];break;
                 case 'notification_settings':
-                    $settings=$this->notificationSettings($owner);foreach(array_keys($settings) as $key){if(!is_bool($data[$key]??null))throw new MarketError(422,'Choose notification options on or off.');$settings[$key]=$data[$key];}$this->run('DELETE FROM market_notifications WHERE owner=?',[$owner]);$this->run('INSERT INTO market_notifications VALUES (?,?)',[$owner,self::json($settings)]);$result=$settings;break;
+                    $settings=$this->notificationSettings($owner);foreach(array_keys($settings) as $key){if(!is_bool($data[$key]??null))throw new MarketError(422,'Choose notification options on or off.');$settings[$key]=$data[$key];}$this->run('DELETE FROM market_notifications WHERE owner=?',[$owner]);$this->run('INSERT INTO market_notifications VALUES (?,?)',[$owner,self::json($settings+['search_opt_in'=>true])]);$result=$settings;break;
                 case 'player_control':
                     $target=self::text($data['target']??null,64);if($target===$owner||!$this->run('SELECT id FROM actors WHERE id=?',[$target])->fetchColumn())throw new MarketError(422,'Choose another player.');foreach(['muted','blocked'] as $k)if(!is_bool($data[$k]??null))throw new MarketError(422,'Choose player options on or off.');
                     $this->run('DELETE FROM market_player_controls WHERE owner=? AND target=?',[$owner,$target]);if($data['muted']||$data['blocked'])$this->run('INSERT INTO market_player_controls VALUES (?,?,?,?)',[$owner,$target,(int)$data['muted'],(int)$data['blocked']]);$result=['saved'=>true];break;

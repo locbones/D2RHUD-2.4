@@ -5,6 +5,7 @@
 #include "MarketplaceWorkspace.h"
 #include <future>
 #include "MarketplaceItemVisuals.h"
+#include "MarketplaceCodexNames.h"
 
 namespace Marketplace::UI {
 struct TablesResult {SaveTables tables;ItemVisuals::Catalog visuals;std::string error;};
@@ -14,7 +15,7 @@ struct PublicationExportState {std::string original,fingerprint;bool loaded=fals
 struct State {
     std::filesystem::path path;
     Settings settings;
-    std::string original,status,tableError,query,priceSaveError;
+    std::string original,status,tableError,query,priceSaveError,listingComment;
     bool valid=false,hardcore=false,editing=false,adding=false;
     bool tablesStarted=false;
     uint64_t statusUntil=0,resetPoll=0;std::string resetId;
@@ -48,6 +49,7 @@ struct State {
     uint64_t messageRevision=1;
     bool walletOpen=false,walletForm=false,walletReview=false;int walletMode=0,walletOffset=0;uint64_t walletRevision=1;std::string walletAmount,walletPending;Json walletAsset,walletCancel;
     bool receiptOpen=false;std::string receiptTitle,receiptDescription;std::vector<Requirement> receiptPrice;
+    bool campaignOpen=false;std::string campaignId,campaignPending;int campaignItemOffset=0;
     bool transferOpen=false,transferReview=false;SavedItem transferItem;Json transferBalance;
     std::string transferTo,transferRecipient,transferName,transferNote,transferAmount,transferResolve,transferPending;uint64_t transferRevision=1;
     bool withdrawalConfirm=false;SavedItem withdrawalItem;std::string withdrawalWatchVersion;std::vector<Panel::WithdrawalWatch> withdrawalWatches;
@@ -57,13 +59,14 @@ struct State {
     uint64_t searchRevision=1,routeRevision=1,priceRevision=1,paymentRevision=1,filterRevision=1;
 };
 inline State& EditorState(){static auto* state=new State;return *state;}
+inline std::string TradeRequirementName(const Requirement& r){auto shown=r;shown.label=CodexName(modName,r.code,r.quality,r.label);return RequirementName(shown);}
 inline std::string Name(const SavedItem& item,const LootFilterConfig::Builder::Catalog& catalog) {
     const auto key=std::tuple(item.code,item.quality,item.index,bool(item.flags&(1u<<4)));
     auto& names=EditorState().names;if(auto found=names.find(key);found!=names.end())return found->second;
-    const auto base=catalog.bases.find(item.code);const auto baseName=base==catalog.bases.end()?item.code:base->second.name;
+    const auto base=catalog.bases.find(item.code);const auto baseName=CodexName(modName,item.code,2,base==catalog.bases.end()?item.code:base->second.name);
     if(!(item.flags&(1u<<4)))return "Unidentified "+baseName;
     for(const auto& named:catalog.namedItems)if(named.code==item.code&&named.index==item.index&&
-        ((item.quality==7&&named.quality=="Unique")||(item.quality==5&&named.quality=="Set"))){if(catalog.loaded)names[key]=named.label;return named.label;}
+        ((item.quality==7&&named.quality=="Unique")||(item.quality==5&&named.quality=="Set"))){const auto label=CodexName(modName,item.code,item.quality,named.label);if(catalog.loaded)names[key]=label;return label;}
     if(catalog.loaded)names[key]=baseName;return baseName;
 }
 inline void Save(State& state,const std::string& mod){
@@ -86,7 +89,7 @@ inline void Load(State& state,const std::string& mod){
     state.local={};state.localValid=false;state.localOriginal=ReadSettingsFile(state.path.parent_path()/(state.hardcore?L"MarketplaceActivityLocal_2.4_HC.json":L"MarketplaceActivityLocal_2.4_SC.json"));
     if(!state.localOriginal.empty())state.local=ReadLocalActivity(Json::parse(state.localOriginal),mod,state.hardcore);state.localValid=true;++state.activityGeneration;
 }
-inline void Close(State& state){state.filtersOpen=false;state.termsOffset=0;state.transferOpen=false;state.transferResolve.clear();state.walletOpen=false;state.offerBoard=false;state.open=state.editing=state.adding=state.counterOffer=state.historyOpen=state.receiptOpen=state.withdrawalConfirm=false;Panel::SetPin({});Panel::CancelScan();state.liveRequest=0;}
+inline void Close(State& state){state.campaignOpen=false;state.filtersOpen=false;state.termsOffset=0;state.transferOpen=false;state.transferResolve.clear();state.walletOpen=false;state.offerBoard=false;state.open=state.editing=state.adding=state.counterOffer=state.historyOpen=state.receiptOpen=state.withdrawalConfirm=false;Panel::SetPin({});Panel::CancelScan();state.liveRequest=0;}
 inline void Refresh(State& state){state.offerBoard=false;++state.generation;state.refresh=true;state.snapshot={};state.liveDeposit=state.liveSeller=false;state.liveRequest=0;state.livePage=0;Panel::CancelScan();state.ownSelection=state.marketSelection=-1;state.editing=state.adding=state.counterOffer=state.historyOpen=state.receiptOpen=false;state.historyOffset=state.threadOffset=state.receiptPage=0;++state.activityGeneration;}
 inline void SetupChoices(State& state){state.profileName=state.snapshot.activity.name;++state.profileRevision;state.depositChoice=state.settings.page;state.withdrawChoice=state.settings.withdrawPage;state.enabledChoice=state.settings.enabled;state.autoChoice=state.settings.autoTrade;++state.routeRevision;}
 inline const Draft* AskingPrice(const State& state,const SavedItem& item){
@@ -104,6 +107,24 @@ inline void PollMarketplaceReset(State& state){
     }catch(...){} // A missing or interrupted sidecar never interrupts the game.
 }
 inline const std::vector<SavedItem>& OwnItems(const State& state){return state.ownSeller?state.snapshot.seller:state.snapshot.feed.escrowItems.empty()?state.snapshot.deposit:state.ownInventory;}
+inline void UpdateOwnInventory(State& state){state.ownInventory=state.snapshot.deposit;state.ownInventory.insert(state.ownInventory.end(),state.snapshot.feed.escrowItems.begin(),state.snapshot.feed.escrowItems.end());}
+inline const std::vector<CounterThread>& Threads(State& state);
+// Background scans replace/reorder collections. Keep the user's place by exact
+// item/record identity instead of a row index (or clearing every selection).
+struct SelectionBookmark {
+    std::string listing,thread;SavedItem item;bool own=false;
+    explicit SelectionBookmark(State& state){
+        if(state.section==Section::Items&&state.ownSelection>=0&&state.ownSelection<int(OwnItems(state).size())){item=OwnItems(state)[state.ownSelection];own=true;}
+        if(state.section==Section::Browse&&state.marketSelection>=0&&state.marketSelection<int(state.snapshot.feed.listings.size()))listing=state.snapshot.feed.listings[state.marketSelection].id;
+        if(state.section==Section::Agreements&&state.activityType==0&&state.marketSelection>=0&&state.marketSelection<int(Threads(state).size()))thread=Threads(state)[state.marketSelection].id;
+    }
+    void Restore(State& state)const{
+        auto find=[](const auto& rows,auto matches){int found=-1;for(int i=0;i<int(rows.size());++i)if(matches(rows[i])){if(found>=0)return -1;found=i;}return found;};
+        if(own)state.ownSelection=find(OwnItems(state),[&](const auto& row){return item.escrowId.empty()?row.escrowId.empty()&&row.tab==item.tab&&row.itemHex==item.itemHex:row.escrowId==item.escrowId;});
+        if(!listing.empty())state.marketSelection=find(state.snapshot.feed.listings,[&](const auto& row){return row.id==listing;});
+        if(!thread.empty())state.marketSelection=find(Threads(state),[&](const auto& row){return row.id==thread;});
+    }
+};
 inline const Draft* OwnPrice(const State& state,const SavedItem& item){
     if(!item.escrowId.empty())return item.escrowState=="listed"&&!item.escrowDraft.price.empty()?&item.escrowDraft:nullptr;
     const auto& drafts=state.ownSeller?state.settings.simulation.drafts:state.settings.drafts;
@@ -114,7 +135,7 @@ inline void ExportPublication(State& state,bool test=false){
     if(!state.valid||(enabled&&!valid))return;
     if(ReadSettingsFile(state.path)!=state.original)throw std::runtime_error("Marketplace settings changed in another instance. Reload before saving.");
     const auto& inventory=test?state.snapshot.seller:state.snapshot.deposit;const auto& drafts=test?state.settings.simulation.drafts:state.settings.drafts;
-    Json rows=Json::array();if(enabled)for(const auto& item:inventory){const auto price=std::find_if(drafts.begin(),drafts.end(),[&](const auto& d){return d.tab==item.tab&&d.itemHex==item.itemHex;});if(price==drafts.end())continue;auto row=item.ToJson();row["price"]=PriceJson(price->price);rows.push_back(std::move(row));}
+    Json rows=Json::array();if(enabled)for(const auto& item:inventory){const auto price=std::find_if(drafts.begin(),drafts.end(),[&](const auto& d){return d.tab==item.tab&&d.itemHex==item.itemHex;});if(price==drafts.end())continue;auto row=item.ToJson();row["price"]=PriceJson(price->price);row["comment"]=price->comment;rows.push_back(std::move(row));}
     if(rows.size()>512)throw std::runtime_error("Publish at most 512 priced items at a time.");
     Json doc={{"schema",1},{"game_mode","2.4"},{"mod",modName},{"hardcore",state.hardcore},{"page",test?state.settings.simulation.page:state.settings.page},{"enabled",enabled},{"source",(test?state.liveSeller:state.liveDeposit)?"live":"saved"},{"custody","local_save"},{"purchasable",false},{"items",rows}};
     auto& publication=state.publications[test?1:0];const auto fingerprint=doc.dump();const auto now=UnixNow();if(fingerprint==publication.fingerprint&&now<publication.at+300)return;
@@ -142,11 +163,12 @@ inline void SaveLocal(State& state){
 }
 inline bool WritePrice(State& state,bool remove){
     state.priceSaveError.clear();
+    if(!remove&&!ValidListingComment(state.listingComment)){state.priceSaveError="Write a listing comment of up to 240 characters.";Notice(state,state.priceSaveError);return false;}
     if(!state.selected.escrowId.empty()){
         const auto before=state.local;
         try{Json command={{"id",ActivityId()},{"type",remove?"escrow_return":"escrow_price"},{"item_id",state.selected.escrowId}};
-            if(!remove)command["price"]=PriceJson(state.price);state.local.commands.push_back(std::move(command));SaveLocal(state);
-            Notice(state,remove?"Return queued. Close and reopen the stash to sync delivery.":"Asking price update queued. Refresh after sync.");state.editing=state.adding=false;Panel::SetPin({});
+            if(!remove){command["price"]=PriceJson(state.price);command["comment"]=state.listingComment;}state.local.commands.push_back(std::move(command));SaveLocal(state);
+            Notice(state,remove?"Return queued for page "+std::to_string(state.settings.withdrawPage)+". The stash refreshes automatically when idle.":"Asking price update queued. Refresh after sync.");state.editing=state.adding=false;Panel::SetPin({});
         }catch(const std::exception& e){state.local=before;state.priceSaveError=e.what();Notice(state,e.what());return false;}return true;
     }
     try{
@@ -160,15 +182,15 @@ inline bool WritePrice(State& state,bool remove){
             throw std::runtime_error("Trade setup changed while pricing this item. Reload before saving; your entered price is still here.");
         auto& drafts=state.ownSeller?latest.simulation.drafts:latest.drafts;
         const auto& original=state.ownSeller?baseline.simulation.drafts:baseline.drafts;
-        auto price=[&](const auto& rows){for(const auto& draft:rows)if(draft.tab==state.selected.tab&&draft.itemHex==state.selected.itemHex)return PriceJson(draft.price);return Json::array();};
-        const auto wanted=remove?Json::array():PriceJson(state.price);
+        auto price=[&](const auto& rows){for(const auto& draft:rows)if(draft.tab==state.selected.tab&&draft.itemHex==state.selected.itemHex)return Json{{"price",PriceJson(draft.price)},{"comment",draft.comment}};return Json::object();};
+        const auto wanted=remove?Json::object():Json{{"price",PriceJson(state.price)},{"comment",state.listingComment}};
         if(price(drafts)!=price(original)&&price(drafts)!=wanted)
             throw std::runtime_error("This item's asking price changed in another instance. Your entered price is still here; refresh to review the other change.");
         std::erase_if(drafts,[&](const Draft& draft){return draft.tab==state.selected.tab&&draft.itemHex==state.selected.itemHex;});
-        if(!remove)drafts.push_back({state.selected.tab,state.selected.itemHex,state.price});
+        if(!remove)drafts.push_back({state.selected.tab,state.selected.itemHex,state.price,state.listingComment});
         const auto next=SettingsJson(latest,modName,state.hardcore).dump(2)+"\n";
         SaveSettingsFile(state.path,current,next);state.settings=std::move(latest);state.original=next;
-        RefreshListings(state);Notice(state,remove?"Asking price removed.":"Asking price saved as a draft.");state.editing=state.adding=false;Panel::SetPin({});return true;
+        RefreshListings(state);Notice(state,remove?"Asking price removed.":!OwnEnabled(state)?"Price saved. Enable your deposit in Setup to list it.":"Asking price saved as a draft.");state.editing=state.adding=false;Panel::SetPin({});return true;
     }catch(const std::exception& e){state.priceSaveError=e.what();Notice(state,e.what());return false;}
 }
 inline const char* Quality(int q){switch(q){case 3:return "Superior";case 4:return "Magic";case 5:return "Set";case 6:return "Rare";case 7:return "Unique";case 8:return "Crafted";default:return "Normal";}}
@@ -186,7 +208,7 @@ inline bool TradeMatches(const SavedItem& item,const std::string& seller,const s
         SavedItem wanted;wanted.code=payment.code;wanted.quality=payment.quality;wanted.index=payment.index;wanted.flags=1u<<4;
         // Balance rows are payment too, but never match an equipment-quality filter.
         if(!payment.kind.empty()&&payment.kind!="item"&&quality)continue;
-        if(matches(wanted,payment.label))return true;
+        if(matches(wanted,TradeRequirementName(payment)))return true;
     }
     return false;
 }
@@ -251,9 +273,14 @@ inline void SubmitCounter(State& state){
 }
 #include "MarketplaceWithdrawalUI.inl"
 #include "MarketplaceNativeMenu.inl"
+}
+#include "MarketplaceCellBorders.inl"
+namespace Marketplace::UI {
 inline void DrawStash(bool allowed=true){
     auto& state=EditorState();const auto now=GetTickCount64();const auto view=Panel::Current();
-    if(!allowed||!view.owner||!Panel::Fresh(now,view.tick)){Close(state);Panel::Hide();return;}
+    if(!allowed){Close(state);Panel::Hide();return;}
+    if(view.suspended)return;
+    if(!view.owner||!Panel::Fresh(now,view.tick)){Close(state);Panel::Hide();return;}
     if(state.context.owner!=view.owner||state.context.hardcore!=view.hardcore){Close(state);Refresh(state);}
     state.context=view;if(Panel::dismiss.exchange(false))Panel::NativeMessage(Panel::MessageHash("BankPanelMessage"),Panel::MessageHash("MarketClose"));
     const auto saved=GetSavePath();if(saved.empty()){Panel::Hide();return;}
@@ -271,17 +298,14 @@ inline void DrawStash(bool allowed=true){
     if(state.loading.valid()&&state.loading.wait_for(std::chrono::seconds(0))==std::future_status::ready){auto result=state.loading.get();state.tables=std::move(result.tables);state.visuals=std::move(result.visuals);state.tableError=std::move(result.error);}
     if(state.scanning.valid()&&state.scanning.wait_for(std::chrono::seconds(0))==std::future_status::ready){
         try{auto result=state.scanning.get();if(result.generation==state.generation){
+            const SelectionBookmark selection(state);
             // Live capture may win the race with the disk scan. Recover its
             // persisted IDs from the completed saved scan before preferring
             // the live positions; otherwise canonical asking prices disappear.
             if(state.liveDeposit){for(auto& item:state.snapshot.deposit)item=ReconcileLiveIdentity(std::move(item),result.data.deposit,state.tables);result.data.deposit=std::move(state.snapshot.deposit);result.data.depositValid=true;result.data.depositError.clear();result.data.depositGold=state.snapshot.depositGold;result.data.goldValid=state.snapshot.goldValid;}
             if(state.liveSeller){for(auto& item:state.snapshot.seller)item=ReconcileLiveIdentity(std::move(item),result.data.seller,state.tables);result.data.seller=std::move(state.snapshot.seller);result.data.sellerValid=true;result.data.sellerError.clear();}
-            std::string selectedListing,selectedThread;
-            if(state.section==Section::Browse&&state.marketSelection>=0&&state.marketSelection<int(state.snapshot.feed.listings.size()))selectedListing=state.snapshot.feed.listings[state.marketSelection].id;
-            if(state.section==Section::Agreements&&state.activityType==0&&state.marketSelection>=0&&state.marketSelection<int(Threads(state).size()))selectedThread=Threads(state)[state.marketSelection].id;
             state.snapshot=std::move(result.data);++state.activityGeneration;RefreshListings(state);state.refresh=false;
-            if(!selectedListing.empty()){const auto& rows=state.snapshot.feed.listings;const auto found=std::find_if(rows.begin(),rows.end(),[&](const auto& r){return r.id==selectedListing;});state.marketSelection=found==rows.end()?-1:int(found-rows.begin());}
-            if(!selectedThread.empty()){const auto& rows=Threads(state);const auto found=std::find_if(rows.begin(),rows.end(),[&](const auto& r){return r.id==selectedThread;});state.marketSelection=found==rows.end()?-1:int(found-rows.begin());}
+            UpdateOwnInventory(state);selection.Restore(state);
         }}
         catch(const std::exception& e){Notice(state,e.what());state.refresh=false;}
     }
@@ -296,15 +320,17 @@ inline void DrawStash(bool allowed=true){
     if(auto result=Panel::TakeScan(state.liveRequest);result.request.sequence){
         try{
             if(!result.error.empty())throw std::runtime_error(result.error);
+            const SelectionBookmark selection(state);
             std::vector<SavedItem> items;std::array<unsigned,8> ordinals{};
             const auto& prior=result.request.page==unsigned(state.settings.page)?state.snapshot.deposit:state.snapshot.seller;
             for(const auto& item:result.items){auto savedItem=ReconcileLiveIdentity(ReadItem(item.bytes,state.tables,item.tab),prior,state.tables);savedItem.ordinal=++ordinals[item.tab];items.push_back(std::move(savedItem));}
             if(result.request.page==unsigned(state.settings.page)){state.snapshot.deposit=std::move(items);state.snapshot.depositValid=true;state.snapshot.depositError.clear();state.liveDeposit=true;state.snapshot.depositGold=result.gold;state.snapshot.goldValid=result.goldValid;}
             else if(state.settings.simulation.enabled&&result.request.page==unsigned(state.settings.simulation.page)){state.snapshot.seller=std::move(items);state.snapshot.sellerValid=true;state.snapshot.sellerError.clear();state.liveSeller=true;}
             RefreshListings(state);
-            if(!state.editing){state.marketSelection=state.ownSelection=-1;state.adding=state.counterOffer=false;}
+            UpdateOwnInventory(state);selection.Restore(state);
         }catch(const std::exception& e){Notice(state,std::string("Live stash snapshot unavailable; using saved data. ")+e.what());}
     }
+    CellBorders::Draw(state.path,state.settings,view,state.tables,state.open);
     UpdateWithdrawalPrompt(state,view,catalog);
     NativeMenu(state,view,catalog);
     Panel::Regions({},false,now); // The game widgets own input; ImGui captures nothing.

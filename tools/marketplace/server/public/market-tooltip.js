@@ -37,7 +37,11 @@ window.MarketTooltip={create(catalog){
       // Elemental ranges and poison rates are encoded as multiple save stats.
       // Poison damage is fixed point (1/256 per frame), at 25 frames/second.
       const elemental={48:'Fire',50:'Lightning',52:'Magic',54:'Cold',57:'Poison'}[p.id];
-      if(elemental){const max=rows.find(q=>q.id===p.id+1&&q.list===p.list),duration=rows.find(q=>q.id===(p.id===57?59:56)&&q.list===p.list);if(max&&(p.id!==57||duration)){used.add(max);let low=p.value,high=max.value,suffix='';if(p.id===57){low=Math.floor(low*duration.value/256);high=Math.floor(high*duration.value/256);suffix=` Over ${Number((duration.value/25).toFixed(2))} Seconds`;used.add(duration);}result.push({text:`Adds ${low===high?low:`${low} to ${high}`} ${elemental} Damage${suffix}`,kind:p.list==='set'?'set':'magic'});continue;}}
+      if(elemental){const max=rows.find(q=>q.id===p.id+1&&q.list===p.list&&(q.param||0)===(p.param||0)),duration=rows.find(q=>q.id===(p.id===57?59:56)&&q.list===p.list&&(q.param||0)===(p.param||0));if(max&&Number(p.value)>=0&&Number(max.value)>0&&Number(max.value)>=Number(p.value)&&(p.id!==57||duration&&Number(duration.value)>0)){used.add(max);let low=Number(p.value),high=Number(max.value),suffix='';if(p.id===57){low=Math.floor(low*duration.value/256);high=Math.floor(high*duration.value/256);suffix=` Over ${Number((duration.value/25).toFixed(2))} Seconds`;used.add(duration);}result.push({text:`Adds ${low===high?low:`${low} to ${high}`} ${elemental} Damage${suffix}`,kind:p.list==='set'?'set':'magic'});continue;}}
+      // Some mod properties use only one member of an elemental pair (for
+      // example +5 magic damage with a saved maximum of zero). Keep the mod's
+      // own label instead of inventing an inverted range or a nonzero endpoint.
+      if(p.id>=48&&p.id<=58&&Number(p.value)===0)continue;
       // Native display groups equal resistances, but never joins separate set
       // lists or proc parameters into a misleading combined bonus.
       if(d.group&&d.groupLabel){const members=Object.entries(catalog.stats).filter(([,s])=>visible(s)&&s.group===d.group).map(([id])=>Number(id));const found=members.map(id=>rows.find(q=>q.id===id&&q.list===p.list&&q.param===p.param&&q.value===p.value));if(found.length>1&&found.every(Boolean)){found.forEach(q=>used.add(q));result.push({text:format(d.groupLabel,[p.value]),kind:p.list==='set'?'set':'magic'});continue;}}

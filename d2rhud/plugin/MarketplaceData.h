@@ -47,16 +47,23 @@ struct Requirement {
     int quantity = 1;
     int ethereal = -1; // -1 either, 0 non-ethereal, 1 ethereal.
     std::string kind="item",stat; // Saved symbols, never table-row IDs for bag balances.
+    int classId=-1; // Optional Hellfire Torch class; absent/-1 accepts any class.
 };
+inline constexpr std::array<const char*,7> ClassNames{"Amazon","Sorceress","Necromancer","Paladin","Barbarian","Druid","Assassin"};
+inline bool ClassChoice(const Requirement& r){return r.kind=="item"&&r.code=="cm2"&&r.quality==7;}
+inline std::string RequirementName(const Requirement& r){return r.label+(r.classId>=0&&r.classId<7?" ("+std::string(ClassNames[r.classId])+")":"");}
 inline int QuantityLimit(const Requirement& r){return r.kind=="item"?MaxQuantity:MaxResourceQuantity;}
 inline bool IsFree(const std::vector<Requirement>& price){return price.size()==1&&price[0].kind=="free";}
+inline bool IsOpen(const std::vector<Requirement>& price){return price.size()==1&&price[0].kind=="open";}
 inline std::vector<Requirement> FreePrice(){return {{"free","Free",2,-1,1,-1,"free",{}}};}
 inline std::string Validate(const std::vector<Requirement>& price) {
     if (price.empty()) return "Add at least one payment item.";
     if (price.size() > MaxPriceLines) return "A price can contain at most 16 item types.";
-    if(IsFree(price)){const auto& r=price[0];return r.code=="free"&&r.quality==2&&r.index==-1&&r.quantity==1&&r.ethereal==-1&&r.stat.empty()?std::string():"Invalid free listing.";}
+    if(IsOpen(price)){const auto& r=price[0];return r.code=="open"&&r.quality==2&&r.index==-1&&r.quantity==1&&r.ethereal==-1&&r.stat.empty()&&r.classId==-1?std::string():"Invalid open-ended listing.";}
+    if(IsFree(price)){const auto& r=price[0];return r.code=="free"&&r.quality==2&&r.index==-1&&r.quantity==1&&r.ethereal==-1&&r.stat.empty()&&r.classId==-1?std::string():"Invalid free listing.";}
     for (size_t i = 0; i < price.size(); ++i) {
         const auto& r = price[i];
+        if(r.classId < -1 || r.classId > 6 || (r.classId>=0&&!ClassChoice(r)))return "Choose a valid Hellfire Torch class.";
         if (r.label.size() > 512 || r.code.empty() || r.code.size() > 4 || r.code != Code(r.code) ||
             !std::all_of(r.code.begin(), r.code.end(), [](unsigned char c) { return c >= 33 && c <= 126; }))
             return "Select a valid item from the list.";
@@ -75,7 +82,8 @@ inline std::string Validate(const std::vector<Requirement>& price) {
             if(r.code=="Z01"&&other.code=="Z01"&&((r.kind=="bag")!=(other.kind=="bag")))
                 return "Choose the storage bag or its contents in one price, not both.";
             if (r.kind==other.kind&&r.stat==other.stat&&r.code == other.code && r.quality == other.quality && r.index == other.index &&
-                (r.ethereal == -1 || other.ethereal == -1 || r.ethereal == other.ethereal))
+                (r.ethereal == -1 || other.ethereal == -1 || r.ethereal == other.ethereal)&&
+                (r.classId==-1||other.classId==-1||r.classId==other.classId))
                 return "Combine overlapping payment lines into one quantity.";
         }
     }
@@ -86,7 +94,7 @@ inline Json PriceJson(const std::vector<Requirement>& price) {
     Json result = Json::array();
     for (const auto& r : price){Json row={{"code",r.code},{"label",r.label},{"quality",r.quality},
         {"index",r.index},{"quantity",r.quantity},{"ethereal",r.ethereal}};
-        if(r.kind!="item"){row["kind"]=r.kind;if(!r.stat.empty())row["stat"]=r.stat;}result.push_back(std::move(row));}
+        if(r.kind!="item"){row["kind"]=r.kind;if(!r.stat.empty())row["stat"]=r.stat;}if(r.classId>=0)row["class_id"]=r.classId;result.push_back(std::move(row));}
     return result;
 }
 inline std::vector<Requirement> ReadPrice(const Json& value) {
@@ -95,7 +103,7 @@ inline std::vector<Requirement> ReadPrice(const Json& value) {
     for (const auto& row : value) {
         result.push_back({row.at("code").get<std::string>(),row.at("label").get<std::string>(),
             Integer(row.at("quality"),2,7),Integer(row.at("index"),-1,MaxQuantity),
-            Integer(row.at("quantity"),1,MaxResourceQuantity),Integer(row.at("ethereal"),-1,1),row.value("kind",std::string("item")),row.value("stat",std::string())});
+            Integer(row.at("quantity"),1,MaxResourceQuantity),Integer(row.at("ethereal"),-1,1),row.value("kind",std::string("item")),row.value("stat",std::string()),Integer(row.value("class_id",Json(-1)),-1,6)});
         if (result.back().label.size() > 512) throw std::runtime_error("Payment label is too long.");
     }
     const auto error = Validate(result); if (!error.empty()) throw std::runtime_error(error);
@@ -107,15 +115,18 @@ struct PaymentItem {
     uint32_t quantity = 1;
     bool identified = true, ethereal = false;
     std::string kind="item",stat;
+    int classId=-1;
 };
 inline bool Matches(const Requirement& r, const PaymentItem& item) {
     return item.identified && item.kind==r.kind&&item.stat==r.stat&&Code(item.code) == r.code && item.quality == r.quality &&
-        (r.index < 0 || item.index == r.index) && (r.ethereal < 0 || bool(r.ethereal) == item.ethereal);
+        (r.index < 0 || item.index == r.index) && (r.ethereal < 0 || bool(r.ethereal) == item.ethereal)&&
+        (r.classId<0||r.classId==item.classId);
 }
 // Pure availability check only. Custody, locking and consuming payment belong
 // to the transaction service; this must never be treated as a purchase receipt.
 inline bool CanPay(const std::vector<Requirement>& price, const std::vector<PaymentItem>& items) {
     if (!Validate(price).empty()) return false;
+    if(IsOpen(price))return false;
     if(IsFree(price))return true;
     for (const auto& r : price) {
         uint64_t available = 0;
@@ -132,7 +143,9 @@ struct Draft {
     unsigned tab = 1;
     std::string itemHex; // Complete parent and socket children; changes invalidate the draft.
     std::vector<Requirement> price;
+    std::string comment;
 };
+inline bool ValidListingComment(const std::string& text){return text.size()<=960&&std::count_if(text.begin(),text.end(),[](unsigned char c){return (c&0xc0)!=0x80;})<=240&&std::none_of(text.begin(),text.end(),[](unsigned char c){return c<32||c==127;});}
 inline bool ValidIdentity(const std::string& text) {
     return !text.empty()&&text.size()<=128&&std::all_of(text.begin(),text.end(),[](unsigned char c){return c>=32&&c!=127;});
 }
@@ -156,8 +169,8 @@ struct Settings {
 };
 inline Json SettingsJson(const Settings& settings, const std::string& mod, bool hardcore) {
     if (settings.page < 1 || settings.page > 64 || settings.drafts.size() > 4096) throw std::runtime_error("Invalid trade page or draft count.");
-    if (settings.withdrawPage < 1 || settings.withdrawPage > 64 || settings.withdrawPage == settings.page)
-        throw std::runtime_error("Deposit and withdrawal pages must be different pages between 1 and 64.");
+    if (settings.withdrawPage < 1 || settings.withdrawPage > 64)
+        throw std::runtime_error("Market page must be between 1 and 64.");
     if(settings.simulation.page<1||settings.simulation.page>64||
         (settings.simulation.enabled&&(settings.simulation.page==settings.page||settings.simulation.page==settings.withdrawPage)))
         throw std::runtime_error("The simulated seller needs a third, separate page between 1 and 64.");
@@ -167,7 +180,8 @@ inline Json SettingsJson(const Settings& settings, const std::string& mod, bool 
         for(const auto& draft:rows){
             if(draft.tab<1||draft.tab>7||!ValidItemHex(draft.itemHex))throw std::runtime_error("Invalid listing item.");
             if(!identities.emplace(draft.tab,draft.itemHex).second)throw std::runtime_error("An item has more than one asking price.");
-            result.push_back({{"tab",draft.tab},{"item_hex",draft.itemHex},{"price",PriceJson(draft.price)}});
+            if(!ValidListingComment(draft.comment))throw std::runtime_error("Write a listing comment of up to 240 characters.");
+            result.push_back({{"tab",draft.tab},{"item_hex",draft.itemHex},{"price",PriceJson(draft.price)},{"comment",draft.comment}});
         }return result;
     };
     const auto drafts=encodeDrafts(settings.drafts),sellerDrafts=encodeDrafts(settings.simulation.drafts);
@@ -179,7 +193,7 @@ inline Json SettingsJson(const Settings& settings, const std::string& mod, bool 
         agreements.push_back({{"seller",a.seller},{"listing",a.listing},{"revision",a.revision},{"item_hex",a.itemHex},{"price",PriceJson(a.price)},{"simulated",a.simulated}});
     }
     return {{"schema",Schema},{"game_mode","2.4"},{"mod",mod},{"hardcore",hardcore},
-        {"enabled",settings.enabled},{"page",settings.page},{"withdraw_page",settings.withdrawPage},
+        {"enabled",settings.enabled},{"page",settings.page},{"withdraw_page",settings.page},{"single_market_page",true},
         {"auto_trade",settings.autoTrade},{"drafts",drafts},{"agreements",agreements},
         {"simulation",{{"enabled",settings.simulation.enabled},{"page",settings.simulation.page},{"drafts",sellerDrafts}}}};
 }
@@ -191,20 +205,20 @@ inline Settings ReadSettings(const Json& source, const std::string& mod, bool ha
     Settings result; result.page = Integer(source.at("page"),1,64); result.enabled = source.at("enabled").get<bool>();
     // Older drafts only designated a deposit page. Preserve their prices and
     // default to manual approval; never opt an existing player into auto-trade.
-    result.withdrawPage = source.contains("withdraw_page") ? Integer(source.at("withdraw_page"),1,64) : (result.page==2?1:2);
+    result.withdrawPage = result.page; // Legacy routes converge on the existing sale page.
     if(source.contains("auto_trade")) {
         if(!source.at("auto_trade").is_boolean())throw std::runtime_error("Invalid auto-trade policy.");
         result.autoTrade=source.at("auto_trade").get<bool>();
     }
     for (const auto& row : source.at("drafts")) {
-        result.drafts.push_back({unsigned(Integer(row.at("tab"),1,7)),row.at("item_hex").get<std::string>(),ReadPrice(row.at("price"))});
+        result.drafts.push_back({unsigned(Integer(row.at("tab"),1,7)),row.at("item_hex").get<std::string>(),ReadPrice(row.at("price")),row.value("comment",std::string())});
     }
     while(result.simulation.page==result.page||result.simulation.page==result.withdrawPage)++result.simulation.page;
     if(source.contains("simulation")){
         const auto& sim=source.at("simulation");
         if(!sim.at("enabled").is_boolean()||!sim.at("drafts").is_array()||sim.at("drafts").size()>4096)throw std::runtime_error("Invalid simulated seller settings.");
         result.simulation.enabled=sim.at("enabled").get<bool>();result.simulation.page=Integer(sim.at("page"),1,64);
-        for(const auto& row:sim.at("drafts"))result.simulation.drafts.push_back({unsigned(Integer(row.at("tab"),1,7)),row.at("item_hex").get<std::string>(),ReadPrice(row.at("price"))});
+        for(const auto& row:sim.at("drafts"))result.simulation.drafts.push_back({unsigned(Integer(row.at("tab"),1,7)),row.at("item_hex").get<std::string>(),ReadPrice(row.at("price")),row.value("comment",std::string())});
     }
     if(source.contains("agreements")){
         const auto& rows=source.at("agreements");if(!rows.is_array()||rows.size()>256)throw std::runtime_error("Invalid agreement drafts.");

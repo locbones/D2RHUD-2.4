@@ -85,7 +85,7 @@ trait MarketplaceIdentity {
         }
         if($custody){$r=$custody[0];
             if($r['owner']!==$owner)throw new MarketError(409,'This item has already changed owner. A restored copy cannot be hosted.');
-            if($r['state']!=='delivered')throw new MarketError(409,'This item is already held in escrow. A restored copy cannot be deposited.');
+            if($r['state']!=='delivered')throw new MarketError(409,'This item is already held in Vault. A restored copy cannot be deposited.');
             if(!$discovery&&$ledger!==$r['item'])throw new MarketError(409,'This delivered item needs its existing ledger reference. Refresh the companion before depositing.');
             return $r['item'];
         }

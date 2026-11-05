@@ -10,6 +10,7 @@ using namespace Data;
 constexpr uint8_t Operation=2;
 constexpr size_t EntriesPerPacket=12,MaxCells=65536,MaxMonsters=16384;
 enum class Stream:uint8_t { Geometry,Monsters };
+inline constexpr uint8_t CompanionKind=4;
 #pragma pack(push,1)
 struct Entry {uint32_t id=0;int32_t x=0,y=0;uint8_t kind=0;};
 struct Wire {
@@ -18,7 +19,10 @@ struct Wire {
     uint16_t level=39;Stream stream=Stream::Geometry;
     uint32_t offset=0,total=0;uint8_t count=0;
     std::array<Entry,EntriesPerPacket> entries{};
-    std::array<uint8_t,11> padding{};
+    // Reserved-byte extension: legacy clients still see ordinary, valid kinds.
+    // Updated clients promote these entries to CompanionKind after decoding.
+    uint16_t companions=0;
+    std::array<uint8_t,9> padding{};
 };
 #pragma pack(pop)
 static_assert(sizeof(Entry)==13 && sizeof(Wire)==sizeof(Packet));
@@ -33,7 +37,7 @@ inline bool Valid(const Wire& w){
     if(w.opcode!=0x2b || w.magic!=PacketMagic || w.operation!=Operation || w.version!=1 || !w.run || !w.revision ||
        (w.level!=39 && w.level!=108 && w.level!=239) || w.stream>Stream::Monsters || w.total>(w.stream==Stream::Geometry?MaxCells:MaxMonsters) ||
        w.offset>w.total || w.offset%EntriesPerPacket || w.count!=std::min<size_t>(EntriesPerPacket,w.total-w.offset) ||
-       (w.total && !w.count))return false;
+       (w.total && !w.count) || (w.companions>>w.count) || (w.stream==Stream::Geometry && w.companions))return false;
     for(size_t i=0;i<w.count;++i){const auto& e=w.entries[i];
         if(e.x<-(1<<24) || e.x>(1<<24) || e.y<-(1<<24) || e.y>(1<<24) ||
            e.kind>(w.stream==Stream::Geometry?1:3) || (w.stream==Stream::Geometry && e.id>32767))return false;
@@ -51,11 +55,21 @@ struct Assembly {
         if(revision!=w.revision){revision=w.revision;received=0;complete=false;pending.resize(w.total);parts.assign(std::max<size_t>(1,(w.total+EntriesPerPacket-1)/EntriesPerPacket),false);}
         if(pending.size()!=w.total || complete)return false;
         const auto part=w.offset/EntriesPerPacket;if(parts[part])return false;
-        std::copy_n(w.entries.begin(),w.count,pending.begin()+w.offset);parts[part]=true;++received;
+        std::copy_n(w.entries.begin(),w.count,pending.begin()+w.offset);
+        for(size_t i=0;i<w.count;++i)if(w.companions&(1u<<i))pending[w.offset+i].kind=CompanionKind;
+        parts[part]=true;++received;
         if(received==parts.size()){ready=std::make_shared<const std::vector<Entry>>(std::move(pending));complete=true;}
         return true;
     }
 };
+// Use formerly reserved packet bytes for the companion flags. Keep legacy
+// monster kinds on the wire, so older clients do not reject an entire snapshot.
+template<class W>inline void EncodeMarkers(W& wire,const std::vector<Entry>& entries,size_t offset){
+    wire.companions=0;std::copy_n(entries.begin()+offset,wire.count,wire.entries.begin());
+    for(size_t i=0;i<wire.count;++i)if(wire.entries[i].kind==CompanionKind){
+        wire.companions|=uint16_t(1u<<i);wire.entries[i].kind=0;
+    }
+}
 // Native map nodes are read by the renderer only. These private trees are
 // never linked into the game's layer list, serializer or exploration flags.
 struct CellNode {CellNode *parent=nullptr,*left=nullptr,*right=nullptr;uint64_t color=0;uint8_t saved=1,pad=0;int16_t image=0;int32_t x=0,y=0,padding=0;};
@@ -83,7 +97,8 @@ struct Geometry {
     Geometry(const Geometry&)=delete;Geometry& operator=(const Geometry&)=delete;
 };
 inline uint8_t MonsterKind(uint8_t flags,bool boss,bool objective){return boss || objective || (flags&0x02)?3:(flags&0x04)?1:(flags&0x08)?3:(flags&0x10)?2:0;}
-inline int SpriteFrame(uint8_t kind){return kind==0?3:kind<=2?1:5;} // units.sprite: dark gray-blue, green, red
+inline int SpriteFrame(uint8_t kind){return kind==CompanionKind?0:kind==0?3:kind<=2?1:5;}
+// Native units.sprite: companions bright blue; enemies gray-blue/green/red.
 struct Point {int32_t x=0,y=0;};
 inline Point Project(Point p,const uint8_t* transform){
     const auto integer=[&](size_t o){int32_t v;memcpy(&v,transform+o,4);return v;};

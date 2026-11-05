@@ -51,7 +51,7 @@ def main():
         saves = root / 'saves'
         saves.mkdir()
         (saves / 'custody-simulation.json').write_text('{}', encoding='utf-8')
-        data = root / 'data'
+        data = root / 'mods' / 'RMD-MP' / 'RMD-MP.mpq' / 'data'
         (data / 'global/excel').mkdir(parents=True)
         for name in ('weapons', 'armor', 'misc', 'itemstatcost', 'itemtypes'):
             (data / f'global/excel/{name}.bin').write_bytes(b'fixture')

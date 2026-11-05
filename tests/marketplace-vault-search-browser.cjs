@@ -1,0 +1,53 @@
+const {chromium}=require('../build-marketplace/browser-check/node_modules/playwright');
+const assert=require('node:assert/strict'),fs=require('node:fs');
+(async()=>{
+  const fixture=JSON.parse(fs.readFileSync(process.env.VAULT_SEARCH_FIXTURE,'utf8'));
+  const browser=await chromium.launch({channel:'msedge',headless:true});
+  try{
+    const page=await browser.newPage({viewport:{width:1440,height:1000}}),errors=[];
+    page.on('pageerror',error=>errors.push(error.message));
+    const url=process.env.VAULT_SEARCH_ORIGIN,owner=fixture.seller.id;
+    await page.goto(url+'/#escrow/'+owner);
+    const search=page.getByRole('searchbox',{name:'Search this player’s Vault'});
+    await search.waitFor();assert.equal(await page.locator('.public-escrow-card').count(),48);
+    await search.fill('jordan stone rings');
+    await page.waitForFunction(()=>document.querySelector('#vault-search-results[aria-busy=false]')?.textContent.includes('matching'));
+    assert(await page.locator('.public-escrow-card').count()>=10);
+    assert((await page.locator('.public-escrow').textContent()).includes('Stone of Jordan'));
+    assert.equal(await search.evaluate(el=>el===document.activeElement),true,'Search retains focus');
+    await page.getByRole('button',{name:'List view',exact:true}).click();
+    await page.waitForSelector('.public-escrow[data-view=list]');assert.equal(await search.inputValue(),'jordan stone rings');
+    await search.fill('ring');await search.press('Enter');
+    await page.waitForSelector('[data-trading="more-escrow"]:enabled');
+    await page.locator('[data-trading="more-escrow"]').click();
+    await page.waitForFunction(()=>document.querySelectorAll('.public-escrow-card').length===96);
+    assert.equal(await search.inputValue(),'ring','Pagination preserves query');
+    await search.fill('no such item');await search.press('Enter');
+    await page.getByText('No matching items',{exact:true}).waitFor();
+    await page.getByRole('button',{name:'Clear',exact:true}).click();
+    await page.waitForFunction(()=>document.querySelectorAll('.public-escrow-card').length===48);
+    assert.equal(await search.inputValue(),'');
+    await page.route('**/web.php?**',async route=>{
+      const request=new URL(route.request().url());
+      if(request.searchParams.get('action')==='player-escrow'&&request.searchParams.get('q')==='stone')await new Promise(resolve=>setTimeout(resolve,700));
+      await route.continue();
+    });
+    await search.fill('stone');await search.press('Enter');
+    await search.fill('zod');await search.press('Enter');
+    await page.getByText('No matching items',{exact:true}).waitFor();
+    await page.waitForTimeout(900);
+    assert.equal(await page.locator('.public-escrow-card').count(),0,'Stale search response ignored');
+    await page.setViewportSize({width:390,height:844});
+    await search.fill('stone');await search.press('Enter');
+    await page.waitForFunction(()=>document.querySelectorAll('.public-escrow-card').length>=10);
+    assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'No mobile overflow');
+    await page.screenshot({path:'build-marketplace/vault-search-mobile.png',fullPage:true});
+    await search.fill('stone');await search.press('Enter');
+    await page.goto(url+'/#browse');await page.locator('#listing-search').waitFor();
+    await page.waitForTimeout(900);assert.equal(await page.locator('#vault-search-form').count(),0,'Late Vault response cannot replace another page');
+    await page.goto(url+'/#escrow/'+fixture.buyer.id);await search.waitFor();
+    assert.equal(await search.inputValue(),'','Another player starts with an empty search');
+    assert((await page.locator('main').textContent()).includes('Development Player'));
+    assert.deepEqual(errors,[]);console.log('PASS browser: full-Vault search, live typing, focus, list view, filtered paging, clear/no matches, stale responses, navigation and mobile layout.');
+  }finally{await browser.close();}
+})().catch(error=>{console.error(error);process.exitCode=1;});

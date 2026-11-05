@@ -14,7 +14,10 @@ $call=function($data)use($m,$agent,$catalog){$data+=['catalog'=>$catalog];return
 $id=Market::id();$call(['id'=>$id,'type'=>'deposit_prepare','balances'=>[$gold],'items'=>[],'pages'=>$pages]);refuses(fn()=>$m->ownerCommand($owner,$start,$dir),409);check($m->controlState()['phase']==='live');
 $call(['id'=>$id,'type'=>'write_authorize','pages'=>$pages]);$call(['id'=>$id,'type'=>'commit','pages'=>$pages]);
 $settings=['page'=>11,'withdraw_page'=>2,'enabled'=>true,'auto_trade'=>true];$call(['type'=>'web_sync','settings'=>$settings,'inventory'=>[]]);$tokenBefore=$m->run('SELECT token_hash FROM actors WHERE id=?',[$owner['id']])->fetchColumn();
+$unsynced=$m->user('Unsynced');$m->browserLink(['code'=>$m->browserTicket($unsynced)['code']]);
+$m->command($unsynced,['id'=>Market::id(),'type'=>'web_setup','expected_revision'=>0,'page'=>17,'withdraw_page'=>4,'enabled'=>true,'auto_trade'=>false],false);
 $ready=$m->ownerCommand($owner,$start,$dir);check($m->ownerCommand($owner,$start,$dir)===$ready);check(!$ready['ready_to_clear']&&$ready['withdrawals']===1&&$m->controlState()['phase']==='draining');
+check(!(int)$m->run("SELECT COUNT(*) FROM web_intents WHERE owner=? AND kind='setup' AND status='queued'",[$unsynced['id']])->fetchColumn());
 $finish=['id'=>Market::id(),'type'=>'clear_finish','confirm'=>'CLEAR MARKETPLACE','reset_id'=>$ready['control']['reset_id']];refuses(fn()=>$m->ownerCommand($owner,$finish,$dir),409);
 $cmd=['id'=>Market::id(),'type'=>'preferences','auto_trade'=>true];refuses(fn()=>$m->controlledRequest($player,'command',$cmd,false,fn()=>$m->command($player,$cmd,false)),409);
 refuses(fn()=>$call(['id'=>Market::id(),'type'=>'deposit_prepare','balances'=>[$gold],'items'=>[],'pages'=>$pages]),409);
@@ -39,5 +42,15 @@ $historyItems=0;$competing=0;foreach($snapshot['listings'] as $liveListing){$pas
 check($historyItems===24&&$competing>=20);$listing=current(array_filter($snapshot['listings'],fn($r)=>!$r['own']&&($r['price'][0]['kind']??'')==='gold'));
 $offer=['id'=>Market::id(),'type'=>'propose','listing_id'=>$listing['id'],'listing_revision'=>1,'price'=>$listing['price']];$r=$d->command($owner,$offer,false);MarketplaceDemo::respond($d,$owner,$offer,$r);$count=(int)$d->run('SELECT COUNT(*) FROM commands')->fetchColumn();MarketplaceDemo::respond($d,$owner,$offer,$r);check((int)$d->run('SELECT COUNT(*) FROM commands')->fetchColumn()===$count);
 check($d->run('SELECT status FROM offers WHERE id=?',[$r['offer_id']])->fetchColumn()==='completed');
+// Live UID recovery authorizes the existing private demo independently of names.
+$replacement=$m->user('Bonesy');$m->run('UPDATE market_owners SET owner=? WHERE community=?',[$replacement['id'],$m->community]);
+$d->db->exec('DROP TABLE market_trade_assets');$d->db->exec('PRAGMA user_version=0');
+refuses(fn()=>MarketplaceDemo::open($dir,$replacement),403);
+check(MarketplaceDemo::status($dir,$replacement,$m)['available']);
+check(MarketplaceDemo::open($dir,$replacement,$m)->isOwner($replacement));
+refuses(fn()=>MarketplaceDemo::status($dir,$owner,$m),403);refuses(fn()=>MarketplaceDemo::open($dir,$moderator,$m),403);
+$m->run('UPDATE actors SET name=? WHERE id=?',['Renamed owner',$replacement['id']]);$replacement=$m->browserActor($replacement['id']);
+check(MarketplaceDemo::status($dir,$replacement,$m)['available']);
+$m->run('UPDATE market_owners SET owner=? WHERE community=?',[$owner['id'],$m->community]);check(MarketplaceDemo::status($dir,$owner,$m)['available']);
 $d=null;refuses(fn()=>MarketplaceDemo::clear($owner,['id'=>Market::id(),'confirm'=>'CLEAR DEMO','expected_demo'=>'stale'],$dir),409);MarketplaceDemo::clear($owner,['id'=>Market::id(),'confirm'=>'CLEAR DEMO','expected_demo'=>$demo['id']],$dir);check(!MarketplaceDemo::status($dir,$owner)['available']);
 echo "Owner controls: stable owner-only capability, moderator refusal, isolated 65-player/320-listing/240-sale demo, real-domain bot settlement and retry dedupe, guarded escrow drain, blocked early purge/new deposits, private backup, retained links/permissions and exactly-once save receipts, late-client reset fence and stale-demo refusal passed.\n";

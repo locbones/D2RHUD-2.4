@@ -5,6 +5,11 @@
 #include <ctime>
 
 namespace Marketplace {
+inline std::vector<uint8_t> Unhex(const std::string& value){
+    if(!ValidItemHex(value))throw std::runtime_error("Invalid marketplace item bytes.");
+    auto digit=[](char c){return c<='9'?c-'0':c-'a'+10;};std::vector<uint8_t> bytes;bytes.reserve(value.size()/2);
+    for(size_t i=0;i<value.size();i+=2)bytes.push_back(uint8_t(digit(value[i])*16+digit(value[i+1])));return bytes;
+}
 struct OfferEvent {int64_t at=0;std::string kind,actor,message;std::vector<Requirement> price;};
 struct CounterThread {
     std::string id,listing,itemId,itemHex,buyer,seller,proposer,buyerName,sellerName,status="draft";
@@ -17,7 +22,8 @@ struct Sale {
     int quality=2,index=-1,ethereal=0,sockets=0;int64_t at=0;
     std::vector<Requirement> price;
 };
-struct Activity {std::string self,name,error;int64_t expires=0;std::vector<Sale> sales;std::vector<CounterThread> threads;Json results=Json::object();};
+struct GiftCampaign {std::string id,title,announcement,from,message;int64_t expires=0;bool claimed=false,claimable=false;std::vector<SavedItem> items;};
+struct Activity {std::string self,name,error;int64_t expires=0;std::vector<Sale> sales;std::vector<CounterThread> threads;Json results=Json::object();std::vector<GiftCampaign> gifts;};
 struct LocalActivity {std::vector<CounterThread> threads;Json commands=Json::array();};
 inline std::string ActivityId(){std::random_device random;std::array<uint8_t,16> bytes{};for(auto& b:bytes)b=uint8_t(random());return Hex(bytes);}
 inline std::string ActivityText(const Json& row,const char* key,size_t maximum=128,bool empty=false){
@@ -42,7 +48,7 @@ inline CounterThread ReadThread(const Json& row,bool local){
 inline void ActivityEnvelope(const Json& doc,const std::string& mod,bool hardcore){
     if(doc.at("schema")!=1||doc.at("game_mode")!="2.4"||doc.at("mod")!=mod||doc.at("hardcore")!=hardcore||!doc.at("hardcore").is_boolean())throw std::runtime_error("Activity cache belongs to another game mode.");
 }
-inline Activity ReadActivity(const Json& doc,const std::string& mod,bool hardcore,int64_t now){
+inline Activity ReadActivity(const Json& doc,const std::string& mod,bool hardcore,int64_t now,const SaveTables* tables=nullptr){
     ActivityEnvelope(doc,mod,hardcore);Activity result;result.self=ActivityText(doc.at("self"),"id");result.name=ActivityText(doc.at("self"),"name");result.expires=Integer(doc.at("expires_at"),1,INT32_MAX);
     if(result.expires<=now||result.expires>now+86400)throw std::runtime_error("Activity cache expired. Sync before responding.");
     const auto& sales=doc.at("history");const auto& offers=doc.at("offers");if(!sales.is_array()||sales.size()>1000||!offers.is_array()||offers.size()>256)throw std::runtime_error("Activity cache is too large.");
@@ -50,6 +56,16 @@ inline Activity ReadActivity(const Json& doc,const std::string& mod,bool hardcor
     for(const auto& row:sales){Sale s;s.id=ActivityText(row,"id");s.itemId=ActivityText(row,"item");s.code=Code(ActivityText(row,"code",4));s.seed=ActivitySeed(row.at("seed"));s.uuid=row.value("item_uuid",std::string());if(!s.uuid.empty()&&(s.uuid.size()!=32||s.uuid.find_first_not_of("0123456789abcdef")!=std::string::npos))throw std::runtime_error("Invalid saved UUID.");s.quality=Integer(row.at("quality"),1,9);s.index=Integer(row.at("item_index"),-1,MaxQuantity);s.ethereal=Integer(row.at("ethereal"),0,1);s.sockets=Integer(row.at("sockets"),0,6);s.at=Integer(row.at("at"),1,INT32_MAX);
         if(row.at("kind")!="completed_sale"||s.at>now||!saleIds.insert(s.id).second)throw std::runtime_error("Invalid completed-sale history.");s.seller=ActivityText(row,"seller_name");s.buyer=ActivityText(row,"buyer_name");s.receipt=ActivityText(row,"receipt");if(!receipts.insert(s.receipt).second)throw std::runtime_error("Duplicate sale receipt.");s.price=ReadPrice(row.at("price"));result.sales.push_back(std::move(s));}
     for(const auto& row:offers){auto t=ReadThread(row,false);if(t.simulated||t.revision<1||(t.buyer!=result.self&&t.seller!=result.self)||!threadIds.insert(t.id).second)throw std::runtime_error("Invalid private conversation.");result.threads.push_back(std::move(t));}
+    if(doc.contains("gifts")){
+        const auto& gifts=doc.at("gifts");if(!gifts.is_array()||gifts.size()>8)throw std::runtime_error("Invalid community gift list.");std::set<std::string> ids;
+        for(const auto& row:gifts){GiftCampaign g;g.id=ActivityText(row,"id",32);g.title=ActivityText(row,"title",80);g.from=ActivityText(row.at("owner"),"name",128);g.announcement=row.at("announcement").get<std::string>();
+            if(!ids.insert(g.id).second||g.announcement.size()>512)throw std::runtime_error("Invalid gift announcement.");
+            g.claimed=row.at("claimed").get<bool>();g.claimable=row.at("claimable").get<bool>();if(!row.at("expires").is_null())g.expires=Integer(row.at("expires"),1,INT32_MAX);
+            if(g.claimed&&!row.at("claim").is_null()){g.message=row.at("claim").at("message").get<std::string>();if(g.message.size()>2048)throw std::runtime_error("Invalid gift message.");}
+            const auto& items=row.at("items");if(!tables||!items.is_array()||items.empty()||items.size()>16)throw std::runtime_error("Gift item definitions are unavailable.");
+            for(const auto& item:items)g.items.push_back(ReadItem(Unhex(ActivityText(item,"item_hex",65536)),*tables,1));result.gifts.push_back(std::move(g));
+        }
+    }
     if(doc.contains("command_results")){const auto& rows=doc["command_results"];if(!rows.is_object()||rows.size()>4096)throw std::runtime_error("Invalid command receipts.");result.results=rows;}if(doc.contains("publication_error"))result.error=ActivityText(doc,"publication_error",512,true);return result;
 }
 inline Json LocalActivityJson(const LocalActivity& local,const std::string& mod,bool hardcore){

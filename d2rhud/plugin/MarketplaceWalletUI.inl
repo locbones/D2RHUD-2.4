@@ -7,7 +7,7 @@ inline Json WalletRows(const State& state){
 inline void ResetWalletForm(State& state){state.walletForm=state.walletReview=false;state.walletCancel=Json();state.walletAsset=Json();}
 inline bool WalletCommand(State& state,uint64_t command,const std::map<std::string,Panel::NativeInput>& inputs){
     auto is=[&](const std::string& name){return command==Panel::MessageHash(name);};
-    if(is("MarketWallet")){state.walletOpen=true;state.walletOffset=0;state.walletMode=0;ResetWalletForm(state);++state.walletRevision;return true;}
+    if(is("MarketWallet")){state.walletOpen=true;state.ownSelection=-1;state.walletOffset=0;state.walletMode=0;ResetWalletForm(state);++state.walletRevision;return true;}
     if(!state.walletOpen)return false;
     try{
         if(is("MarketWalletBack")){if(state.walletForm)ResetWalletForm(state);else state.walletOpen=false;return true;}
@@ -20,7 +20,7 @@ inline bool WalletCommand(State& state,uint64_t command,const std::map<std::stri
             else return true;state.walletForm=true;++state.walletRevision;return true;
         }
         if(is("MarketWalletSubmit")&&state.walletForm){
-            if(!state.walletPending.empty())throw std::runtime_error("Wait for the previous wallet request to sync.");
+            if(!state.walletPending.empty())throw std::runtime_error("Wait for the previous Vault request to sync.");
             if(!state.walletCancel.is_null()){
                 state.walletPending=QueueSocial(state,{{"type","wallet_cancel"},{"withdrawal_id",state.walletCancel.at("id")},{"expected_revision",state.walletCancel.at("revision")}});
             }else{
@@ -31,7 +31,7 @@ inline bool WalletCommand(State& state,uint64_t command,const std::map<std::stri
                 if(kind=="bag")row["stat"]=state.walletAsset.at("stat");
                 state.walletPending=QueueSocial(state,{{"type","wallet_withdraw"},{"balances",Json::array({row})}});
             }
-            ResetWalletForm(state);state.walletMode=1;state.walletOffset=0;++state.walletRevision;Notice(state,"Wallet request queued. View another stash page while delivery syncs.");return true;
+            ResetWalletForm(state);state.walletMode=1;state.walletOffset=0;++state.walletRevision;Notice(state,"Vault withdrawal queued. The stash refreshes automatically when idle.");return true;
         }
     }catch(const std::exception& e){Notice(state,e.what());return true;}
     return false;
@@ -42,9 +42,10 @@ inline void PresentWallet(State& state,Panel::NativeView& result){
     show("MarketWalletGroup",state.walletOpen);if(!state.walletOpen)return;
     if(!state.walletPending.empty()&&state.snapshot.activity.results.contains(state.walletPending))state.walletPending.clear();
     show("MarketListGroup",false);show("MarketSetupGroup",false);show("MarketWalletRows",!state.walletForm);show("MarketWalletForm",state.walletForm);
-    text("MarketWalletBackButtonLabel",state.walletForm?"Back to wallet":"My items");
-    text("MarketWalletHelp","Funds stay available until spent or withdrawn. View another stash page while delivery syncs, then switch back. Bag withdrawals need a compatible bag on the delivery page.");
-    show("MarketWalletMode",!state.walletForm);result.choices.push_back({"MarketWalletMode",state.walletMode,state.walletRevision});
+    text("MarketWalletBackButtonLabel",state.walletForm?"Back to Vault":"Items");
+    text("MarketWalletTitle",state.walletMode==0?"VAULT | GOLD & RESOURCES":state.walletMode==1?"VAULT | WITHDRAWALS":"VAULT | ACTIVITY");
+    text("MarketWalletHelp","Funds stay available until spent or withdrawn. The market page refreshes automatically when the stash is idle. Bag currencies arrive in a new, mergeable Storage Bag.");
+    show("MarketWalletMode",false);result.choices.push_back({"MarketWalletMode",state.walletMode,state.walletRevision});
     const auto rows=WalletRows(state);state.walletOffset=rows.empty()?0:(std::min)(state.walletOffset,int((rows.size()-1)/4)*4);
     text("MarketWalletPage","Page "+std::to_string(state.walletOffset/4+1)+" / "+std::to_string((std::max)(size_t(1),(rows.size()+3)/4)));
     show("MarketWalletPrevButton",!state.walletForm&&state.walletOffset>0);show("MarketWalletNextButton",!state.walletForm&&state.walletOffset+4<int(rows.size()));show("MarketWalletPage",!state.walletForm);
@@ -62,7 +63,7 @@ inline void PresentWallet(State& state,Panel::NativeView& result){
         show("MarketWalletAmountField",!cancel&&!state.walletReview);show("MarketWalletAmountTitle",!cancel&&!state.walletReview);
         result.widgets.push_back({"MarketWalletAmount",state.walletAmount,true,true,state.walletRevision});
         text("MarketWalletReviewAmount",!cancel&&state.walletReview?state.walletAmount+" x "+WalletLabel(state.walletAsset):"");show("MarketWalletReviewAmount",!cancel&&state.walletReview);
-        text("MarketWalletFormHelp",cancel?"Only the undelivered remainder returns to your trading balance. Amounts already delivered stay in your game.":"Requested funds are reserved immediately. View another stash page while delivery syncs, then switch back. Any amount that does not fit stays queued and can be cancelled.");
+        text("MarketWalletFormHelp",cancel?"Only the undelivered remainder returns to your trading balance. Amounts already delivered stay in your game.":"Requested funds are reserved immediately. The market page refreshes automatically when the stash is idle. Any amount that does not fit stays queued and can be cancelled.");
         text("MarketWalletSubmitButtonLabel",cancel?"Cancel remainder":state.walletReview?"Queue withdrawal":"Review amount");
     }
 }

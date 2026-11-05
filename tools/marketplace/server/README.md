@@ -1,5 +1,48 @@
 # DreamHost marketplace service
 
+Marketplace compatibility protocol 2 fingerprints the native helper's normalized
+saved item flags, dimensions, stat widths/addends, code dictionary and bag stat
+mapping. Whole BIN hashes and unrelated HUD metadata no longer define a market.
+`market_catalog_versions` retains each revision; a mod's compatible family keeps
+its existing custody catalog and account/agent credentials. Additions merge;
+conflicting existing saved definitions refuse with the relevant key. Older
+receivers cannot claim new items, socket contents or properties they lack.
+
+Before upgrading an existing opaque catalog, the operator must seed its family
+with `seedLegacyCompatibility` from files whose old whole-file digest matches
+the registered catalog. New mods register their own independent family.
+Authenticated `custody/catalog_refresh` updates a paired agent's revision with
+no pending write. Pandemonium performs this automatically after compatible mod
+updates. Local guards still verify the helper and semantic schema before writes;
+pending journals and game launch availability remain protected.
+
+Public display names are editable and may be shared. Every player receives a
+permanent compact player ID such as `P-000001`; profile links and ownership keep
+using the existing internal actor ID. IDs appear beside names in listings,
+profiles, private conversations, sale history and seller rankings. Player search
+accepts the public ID. Name-only messages and gifts refuse ambiguous matches.
+
+Operator-only `cli.php retire-player OLD_ID NEW_ID CLAIM_NAME` retires an empty
+account, revokes its tokens and pairings, and arms one permission recovery for
+the specified code-linked replacement. Return or gift all escrow first. A name
+change to CLAIM_NAME consumes that recovery; matching names on other accounts
+never grant permissions. A private database backup must precede retirement.
+Retired actor tombstones and financial records remain for item-history audits.
+
+Owner authorization uses the live actor UID, never its display name. Private
+demo access rebinds its cached owner only after the live service verifies that
+UID; a stale or unavailable demo must not block live Owner Tools.
+
+Owner Tools → Trade history provides scoped, paginated trade inspection by
+player UID/name, item UUID/ledger ID, saved seed, trade ID or settlement receipt.
+New settlements atomically retain sanitized exact goods/payment snapshots in
+`market_trade_assets`, including stack fragments. Claim commit attaches the
+acknowledged save-write receipt and delivery pages to the latest recipient leg.
+Resource proceeds are wallet credits, not proof of physical withdrawal. Older
+trades without transfer snapshots are explicitly marked as incomplete evidence;
+missing receipts never imply a failed delivery. These private records are
+owner-only, included in reset backups, and cleared with marketplace history.
+
 Live API: **https://market.d2rmodding.com/index.php**. DreamHost hosting, the
 certificate, Apache authorization, MySQL and initial PC synchronization are
 verified. It needs PHP 8.1+ (64-bit), PDO MySQL and MySQL/InnoDB.
@@ -320,3 +363,93 @@ interruption matrix. It never writes to the supplied reference saves and stores
 its latest report in `build-marketplace/resilience-last.json`. Additional MySQL
 validation includes concurrent free-bundle claimants with one winner and exact
 member/payment conservation; every validation table uses a disposable prefix.
+
+## Automatic player installation
+
+`POST index.php?action=enroll` provisions an ordinary player and a mod/catalog-scoped
+save agent from a client-generated random installation secret. The launcher persists
+that secret before sending it. Retrying after an interrupted response returns the
+same identity and credentials; it cannot select an existing owner, change catalogs,
+elevate roles or cross mod/game-mode scopes. Only hashes are stored on the service.
+New installations are rate limited by a hashed direct peer address. Existing paired
+requests continue working at the limit. Run `php cli.php init` before deploying the
+new endpoint so `market_installations` exists. This registry survives marketplace
+resets along with real player links and names.
+
+
+## Open offers, wanted listings and the message center
+
+RMD-MP's Codex reference is exported from `override_rules.lua` by
+`build-codex-reference.py`. It maps 49 description-only Testament labels and seven
+completed Testaments to their existing item codes and qualities. The generated
+native header and website catalog use the same labels; prices and wanted posts
+continue matching exact saved identities, with no new save fields or price format.
+
+Listings accept an optional public `comment` of up to 240 Unicode characters.
+Comments accompany local asking-price drafts, discovery publication and Vault
+pricing, and appear in public/native listings. They are informational text, never
+payment instructions. HTML is escaped by the browser. Missing fields from older
+clients preserve the existing comment; an explicit empty string clears it. Website
+stash comments require the paired `listing_comments` capability so an older HUD
+cannot silently discard them. Comments belong to listings, not subsequent owners.
+
+The website supports fixed prices, explicit free claims, and `Open to Offers`.
+The latter is an asking-price marker, never a payment. Every proposal supplies
+concrete terms and requires manual approval even if auto-trade is enabled. Legacy
+native feeds omit the new asking marker so older HUDs keep working. Local stash
+pricing exposes it only after a companion with a compatible HUD reports support.
+Existing escrow goods can use it immediately.
+
+Wanted posts (`wanted_create`, `wanted_close`, `wanted_respond`) are scoped catalog
+requests, with either a payment bundle or "Please message me". They never invent
+custody items. Responses attach an identified matching item already in the seller's
+escrow, create a seller-proposed conversation, and use normal acceptance, funding,
+settlement and delivery. Publishing a WTB budget is not purchase consent. A
+completed response marks the wanted post fulfilled. Existing conversations remain
+available after a wanted post closes.
+
+`player-escrow` exposes safe item display metadata and available wallet balances
+for a code-linked player in the selected mod/mode. It excludes delivery reservations
+and never exposes save bytes, tokens, private paths or recovery records. Trade
+messages are grouped by offer/transaction and include both sent and received event
+messages; Direct Messages retains ordinary conversations with older-message paging.
+The public Vault's optional `q` parameter searches item names, base names, types,
+and codes with the same partial-word rules as trade browsing. Filtering occurs
+before the 48-item page limit, and `after` continues only that query's matches.
+Delivery reservations and unidentified names remain excluded from search results.
+The browser keeps the search while switching item views or loading more matches.
+
+Trade conversations across mods/modes appear in one center; selecting one changes
+the active market before showing its item or enabling trade actions. Read markers
+acknowledge only the open conversation. Standalone gift/search notices remain in
+Other trade updates.
+
+## Signed companion release channel (Windows)
+
+Pandemonium 0.1.9 adds automatic companion updates. Older launchers need that
+launcher release once; subsequent companion releases require no repair/relink.
+The windowless supervisor checks `/companion/manifest.json` every five minutes in
+a background thread. Its RSA/SHA-256 publisher key is pinned in the launcher and
+supervisor. A bounded content-addressed ZIP is verified before extraction, and
+every runtime member is checked. Profiles adopt new code under the existing setup
+and save guard leases, between operations; a pending save journal defers adoption.
+Owner, mod, catalog family, credentials, and guarded launcher/HUD pins are preserved.
+The launcher retains a newer authenticated cached runtime during normal maintenance.
+No updater changes a stash or terminates a game/save writer.
+
+Build the HUD, then package both launcher platforms. Prepare the signed channel:
+
+```powershell
+& tools/marketplace/publish-companion.ps1 -OutputDirectory build-marketplace/signed-companion
+```
+
+The private key defaults to `%USERPROFILE%/.d2r-marketplace-signing/companion-rsa.pem`,
+outside both source repositories and shipped packages. Keep it private; losing or
+rotating it requires a launcher trust-key update. Upload the hash-named ZIP first,
+verify its SHA-256, then atomically publish the signed `manifest.json` under the
+website's public `companion` directory. The manifest must use `Cache-Control: no-store`.
+Never publish an unsigned envelope, a private key, or developer pairing files.
+The browser's Setup status and Pandemonium show the **installed companion version**;
+website status updates after an authenticated agent sync and does not assume an
+older PC has already updated. Linux launcher packages remain paired; managed save
+synchronization and its runtime updater are currently Windows-only.

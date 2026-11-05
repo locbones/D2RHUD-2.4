@@ -41,3 +41,12 @@ $row['price']=[['code'=>'rin','quality'=>2,'index'=>-1,'label'=>'Legacy Stone of
 // An ordinary ring must not inherit an unrelated set name from its index.
 $row['price']=[['code'=>'rin','quality'=>2,'index'=>0,'label'=>'Ring']];$criteria=$criteriaMethod->invoke($m,['q'=>$catalog['set'][0]['name'],'searchScope'=>'wanted']);check(!$predicate->invoke($m,$row,$criteria,$buyer['id'],$catalog,'RMD-MP|2.4|SC'));
 echo "Search: browser/PHP text parity, real wanted-payment alert, partial/reordered names, saved labels, scope preservation and valid quality lookup passed.\n";
+
+// Legacy all-on defaults must not opt people into market-wide listing alerts.
+$m->run('DELETE FROM market_notifications WHERE owner=?',[$other['id']]);
+$m->run('INSERT INTO market_notifications VALUES (?,?)',[$other['id'],json_encode(['game_direct'=>true,'game_trade'=>true,'game_search'=>true])]);
+check($m->notificationSettings($other['id'])['game_search']===false);
+$cmd($other,['type'=>'notification_settings','game_direct'=>true,'game_trade'=>true,'game_search'=>true]);
+check($m->notificationSettings($other['id'])['game_search']===true);
+check(array_keys($m->notificationSettings($other['id']))===['game_direct','game_trade','game_search']);
+echo "Listing alerts: legacy all-on defaults are silenced until explicit opt-in; private trade settings remain enabled.\n";

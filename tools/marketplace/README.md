@@ -13,7 +13,9 @@ assets must already be in escrow for settlement. An accepted unfunded offer wait
 for its buyer's next deposit. Development Trader offers never settle.
 
 Requested returns, purchases and physical item proceeds are collected into the
-delivery page when the stash closes; reopen it to load the updated inventory.
+delivery page while it is unloaded. View another stash page while delivery
+syncs, then switch to the delivery page to load the updated contents. Closing
+and reopening the stash also works.
 Unspent wallet resources remain available for trades. Listed goods remain on sale while the player sleeps
 or their PC is off. The site needs no resident server process: authenticated
 commands and deposits trigger bounded settlement sweeps. Networking and save
@@ -217,7 +219,8 @@ item type rather than inventing rolled properties for that request.
 Auto-trade defaults off, including migration from older settings. It approves
 buyer-originated offers matching every asking term when both sides' exact
 assets are available in escrow. Ownership and payment move atomically; delivery
-runs in the background while the game is closed, with physical capacity checks.
+  runs in the background while the game is closed or the destination page is
+  unloaded under the live handoff, with physical capacity checks.
 
 Settings live beside mod saves in Marketplace_2.4_SC.json or
 Marketplace_2.4_HC.json, partitioned by mod and character mode. Older trade-page
@@ -279,26 +282,54 @@ See [website access, security and deployment](WEB.md).
 
 ## Installation and unattended operation
 
-Build the HUD, `custody-save.exe`, native JSON layouts and the current Pandemonium
-launcher. The launcher integration lives in the companion repository's
-`CrossPlatform/src/Pandemonium.Core/MarketplaceCustodyGuard.cs` and `GameLauncher.cs`.
-The HUD requires `MarketplaceLaunchGuard.h`. Install both halves before enrolling.
+Pandemonium 0.1.6+ bundles the Windows marketplace runtime inside its own executable.
+Players do not install Python, run PowerShell scripts, download a separate companion,
+or receive permanent pairing files from an operator. Selecting a 2.4 mod prepares its native marketplace controls in the background.
+Launching it completes player enrollment without waiting for network setup. Settings → Marketplace → Get link code also completes setup.
+Start / repair restores missing runtime files without replacing the player identity.
 
-An operator creates a player with `php cli.php user NAME player` and pairs its
-save agent with `php cli.php pair-agent PLAYER_ID CATALOG_SHA256`. Keep both
-returned tokens private. Supply the player's `pairing.json` and sync config in
-`%USERPROFILE%/.d2r-marketplace`, then run `install-custody.ps1` with the verified
-HUD/launcher hashes, game/launcher paths, helper and private agent-pairing file.
-Enrollment takes an untouched save backup and pins the helper and table catalog.
-Python 3.10+ and Windows are required for the live save agent.
+The per-user supervisor starts at Windows sign-in, restarts missing sync/save workers,
+and uses no console windows. Code, credentials, bounded logs and recovery journals
+remain in `%USERPROFILE%/.d2r-marketplace`; additional mods use `profiles/MOD` inside
+that root. The release contains no companion sidecars or credentials. Each setup
+uses a securely saved installation secret: repeated or interrupted enrollment recovers
+the same ordinary player, with separate scoped agent credentials and catalog checks.
+An existing development/operator pairing is reused, never silently replaced.
 
-Use the installed runtime's `start-marketplace.ps1 -InstallStartup` to start the
-companions and add a current-user Windows Windows scheduled task. Start/stop sync tools
-validate PID identity before changing an existing worker. A pending custody
-journal is recovered by the background companion when trade pages unload or the game closes; never
-delete it or restore a `.before` file by hand. Marketplace failures never prevent
-game startup. Updating the parser or compiled item/stat tables
-requires revalidation against outstanding custody, not a silent hash override.
+The launcher repairs enrolled installations in the background. No marketplace network
+request or enrollment failure blocks game launch. Pending custody journals are never
+discarded during upgrades. Versioned save definitions ignore unrelated file changes;
+compatible updates refresh the existing pairing automatically. New item/stat additions
+can coexist, with recipient checks for older installations. Conflicting existing saved
+definitions identify the affected field and preserve escrow. Each mod has its own
+compatibility family. Live per-page handoff remains supported by the
+RMD-MP 2.4 HUD; other mod scopes retain the closed-game custody safeguards.
+
+  Live handoffs fence only the pages named in a pending transaction. After all
+  local page replacements and their receipt are durable, those pages may reload
+  while remote acknowledgement retries continue. Recovery of that applied receipt
+  completes the remote commit without replaying a page over later native item
+  movements. Legacy or malformed pending pointers remain conservatively fenced.
+  Page selections retry short lease/cursor contention and keep the latest choice.
+  RMD-MP pages are validated before the current stash is freed; a native parse
+  failure explicitly restores the previous page rather than silently waiting.
+
+The viewed delivery page refreshes automatically only for queued escrow items
+or wallet withdrawals. Browsing, clicks, price edits and deposit polling never
+request a visible reload. A delivery is coalesced by operation ID rather than
+re-armed by a timer. Deposits continue through the ordinary save handoff when
+the deposit page unloads. The native JSON shows only a small "Reloading Stash..."
+label with no background. Only an acknowledged parking page grants save access;
+requests bind player/process/start/session/mode/page and a delivery-only kind.
+Local receipts restore the same page/tab before slow remote acknowledgement.
+Gold/stack dialogs, held mouse buttons and an occupied cursor defer the handoff.
+Closing the stash releases the temporary input lock; transaction fences remain.
+
+Windows releases must use the launcher's `CrossPlatform/pack-release.ps1`, which runs
+`build-marketplace.ps1`, rebuilds the save helper, bundles a checksum-pinned official
+Python runtime, and verifies the runtime inside the actual published launcher. The
+older `install-player.ps1` / `install-custody.ps1` tools remain for operator recovery,
+not normal player onboarding. Do not distribute a developer's installed profile.
 
 The default delivery gold ceiling is a conservative 2,500,000 per shared tab.
 Bag credits require an existing supported normal Storage Bag in the delivery
@@ -411,3 +442,114 @@ Real player links, names and permissions remain. A private recovery snapshot
 and technical exactly-once delivery receipts are retained. The updated HUD and
 companion clear stale local trade drafts after reset, preventing old listings
 from reappearing automatically. The reset has not been run on the live market.
+
+### Single market page (0.1.12)
+
+The existing sale page becomes the market page; `withdraw_page` is retained in
+the wire format and equals `page` in new setups. Legacy sidecars are backed up
+before route migration, and unfinished transactions recover before migration.
+Only ordinary items with asking-price drafts enter escrow automatically.
+Unlisted goods stay local until used to fund a mutually agreed trade. Gold and
+unpriced bag currencies still auto-deposit when the page is saved/unloaded.
+Delivery claims use the same guarded page lease and occupancy checks.
+
+Bag-currency claims create normal Z01 containers with claim-bound UUIDs
+and only the requested balances, splitting large amounts across available slots
+using the installed mod's stat definitions.
+No existing bag is changed by a currency delivery. Completed delivery receipts
+retain returned gold and unchanged delivered bags so background sync cannot
+sweep them back into escrow. Taking gold out lowers its retained amount; taking
+a bag off the market page releases its exemption after the saved page syncs.
+Red cell borders mean unlisted; green borders mean received. Border receipt
+reads run in the background, and native serialization is cached and amortized.
+
+During an acknowledged delivery refresh, the companion processes only queued
+returns and wallet withdrawals. Listing/setup publication, deposits and optional
+character/browser-link uploads resume afterward. Reservations, write authority,
+save leases, checksums and crash-recovery rules are unchanged. One compact
+`delivery-timing.json` diagnostic records request durations after each handoff.
+The native stash notice uses large gold text centered on a local black backdrop;
+item borders fade inward to avoid tinting neighboring cells.
+
+## Player-facing Vault and notification audio
+
+The HUD's Vault tab and website Vault navigation contain Items, Gold & resources,
+withdrawals and activity. The custody protocol, SQL tables and compatibility
+routes retain their escrow/wallet identifiers; this is a presentation change,
+not a transfer or migration of player assets. The native layout generator also
+replays `layouts/marketplace-single-page-patch.json` so rebuilding does not restore
+the obsolete separate deposit/delivery Setup controls.
+
+Personal trade alerts are limited to participating buyers/sellers. Saved-search
+listing notices have their own category and require explicit opt-in, including
+for accounts created when notifications defaulted to all enabled. Companions
+also classify legacy queued saved-search notices independently of trade alerts.
+
+HUD Settings → Sound → Notification volume controls chat and marketplace sounds
+from 0–100%, defaults to 30%, and persists in the HUD preferences. Preview uses
+the same gain. A bounded background decoder and XAudio2 source voice keep file
+I/O and decoding off the game thread; missing/unsupported sounds use a quiet
+generated chime at that gain. Notifications never change the game/system mixer,
+launch an external media player or use the unattenuated system beep.
+
+Companion manifests include an internal `build_epoch` for fixes within an app
+version. Signed caches older than the launcher's embedded build cannot replace
+it. App version changes remain an explicit release decision.
+
+The native marketplace uses its own three-state marketplace button artwork in
+`assets/`. Only the HD and low-end sprites are installed, under the mod's
+`data/Pandemonium/Marketplace/`; developer PNGs stay in the repository. The
+installer backs up and atomically publishes artwork and layouts together, and
+rolls both back on failure. `build-native-layout.py` fits controls to the visible
+InfoBGW_R area (x10..2238, y60..1558), rather than its transparent padding, and
+keeps button hit rectangles and centered captions equal to the sprite frames.
+`tests/marketplace-sprite-layout-test.py` checks those real artwork dimensions
+and installation/rollback behavior; the native UI tests check all presented
+pages against the visible panel bounds.
+
+### Hellfire Torch class requests
+
+Select Hellfire Torch as a payment, then choose Any class or one of the seven character classes. The website supports the same choice on wanted listings. Prices, counter-offers, history, affordability, agreed funding and Vault settlement retain the class requirement. Matching uses the identified root item’s positive native class-skill property (stat 83), excluding socket/set lists and ambiguous multi-class rolls. Existing prices without `class_id` accept any class. The unique item index remains catalog-specific. New HUD support is advertised by its signed companion manifest; older HUDs cannot consume a class-restricted feed or auto-fund it with the wrong class.
+
+### Community gift campaigns
+
+Owner tools → Community gifts creates an item bundle from 1–16 identified Vault
+items. Templates are frozen at publication; originals remain owned and tradable.
+The owner may set an announcement, a message revealed on claim, and an optional
+claim deadline. Campaigns belong to one mod, game mode and SC/HC scope. Any linked
+account, including an account linked after publication, may claim before expiry.
+
+Claims are transactional and unique per campaign/account. Retry commands return
+the original receipt. Every generated item and socket child gets a fresh native
+UUID; extended items also get a new seed. Saved properties and stack quantities
+are preserved using the verified mod save definitions. The whole bundle enters
+the claimant’s Vault and uses normal queued delivery, including safe waiting for
+space. Owner claim history reports each recipient UID and delivery receipt.
+
+The website announces new gifts with a dismissible banner and a gold gift badge.
+The HUD uses native JSON controls, item links and the same private chat pipeline
+for announcements, respecting notification volume. Native campaign controls are
+hidden by default for older HUD builds. Ending a campaign prevents future claims
+without recalling gifts already claimed. Tests never publish live campaigns.
+
+Regression coverage: `marketplace-gifts-test.php`, the MySQL validation runner’s
+`gifts` suite (including simultaneous claims), `marketplace-gift-codec-test.cpp`,
+and native UI geometry/font checks. The codec is tested by the independent native
+save parser for both synthetic and read-only real-item fixtures.
+
+### Marketplace shortcut
+
+D2RHUD Options → Hotkeys & Commands → Open Marketplace accepts the same key or
+modifier chord as other HUD shortcuts. It starts unbound. From normal gameplay,
+the shortcut shows only the marketplace, waiting for a fresh panel capture. Its
+native stash host and inventory are visually hidden, without changing item
+records or their native lifecycle. Closing the marketplace restores the previous
+stash/inventory visibility and closes only panels opened by the shortcut. Repeated keydown
+messages coalesce. Chat, modal item interactions, a held item, death and live stash
+handoffs cannot force a panel switch. Unsupported clients/layouts decline safely.
+
+The window callback posts a request; native panel lifecycle calls stay on the
+existing UI/render path. The idle path performs no file I/O, item serialization,
+or stash inventory copying. `marketplace-hotkey-test.cpp` covers lifecycle policy;
+`marketplace-hotkey-native-test.cpp` checks the adapter against installed 2.4 code
+signatures with controlled native calls, including changed-signature rejection.

@@ -1,6 +1,7 @@
 #include "../d2rhud/RuntimeDiagnostics.h"
 #include "../d2rhud/Pattern.h"
 #include "../d2rhud/RuntimeTelemetry.h"
+#include "../d2rhud/HitchDiagnostics.h"
 #include "../d2rhud/plugin/D2RHUD/HudConfigStore.h"
 #include "../d2rhud/plugin/TooltipText.h"
 #include "../d2rhud/SessionEpoch.h"
@@ -37,8 +38,13 @@ int main(){
     const auto next=HudSession::Observe(true,123,false,222);TooltipText::ResetSession(next);assert(TooltipText::Expand(42,prefix)==prefix);
     TooltipText::Remember(42,full,epoch);assert(TooltipText::Expand(42,prefix)==prefix);
     TooltipText::Remember(42,full,next);assert(TooltipText::Expand(42,prefix)==full);
+    assert(HudHitches::Start({50,2},root/L"Support",identity));HudHitches::SetContext(1,false,true,false,11,1);
+    {HudHitches::Present frame(reinterpret_cast<void*>(1),false,GetForegroundWindow());frame.BeforeDriver();}Sleep(65);
+    {HudHitches::Present frame(reinterpret_cast<void*>(1),false,GetForegroundWindow());frame.BeforeDriver();}
+    const auto menuCapture=HudHitches::Snapshot();assert(menuCapture.summary.frames==0&&menuCapture.summary.allHitches==1&&menuCapture.graphCount==1);
     ImGui::CreateContext();auto& io=ImGui::GetIO();io.IniFilename=nullptr;io.DisplaySize={1280,720};io.Fonts->AddFontDefault();assert(io.Fonts->Build());
     for(int i=0;i<2;++i){ImGui::NewFrame();ImGui::Begin("Diagnostics");RuntimeDiagnostics::DrawPanel();ImGui::End();ImGui::Render();}
     assert(ImGui::GetDrawData()->TotalVtxCount>0);ImGui::DestroyContext();
+    HudHitches::Stop();for(int i=0;i<200&&HudHitches::Snapshot().saving;++i)Sleep(25);assert(!HudHitches::Snapshot().report.empty());
     std::cout<<"PASS: cached version/hash/mod identity; attributed fault text; bounded unique support reports; atomic preference preservation/refusal; tooltip epoch reuse/stale results; real Diagnostics panel. Reports: "<<root<<'\n';
 }

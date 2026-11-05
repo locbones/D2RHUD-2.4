@@ -98,6 +98,7 @@
     <ClCompile Include="plugin\D2RHUD\CombatFeedback.cpp" />
     <ClCompile Include="plugin\D2RHUD\ChatNotifications.cpp" />
     <ClCompile Include="plugin\D2RHUD\HudSoundLibrary.cpp" />
+    <ClCompile Include="plugin\D2RHUD\NotificationSound.cpp" />
     <ClCompile Include="plugin\D2RHUD\HudCommands.cpp" />
     <ClCompile Include="plugin\D2RHUD\HudHookSetup.cpp" />
     <ClCompile Include="plugin\D2RHUD\CameraController.cpp" />
@@ -108,6 +109,7 @@
     <ClCompile Include="plugin/D2RHUD/CameraEditor.cpp" />
     <ClCompile Include="plugin/D2RHUD/HudPresentation.cpp" />
     <ClCompile Include="RuntimeDiagnostics.cpp" />
+    <ClCompile Include="HitchDiagnostics.cpp" />
     <ClCompile Include="plugin\RunTracker.cpp" />
     <ClCompile Include="plugin\Inspect.cpp" />
     <ClCompile Include="plugin\Spectate.cpp" />
@@ -153,6 +155,7 @@
     <ClCompile Include="plugin\QuestJournalClient.cpp" />
     <ClCompile Include="plugin\D3Whirlwind.cpp" />
     <ClCompile Include="plugin\SelectedAuras.cpp" />
+    <ClCompile Include="plugin\MultipleAuras.cpp" />
     <ClCompile Include="plugin\WidescreenBars.cpp" />
     <ClCompile Include="plugin\LoadingPerformance.cpp" />
     <ClCompile Include="plugin\WindowLayout.cpp" />
@@ -205,6 +208,10 @@
     <ClInclude Include="resource.h" />
     <ClInclude Include="Version.h" />
     <ClInclude Include="StartupDiagnostics.h" />
+    <ClInclude Include="HitchDiagnostics.h" />
+    <ClInclude Include="HitchModel.h" />
+    <ClInclude Include="plugin\MarketplaceChatPresence.h" />
+    <ClInclude Include="plugin\MarketplacePageRequests.h" />
     <ClInclude Include="plugin\FloatingDamage.h" />
     <ClInclude Include="plugin\BuffIcons.h" />
     <ClInclude Include="plugin\StatRanges.h" />
@@ -243,8 +250,11 @@
     <ClInclude Include="plugin\QuestJournalClient.h" />
     <ClInclude Include="plugin\QuestJournalData.h" />
     <ClInclude Include="plugin\QuestJournalStorage.h" />
+    <ClInclude Include="plugin\QuestJournalProgressStore.h" />
     <ClInclude Include="plugin\D3Whirlwind.h" />
     <ClInclude Include="plugin\SelectedAuras.h" />
+    <ClInclude Include="plugin\MultipleAuras.h" />
+    <ClInclude Include="plugin\MultipleAurasNative.h" />
     <ClInclude Include="plugin\WidescreenBars.h" />
     <ClInclude Include="plugin\WidescreenBarsNative.h" />
     <ClInclude Include="plugin\LoadingPerformance.h" />
@@ -412,6 +422,7 @@
     <ClInclude Include="plugin\MarketplaceNative.inl" />
     <ClInclude Include="plugin\MarketplaceNativeMenu.inl" />
     <ClInclude Include="plugin\MarketplaceWalletUI.inl" />
+    <ClInclude Include="plugin\MarketplaceCellBorders.inl" />
     <ClInclude Include="plugin\MarketplaceChat.h" />
     <ClInclude Include="plugin\MarketplaceNativeImages.inl" />
     <ClInclude Include="plugin\MarketplaceNativeLinks.inl" />

@@ -1,4 +1,4 @@
-"""Guarded escrow agent. Requires enrollment and the launcher/HUD file leases.
+"""Guarded Vault agent. Requires enrollment and the launcher/HUD file leases.
 
 The simulation-only copy tool remains separate. This agent journals a cloud
 ticket BEFORE contacting the service and obtains write authorization BEFORE
@@ -24,6 +24,31 @@ import uuid
 spec = importlib.util.spec_from_file_location("custody_io", Path(__file__).with_name("custody-workspace.py"))
 io = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(io)
+
+
+_RUNTIME_FEATURES = None
+
+def web_features(config):
+    global _RUNTIME_FEATURES
+    if _RUNTIME_FEATURES is None:
+        try:
+            _RUNTIME_FEATURES = io.document(Path(__file__).with_name('manifest.json')).get('features', {})
+        except (OSError, ValueError):
+            _RUNTIME_FEATURES = {}
+    return [name for name in ('open_offers','torch_class','listing_comments') if config.get('hud_sha256') in _RUNTIME_FEATURES.get(name+'_hud_sha256', [])]
+
+
+_RUNTIME_VERSION = None
+
+def companion_version():
+    global _RUNTIME_VERSION
+    if _RUNTIME_VERSION is None:
+        try:
+            version = io.document(Path(__file__).with_name('manifest.json')).get('version', '')
+            _RUNTIME_VERSION = version if re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+', version) else '0.0.0'
+        except (OSError, ValueError, TypeError):
+            _RUNTIME_VERSION = '0.0.0'
+    return _RUNTIME_VERSION
 
 
 def catalog(data):
@@ -189,13 +214,24 @@ class Agent:
         self.game_lease = self.root.parent / "game.lock"
         self.delivery_items = {}
         self.wallet_withdrawals = {}
+        self.funding_requests = {}
         self.transport = transport
         self.fault = fault or (lambda stage: None)
+        self.timings = []
+        self.local_ready_tick = None
         self.verify()
 
     def verify(self):
-        if io.digest(io.read(self.helper)) != self.config["helper_sha256"] or catalog(self.data) != self.config["catalog"]:
-            raise ValueError("Save helper or compiled catalog changed; custody is paused for revalidation")
+        if io.digest(io.read(self.helper)) != self.config["helper_sha256"]:
+            raise ValueError("The save helper changed; use Pandemonium Start / repair before writing saves")
+        if self.config.get('catalog_protocol') == 2:
+            current = io.compatibility(self.data)
+            if not hasattr(self, '_save_catalog_cache') or self._save_catalog_cache[0] != current:
+                self._save_catalog_cache = (current, io.save_catalog(self.data, self.helper)[0])
+            if self._save_catalog_cache[1] != self.config.get('catalog_schema'):
+                raise ValueError("This mod's saved definitions changed; Pandemonium will check update compatibility. Your player and Vault are preserved")
+        elif catalog(self.data) != self.config["catalog"]:
+            raise ValueError("The legacy item catalog changed; use the updated Pandemonium Start / repair to migrate compatibility")
         if not self.test:
             binaries = [(Path(self.config["game_directory"]) / "d2rhud.dll", self.config["hud_sha256"]),
                         (Path(self.config["launcher_path"]), self.config["launcher_sha256"])]
@@ -266,12 +302,70 @@ class Agent:
                 raise BlockingIOError("Marketplace settings changed; retry after the stash closes")
             io.save(path, value)
 
+    def request_refresh(self, mode, page, reason):
+        """Ask the native client to save/park a viewed page; never relax its lease."""
+        # Only actual queued escrow deliveries may request a visible reload.
+        prefix, separator, identities = reason.partition(':')
+        if prefix not in {'items', 'withdraw'} or not separator or not identities or any(not re.fullmatch('[0-9a-f]{32}', identity) for identity in identities.split(',')):
+            return False
+        try:
+            with self.save_access(mode, []) as window:
+                if not window or window.get('refresh_supported') != 2 or window.get('loaded') != page or window.get('refresh_id') or window.get('delivery') != page:
+                    return False
+                key = f"{window['started']}:{page}:{reason}"
+                trigger = reason
+                seen_path = self.root / 'refresh-seen.json'
+                seen = io.document(seen_path) if seen_path.exists() else {}
+                previous = seen.get(key, {})
+                if previous.get('trigger') == trigger:
+                    return False
+                path = self.root / 'live-refresh-request.json'
+                if path.exists():
+                    old = io.document(path)
+                    if old.get('session') == window['session'] and old.get('page') == page and old.get('trigger') == trigger and 0 <= ticks() - old.get('tick', 0) < 12000:
+                        return True
+                request = {k: window[k] for k in ('owner', 'catalog', 'pid', 'started', 'player', 'hardcore', 'session')}
+                request.update(schema=1, kind="delivery", id=uuid.uuid4().hex, page=page, tick=ticks(), key=key, trigger=trigger)
+                io.save(path, request)
+                return True
+        except (OSError, ValueError, KeyError):
+            return False
+
+    def refresh_ready(self, window):
+        if not window or not re.fullmatch('[0-9a-f]{32}', str(window.get('refresh_id', ''))):
+            return
+        identity = window['refresh_id']
+        result = dict(schema=1, id=identity, session=window['session'], ready=True)
+        path = self.root / 'live-refresh-result.json'
+        if path.exists() and io.document(path) == result:
+            return
+        io.save(path, result)
+        self.local_ready_tick = ticks()
+        request_path = self.root / 'live-refresh-request.json'
+        if request_path.exists():
+            request = io.document(request_path)
+            if request.get('id') == identity:
+                seen_path = self.root / 'refresh-seen.json'
+                seen = io.document(seen_path) if seen_path.exists() else {}
+                # Bound this housekeeping file across game sessions.
+                seen = dict(list(seen.items())[-63:])
+                seen[request['key']] = dict(trigger=request['trigger'], at=time.time())
+                io.save(seen_path, seen)
+
     def live_result(self, window, error=None):
         if window:
+            self.refresh_ready(window)
             io.save(self.root / 'live-result.json', dict(schema=1, session=window['session'], at=int(time.time()),
                     terminal=True, pending=self.pending.exists(), error=str(error)[:512] if error else ''))
 
     def request(self, mode, data):
+        began = time.monotonic()
+        try:
+            return self._request(mode, data)
+        finally:
+            self.timings.append(dict(operation=data.get('type', ''), milliseconds=round((time.monotonic() - began) * 1000, 1)))
+
+    def _request(self, mode, data):
         data = dict(data, catalog=self.config["catalog"])
         if self.transport:
             return self.transport(mode, data)
@@ -343,6 +437,8 @@ class Agent:
             old = io.document(state_path) if state_path.exists() else {}
             current, errors = {}, {}
             for path in sorted(self.folder.glob('*.d2s'))[:128]:
+                if self.refresh_active():
+                    return  # Preserve the previous manifest; resume preview work later.
                 try:
                     if path.is_symlink() or path.resolve().parent != self.folder:
                         continue
@@ -365,6 +461,8 @@ class Agent:
                     errors[path.name] = str(error)[:512]
                     if path.name in old:
                         current[path.name] = old[path.name]
+            if self.refresh_active():
+                return
             if not errors:
                 for mode in ('SC', 'HC'):
                     self.request(mode, dict(type='profile_manifest', characters=[r['key'] for r in current.values() if r['mode'] == mode]))
@@ -376,9 +474,22 @@ class Agent:
         if any(value.get(k) != v for k, v in dict(schema=1, game_mode="2.4", mod=self.mod, hardcore=mode == "HC").items()):
             raise ValueError("Save settings belong to a different mod or mode")
         deposit, delivery = value["page"], value["withdraw_page"]
-        if type(deposit) is not int or type(delivery) is not int or not 1 <= deposit <= 64 or not 1 <= delivery <= 64 or deposit == delivery:
-            raise ValueError("Choose different valid deposit and delivery pages")
+        if type(deposit) is not int or type(delivery) is not int or not 1 <= deposit <= 64 or not 1 <= delivery <= 64:
+            raise ValueError("Choose a market page between 1 and 64")
         return value
+
+    def migrate_market_page(self, mode):
+        old = self.settings(mode)
+        if old.get('single_market_page') is True and old['withdraw_page'] == old['page']:
+            return
+        if self.pending.exists():
+            raise BlockingIOError('Finish the pending transfer before changing market routes')
+        backup = self.root / 'migrations' / f'single-market-page-{mode}.json'
+        if not backup.exists():
+            backup.parent.mkdir(parents=True, exist_ok=True)
+            io.save(backup, old)
+        self.save_sidecar(self.folder / f'Marketplace_2.4_{mode}.json',
+                          dict(old, withdraw_page=old['page'], single_market_page=True), old)
 
     def page(self, mode, number):
         return self.folder / f"Stash_{mode}_Page{number}.d2i"
@@ -430,7 +541,7 @@ class Agent:
                 io.atomic(directory / f"{page}.after", after)
                 record["images"].append(dict(page=page, before=io.digest(before), after=io.digest(after)))
             self.persist(record)
-            io.save(self.pending, dict(id=identity, mode=mode))
+            io.save(self.pending, dict(id=identity, mode=mode, pages=pages, reload_safe=False))
             self.fault("intent")
         return self.recover()
 
@@ -457,10 +568,23 @@ class Agent:
         if record["phase"] == "complete":
             self.finish(record)
             return record
+        if record["phase"] == "applied":
+            # The local write and its receipt are durable. Native play may have
+            # legitimately changed the page since then. Finish only the remote
+            # acknowledgement; never re-apply an already delivered image.
+            if not io.document(self.pending).get('reload_safe', False):
+                io.save(self.pending, dict(id=identity, mode=mode,
+                    pages=[image["page"] for image in record["images"]], reload_safe=True))
+            self.request(mode, dict(id=identity, type="commit", pages=record["images"]))
+            self.fault("committed_remote")
+            record["phase"] = "complete"
+            self.persist(record)
+            self.finish(record)
+            return record
         try:
             ticket = self.request(mode, record["request"])
         except ValueError as error:
-            if record["request"]["type"] == "claim_prepare" and not record["images"] and "409: No unlisted escrow assets" in str(error):
+            if record["request"]["type"] == "claim_prepare" and not record["images"] and any(text in str(error) for text in ("409: No unlisted escrow assets", "409: No unlisted Vault assets")):
                 record["phase"] = "empty"
                 self.persist(record)
                 self.pending.unlink()
@@ -506,12 +630,15 @@ class Agent:
                 settings = self.settings(mode)
                 page = settings["withdraw_page"]
                 before, after, result = self.plan(mode, settings, page,
-                    credit_items=ticket["packet"]["items"], credit_balances=ticket["packet"]["balances"])
+                    credit_items=ticket["packet"]["items"], credit_balances=ticket["packet"]["balances"], currency_bag_id=identity)
                 io.atomic(directory / f"{page}.before", before)
                 io.atomic(directory / f"{page}.after", after)
                 record["images"] = [dict(page=page, before=io.digest(before), after=io.digest(after))]
                 record["delivered"] = [dict(item=item["item"], item_hex=placed["item_hex"])
                     for item, placed in zip(ticket["packet"]["items"], result["delivered"], strict=True)]
+                record['currency_bags'] = result.get('currency_bags', [])
+                record['retained_bags'] = [r['item_hex'] for r in result.get('currency_bags', []) + result['delivered'] if r['code'] == 'Z01' and r['quality'] == 2]
+                record['received_balances'] = ticket['packet']['balances']
                 self.persist(record)
             except BlockingIOError:
                 # The player switched into this page during the cloud request.
@@ -538,7 +665,7 @@ class Agent:
         self.fault("authorized_remote")
         record["phase"] = "applying"
         self.persist(record)
-        with self.save_access(mode, [image["page"] for image in record["images"]]):
+        with self.save_access(mode, [image["page"] for image in record["images"]]) as applied_window:
             # Recheck after authorization: the game may have started (or changed
             # a save) while the cloud request was in flight. Never overwrite it.
             for image in record["images"]:
@@ -551,6 +678,15 @@ class Agent:
                 if io.digest(io.read(path)) != image["after"]:
                     raise ValueError("Save write verification failed; trading is paused for reconciliation")
                 self.fault("page_written")
+            # Publish this before releasing the short write gate. A slow/lost
+            # cloud commit must not keep a completely written stash unloaded.
+            record["phase"] = "applied"
+            self.persist(record)
+            io.save(self.pending, dict(id=identity, mode=mode,
+                pages=[image["page"] for image in record["images"]], reload_safe=True))
+            if ticket['kind'] == 'claim':
+                self.refresh_ready(applied_window)
+            self.fault("locally_applied")
         self.request(mode, dict(id=identity, type="commit", pages=record["images"]))
         self.fault("committed_remote")
         record["phase"] = "complete"
@@ -563,6 +699,24 @@ class Agent:
         state_path = self.root / "lineage.json"
         state = io.document(state_path) if state_path.exists() else dict(delivered={}, consumed={}, receipts=[])
         if record["id"] not in state["receipts"]:
+            old = self.settings(record['mode'])
+            identities = {positionless(r['item_hex']) for r in record['request'].get('items', [])}
+            identities.update(positionless(r['item_hex']) for r in record.get('delivered', []))
+            kept = [r for r in old['drafts'] if positionless(r['item_hex']) not in identities]
+            if kept != old['drafts']:
+                self.save_sidecar(self.folder / f"Marketplace_2.4_{record['mode']}.json", dict(old, drafts=kept), old)
+            for n, item in enumerate(record.get('currency_bags', [])):
+                state.setdefault('currency_bags', {})[record['id'] + ':' + str(n)] = dict(mode=record['mode'], item_hex=item['item_hex'])
+            if record.get('retained_bags'):
+                previous = state.setdefault('retained_bags', {}).get(record['mode'], {})
+                retained = previous.get('items', []) if previous.get('page') == record['images'][0]['page'] else []
+                state['retained_bags'][record['mode']] = dict(page=record['images'][0]['page'], items=list(dict.fromkeys(retained + record['retained_bags'])))
+            gold = sum(r['quantity'] for r in record.get('received_balances', []) if r['kind'] == 'gold')
+            if gold:
+                route = record['images'][0]['page']
+                previous = state.setdefault('retained_gold', {}).get(record['mode'], {})
+                quantity = previous.get('quantity', 0) if previous.get('page') == route else 0
+                state['retained_gold'][record['mode']] = dict(page=route, quantity=quantity + gold)
             for image in record["images"]:
                 state["consumed"][record["mode"] + ":" + str(image["page"]) + ":" + image["before"]] = record["id"]
             for item in record.get("delivered", []):
@@ -571,6 +725,13 @@ class Agent:
                 state["delivered"].pop(item.get("ledger_id"), None)
             state["receipts"].append(record["id"])
             io.save(state_path, state)
+        markers = [v['item_hex'] for field in ('delivered', 'currency_bags') for v in state.get(field, {}).values() if v.get('mode') == record['mode']]
+        path = self.folder / f"MarketplaceReceipts_2.4_{record['mode']}.json"
+        value = dict(schema=1, mod=self.mod, hardcore=record['mode'] == 'HC', items=markers[-4096:])
+        # This value-only receipt sidecar is owned by the agent, not a save.
+        # Applied recovery must remain possible even while the native lease is held.
+        if not path.exists() or io.document(path) != value:
+            io.save(path, value)
         self.pending.unlink(missing_ok=True)
 
     @staticmethod
@@ -591,9 +752,13 @@ class Agent:
             raise ValueError('Invalid requested delivery list')
         withdrawals = response.get('wallet_withdrawals', [])
         if not isinstance(withdrawals, list) or len(withdrawals) > 64 or any(not isinstance(w, dict) or not isinstance(w.get('id'), str) or not re.fullmatch('[0-9a-f]{32}', w['id']) for w in withdrawals):
-            raise ValueError('Invalid wallet withdrawal queue')
+            raise ValueError('Invalid Vault withdrawal queue')
         self.delivery_items[mode] = deliveries
         self.wallet_withdrawals[mode] = withdrawals
+        funding = response.get('funding_requests', [])
+        if not isinstance(funding, list) or len(funding) > 64 or any(not isinstance(r, dict) or not re.fullmatch('[0-9a-f]{32}', str(r.get('id', ''))) or not isinstance(r.get('price'), list) for r in funding):
+            raise ValueError('Invalid agreed trade funding queue')
+        self.funding_requests[mode] = funding
 
     def clear_market_sidecars(self, mode):
         """Clear trade-only drafts after a server reset; never edit game saves."""
@@ -656,9 +821,9 @@ class Agent:
             priced = []
             if settings['enabled']:
                 for row in inventory['items']:
-                    price = next((d['price'] for d in settings['drafts'] if d['tab'] == row['tab'] and d['item_hex'] == row['item_hex']), None)
-                    if price:
-                        priced.append(dict(row, price=price))
+                    draft = next((d for d in settings['drafts'] if d['tab'] == row['tab'] and d['item_hex'] == row['item_hex']), None)
+                    if draft and draft.get('price'):
+                        priced.append(dict(row, price=draft['price'], **({'comment': draft['comment']} if 'comment' in draft else {})))
             packet = dict(schema=1, game_mode='2.4', mod=self.mod, hardcore=mode == 'HC',
                           page=settings['page'], enabled=settings['enabled'], source='saved', custody='local_save', purchasable=False, items=priced)
             previous = io.document(publication_path) if publication_path.exists() else {}
@@ -675,7 +840,9 @@ class Agent:
                 draft = next((d for d in settings["drafts"] if d["tab"] == row["tab"] and d["item_hex"] == row["item_hex"]), None)
                 if draft:
                     row["price"] = draft["price"]
-            response = self.request(mode, dict(type="web_sync", settings={key: settings[key] for key in ("page", "withdraw_page", "enabled", "auto_trade")}, inventory=rows, acknowledged=acknowledgements))
+                    if "comment" in draft:
+                        row["comment"] = draft["comment"]
+            response = self.request(mode, dict(type="web_sync", features=web_features(self.config), companion_version=companion_version(), settings={key: settings[key] for key in ("page", "withdraw_page", "enabled", "auto_trade")}, inventory=rows, acknowledged=acknowledgements))
             self.delivery_queue(mode, response)
             acknowledgements = []
             if not response["intents"]:
@@ -689,12 +856,14 @@ class Agent:
                         if current["page"] != packet["page"]:
                             current["drafts"] = []
                         current.update(packet)
+                        current.update(withdraw_page=current['page'], single_market_page=True)
                     elif intent["kind"] == "price":
                         if current["page"] != packet["page"] or not any(row["tab"] == packet["tab"] and row["item_hex"] == packet["item_hex"] for row in self.inventory(self.page(mode, current["page"]))["items"]):
                             raise ValueError("The stash item moved or changed before its asking price could be applied")
+                        previous_draft = next((row for row in current["drafts"] if row["tab"] == packet["tab"] and row["item_hex"] == packet["item_hex"]), {})
                         current["drafts"] = [row for row in current["drafts"] if not (row["tab"] == packet["tab"] and row["item_hex"] == packet["item_hex"])]
                         if packet["price"]:
-                            current["drafts"].append({key: packet[key] for key in ("tab", "item_hex", "price")})
+                            current["drafts"].append({**{key: packet[key] for key in ("tab", "item_hex", "price")}, **({"comment": packet.get("comment", previous_draft.get("comment", ""))} if "comment" in packet or "comment" in previous_draft else {})})
                     elif intent["kind"] == "reset":
                         self.clear_market_sidecars(mode)
                         current['enabled'] = current['auto_trade'] = False
@@ -706,8 +875,8 @@ class Agent:
                     else:
                         raise ValueError("Unsupported website request")
                     # Reuse route validation before committing the settings file.
-                    if type(current["page"]) is not int or type(current["withdraw_page"]) is not int or not 1 <= current["page"] <= 64 or not 1 <= current["withdraw_page"] <= 64 or current["page"] == current["withdraw_page"]:
-                        raise ValueError("Choose different valid stash pages")
+                    if type(current["page"]) is not int or type(current["withdraw_page"]) is not int or not 1 <= current["page"] <= 64 or not 1 <= current["withdraw_page"] <= 64:
+                        raise ValueError("Choose a valid market page")
                     self.save_sidecar(self.folder / f"Marketplace_2.4_{mode}.json", current, original_current)
                     if intent['kind'] == 'reset':
                         marker = dict(schema=1, game_mode='2.4', mod=self.mod, hardcore=mode == 'HC', id=intent['id'], generation=packet['generation'])
@@ -725,7 +894,7 @@ class Agent:
                 raise
             except (OSError, ValueError):
                 rows = []
-            self.request(mode, dict(type="web_sync", settings={key: settings[key] for key in ("page", "withdraw_page", "enabled", "auto_trade")}, inventory=rows, acknowledged=acknowledgements))
+            self.request(mode, dict(type="web_sync", features=web_features(self.config), companion_version=companion_version(), settings={key: settings[key] for key in ("page", "withdraw_page", "enabled", "auto_trade")}, inventory=rows, acknowledged=acknowledgements))
 
     def deposit(self, mode):
         settings = self.settings(mode)
@@ -742,12 +911,23 @@ class Agent:
         # enforced by their saved identity and server ownership, not this hash.
         inventory = self.inventory(path)
         items, selectors, resources = [], [], {}
+        previous = state.setdefault('retained_bags', {}).get(mode, {})
+        present = {positionless(r['item_hex']) for r in inventory['items'] if r['code'] == 'Z01'}
+        retained_bags = [h for h in previous.get('items', []) if positionless(h) in present] if previous.get('page') == page else []
+        if previous.get('items', []) != retained_bags:
+            state['retained_bags'][mode] = dict(page=page, items=retained_bags)
+            with self.save_access(mode, [page]):
+                io.save(self.root / 'lineage.json', state)
+        retained_keys = {positionless(h) for h in retained_bags}
         for row in inventory["items"]:
-            price = next((d["price"] for d in settings["drafts"] if d["tab"] == row["tab"] and d["item_hex"] == row["item_hex"]), None)
-            if len(items) < 64 and (price or row["identified"] and row["quality"] in {2, 5, 7} and row["code"] != "Z01"):
+            draft = next((d for d in settings["drafts"] if d["tab"] == row["tab"] and d["item_hex"] == row["item_hex"]), None)
+            price = draft.get("price") if draft else None
+            if len(items) < 64 and price:
                 item = self.web_item(row, page)
                 if price:
                     item["price"] = price
+                    if "comment" in draft:
+                        item["comment"] = draft["comment"]
                 lineage = [key for key, value in state["delivered"].items() if value["mode"] == mode and positionless(value["item_hex"]) == positionless(row["item_hex"])]
                 if len(lineage) > 1:
                     raise ValueError("Ambiguous item lineage; do not merge identical seeds or bytes")
@@ -756,20 +936,63 @@ class Agent:
                 items.append(item)
                 selectors.append({k: row[k] for k in ("tab", "ordinal", "item_hex")})
             elif not price and row["code"] == "Z01" and row["quality"] == 2:
+                # A currency parcel just delivered here stays available to take or cube.
+                if positionless(row['item_hex']) in retained_keys:
+                    continue
                 for balance in row["balances"]:
                     resources[balance["stat"]] = min(2000000000, resources.get(balance["stat"], 0) + balance["quantity"])
         balances = [dict(kind="bag", code="Z01", label=stat, stat=stat, quality=2, index=-1, ethereal=-1, quantity=q) for stat, q in sorted(resources.items()) if q][:15]
-        if inventory["gold"]:
-            balances.append(dict(kind="gold", code="gld", label="Gold", quality=2, index=-1, ethereal=-1, quantity=min(inventory["gold"], 2000000000)))
+        retained = state.setdefault('retained_gold', {}).get(mode, {})
+        floor = min(inventory['gold'], retained.get('quantity', 0)) if retained.get('page') == page else 0
+        if retained.get('quantity', 0) != floor:
+            state['retained_gold'][mode] = dict(page=page, quantity=floor)
+            with self.save_access(mode, [page]):
+                io.save(self.root / 'lineage.json', state)
+        if inventory['gold'] > floor:
+            balances.append(dict(kind="gold", code="gld", label="Gold", quality=2, index=-1, ethereal=-1, quantity=min(inventory['gold'] - floor, 2000000000)))
         if not items and not balances:
             return False
-        raw, after, result = self.plan(mode, settings, page, take=selectors, debit=balances)
+        excluded = [dict(tab=r['tab'], item_hex=r['item_hex']) for r in inventory['items'] if positionless(r['item_hex']) in retained_keys and
+                    not any(d['tab'] == r['tab'] and d['item_hex'] == r['item_hex'] for d in settings['drafts'])]
+        raw, after, result = self.plan(mode, settings, page, take=selectors, debit=balances, debit_exclude=excluded)
         if raw != before:
             raise ValueError("Deposit page changed before planning")
         request = dict(id=uuid.uuid4().hex, type="deposit_prepare", items=items, balances=balances,
                        pages=[dict(page=page, before=io.digest(before), after=io.digest(after))])
         self.start(mode, request, [(page, before, after)])
         return True
+
+    def fund_agreed_trade(self, mode):
+        settings = self.settings(mode)
+        if not settings['enabled']:
+            return False
+        for offer in self.funding_requests.get(mode, []):
+            try:
+                before, after, result = self.plan(mode, settings, settings['page'], debit=offer['price'])
+            except ValueError:
+                continue  # No complete local payment: leave every local item untouched.
+            if before == after:
+                continue
+            snapshot = self.inventory(self.page(mode, settings['page']))
+            items = []
+            for row in result['removed']['items']:
+                original = next(r for r in snapshot['items'] if r['tab'] == row['tab'] and r['ordinal'] == row['ordinal'])
+                items.append(self.web_item(dict(row, quantity_bit=original['quantity_bit']), settings['page']))
+            state = io.document(self.root / 'lineage.json') if (self.root / 'lineage.json').exists() else {}
+            for row in items:
+                matches = [k for k,v in state.get('delivered', {}).items() if v['mode'] == mode and positionless(v['item_hex']) == positionless(row['item_hex'])]
+                if len(matches) > 1:
+                    raise ValueError('Ambiguous agreed payment lineage')
+                if matches:
+                    row['ledger_id'] = matches[0]
+            request = dict(id=uuid.uuid4().hex, type='deposit_prepare', funding_offer=offer['id'], funding_revision=offer['revision'], items=items, balances=result['removed']['balances'],
+                           pages=[dict(page=settings['page'], before=io.digest(before), after=io.digest(after))])
+            try:
+                self.start(mode, request, [(settings['page'], before, after)])
+            except DepositRejected:
+                continue  # Rejected/countered while planning: no local item was changed.
+            return True
+        return False
 
     def claim(self, mode, item_limit=64, item_ids=None, withdrawal_id=None):
         try:
@@ -780,10 +1003,8 @@ class Agent:
             raise
         except (OSError, ValueError, KeyError) as error:
             raise CapacityError("Delivery page is not ready: " + str(error), shrink=False) from error
-        capacities = {}
-        for row in inventory["items"]:
-            for cap in row["credit_capacity"]:
-                capacities[cap["stat"]] = min(2000000000, capacities.get(cap["stat"], 0) + cap["quantity"])
+        # Capacity is for a freshly generated bag, never for a player's existing bag.
+        capacities = {cap['stat']: cap['quantity'] for cap in inventory.get('bag_parcel_capacity', [])}
         balances = [dict(kind="bag", code="Z01", label=stat, stat=stat, quality=2, index=-1, ethereal=-1, quantity=q)
                     for stat, q in sorted(capacities.items()) if q][:15]
         import struct
@@ -802,7 +1023,7 @@ class Agent:
             request.update(item_ids=item_ids[:item_limit], balance_caps=[])
         if withdrawal_id is not None:
             if not balances:
-                raise CapacityError("Make room for gold or place a compatible Storage Bag on your delivery page.", shrink=False)
+                raise CapacityError("Make room on your market page for gold or a new currency bag.", shrink=False)
             request.update(item_ids=[], item_limit=0, withdrawal_id=withdrawal_id)
         return self.start(mode, request)
 
@@ -816,7 +1037,7 @@ class Agent:
                     delivered += 1
                 message = ''
             except CapacityError:
-                message = 'Make room for gold or place a compatible Storage Bag with free capacity on your delivery page. The remaining amount stays reserved.'
+                message = 'Make room on your market page for gold or a new currency bag. The remaining amount stays reserved.'
             self.request(mode, dict(id=uuid.uuid4().hex, type='wallet_notice', withdrawal_id=identity, message=message))
         return delivered
 
@@ -838,6 +1059,51 @@ class Agent:
                 return str(error)
         return count
 
+    def refresh_active(self):
+        # Priority hint only. Every read/write still obtains the real save lease.
+        try:
+            window = self.live_window(pages=[])
+            if re.fullmatch('[0-9a-f]{32}', str(window.get('refresh_id', ''))):
+                return True
+            request = io.document(self.root / 'live-refresh-request.json')
+            return (request.get('kind') == 'delivery' and request.get('session') == window['session']
+                    and re.fullmatch('[0-9a-f]{32}', str(request.get('id', ''))) is not None
+                    and request.get('owner') == window['owner'] and request.get('started') == window['started']
+                    and request.get('pid') == window['pid'] and request.get('catalog') == window['catalog']
+                    and request.get('page') == window['delivery'] == window['loaded']
+                    and type(request.get('tick')) is int and 0 <= ticks() - request['tick'] <= 15000)
+        except (OSError, ValueError, KeyError):
+            return False
+
+    def deliver_parked_page(self, window, warnings, rejected):
+        """Only queued deliveries while native UI is waiting for this handoff.
+
+        Defer listing publication, deposits, browser-link renewal and character
+        upload. Remote reservations/authorization and durable save receipts are
+        unchanged. No unrelated request holds the player on the parking page.
+        """
+        began = time.monotonic()
+        mode = 'HC' if window['hardcore'] else 'SC'
+        self.delivery_queue(mode)
+        delivered = 0
+        try:
+            if self.delivery_items.get(mode):
+                delivered = self.collect_deliveries(mode, self.delivery_items[mode])
+            self.collect_wallet_withdrawals(mode)
+            if isinstance(delivered, str):
+                warnings[mode] = delivered
+            else:
+                warnings.pop(mode, None)
+        except BlockingIOError:
+            warnings[mode] = 'Delivery will refresh automatically when the stash is idle.'
+        io.save(self.root / 'status.json', dict(at=int(time.time()), pending=self.pending.exists(), result={mode: 0}, deliveries={mode: delivered}, delivery_warnings=warnings, rejected_deposits=rejected))
+        self.live_result(window)
+        # One compact diagnostic per refresh, without per-request disk writes.
+        io.save(self.root / 'delivery-timing.json', dict(schema=1, refresh_id=window['refresh_id'],
+            at=int(time.time()), milliseconds=round((time.monotonic() - began) * 1000, 1),
+            local_ready_tick=self.local_ready_tick, requests=self.timings))
+        return {mode: 0}
+
     def run(self, preflight=False):
         with lease(self.root / "guard.lock"):
             with self.save_access(pages=[]) as window:
@@ -851,12 +1117,15 @@ class Agent:
             status_path = self.root / "status.json"
             warnings = io.document(status_path).get("delivery_warnings", {}) if status_path.exists() else {}
             deliveries = {}
+            if not preflight and window and re.fullmatch('[0-9a-f]{32}', str(window.get('refresh_id', ''))):
+                return self.deliver_parked_page(window, warnings, rejected)
             for mode in ("SC", "HC"):
                 if live_mode is not None and mode != live_mode:
                     continue
                 if not (self.folder / f"Marketplace_2.4_{mode}.json").exists():
                     continue
                 try:
+                    self.migrate_market_page(mode)
                     self.web_sync(mode)
                 except BlockingIOError:
                     pass  # Deposit is loaded; its private snapshot stays intact.
@@ -890,11 +1159,17 @@ class Agent:
                     except BlockingIOError:
                         pass
                     self.delivery_queue(mode)
+                    try:
+                        if self.fund_agreed_trade(mode):
+                            self.delivery_queue(mode)
+                    except BlockingIOError:
+                        pass
                     if self.delivery_items.get(mode):
                         try:
                             delivered = self.collect_deliveries(mode, self.delivery_items[mode])
                         except BlockingIOError:
-                            delivered = 'Switch away from your delivery page to receive queued trades.'
+                            delivered = 'Delivery will refresh automatically when the stash is idle.'
+                            self.request_refresh(mode, self.settings(mode)['withdraw_page'], 'items:' + ','.join(self.delivery_items[mode]))
                         deliveries[mode] = delivered
                         if isinstance(delivered, str):
                             warnings[mode] = delivered
@@ -902,10 +1177,12 @@ class Agent:
                             warnings.pop(mode, None)
                 try:
                     self.collect_wallet_withdrawals(mode)
-                    if warnings.get(mode) == 'Switch away from your delivery page to receive queued withdrawals.':
+                    if warnings.get(mode) in ('Switch away from your delivery page to receive queued withdrawals.', 'Delivery will refresh automatically when the stash is idle.'):
                         warnings.pop(mode, None)
                 except BlockingIOError:
-                    warnings[mode] = 'Switch away from your delivery page to receive queued withdrawals.'
+                    warnings[mode] = 'Delivery will refresh automatically when the stash is idle.'
+                    ids = ','.join(io.digest((w['id'] + ':' + str(w.get('revision', 0))).encode())[:32] for w in self.wallet_withdrawals.get(mode, []))
+                    self.request_refresh(mode, self.settings(mode)['withdraw_page'], 'withdraw:' + ids)
             if preflight:
                 for mode, value in results.items():
                     if isinstance(value, str):
@@ -929,6 +1206,9 @@ def report_failure(config, error):
         window = io.document(root / 'live-window.json')
         if (window.get('owner') == config.get('owner') and window.get('catalog') == config.get('catalog')
                 and isinstance(window.get('session'), str)):
+            identity = window.get('refresh_id', '')
+            if re.fullmatch('[0-9a-f]{32}', str(identity)):
+                io.save(root / 'live-refresh-result.json', dict(schema=1, id=identity, session=window['session'], ready=True))
             io.save(root / 'live-result.json', dict(schema=1, session=window['session'], at=int(time.time()),
                 terminal=True, pending=status['pending'], error=message))
     except (OSError, ValueError):
@@ -950,10 +1230,14 @@ def main():
         config = {}
         try:
             config = io.document(args.config)
+            # Managed upgrades stop between operations, with every receipt durable.
+            if args.watch and config.get('managed_runtime') and Path(config['managed_runtime']).resolve() != Path(__file__).resolve().parent and not (Path(config['state_directory']) / 'pending.json').exists():
+                break
             agent = Agent(config)
             if args.watch:
                 io.save(agent.root / 'live-capability.json', dict(schema=1, owner=agent.config['owner'], catalog=agent.config['catalog']))
-            if not args.preflight and time.monotonic() - last_link >= 15:
+            urgent = agent.refresh_active() if args.watch else False
+            if not urgent and not args.preflight and time.monotonic() - last_link >= 15:
                 last_link = time.monotonic()
                 try:
                     agent.publish_browser_link()
@@ -961,7 +1245,7 @@ def main():
                     # Website linking is optional; it cannot stop custody or
                     # create a pending save operation when the site is offline.
                     print("Browser link: " + str(error), flush=True)
-            if args.watch and time.monotonic() - last_profiles >= 60:
+            if args.watch and not urgent and time.monotonic() - last_profiles >= 60:
                 last_profiles = time.monotonic()
                 try:
                     agent.publish_characters()

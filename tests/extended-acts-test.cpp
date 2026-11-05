@@ -205,7 +205,7 @@ void StartupDataTests(const char* sourcePath,bool gitLineEndings=false){
     assert(ConfigureData(data,config,false,true,5)==Config::Disabled && !pendingRestart);check(false,false);
     assert(ConfigureData(data,config,true,true,5)==Config::Disabled && pendingRestart);check(true,false);
     assert(ConfigureData(data,config,true,true,6)==Config::Enabled && !pendingRestart);check(true,true);
-    assert(ConfigureData(data,config,false,true,6)==Config::Enabled && pendingRestart);check(false,true);
+    assert(ConfigureData(data,config,false,true,6)==Config::Disabled && !pendingRestart);check(false,false);
     assert(ConfigureData(data,config,false,true,5)==Config::Disabled);check(false,false);
     LevelEditTests(data,config);check(false,false);
     StringEditTests(data,config,source);check(false,false);
@@ -228,7 +228,7 @@ void StartupDataTests(const char* sourcePath,bool gitLineEndings=false){
     std::filesystem::rename(required.string()+".backup",required);
     auto bin=[&](const char* name,size_t stride,uint32_t count){
         std::vector<uint8_t> bytes(4+size_t(count)*stride);memcpy(bytes.data(),&count,4);
-        if(std::string(name)=="actinfo")for(uint32_t n=0;n<count;++n){const auto id=n+1;memcpy(bytes.data()+4+size_t(n)*stride,&id,4);}
+        if(std::string(name)=="actinfo")for(uint32_t n=0;n<count;++n){const auto town=std::array<uint32_t,6>{1,40,75,103,109,240}[n];memcpy(bytes.data()+4+size_t(n)*stride,&town,4);}
         if(std::string(name)=="levels")for(uint32_t n=0;n<count;++n){auto row=bytes.data()+4+size_t(n)*stride;memcpy(row,&n,4);if(n>=240&&n<249){row[7]=5;row[0xe8]=uint8_t(39+n-240);}}
         std::ofstream file(data/"global/excel"/(std::string(name)+".bin"),std::ios::binary);file.write(reinterpret_cast<char*>(bytes.data()),bytes.size());
     };
@@ -240,7 +240,8 @@ void StartupDataTests(const char* sourcePath,bool gitLineEndings=false){
     }
     std::filesystem::rename(required.string()+".backup",required);
     assert(ConfigureData(data,config,true,false,6)==Config::Enabled && !pendingRestart && !compileText);
-    assert(ConfigureData(data,config,false,false,6)==Config::Enabled && pendingRestart);
+    assert(ConfigureData(data,config,false,false,6)==Config::Disabled && !pendingRestart);
+    assert(read(controller)==originalController);
     const auto sixController=read(controller);
     {std::ofstream f(controller,std::ios::binary);f<<sixController<<"\n ";}
     for(bool want:{false,true}){bool badLayout=false;try{ConfigureData(data,config,want,false,6);}catch(const std::exception& e){badLayout=std::string(e.what()).find("controller/questlogpanelexpansionhd.json")!=std::string::npos;}assert(badLayout);}
@@ -319,15 +320,17 @@ void NativeInstallTests(const char* path){
     image[0x33be69]^=1;assert(!Activate() && !storage);image[0x33be69]^=1;
     levels={240,241,242,243,244,245,246,247,248};
     for(unsigned i=0;i<6;++i)labels[i]={uint16_t(64010+3*i),uint16_t(64011+3*i),uint16_t(64012+3*i)};
+    std::array<std::array<uint8_t,0x8c>,6> acts{};
+    for(unsigned i=0;i<6;++i){int first=std::array<int,6>{1,40,75,103,109,240}[i];memcpy(acts[i].data(),&first,4);memcpy(acts[i].data()+4,&first,4);}
+    auto table=acts.data();uint64_t count=6,capacity=6;
+    memcpy(image+0x1c9ea80,&table,8);memcpy(image+0x1c9ea88,&count,8);memcpy(image+0x1c9ea90,&capacity,8);
     assert(Activate() && Active() && town==240 && observer==&Tick);
+    assert(Field<uint64_t>(image+0x1c9ea88)==6);
     for(uint32_t rva:{0x2a3d32u,0x33be69u,0x33c20du,0x33cc8eu})assert(image[rva]==0x90);
     // Execute the native Baal credit routine, with only room/player lookup
     // bound to fixture objects. Its original quest-bit writes stay active.
     Jump(image+0x20c230,reinterpret_cast<uintptr_t>(&PlayerData));
     Jump(image+0x209530,reinterpret_cast<uintptr_t>(&Room));
-    std::array<std::array<uint8_t,0x8c>,6> acts{};
-    for(unsigned i=0;i<6;++i){int first=std::array<int,6>{1,40,75,103,109,240}[i];memcpy(acts[i].data()+4,&first,4);}
-    auto table=acts.data();uint64_t count=6;memcpy(image+0x1c9ea80,&table,8);memcpy(image+0x1c9ea88,&count,8);
     D2GameStrc game{};D2UnitStrc player{};D2PlayerDataStrc data{};D2ClientStrc client{};
     player.pPlayerData=&data;data.pClient=&client;
     std::array<uint8_t,96> bytes{};BitBuffer buffer{bytes.data(),768};
@@ -357,6 +360,45 @@ void NativeInstallTests(const char* path){
     memset(image+0x1c9fd28,0,8);memset(image+0x1c9fd10,0,4);
     memset(image+0x1c9ea80,0,16);
     Uninstall();assert(!Active() && !storage && !town && !observer && Supported());
+    // A fresh disabled launch uses the same six allocated records but exposes
+    // only five. No six-act code patches, callbacks or extra UI remain active.
+    capacity=6;count=6;
+    memcpy(image+0x1c9ea80,&table,8);memcpy(image+0x1c9ea88,&count,8);memcpy(image+0x1c9ea90,&capacity,8);
+    const auto preservedActs=acts;
+    *reinterpret_cast<uint8_t*>(image+0x1dc76f8)=1;
+    assert(!DisableLoadedAct() && Field<uint64_t>(image+0x1c9ea88)==6);
+    *reinterpret_cast<uint8_t*>(image+0x1dc76f8)=0;
+    image[0x33be69]^=1;assert(!DisableLoadedAct());image[0x33be69]^=1;
+    image[ActInfoMoveRva]^=1;assert(!DisableLoadedAct());image[ActInfoMoveRva]^=1;
+    capacity=5;memcpy(image+0x1c9ea90,&capacity,8);assert(!DisableLoadedAct());
+    capacity=6;memcpy(image+0x1c9ea90,&capacity,8);
+    assert(DisableLoadedAct() && DisableLoadedAct());
+    assert(Field<uint64_t>(image+0x1c9ea88)==5 && Field<uint64_t>(image+0x1c9ea90)==6);
+    assert(Field<void*>(image+0x1c9ea80)==table && acts==preservedActs);
+    assert(!Active() && !storage && !town && !observer && Supported());
+    // The unpatched Baal handler must grant the next difficulty normally.
+    chamber=132;memcpy(area.data()+0x1f8,&chamber,4);
+    for(unsigned diff=0;diff<3;++diff){
+        game.nDifficulty=uint8_t(diff);data.pQuestData[diff]=reinterpret_cast<D2BitBufferStrc*>(&buffer);bytes.fill(0);
+        uint16_t before=uint16_t(0x402d|((5*diff+4)<<8));memcpy(reinterpret_cast<uint8_t*>(&client)+0xa,&before,2);
+        baal(&game,&player);
+        assert(Flag(&buffer,40,0));
+        assert(unsigned((Field<uint16_t>(&client,0xa)>>8)&31)==5*(diff+1));
+    }
+    // Real BIN startup first allocates zero records through ActCode, then
+    // ActInfo's compiler replaces the entire vector. Exercise the original
+    // native move through the disabled-mode detour, not a populated-only mock.
+    memset(image+0x1c9ea88,0,8);Uninstall();assert(!disabledActHook);
+    std::array<std::array<uint8_t,0x8c>,6> emptyActs{};auto emptyTable=emptyActs.data();
+    count=6;memcpy(image+0x1c9ea80,&emptyTable,8);memcpy(image+0x1c9ea88,&count,8);memcpy(image+0x1c9ea90,&capacity,8);
+    assert(DisableLoadedAct() && DisableLoadedAct() && Field<uint64_t>(image+0x1c9ea88)==6);
+    std::array<uintptr_t,3> compiled{reinterpret_cast<uintptr_t>(table),6,6};
+    At<ActInfoMove>(ActInfoMoveRva)(image+0x1c9ea80,compiled.data());
+    assert(Field<uint64_t>(image+0x1c9ea88)==5 && Field<uint64_t>(image+0x1c9ea90)==6);
+    assert(Field<void*>(image+0x1c9ea80)==table && acts==preservedActs && compiled[1]==0);
+    std::array<uintptr_t,3> unrelated{},other{reinterpret_cast<uintptr_t>(table),6,6};
+    At<ActInfoMove>(ActInfoMoveRva)(unrelated.data(),other.data());
+    assert(unrelated[1]==6 && Field<uint64_t>(image+0x1c9ea88)==5);
     // Execute the original modern save loader's saved-act normalization and
     // bound check with its original zero fallback (ESI). A disabled Act VI
     // clamps to Act I; valid original acts and the enabled sixth act survive.
@@ -366,14 +408,82 @@ void NativeInstallTests(const char* path){
     auto target=reinterpret_cast<uintptr_t>(image+0x31aa33);memcpy(wrapper+9,&target,8);
     auto code=static_cast<uint8_t*>(VirtualAlloc(nullptr,0x1000,MEM_COMMIT|MEM_RESERVE,PAGE_EXECUTE_READWRITE));assert(code);memcpy(code,wrapper,sizeof(wrapper));
     auto normalize=reinterpret_cast<unsigned(__fastcall*)(unsigned)>(code);
+    assert(normalize(0x85)==0); // production disable helper capped size to five.
     for(unsigned loaded:{5u,6u}){memcpy(image+0x1c9ea88,&loaded,4);for(unsigned act=0;act<6;++act)assert(normalize(0x80|act)==(act<loaded?act:0));}
-    memset(image+0x1c9ea88,0,8);VirtualFree(code,0,MEM_RELEASE);
+    memset(image+0x1c9ea80,0,24);Uninstall();assert(!disabledActHook && image[ActInfoMoveRva]==0x48);VirtualFree(code,0,MEM_RELEASE);
     // An unrelated existing hook is never removed by a failed installation.
     void* previous=nullptr;assert(MH_CreateHook(image+0xc32320,reinterpret_cast<void*>(&CreditsOpen),&previous)==MH_OK);
     assert(!Activate() && !storage && Supported());assert(MH_RemoveHook(image+0xc32320)==MH_OK);
     VirtualFree(image,0,MEM_RELEASE);fixtureBase=0;
+    std::cout<<"Native disabled mode: five logical acts, original Baal progression and saved-act fallback; table bytes/capacity preserved; unsafe changes rejected.\n";
+}
+void CompiledDataTests(const char* sourcePath){
+    using namespace ExtendedActs;
+    const std::filesystem::path source=std::filesystem::absolute(sourcePath);
+    const auto temp=std::filesystem::canonical(std::filesystem::temp_directory_path());
+    const auto root=temp/("act6-real-bin-test-"+std::to_string(GetCurrentProcessId()));
+    assert(!std::filesystem::exists(root));
+    std::filesystem::create_directories(root/"global/excel");
+    const std::array<int,9> areas{240,241,242,243,244,245,246,247,248};
+    std::map<std::string,std::vector<uint8_t>> originals;
+    for(const char* name:{"actinfo","levels"}){
+        const auto relative=std::string("global/excel/")+name+".bin";
+        std::ifstream f(source/relative,std::ios::binary);assert(f);
+        originals[name]=std::vector<uint8_t>(std::istreambuf_iterator<char>(f),{});
+    }
+    auto put=[&](const std::string& name,const std::vector<uint8_t>& bytes){
+        std::ofstream f(root/"global/excel"/(name+".bin"),std::ios::binary);
+        f.write(reinterpret_cast<const char*>(bytes.data()),bytes.size());f.close();assert(f);
+    };
+    for(const auto& [name,bytes]:originals)put(name,bytes);
+    // Use game-produced records: the TXT act key is not serialized in BIN.
+    try{ValidateCompiledActs(root,6,areas);}
+    catch(const std::exception& e){std::cerr<<"Real compiled package rejected: "<<e.what()<<std::endl;assert(false);}
+    auto reject=[&](const std::string& name,std::vector<uint8_t> bytes){
+        put(name,bytes);bool bad=false;
+        try{ValidateCompiledActs(root,6,areas);}catch(const std::exception&){bad=true;}
+        assert(bad);put(name,originals.at(name));
+    };
+    // Swapped act rows and wrong towns must still fail, including Act VI.
+    for(size_t row=0;row<6;++row){auto b=originals.at("actinfo");b[4+row*0x8c]^=1;reject("actinfo",b);}
+    auto b=originals.at("actinfo");
+    std::swap_ranges(b.begin()+4,b.begin()+4+0x8c,b.begin()+4+0x8c);reject("actinfo",b);
+    b=originals.at("actinfo");b[0]=5;reject("actinfo",b);
+    b=originals.at("actinfo");b.pop_back();reject("actinfo",b);
+    // Required level IDs, act indices and waypoint positions remain strict.
+    for(size_t row=240;row<249;++row)for(size_t offset:{size_t(0),size_t(7),size_t(0xe8)}){
+        b=originals.at("levels");b[4+row*0x184+offset]^=1;reject("levels",b);
+    }
+    b=originals.at("levels");b.pop_back();reject("levels",b);
+    // Unrelated monster settings are outside the launch contract.
+    b=originals.at("levels");b[4+240*0x184+0x70]^=1;put("levels",b);
+    ValidateCompiledActs(root,6,areas);
+    // Replay BIN startup using this package's real manifest and UI files,
+    // with the saved Act VI preference both on and off. Off selects five-act
+    // layouts and leaves six-act hooks uninstalled; Install caps native size.
+    std::ifstream manifest(source/"Pandemonium/act6.json");assert(manifest);
+    const auto config=nlohmann::json::parse(manifest);
+    const auto layouts=config.at("native_layouts").get<std::set<std::string>>();
+    for(const auto& file:config.at("switch_files")){
+        if(!layouts.contains(file.at("path").get<std::string>()))continue;
+        for(const char* key:{"path","enabled","disabled"}){
+            const auto relative=file.at(key).get<std::string>();
+            if(!std::filesystem::exists(source/relative))continue;
+            std::filesystem::create_directories((root/relative).parent_path());
+            std::filesystem::copy_file(source/relative,root/relative,std::filesystem::copy_options::overwrite_existing);
+        }
+    }
+    for(bool want:{false,true}){
+        assert(ConfigureData(root,config,want,false,6)==(want?Config::Enabled:Config::Disabled));
+        assert(configured && !compileText && !pendingRestart);
+    }
+    configured=false;configuredManifest={};configuredData.clear();
+    assert(std::filesystem::canonical(root).parent_path()==temp);
+    std::filesystem::remove_all(root);
+    std::cout<<"Real package BIN startup accepts both Act VI preferences; 37 corrupt layouts/fields rejected; unrelated level edits preserved.\n";
 }
 int main(int argc,char** argv){
+    if(argc>2 && std::string(argv[1])=="--compiled-data-test"){CompiledDataTests(argv[2]);return 0;}
     if(argc>1 && std::string(argv[1])=="--file-config-test"){FileConfigurationTests(argc>2 && std::string(argv[2])=="-txt");return 0;}
     FileConfigurationTests(false);
     ProgressTests();TransitionTests();DataTests();TickTests();ExitTests();

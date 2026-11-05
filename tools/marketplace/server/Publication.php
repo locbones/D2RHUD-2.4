@@ -20,7 +20,7 @@ trait MarketplacePublication {
             if(!$row||$row['owner']!==$owner||$row['scope']!==$scope)throw new MarketError(404,'Physical item not found.');
             if($row['item_hex']!==$hex)throw new MarketError(409,'The item changed. Refresh before withdrawing it.');
             $held=$this->run('SELECT state FROM escrow_items WHERE item=?',[$item])->fetchColumn();
-            if($held!==false&&$held!=='delivered')throw new MarketError(409,'This item is held in escrow. Use Return to delivery.');
+            if($held!==false&&$held!=='delivered')throw new MarketError(409,'This item is held in Vault. Use Return to delivery.');
             $listings=$this->run("SELECT id FROM listings WHERE item=? AND seller=? AND status IN ('open','agreed')",[$item,$owner])->fetchAll();
             foreach($listings as $listing){$this->invalidateOffers($listing['id'],$actor,'The seller withdrew this item before moving it.');$this->run("UPDATE listings SET status='withdrawn',revision=revision+1 WHERE id=?",[$listing['id']]);}
             $this->run('UPDATE published_items SET expires=0 WHERE item=? AND owner=? AND scope=?',[$item,$owner,$scope]);
@@ -58,7 +58,7 @@ trait MarketplacePublication {
             $code=self::text($r['code']??null,4);if(!preg_match('/^[\x21-\x7e]{1,4}$/D',$code))throw new MarketError(422,'Invalid item code.');
             $children=$r['socketed_items']??[];if(!is_array($children)||!array_is_list($children)||count($children)>6)throw new MarketError(422,'Invalid socket count.');
             $key=hash('sha256',$page.'|'.$tab.'|'.$hex);if(isset($rows[$key]))throw new MarketError(422,'Duplicate item in publication.');
-            $rows[$key]=['tab'=>$tab,'hex'=>$hex,'code'=>$code,'seed'=>self::number($r['saved_id']??null,0,4294967295),'quality'=>self::number($r['quality']??null,1,9),'index'=>self::number($r['index']??null,-1,1000000),'ethereal'=>(int)$r['ethereal'],'sockets'=>count($children),'price'=>self::price($r['price']??null),'display'=>$this->displayItem($r)];
+            $rows[$key]=['tab'=>$tab,'hex'=>$hex,'code'=>$code,'seed'=>self::number($r['saved_id']??null,0,4294967295),'quality'=>self::number($r['quality']??null,1,9),'index'=>self::number($r['index']??null,-1,1000000),'ethereal'=>(int)$r['ethereal'],'sockets'=>count($children),'price'=>self::price($r['price']??null),'display'=>$this->displayItem($r),'comment'=>array_key_exists('comment',$r)?self::listingComment($r['comment']):null];
         }
         foreach($rows as &$r)if($native=$this->itemIdentity($r['hex'])){$r['seed']=$native['saved_id'];}unset($r);
         $identities=[];$duplicates=[];
@@ -101,6 +101,7 @@ trait MarketplacePublication {
                     $this->run('INSERT INTO published_items VALUES (?,?,?,?,?,?,?,?)',[$owner,$scope,$key,$item,$listing,$r['tab'],$expires,1]);
                     $this->event($item,null,$actor,'listed','Client-reported item; not escrowed.',$r['price'],$owner);
                 }
+                $this->setListingComment(isset($mapped[$key])?$mapped[$key]['listing']:$listing,$r['comment']);
                 $displayItem=isset($mapped[$key])?$mapped[$key]['item']:$item;$this->recordIdentity($displayItem,$scope,$r['hex']);
                 $this->run('DELETE FROM web_item_display WHERE item=?',[$displayItem]);$this->run('INSERT INTO web_item_display VALUES (?,?)',[$displayItem,self::json($r['display'])]);
             }

@@ -41,12 +41,13 @@ trait MarketplaceOwnerTools {
     public function controlledRequest(array $actor,string $action,array $data,bool $hc,callable $callback): array {
         return $this->transaction(function()use($actor,$action,$data,$hc,$callback){
             $control=$this->run('SELECT phase FROM market_control WHERE community=?'.$this->lock(),[$this->community])->fetchColumn();
+            if($this->run('SELECT role FROM actors WHERE id=?',[$actor['owner']??$actor['id']])->fetchColumn()==='retired')throw new MarketError(401,'This player account has been retired. Link your current player.');
             $type=$data['type']??'';
             $operating=$action==='owner';
             if($operating)$this->requireOwner($actor);
             $recovery=$action==='custody'&&in_array($type,['web_sync','delivery_queue','claim_prepare','write_authorize','commit','cancel','status','wallet_notice','browser_link','profile_state'],true);
             if(!$operating&&!$recovery){
-                if($control==='draining')throw new MarketError(409,'The owner is clearing the marketplace. Escrow returns are still available.');
+                if($control==='draining')throw new MarketError(409,'The owner is clearing the marketplace. Vault returns are still available.');
                 $reset=$this->clientReset($actor['owner']??$actor['id'],$hc);
                 if($reset&&!$reset['acknowledged'])throw new MarketError(409,'Marketplace reset: let the updated save companion clear old trade drafts first.');
             }
@@ -58,14 +59,22 @@ trait MarketplaceOwnerTools {
         $items="item IN (SELECT id FROM items WHERE $scope)";
         $listings="listing IN (SELECT id FROM listings WHERE $items)";
         return [
+            'market_gift_notices'=>"campaign IN (SELECT id FROM market_gift_campaigns WHERE $scope)",
+            'market_gift_claims'=>"campaign IN (SELECT id FROM market_gift_campaigns WHERE $scope)",
+            'market_gift_campaigns'=>$scope,
+            'market_wanted_offers'=>"wanted IN (SELECT id FROM market_wanted WHERE $scope)",
+            'market_wanted'=>$scope,
+            'market_browser_features'=>$scope,
+            'market_companion_versions'=>$scope,
+            'market_message_seen'=>"message IN (SELECT id FROM market_messages WHERE $scope)",
             'market_search_notices'=>"search IN (SELECT id FROM market_searches WHERE $scope)",
             'market_search_hits'=>"search IN (SELECT id FROM market_searches WHERE $scope)",
-            'market_bundle_items'=>$listings,'market_bundles'=>$listings,'market_activity_reads'=>$scope,
+            'market_listing_comments'=>$listings,'market_bundle_items'=>$listings,'market_bundles'=>$listings,'market_activity_reads'=>$scope,
             'market_report_events'=>"report IN (SELECT id FROM market_reports WHERE $scope)",
             'market_reports'=>$scope,'market_public_offers'=>$listings,'market_bidder_aliases'=>$listings,
             'events'=>$items,'offers'=>$listings,'published_items'=>$scope,
             'web_item_display'=>$items,'item_identities'=>$scope,'identity_reservations'=>$scope,
-            'escrow_items'=>$scope,'escrow_balances'=>$scope,'settlements'=>$scope,
+            'escrow_items'=>$scope,'escrow_balances'=>$scope,'settlements'=>$scope,'market_trade_assets'=>$scope,
             'wallet_entries'=>$scope,'wallet_withdrawals'=>$scope,'market_favorites'=>$scope,
             'market_messages'=>$scope,'market_characters'=>$scope,'web_intents'=>$scope,
             'web_profiles'=>$scope,'market_preferences'=>$scope,'custody_sources'=>$scope,'inventory_sources'=>$scope,
@@ -80,7 +89,7 @@ trait MarketplaceOwnerTools {
         $funds=$this->run("SELECT b.owner,a.name,b.scope,b.kind,b.stat,b.quantity FROM escrow_balances b JOIN actors a ON a.id=b.owner WHERE b.scope LIKE ? ESCAPE '!' AND b.quantity>0",[$pattern])->fetchAll();
         $withdrawals=(int)$this->run("SELECT COUNT(*) FROM wallet_withdrawals WHERE scope LIKE ? ESCAPE '!' AND status IN ('queued','delivering')",[$pattern])->fetchColumn();
         $pending=(int)$this->run("SELECT COUNT(*) FROM custody_tickets WHERE scope LIKE ? ESCAPE '!' AND status IN ('prepared','writing')",[$pattern])->fetchColumn();
-        return ['control'=>$this->controlState(),'counts'=>$counts,'held_items'=>$held,'held_balances'=>$funds,'withdrawals'=>$withdrawals,'pending_save_operations'=>$pending,'ready_to_clear'=>!$held&&!$funds&&!$withdrawals&&!$pending];
+        return ['owner_player_id'=>$this->publicPlayerId($actor['id']),'control'=>$this->controlState(),'counts'=>$counts,'held_items'=>$held,'held_balances'=>$funds,'withdrawals'=>$withdrawals,'pending_save_operations'=>$pending,'ready_to_clear'=>!$held&&!$funds&&!$withdrawals&&!$pending];
     }
     private function enqueueResetIntent(string $owner,string $scope,string $kind,array $packet,string $id): void {
         $this->run('INSERT INTO web_intents (id,owner,scope,kind,packet,status,message,created) VALUES (?,?,?,?,?,?,?,?)',[$id,$owner,$scope,$kind,self::json($packet),'queued','',time()]);
@@ -97,7 +106,7 @@ trait MarketplaceOwnerTools {
             $this->run("UPDATE offers SET status='withdrawn',revision=revision+1 WHERE listing IN (SELECT id FROM listings WHERE item IN (SELECT id FROM items WHERE scope LIKE ? ESCAPE '!')) AND status IN ('pending','accepted')",[$pattern]);
             $this->run("UPDATE market_preferences SET auto_trade=0 WHERE scope LIKE ? ESCAPE '!'",[$pattern]);
             $this->run("UPDATE web_intents SET status='failed',message='Cancelled by marketplace reset.' WHERE scope LIKE ? ESCAPE '!' AND status='queued'",[$pattern]);
-            foreach($this->run("SELECT owner,scope,settings FROM web_profiles WHERE scope LIKE ? ESCAPE '!'",[$pattern])->fetchAll() as $p){$settings=json_decode($p['settings'],true,512,JSON_THROW_ON_ERROR);$settings['enabled']=$settings['auto_trade']=false;$this->enqueueResetIntent($p['owner'],$p['scope'],'setup',$settings,self::id());}
+            foreach($this->run("SELECT owner,scope,settings FROM web_profiles WHERE scope LIKE ? ESCAPE '!'",[$pattern])->fetchAll() as $p){$settings=json_decode($p['settings'],true,512,JSON_THROW_ON_ERROR);if($settings===null)continue;$settings['enabled']=$settings['auto_trade']=false;$this->enqueueResetIntent($p['owner'],$p['scope'],'setup',$settings,self::id());}
         }
         foreach($this->run("SELECT item,metadata FROM escrow_items WHERE scope LIKE ? ESCAPE '!' AND state IN ('available','listed')",[$pattern])->fetchAll() as $e){$meta=json_decode($e['metadata'],true,512,JSON_THROW_ON_ERROR);$meta['price']=[];$meta['delivery_requested']=true;$this->run("UPDATE escrow_items SET state='available',metadata=? WHERE item=?",[self::json($meta),$e['item']]);}
         foreach($this->run("SELECT * FROM escrow_balances WHERE scope LIKE ? ESCAPE '!' AND quantity>0",[$pattern])->fetchAll() as $b){
@@ -114,7 +123,7 @@ trait MarketplaceOwnerTools {
     private function finishClear(array $actor,array $data,string $directory): array {
         $status=$this->ownerStatus($actor);$control=$status['control'];
         if(($data['confirm']??'')!=='CLEAR MARKETPLACE'||($data['reset_id']??'')!==$control['reset_id']||$control['phase']!=='draining')throw new MarketError(409,'Review the current reset and type CLEAR MARKETPLACE.');
-        if(!$status['ready_to_clear'])throw new MarketError(409,'Escrow returns or save operations are still outstanding. No data was purged.');
+        if(!$status['ready_to_clear'])throw new MarketError(409,'Vault returns or save operations are still outstanding. No data was purged.');
         $pattern=$this->communityPattern();$backup=['schema'=>1,'community'=>$this->community,'created'=>time(),'tables'=>[]];
         foreach($this->resetSelections() as $table=>$where)$backup['tables'][$table]=$this->run("SELECT * FROM $table WHERE $where",[$pattern])->fetchAll();
         if(!is_dir($directory)&&!mkdir($directory,0700,true))throw new RuntimeException('Cannot create the private reset archive.');
@@ -125,7 +134,7 @@ trait MarketplaceOwnerTools {
         // Retire old explicitly designated service test traders once no holdings
         // or other-community profile/messages refer to them. Real players stay.
         $testers=$this->run("SELECT id FROM actors a WHERE role='tester' AND NOT EXISTS(SELECT 1 FROM items i WHERE i.owner=a.id) AND NOT EXISTS(SELECT 1 FROM market_messages m WHERE m.sender=a.id OR m.recipient=a.id) AND NOT EXISTS(SELECT 1 FROM market_characters c WHERE c.owner=a.id) AND NOT EXISTS(SELECT 1 FROM custody_agents_scoped g WHERE g.owner=a.id)")->fetchAll(PDO::FETCH_COLUMN);
-        foreach($testers as $id){foreach(['market_memberships','market_players','market_names','market_message_reads'] as $table)$this->run("DELETE FROM $table WHERE owner=?",[$id]);$this->run('DELETE FROM actors WHERE id=?',[$id]);}
+        foreach($testers as $id){foreach(['market_memberships','market_players','market_names','market_message_reads','market_message_seen'] as $table)$this->run("DELETE FROM $table WHERE owner=?",[$id]);$this->run('DELETE FROM actors WHERE id=?',[$id]);}
         // Delayed clients must clear old drafts/outboxes before they may publish
         // again. Real names, pairing tokens, accounts and capabilities stay put.
         foreach($this->run("SELECT owner,`mod` FROM market_memberships WHERE game_mode='2.4'")->fetchAll() as $p)foreach(['SC','HC'] as $mode){

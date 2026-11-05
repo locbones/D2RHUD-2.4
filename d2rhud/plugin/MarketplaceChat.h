@@ -1,11 +1,13 @@
 #pragma once
 #include "MarketplaceActivity.h"
+#include "MarketplaceChatPresence.h"
 #include <functional>
 #include <mutex>
 #include <optional>
 
-// Value-only local mailbox/outbox. No HTTP, inventory access, native pointers,
-// background threads, or shutdown work. The host owns calls into native chat.
+// Value-only local mailbox/outbox. No HTTP, inventory access, native pointers
+// or shutdown waits. Only ephemeral presence uses a value-only
+// background writer; the host owns calls into native chat.
 namespace Marketplace::Chat {
 inline constexpr std::array<uint8_t,16> PacketQueuePrefix{0x48,0x89,0x5c,0x24,0x18,0x57,0x48,0x81,0xec,0x50,0x02,0,0,0x48,0x8b,0x05};
 inline constexpr std::array<uint8_t,24> SubmitPrefix{0x40,0x55,0x53,0x56,0x57,0x41,0x56,0x41,0x57,0x48,0x8d,0xac,0x24,0xf8,0xf9,0xff,0xff,0x48,0x81,0xec,0x08,0x07,0x00,0x00};
@@ -48,21 +50,54 @@ inline std::optional<std::string> PacketText(std::span<const uint8_t> packet){
     return std::string(reinterpret_cast<const char*>(text.data()),size_t(end-text.begin()));
 }
 class Bridge {
+public:
+    using MailboxRead=std::function<std::vector<uint8_t>(const std::filesystem::path&)>;
+private:
     std::mutex mutex;
     std::filesystem::path folder;
     std::string owner;bool hardcore=false,hinted=false,delivering=false;
     int64_t through=0;uint64_t polled=0,presence=0;
     Json reply=Json::object();std::vector<std::string> notices;
+    PresenceWriter presenceWriter;
+    struct Stamp {uint64_t size=0,written=0;bool operator==(const Stamp&)const=default;};
+    std::filesystem::path mailboxPath;Stamp mailboxStamp;Json mailbox,handledResults=Json::object();
+    uint64_t mailboxAt=0;bool mailboxLoaded=false,mailboxValid=false;MailboxRead mailboxRead;
+    static Stamp FileStamp(const std::filesystem::path& path){
+        WIN32_FILE_ATTRIBUTE_DATA info{};
+        if(!GetFileAttributesExW(path.c_str(),GetFileExInfoStandard,&info)||(info.dwFileAttributes&FILE_ATTRIBUTE_DIRECTORY))throw std::runtime_error("Private mailbox is unavailable.");
+        return {(uint64_t(info.nFileSizeHigh)<<32)|info.nFileSizeLow,(uint64_t(info.ftLastWriteTime.dwHighDateTime)<<32)|info.ftLastWriteTime.dwLowDateTime};
+    }
+    const Json& ReadMailbox(const std::filesystem::path& path,uint64_t now){
+        const auto stamp=FileStamp(path);
+        // Poll metadata for timely messages; unchanged content stays in memory.
+        // A periodic re-read also handles tools which preserve timestamps/size.
+        if(!mailboxLoaded||path!=mailboxPath||stamp!=mailboxStamp||now<mailboxAt||now-mailboxAt>=30000){
+            mailboxPath=path;mailboxStamp=stamp;mailboxAt=now;mailboxLoaded=false;mailboxValid=false;
+            if(stamp.size>2*1024*1024){mailboxLoaded=true;throw std::runtime_error("Private mailbox exceeds its limit.");}
+            const auto bytes=mailboxRead(path);
+            if(FileStamp(path)!=stamp)throw std::runtime_error("Private mailbox changed during reading.");
+            mailboxLoaded=true; // Memoize malformed content, not transient I/O failures.
+            auto next=Json::parse(bytes);
+            mailbox=std::move(next);mailboxValid=true;
+        }
+        if(!mailboxValid)throw std::runtime_error("Private mailbox is unreadable.");
+        return mailbox;
+    }
     std::filesystem::path Outbox(){return folder/(hardcore?L"MarketplaceChatOutbox_2.4_HC.json":L"MarketplaceChatOutbox_2.4_SC.json");}
     Json ReadOutbox(std::string& original){original=ReadSettingsFile(Outbox());
         Json value=original.empty()?Json{{"schema",1},{"game_mode","2.4"},{"mod","RMD-MP"},{"hardcore",hardcore},{"owner",owner},{"commands",Json::array()}}:Json::parse(original);
         if(value.at("schema")!=1||value.at("game_mode")!="2.4"||value.at("mod")!="RMD-MP"||value.at("hardcore")!=hardcore||value.at("owner")!=owner||!value.at("commands").is_array()||value["commands"].size()>256)throw std::runtime_error("Chat outbox belongs to another player or game mode.");return value;
     }
 public:
+    void Notify(const std::string& text){std::lock_guard lock(mutex);notices.push_back("[Market] "+Plain(text));}
+    explicit Bridge(PresenceWriter::Launch launch={},PresenceWriter::Write write={},MailboxRead read={}):presenceWriter(std::move(launch),std::move(write)),mailboxRead(std::move(read)){
+        if(!mailboxRead)mailboxRead=[](const auto& path){return ReadFile(path,2*1024*1024);};
+    }
     void Configure(const std::filesystem::path& saves,const std::string& player,bool hc){
         std::lock_guard lock(mutex);if(saves!=folder||player!=owner){folder=saves;owner=player;through=0;reply=Json::object();polled=presence=0;hinted=false;
+            presenceWriter.Reset();mailboxLoaded=false;handledResults=Json::object();
             try{const auto old=Json::parse(ReadSettingsFile(folder/L"MarketplaceChatSeen_2.4.json"));if(old.at("owner")==owner)through=(std::max)(int64_t(0),old.at("through").get<int64_t>());}catch(...){}
-        }hardcore=hc;
+        }if(hardcore!=hc){mailboxLoaded=false;handledResults=Json::object();}hardcore=hc;
     }
     bool Outgoing(const std::string& text){
         // Public packets never acquire the mailbox lock: native chat display
@@ -81,6 +116,7 @@ public:
             }else{command["type"]="direct_message";command["to"]=target;}
             std::string original;auto outbox=ReadOutbox(original);if(outbox["commands"].size()>=256)throw std::runtime_error("The private message outbox is full. Let the companion reconnect first.");
             outbox["commands"].push_back(command);SaveSettingsFile(Outbox(),original,outbox.dump());
+            handledResults=Json::object();
             for(const auto& line:Lines(Plain(parsed->message)))notices.push_back("[Private -> "+Plain(target)+"] "+line);
         }catch(const std::exception& e){notices.push_back(std::string("[Market] ")+e.what());}
         return true; // Private commands are never sent to the TCP/IP game.
@@ -95,10 +131,10 @@ public:
             delivering=true;polled=now;output.swap(notices);
             const auto print=[&](const std::string& text){output.push_back(text);};
             if(!owner.empty()&&!folder.empty()){
-                if(now>=presence+2000){presence=now;try{const auto path=folder/L"MarketplaceChatPresence_2.4.json";const auto before=ReadSettingsFile(path);SaveSettingsFile(path,before,Json{{"schema",1},{"owner",owner},{"at",std::time(nullptr)}}.dump());}catch(...){} }
+                if(!presence||now>=presence+5000){presence=now;presenceWriter.Schedule({folder/L"MarketplaceChatPresence_2.4.json",owner,std::time(nullptr)});}
                 try{
                     const auto path=folder/(hardcore?L"MarketplaceMessages_2.4_HC.json":L"MarketplaceMessages_2.4_SC.json");
-                    const auto cache=Json::parse(ReadFile(path,2*1024*1024));
+                    const auto& cache=ReadMailbox(path,now);
                     if(cache.at("schema")!=1||cache.at("game_mode")!="2.4"||cache.at("mod")!="RMD-MP"||cache.at("hardcore")!=hardcore||cache.at("owner")!=owner||!cache.at("messages").is_array()||cache["messages"].size()>256)throw std::runtime_error("Invalid private mailbox.");
                     int printed=0;int64_t previous=0;
                     for(const auto& row:cache["messages"]){
@@ -108,7 +144,8 @@ public:
                         const auto kind=ActivityText(row,"kind",16),sender=ActivityText(row,"sender_name",128);
                         const auto body=row.at("body").get<std::string>();
                         if((kind!="direct"&&kind!="trade")||body.size()>4096)throw std::runtime_error("Invalid private message.");
-                        for(const auto& line:Lines(Plain(body)))print(std::string(kind=="trade"?"[Trade] ":"[Message] ")+Plain(sender)+": "+line);
+                        const auto category=row.value("category",body.starts_with("Saved search ")?std::string("search"):kind);
+                        for(const auto& line:Lines(Plain(body)))print(std::string(category=="search"?"[Search] ":kind=="trade"?"[Trade] ":"[Message] ")+Plain(sender)+": "+line);
                         nextReply=row;nextThrough=seq;if(++printed==8)break;
                     }
                     if(nextThrough>through){
@@ -116,7 +153,7 @@ public:
                         if(!hinted){print("[Market] Reply with /mr message. Send privately with /mt \"Player Name\" message.");hinted=true;}
                     }
                     const auto results=cache.value("results",Json::object());
-                    if(results.is_object()&&!results.empty()){
+                    if(results.is_object()&&!results.empty()&&results!=handledResults){
                         std::string original;auto outbox=ReadOutbox(original);auto& commands=outbox["commands"];const auto old=commands.size();
                         for(auto it=commands.begin();it!=commands.end();){const auto id=it->at("id").get<std::string>();
                             if(!results.contains(id)){++it;continue;}
@@ -124,6 +161,7 @@ public:
                             it=commands.erase(it);
                         }
                         if(commands.size()!=old)SaveSettingsFile(Outbox(),original,outbox.dump());
+                        handledResults=results;
                     }
                 }catch(...){} // An offline/malformed cache never affects gameplay.
             }

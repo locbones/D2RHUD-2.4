@@ -14,6 +14,9 @@ std::string Resolve(const std::string& preferred);
 bool IsSupported(const std::filesystem::path& path);
 bool PlayFile(const std::string& path);
 void Beep();
+// Bounded, background playback with per-voice gain. Never changes Windows or
+// game mixer volume and never falls back to an unattenuated system beep.
+void PlayNotification(const std::string& path, int volumePercent);
 struct ImportResult { size_t copied = 0; std::string error; };
 ImportResult Import(const std::string& sourceDirectory);
 }

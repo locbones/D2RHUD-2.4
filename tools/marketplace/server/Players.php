@@ -8,6 +8,7 @@ trait MarketplacePlayers {
             'market_characters'=>'owner VARCHAR(64) NOT NULL, scope VARCHAR(255) NOT NULL, character_key CHAR(64) NOT NULL, name VARCHAR(64) NOT NULL, class_id INT NOT NULL, level INT NOT NULL, saved_at BIGINT NOT NULL, updated BIGINT NOT NULL, snapshot MEDIUMTEXT NOT NULL, PRIMARY KEY(owner,scope,character_key)',
             'market_messages'=>($engine?'seq BIGINT AUTO_INCREMENT PRIMARY KEY':'seq INTEGER PRIMARY KEY AUTOINCREMENT').', id CHAR(32) NOT NULL UNIQUE, sender VARCHAR(64) NOT NULL, recipient VARCHAR(64) NOT NULL, scope VARCHAR(255) NOT NULL, kind VARCHAR(16) NOT NULL, thread VARCHAR(64) NOT NULL, body TEXT NOT NULL, created BIGINT NOT NULL',
             'market_message_reads'=>'owner VARCHAR(64) PRIMARY KEY, through_seq BIGINT NOT NULL',
+            'market_message_seen'=>'message CHAR(32) PRIMARY KEY, owner VARCHAR(64) NOT NULL',
         ] as $name=>$columns)$this->db->exec("CREATE TABLE IF NOT EXISTS $name ($columns)$engine");
     }
     private function linkedPlayer(string $owner): void {
@@ -19,9 +20,9 @@ trait MarketplacePlayers {
         $search=trim(self::text(($query['q']??'')===''?' ':$query['q'],64));
         $after=isset($query['after'])?self::text($query['after'],64):'';
         $like='%'.str_replace(['!','%','_'],['!!','!%','!_'],strtolower($search)).'%';
-        $rows=$this->run("SELECT a.id,a.name,p.linked,(SELECT COUNT(*) FROM market_characters c WHERE c.owner=a.id AND c.scope=?) AS characters,(SELECT MAX(updated) FROM market_characters c WHERE c.owner=a.id AND c.scope=?) AS updated FROM actors a JOIN market_memberships p ON p.owner=a.id AND p.`mod`=? AND p.game_mode='2.4' AND p.linked>0 WHERE a.role IN ('player','tester') AND a.id>? AND LOWER(a.name) LIKE ? ESCAPE '!' ORDER BY a.id LIMIT 25",[$this->scope($hc),$this->scope($hc),$this->mod,$after,$like])->fetchAll();
+        $rows=$this->run("SELECT a.id,a.name,p.linked,(SELECT COUNT(*) FROM market_characters c WHERE c.owner=a.id AND c.scope=?) AS characters,(SELECT MAX(updated) FROM market_characters c WHERE c.owner=a.id AND c.scope=?) AS updated FROM actors a JOIN market_memberships p ON p.owner=a.id AND p.`mod`=? AND p.game_mode='2.4' AND p.linked>0 WHERE a.role IN ('player','tester') AND a.id>? AND (LOWER(a.name) LIKE ? ESCAPE '!' OR a.id LIKE ? ESCAPE '!' OR a.id IN (SELECT owner FROM market_player_ids WHERE number=?)) ORDER BY a.id LIMIT 25",[$this->scope($hc),$this->scope($hc),$this->mod,$after,$like,$like,preg_match('/^P-([0-9]+)$/iD',$search,$match)?$match[1]:0])->fetchAll();
         $more=count($rows)>24;if($more)array_pop($rows);
-        foreach($rows as &$r){$r['characters']=(int)$r['characters'];$r['updated']=(int)$r['updated'];$r['linked']=(int)$r['linked'];}unset($r);
+        foreach($rows as &$r){$r['player_id']=$this->publicPlayerId($r['id']);$r['characters']=(int)$r['characters'];$r['updated']=(int)$r['updated'];$r['linked']=(int)$r['linked'];}unset($r);
         return ['players'=>$rows,'next_after'=>$more?end($rows)['id']:null];
     }
     public function playerProfile(string $owner,bool $hc,?string $character=null): array {
@@ -29,7 +30,7 @@ trait MarketplacePlayers {
         if(!$actor)throw new MarketError(404,'Player profile not found.');
         $rows=$this->run('SELECT character_key,name,class_id,level,saved_at,updated FROM market_characters WHERE owner=? AND scope=? ORDER BY name,character_key',[$owner,$this->scope($hc)])->fetchAll();
         foreach($rows as &$r)foreach(['class_id','level','saved_at','updated'] as $k)$r[$k]=(int)$r[$k];unset($r);
-        $result=['player'=>$actor,'characters'=>$rows,'character'=>null];
+        $actor['player_id']=$this->publicPlayerId($actor['id']);$result=['player'=>$actor,'characters'=>$rows,'character'=>null];
         if($character!==null){$character=self::digest($character);$value=$this->run('SELECT snapshot FROM market_characters WHERE owner=? AND scope=? AND character_key=?',[$owner,$this->scope($hc),$character])->fetchColumn();if($value===false)throw new MarketError(404,'Character not found in this game mode.');$result['character']=json_decode($value,true,512,JSON_THROW_ON_ERROR);}
         return $result;
     }
@@ -89,11 +90,11 @@ trait MarketplacePlayers {
             $sender=in_array($kind,['completed_sale','delivered'],true)?($recipient===$o['buyer']?$o['seller']:$o['buyer']):$actor['id'];
             $body=($bundle&&$kind==='delivered'?'Bundle delivered':($gift?($recipient===$o['buyer']?'Gift received':'Gift sent'):$labels[$kind])).': '.$title;
             if($gift)$body.=$recipient===$o['buyer']?' — item queued for delivery.':' — ownership transferred; item queued for the recipient.';
-            elseif($kind==='completed_sale')$body.=$recipient===$o['buyer']?' — purchase complete; item queued for delivery.':' — sale complete; payment is available in escrow.';
+            elseif($kind==='completed_sale')$body.=$recipient===$o['buyer']?' — purchase complete; item queued for delivery.':' — sale complete; payment is available in Vault.';
             elseif($kind==='delivered')$body.=' — delivery page updated. Switch to that page to load it.';
             elseif($message!=='')$body.=' — '.$message;
-            elseif($kind==='accept')$body.=' — terms agreed; settlement requires both sides’ escrow.';
-            if($price){$terms=[];foreach($price as $p)$terms[]=(($p['kind']??'')==='free'?'Free':$p['quantity'].' × '.(($p['kind']??'')==='gold'?'Gold':(($p['kind']??'')==='bag'?$p['label']:$this->notificationItemName(['code'=>$p['code'],'quality'=>$p['quality'],'item_index'=>$p['index']]))));$body.=' | Terms: '.implode(' + ',$terms);}
+            elseif($kind==='accept')$body.=' — terms agreed; settlement requires both sides’ Vault.';
+            if($price){$terms=[];foreach($price as $p)$terms[]=(($p['kind']??'')==='free'?'Free':$p['quantity'].' × '.(($p['kind']??'')==='gold'?'Gold':(($p['kind']??'')==='bag'?$p['label']:$this->notificationItemName(['code'=>$p['code'],'quality'=>$p['quality'],'item_index'=>$p['index']]))).(($p['class_id']??-1)>=0?' ('.(['Amazon','Sorceress','Necromancer','Paladin','Barbarian','Druid','Assassin'][$p['class_id']]).')':''));$body.=' | Terms: '.implode(' + ',$terms);}
             $body=substr($body,0,4096);while(!preg_match('//u',$body))$body=substr($body,0,-1);
             $this->run('INSERT INTO market_messages (id,sender,recipient,scope,kind,thread,body,created) VALUES (?,?,?,?,?,?,?,?)',[hash('md5',$event.'|'.$recipient),$sender,$recipient,$o['scope'],'trade',$offer,$body,time()]);
         }
@@ -120,30 +121,37 @@ trait MarketplacePlayers {
         if(count($members)>1){$sale=(int)$this->run("SELECT seq FROM events WHERE offer=? AND kind='completed_sale' ORDER BY seq DESC LIMIT 1",[$offer])->fetchColumn();foreach($members as $member)if(!$this->run("SELECT id FROM events WHERE item=? AND actor=? AND kind='delivered' AND seq>? LIMIT 1",[$member,$actor['id'],$sale])->fetchColumn())return;}
         $this->notifyTrade($event,$offer,$actor,'delivered','',[]);
     }
+    private function unreadMessages(string $owner): int {
+        return (int)$this->run('SELECT COUNT(*) FROM market_messages m WHERE m.recipient=? AND m.seq>COALESCE((SELECT through_seq FROM market_message_reads WHERE owner=m.recipient),0) AND NOT EXISTS(SELECT 1 FROM market_message_seen s WHERE s.message=m.id AND s.owner=m.recipient)',[$owner])->fetchColumn();
+    }
     public function inbox(array $actor,int $after=0,string $channel='web',bool $preferencesOnly=false): array {
-        $after=self::number($after,0,PHP_INT_MAX);$owner=$actor['id'];$this->evaluateSearches($actor);
+        $after=self::number($after,0,PHP_INT_MAX);$owner=$actor['id'];$this->evaluateSearches($actor);$this->announceGiftCampaigns($actor);
         $rows=$preferencesOnly?[]:$this->run('SELECT m.*,a.name AS sender_name FROM market_messages m JOIN actors a ON a.id=m.sender WHERE m.recipient=? AND m.seq>? ORDER BY m.seq LIMIT 100',[$owner,$after])->fetchAll();
         $next=$rows?(int)end($rows)['seq']:$after;$preferences=$this->notificationSettings($owner);
-        foreach($rows as &$r){$notice=$this->run('SELECT listing,search FROM market_search_notices WHERE message=?',[$r['id']])->fetch();$r['category']=$notice?'search':$r['kind'];if($notice)$r['listing_id']=$notice['listing'];}unset($r);
+        foreach($rows as &$r){$notice=$this->run('SELECT listing,search FROM market_search_notices WHERE message=?',[$r['id']])->fetch();$r['category']=$notice||str_starts_with($r['body'],'Saved search ')?'search':$r['kind'];if($notice)$r['listing_id']=$notice['listing'];}unset($r);
         if($channel==='game')$rows=array_values(array_filter($rows,function($r)use($owner,$preferences){
             if(!$preferences['game_'.$r['category']])return false;
+            // A trade-thread alert must belong to this buyer/seller. Listing
+            // discovery uses game_search and must never inherit game_trade.
+            if($r['category']==='trade'&&$r['thread']!==''&&!$this->run('SELECT id FROM offers WHERE id=? AND (buyer=? OR seller=?)',[$r['thread'],$owner,$owner])->fetchColumn())return false;
             if($r['kind']==='trade'&&!str_starts_with($r['scope'],$this->community.'|'.$this->mod.'|2.4|'))return false;
             return !$this->run('SELECT owner FROM market_player_controls WHERE owner=? AND target=? AND (muted=1 OR blocked=1)',[$owner,$r['sender']])->fetchColumn();
         }));
-        foreach($rows as &$r){$r['seq']=(int)$r['seq'];$r['created']=(int)$r['created'];}unset($r);
-        $max=(int)$this->run('SELECT MAX(seq) FROM market_messages WHERE recipient=?',[$owner])->fetchColumn();$read=(int)$this->run('SELECT through_seq FROM market_message_reads WHERE owner=?',[$owner])->fetchColumn();
+        foreach($rows as &$r){$r['sender_player_id']=$this->publicPlayerId($r['sender']);$r['seq']=(int)$r['seq'];$r['created']=(int)$r['created'];}unset($r);
+        $max=(int)$this->run('SELECT MAX(seq) FROM market_messages WHERE recipient=?',[$owner])->fetchColumn();
         $filters=$channel==='game'?['delivery_preferences'=>$preferences,'muted_senders'=>$this->run('SELECT target FROM market_player_controls WHERE owner=? AND (muted=1 OR blocked=1)',[$owner])->fetchAll(PDO::FETCH_COLUMN)]:[];
-        return $filters+['owner'=>$owner,'messages'=>$rows,'next'=>$next,'latest'=>$max,'unread'=>(int)$this->run('SELECT COUNT(*) FROM market_messages WHERE recipient=? AND seq>?',[$owner,$read])->fetchColumn()];
+        return $filters+['owner'=>$owner,'messages'=>$rows,'next'=>$next,'latest'=>$max,'unread'=>$this->unreadMessages($owner)];
     }
     public function conversations(array $actor,?string $peer=null,int $before=PHP_INT_MAX): array {
         $owner=$actor['id'];$before=self::number($before,1,PHP_INT_MAX);
         if($peer!==null){$peer=self::text($peer,64);$target=$this->run('SELECT a.id,a.name FROM actors a JOIN market_players p ON p.owner=a.id WHERE a.id=?',[$peer])->fetch();if(!$target)throw new MarketError(404,'Player not found.');
             $rows=$this->run("SELECT m.*,a.name AS sender_name FROM market_messages m JOIN actors a ON a.id=m.sender WHERE m.kind='direct' AND ((m.sender=? AND m.recipient=?) OR (m.sender=? AND m.recipient=?)) AND m.seq<? ORDER BY m.seq DESC LIMIT 51",[$owner,$peer,$peer,$owner,$before])->fetchAll();$more=count($rows)>50;if($more)array_pop($rows);
-            foreach($rows as &$r){$r['seq']=(int)$r['seq'];$r['created']=(int)$r['created'];}unset($r);
-            return ['peer'=>$target,'messages'=>array_reverse($rows),'next_before'=>$more?(int)end($rows)['seq']:null];
+            foreach($rows as &$r){$r['sender_player_id']=$this->publicPlayerId($r['sender']);$r['seq']=(int)$r['seq'];$r['created']=(int)$r['created'];}unset($r);
+            $target['player_id']=$this->publicPlayerId($target['id']);return ['peer'=>$target,'messages'=>array_reverse($rows),'next_before'=>$more?(int)end($rows)['seq']:null];
         }
-        $rows=$this->run("SELECT CASE WHEN sender=? THEN recipient ELSE sender END AS peer,MAX(seq) AS last_seq FROM market_messages WHERE kind='direct' AND (sender=? OR recipient=?) GROUP BY CASE WHEN sender=? THEN recipient ELSE sender END ORDER BY last_seq DESC LIMIT 100",[$owner,$owner,$owner,$owner])->fetchAll();$out=[];
-        foreach($rows as $r){$m=$this->run('SELECT body,created,sender FROM market_messages WHERE seq=?',[$r['last_seq']])->fetch();$p=$this->run('SELECT id,name FROM actors WHERE id=?',[$r['peer']])->fetch();$out[]=array_merge($p,['body'=>$m['body'],'created'=>(int)$m['created'],'last_seq'=>(int)$r['last_seq'],'outgoing'=>$m['sender']===$owner]);}
+        $read=(int)$this->run('SELECT through_seq FROM market_message_reads WHERE owner=?',[$owner])->fetchColumn();
+        $rows=$this->run("SELECT CASE WHEN m.sender=? THEN m.recipient ELSE m.sender END AS peer,MAX(m.seq) AS last_seq,MAX(CASE WHEN m.recipient=? AND m.seq>? AND s.message IS NULL THEN m.seq ELSE 0 END) AS unread_seq FROM market_messages m LEFT JOIN market_message_seen s ON s.message=m.id AND s.owner=m.recipient WHERE m.kind='direct' AND (m.sender=? OR m.recipient=?) GROUP BY CASE WHEN m.sender=? THEN m.recipient ELSE m.sender END ORDER BY last_seq DESC LIMIT 100",[$owner,$owner,$read,$owner,$owner,$owner])->fetchAll();$out=[];
+        foreach($rows as $r){$m=$this->run('SELECT body,created,sender FROM market_messages WHERE seq=?',[$r['last_seq']])->fetch();$p=$this->run('SELECT id,name FROM actors WHERE id=?',[$r['peer']])->fetch();$p['player_id']=$this->publicPlayerId($p['id']);$out[]=array_merge($p,['body'=>$m['body'],'created'=>(int)$m['created'],'last_seq'=>(int)$r['last_seq'],'unread_seq'=>(int)$r['unread_seq'],'outgoing'=>$m['sender']===$owner]);}
         return ['conversations'=>$out];
     }
     private function playerCommand(array $actor,array $data): array {
@@ -153,7 +161,7 @@ trait MarketplacePlayers {
             if($old){if(!hash_equals($old['hash'],$hash))throw new MarketError(409,'Command ID reused.');return json_decode($old['result'],true,512,JSON_THROW_ON_ERROR);}
             if(($data['type']??'')==='direct_message'){
                 if(!$this->run('SELECT owner FROM market_players WHERE owner=?',[$owner])->fetch())throw new MarketError(403,'Link your player code before messaging.');
-                $to=self::text($data['to']??null,64);$recipient=$this->run('SELECT a.id FROM actors a JOIN market_players p ON p.owner=a.id WHERE a.id=? OR LOWER(a.name)=LOWER(?) ORDER BY a.id LIMIT 1',[$to,$to])->fetchColumn();
+                $to=self::text($data['to']??null,64);$recipient=$this->resolveLinkedPlayer($to)['id'];
                 // Self messages use the same inbox and native delivery path so
                 // a linked player can test website-to-game chat without a peer.
                 if(!$recipient)throw new MarketError(422,'Choose a linked player.');if($this->communicationBlocked($owner,$recipient))throw new MarketError(403,'Messaging is unavailable between these players.');$body=trim(self::message($data['message']??null));if($body==='')throw new MarketError(422,'Write a message first.');
@@ -161,8 +169,24 @@ trait MarketplacePlayers {
                 $pair=[$owner,$recipient];sort($pair);$thread=hash('sha256',implode('|',$pair));
                 $this->run("INSERT INTO market_messages (id,sender,recipient,scope,kind,thread,body,created) VALUES (?,?,?,?,?,?,?,?)",[$id,$owner,$recipient,'','direct',$thread,$body,time()]);$result=['message_id'=>$id,'peer'=>$recipient];
             }elseif(($data['type']??'')==='message_read'){
-                $max=(int)$this->run('SELECT MAX(seq) FROM market_messages WHERE recipient=?',[$owner])->fetchColumn();$through=self::number($data['through']??null,0,$max);$oldRead=$this->run('SELECT through_seq FROM market_message_reads WHERE owner=?'.$this->lock(),[$owner])->fetchColumn();
-                if($oldRead===false)$this->run('INSERT INTO market_message_reads VALUES (?,?)',[$owner,$through]);else $this->run('UPDATE market_message_reads SET through_seq=? WHERE owner=?',[max($through,(int)$oldRead),$owner]);$result=['through'=>$through];
+                if(isset($data['trade_thread'])){
+                    $thread=self::text($data['trade_thread'],64);$this->offer($thread,$actor);
+                    $ids=$this->run('SELECT id FROM market_messages WHERE recipient=? AND thread=?',[$owner,$thread])->fetchAll(PDO::FETCH_COLUMN);
+                    foreach($ids as $message)if(!$this->run('SELECT message FROM market_message_seen WHERE message=?',[$message])->fetchColumn())$this->run('INSERT INTO market_message_seen VALUES (?,?)',[$message,$owner]);
+                    $result=['messages'=>$ids];
+                }elseif(array_key_exists('messages',$data)){
+                    $ids=$data['messages'];if(!is_array($ids)||!array_is_list($ids)||!count($ids)||count($ids)>200||array_key_exists('through',$data))throw new MarketError(422,'Choose up to 200 received messages.');
+                    $ids=array_values(array_unique(array_map(fn($id)=>self::ticketId($id),$ids)));
+                    foreach($ids as $message){
+                        if(!$this->run('SELECT id FROM market_messages WHERE id=? AND recipient=?',[$message,$owner])->fetchColumn())throw new MarketError(422,'A received message is unavailable.');
+                        if(!$this->run('SELECT message FROM market_message_seen WHERE message=?',[$message])->fetchColumn())$this->run('INSERT INTO market_message_seen VALUES (?,?)',[$message,$owner]);
+                    }
+                    $result=['messages'=>$ids];
+                }else{
+                    $max=(int)$this->run('SELECT MAX(seq) FROM market_messages WHERE recipient=?',[$owner])->fetchColumn();$through=self::number($data['through']??null,0,$max);$oldRead=$this->run('SELECT through_seq FROM market_message_reads WHERE owner=?'.$this->lock(),[$owner])->fetchColumn();
+                    if($oldRead===false)$this->run('INSERT INTO market_message_reads VALUES (?,?)',[$owner,$through]);else $this->run('UPDATE market_message_reads SET through_seq=? WHERE owner=?',[max($through,(int)$oldRead),$owner]);$result=['through'=>$through];
+                }
+                $result['unread']=$this->unreadMessages($owner);
             }else throw new MarketError(422,'Unknown messaging command.');
             $this->run('INSERT INTO commands VALUES (?,?,?,?)',[$owner,$id,$hash,self::json($result)]);return $result;
         });

@@ -48,8 +48,11 @@ An operator can issue a one-use code with `php cli.php web-code PLAYER_ID`.
 
 Escrow actions take effect on the service immediately. Website changes to local
 stash prices/routes are queued as `web_intents`, scoped to the authenticated
-player and SC/HC mode. The paired save agent publishes a private snapshot and
-applies those settings only under guarded closed-game or native parked-page access.
+player and SC/HC mode. Linked players can save routes before their first stash snapshot. A setup-only
+profile has null applied settings and a zero last-seen time until the companion
+syncs; the browser shows the requested pages as pending rather than disabling Save.
+The paired save agent publishes a private snapshot and applies those settings
+only under guarded closed-game or native parked-page access.
 It durably writes the sidecar before acknowledging an intent. An exact item
 that moved/changed is rejected with a visible receipt instead of repricing a
 different item. The existing staged deposit protocol then moves priced goods
@@ -238,3 +241,12 @@ before showing a second, stable-ID confirmation. Item gifts close existing offer
 transfer the same ledger/identity and queue delivery. Resource gifts conserve both
 wallet balances atomically. Retries use the original command ID. Gifts and delivery
 create the same private notifications/history as ordinary trades.
+
+
+## Owner support: Impersonate
+
+Owner tools → Impersonate searches linked players in the selected mod by name or permanent player ID. Review the target and start a session to use their normal marketplace controls, including escrow, deliveries, setup and messages. A persistent banner identifies the acting UID and has an Exit impersonation button. Exit restores the original owner login; sessions also expire after one hour. Returning an escrow item still queues delivery through that player's own companion and existing save guards.
+
+Authorization uses the authenticated owner's permanent identity on every request. Impersonation never copies a player's token, changes their login, grants their account owner privileges, or enables owner management/demo/linking controls in their context. Start, exit and submitted commands are retained in the owner audit, including failed commands; message bodies and serialized saves are excluded. Recent impersonation sessions → View actions shows the owner UID, target UID and command results. Old or stale browser views cannot submit target commands without the correct acting-player header and current CSRF token.
+
+Wallet cards reserve a full row for Withdraw/Gift and wider balance space. The browser regression checks the complete 30,724,600,025 Gold balance in both 320px and 240px cards without overlap or clipping.

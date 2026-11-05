@@ -87,6 +87,7 @@ def main():
                     csrf = value.get('csrf', csrf)
                     return value
                 guest = call('snapshot')
+                call('owner-trades', expected=403)
                 assert guest['self'] is None and guest['offers'] == [] and len(guest['listings']) == 6
                 assert all('item_hex' not in row for row in guest['listings'])
                 call('link', {'code':seeded['code']}, 403, token='bad-csrf')
@@ -95,6 +96,56 @@ def main():
                 session = call('snapshot')
                 assert session['self']['id'] == seeded['buyer']['id']
                 assert len(session['offers']) == 1 and len(session['local_items']) == 1
+                unread_before = call('inbox')['unread']
+                for key in ['a1'*16, 'a2'*16]:
+                    call('command', {'id':key, 'type':'direct_message', 'to':seeded['buyer']['id'], 'message':'Read receipt HTTP fixture'})
+                read_packet = {'id':'a3'*16, 'type':'message_read', 'messages':['a1'*16]}
+                read_result = call('command', read_packet)
+                assert read_result['unread'] == unread_before + 1 and call('command', read_packet) == read_result
+                assert call('inbox')['unread'] == unread_before + 1
+                call('command', {'id':'a4'*16, 'type':'message_read', 'messages':['a2'*16, 'af'*16]}, 422)
+                assert call('inbox')['unread'] == unread_before + 1  # No partial batch acknowledgement.
+                call('owner-trades', expected=403)
+                grant = root / 'grant-owner.php'
+                grant.write_text('<?php require ' + json.dumps((SERVER / 'bootstrap.php').as_posix()) +
+                    ';market()->grantOwner(' + json.dumps(seeded['buyer']['id']) + ');', encoding='utf-8')
+                subprocess.check_call(args + [str(grant)], env=env)
+                assert call('snapshot')['owner_tools']
+                audit_id = seeded['offer']['offer_id']
+                assert call('owner-trade', expected=422)['error']
+                # Use the real authenticated HTTP query path for detail/history.
+                audit_url = endpoint + '?action=owner-trade&id=' + audit_id
+                audit = json.load(client.open(audit_url, timeout=10))
+                assert audit['status'] == 'pending' and audit['assets'] == []
+                assert len(call('owner-trades')['rows']) == 7
+                demo = call('owner-command', {'id':'9'*32,'type':'demo_generate','size':'small','expected_demo':''})
+                assert demo['available'] and call('owner-status')['demo']['available']
+                demo_file = root / 'operator-data/demo.sqlite'
+                retained_demo = root / 'operator-data/demo.test-backup.sqlite'
+                demo_file.replace(retained_demo)
+                try:
+                    demo_file.write_bytes(b'Invalid isolated demo fixture')
+                    status = call('owner-status')
+                    assert status['demo']['available'] is False and status['demo']['error']
+                    assert 'counts' in status  # Optional demo failure cannot revoke live tools.
+                finally:
+                    demo_file.unlink(missing_ok=True)
+                    retained_demo.replace(demo_file)
+                # The linked player's unsynced HC profile must still accept setup.
+                assert call('snapshot', hc=1)['profile'] is None
+                setup = {'id':'5'*32, 'type':'web_setup', 'expected_revision':0,
+                         'page':17, 'withdraw_page':4, 'enabled':True, 'auto_trade':False}
+                receipt = call('command', setup, hc=1)
+                assert receipt['queued'] and call('command', setup, hc=1) == receipt
+                waiting = call('snapshot', hc=1)
+                assert waiting['profile']['settings'] is None and waiting['profile']['seen'] == 0
+                assert waiting['profile']['desired']['page'] == 17
+                assert waiting['profile']['desired']['withdraw_page'] == 4
+                assert waiting['pending'][0]['status'] == 'queued'
+                assert call('snapshot')['profile'] == session['profile']
+                public_id = session['self']['player_id']
+                call('command', {'id':'4'*32,'type':'profile_name','name':'The Wanderer','expected_name':session['self']['name']})
+                assert call('snapshot')['self']['player_id'] == public_id
                 assert any(cookie.has_nonstandard_attr('HttpOnly') for cookie in jar)
                 call('link', {'code':seeded['code']}, 401)
                 offer = session['offers'][0]
@@ -107,11 +158,27 @@ def main():
                 assert completed['offers'][0]['status'] == 'completed'
                 assert len(completed['escrow']['items']) == 1
                 assert sum(row['quantity'] for row in completed['escrow']['balances']) == 227000
+                audit = json.load(client.open(audit_url, timeout=10))
+                assert audit['status'] == 'completed' and len(audit['assets']) == 2
+                assert {a['delivery']['state'] for a in audit['assets']} == {'pending', 'wallet'}
+                assert 'item_hex' not in json.dumps(audit)
                 assert call('snapshot', hc=1)['offers'] == []
+                # A retired identity must not trap its browser in a failing
+                # session: guest discovery and linking a current player work.
+                retire = root / 'retire-session.php'
+                retire.write_text('<?php require ' + json.dumps((SERVER / 'bootstrap.php').as_posix()) +
+                    ';$m=market();$m->run("UPDATE actors SET role=\'retired\' WHERE id=?",[' + json.dumps(seeded['buyer']['id']) +
+                    ']);$m->run("UPDATE market_owners SET owner=? WHERE community=?",[' + json.dumps(seeded['seller']['id']) +
+                    ',"tcpip"]);echo json_encode($m->browserTicket($m->browserActor(' + json.dumps(seeded['seller']['id']) + ')));', encoding='utf-8')
+                relink = json.loads(subprocess.check_output(args + [str(retire)], env=env, text=True))
+                assert call('snapshot')['self'] is None
+                call('link', {'code':relink['code']})
+                assert call('snapshot')['self']['id'] == seeded['seller']['id']
+                assert call('owner-status')['demo']['available']  # Cached old demo UID recovers.
                 call('unlink', {})
                 assert call('snapshot')['self'] is None
                 call('command', {'id':'2'*32,'type':'preferences','auto_trade':True}, 401)
-                print('Browser HTTP: guest discovery, CSRF, session rotation/cookies, single-use account linking, private inventory, counter acceptance with atomic settlement, SC/HC separation and browser unlink passed.')
+                print('Browser HTTP: shared names/stable IDs, retired-session recovery/relinking, guest discovery, CSRF, session rotation/cookies, single-use linking, private inventory, atomic settlement, SC/HC and unlink passed.')
             finally:
                 proc.terminate()
                 proc.wait(timeout=10)

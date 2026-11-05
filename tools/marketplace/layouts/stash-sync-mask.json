@@ -1,0 +1,58 @@
+{
+    "type": "Widget",
+    "name": "MarketplaceSyncMask",
+    "fields": {
+        "fitToParent": true,
+        "priority": 9005,
+        "visible": false
+    },
+    "children": [
+        {
+            "type": "RectangleWidget",
+            "name": "MarketplaceSyncBackdrop",
+            "fields": {
+                "anchor": {
+                    "x": 0.5,
+                    "y": 0.5
+                },
+                "rect": {
+                    "x": -244,
+                    "y": -200,
+                    "width": 960,
+                    "height": 152
+                },
+                "color": [
+                    0,
+                    0,
+                    0,
+                    0.92
+                ]
+            }
+        },
+        {
+            "type": "TextBoxWidget",
+            "name": "MarketplaceSyncText",
+            "fields": {
+                "anchor": {
+                    "x": 0.5,
+                    "y": 0.5
+                },
+                "rect": {
+                    "x": -224,
+                    "y": -188,
+                    "width": 920,
+                    "height": 128
+                },
+                "text": "Reloading Stash...",
+                "style": {
+                    "fontColor": "$FontColorGoldYellow",
+                    "pointSize": 64,
+                    "alignment": {
+                        "h": "center",
+                        "v": "center"
+                    }
+                }
+            }
+        }
+    ]
+}

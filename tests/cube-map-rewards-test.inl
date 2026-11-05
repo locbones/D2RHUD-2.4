@@ -22,14 +22,30 @@ void TimedRewards(){
     assert(Remaining(100,100,Event::PlentifulPirating)==120 && Remaining(125,100,Event::PlentifulPirating)==119);
     assert(Remaining(3099,100,Event::PlentifulPirating)==1 && !Remaining(3100,100,Event::PlentifulPirating));
     assert(Remaining(wrapStart+25u,wrapStart,Event::PlentifulPirating)==119 && !Remaining(wrapStart+3000u,wrapStart,Event::PlentifulPirating));
+    // Thousands of successive selections preserve even the last server tick.
+    Timer clock(100);uint32_t now=100+14999;
+    for(unsigned i=0;i<2048;++i){
+        assert(clock.RemainingAt(now,Event::TreasureTrove)==1);
+        assert(clock.Pause(now,true) && !clock.Pause(now,true));now+=5000;
+        assert(clock.RemainingAt(now,Event::TreasureTrove)==1);
+        assert(clock.Pause(now,false) && !clock.Pause(now,false));
+    }
+    ++now;assert(!clock.RemainingAt(now,Event::TreasureTrove));
+    Timer wrapClock(UINT32_MAX-10);assert(wrapClock.Pause(UINT32_MAX-1,true));
+    assert(wrapClock.RemainingAt(50,Event::PlentifulPirating)==120);
+    assert(wrapClock.Pause(50,false) && wrapClock.RemainingAt(66,Event::PlentifulPirating)==119);
     Wire packet;packet.epoch=2;packet.sequence=1;packet.recipient=100;packet.remaining={600,599,1};assert(Valid(packet));
     for(auto field:{0,1,2,3,4,5}){auto invalid=packet;switch(field){case 0:invalid.opcode=3;break;case 1:invalid.magic=0;break;case 2:invalid.operation=4;break;case 3:invalid.version=2;break;case 4:invalid.epoch=0;break;case 5:invalid.sequence=0;break;}assert(!Valid(invalid));}
+    packet.paused=2;assert(!Valid(packet));packet.paused=0;
     packet.remaining[0]=601;assert(!Valid(packet));packet.remaining[0]=600;
     packet.remaining[2]=121;assert(!Valid(packet));packet.remaining[2]=120;assert(Valid(packet));packet.remaining[2]=1;
     View model;assert(model.Accept(packet,1000));assert(!model.Accept(packet,1001));
     assert(model.Lines(1000,100,0,2)==std::vector<std::string>({"Treasure Trove: 10:00","Golden Goose: 9:59","Plentiful Pirating: 0:01"}));
     assert(model.Lines(2000,100,0,2).size()==2 && model.Lines(5000,100,0,2).size()==2 && model.Lines(5001,100,0,2).empty());
     assert(model.Lines(999,100,0,2).empty() && model.Lines(1000,101,0,2).empty() && model.Lines(1000,100,1,2).empty() && model.Lines(1000,100,0,3).empty());
+    packet.paused=1;packet.sequence=2;assert(model.Accept(packet,6000));
+    const auto frozen=model.Lines(6000,100,0,2);assert(frozen.size()==3 && model.Lines(9000,100,0,2)==frozen);
+    packet.paused=0;packet.sequence=3;assert(model.Accept(packet,9000));assert(model.Lines(10000,100,0,2).size()==2);
     packet.sequence=UINT32_MAX;model={};assert(model.Accept(packet,1000));packet.sequence=1;assert(model.Accept(packet,1001));
     packet.epoch=3;packet.sequence=1;assert(model.Accept(packet,1002));
     const auto savedBindings=bindings;const auto savedKnown=clientLayoutSessionKnown;
@@ -50,7 +66,7 @@ void TimedRewards(){
     assert(!state.run && HasTimedReward(game,&hero,Event::TreasureTrove) && !HasTimedReward(game,&other,Event::TreasureTrove));
     assert(state.timedRewards.at(100).size()==2 && !HasTimedReward(game,&hero,Event::ChampionClash));
     game->dwGameFrame=125;GrantTimedReward(game,100,Event::TreasureTrove);GrantTimedReward(game,100,Event::PlentifulPirating);
-    assert(state.timedRewards.at(100).size()==3 && state.timedRewards.at(100).at(Event::TreasureTrove)==125 && state.timedRewards.at(100).at(Event::GoldenGoose)==100);
+    assert(state.timedRewards.at(100).size()==3 && state.timedRewards.at(100).at(Event::TreasureTrove).start==125 && state.timedRewards.at(100).at(Event::GoldenGoose).start==100);
     rewardPackets.clear();ProcessTimedRewards(game,state,true);assert(rewardPackets.size()==2);
     assert((rewardPackets[0].first==1 && rewardPackets[0].second.remaining==std::array<uint16_t,3>({600,599,120})));
     assert((rewardPackets[1].first==2 && rewardPackets[1].second.remaining==std::array<uint16_t,3>{}));
@@ -86,7 +102,36 @@ void TimedRewards(){
     assert((state.timedRewards.empty() && rewardPackets.front().second.remaining==std::array<uint16_t,3>{}));
     GrantTimedReward(game,100,Event::TreasureTrove);game->dwInitSeed=1235;assert(!HasTimedReward(game,&hero,Event::TreasureTrove));
     assert(State(game).timedRewards.empty());
+    // Scope pauses to participating players and resume on completion, failure or
+    // run removal. Other players continue spending their own bonus time.
+    game->dwGameFrame=20000;GrantTimedReward(game,100,Event::TreasureTrove);GrantTimedReward(game,100,Event::GoldenGoose);GrantTimedReward(game,100,Event::PlentifulPirating);GrantTimedReward(game,101,Event::TreasureTrove);
+    auto& pausedState=State(game);pausedState.run=std::make_unique<Run>();auto& run=*pausedState.run;
+    run.event=Event::Trial;run.eventPhase=EventPhase::WaitingTown;run.returns[100]={109,0,0};
+    game->dwGameFrame+=25;ProcessTimedRewards(game,pausedState,true);assert(!rewardPackets[rewardPackets.size()-2].second.paused);
+    run.eventPhase=EventPhase::Ceremony;ProcessTimedRewards(game,pausedState);
+    assert(rewardPackets[rewardPackets.size()-2].second.paused && !rewardPackets.back().second.paused);
+    const auto remaining=rewardPackets[rewardPackets.size()-2].second.remaining;
+    game->dwGameFrame+=10000;run.eventPhase=EventPhase::Briefing;ProcessTimedRewards(game,pausedState,true);
+    assert(rewardPackets[rewardPackets.size()-2].second.remaining==remaining && HasTimedReward(game,&hero,Event::PlentifulPirating));
+    assert(rewardPackets.back().second.remaining[0]==199);
+    run.eventPhase=EventPhase::Entering;ProcessTimedRewards(game,pausedState,true);
+    assert(rewardPackets[rewardPackets.size()-2].second.remaining==remaining);
+    game->dwGameFrame+=25;run.eventPhase=EventPhase::Active;ProcessTimedRewards(game,pausedState);
+    assert(!rewardPackets[rewardPackets.size()-2].second.paused && rewardPackets[rewardPackets.size()-2].second.remaining==remaining);
+    game->dwGameFrame+=25;ProcessTimedRewards(game,pausedState,true);
+    for(size_t i=0;i<Types.size();++i)assert(rewardPackets[rewardPackets.size()-2].second.remaining[i]+1==remaining[i]);
+    for(auto terminal:{EventPhase::Cancelled,EventPhase::Finished}){
+        run.eventPhase=EventPhase::Ceremony;ProcessTimedRewards(game,pausedState);game->dwGameFrame+=10000;
+        run.eventPhase=terminal;ProcessTimedRewards(game,pausedState);assert(!rewardPackets[rewardPackets.size()-2].second.paused && HasTimedReward(game,&hero,Event::PlentifulPirating));
+    }
+    // An avatar's participant GUID pauses the hero's independently owned buffs.
+    context=std::make_unique<SurvivorAvatar>();context->game=game;context->hero=&hero;context->avatar=&avatar;
+    survivorAvatars[&client]=std::move(context);client.dwUnitGUID=200;run.returns.clear();run.returns[200]={109,0,0};run.event=Event::Survivors;run.eventPhase=EventPhase::Briefing;
+    ProcessTimedRewards(game,pausedState);assert(rewardPackets[rewardPackets.size()-2].second.paused);
+    game->dwGameFrame+=10000;pausedState.run.reset();ProcessTimedRewards(game,pausedState);
+    assert(!rewardPackets[rewardPackets.size()-2].second.paused && HasTimedReward(game,&avatar,Event::PlentifulPirating));
+    survivorAvatars.erase(&client);client.dwUnitGUID=100;
     games.erase(game);rewardTestPlayers.clear();rewardTestLocal=nullptr;rewardTestGame=nullptr;ClearClientRewards();
     clientLayoutSessionKnown=savedKnown;clientLayoutSession=savedSession;clientLayoutEpoch=savedEpoch;bindings=savedBindings;
-    std::cout<<"Timed rewards refresh/coexist, survive map exit/avatar swaps, expire/wrap safely and authenticate bounded replay-resistant packets passed.\n";
+    std::cout<<"Timed rewards refresh/coexist, survive map exit/avatar swaps, pause all participant bonuses through 2,048 selections, resume on completion/cancellation, freeze client countdowns, expire/wrap safely and authenticate replay-resistant packets passed.\n";
 }

@@ -15,6 +15,23 @@ check(!$m->custody($sa,['type'=>'browser_link','catalog'=>$catalog,'code'=>$link
 refuses(fn()=>$m->custody($sa,['type'=>'browser_link','catalog'=>str_repeat('f',64)],false),401);
 for($i=0;$i<30;$i++)$m->browserThrottle('fixture');refuses(fn()=>$m->browserThrottle('fixture'),429);
 $settings=['page'=>11,'withdraw_page'=>2,'enabled'=>true,'auto_trade'=>false];
+// A newly code-linked player can configure pages before any stash snapshot.
+$fresh=$m->user('Fresh player');$freshAgent=$m->authAgent($m->pairAgent($fresh['id'],$catalog)['token']);
+$m->browserLink(['code'=>$m->browserTicket($fresh)['code']]);check($m->browserSnapshot($fresh,false)['profile']===null);
+$firstSetup=['type'=>'web_setup','id'=>Market::id(),'expected_revision'=>0,'page'=>17,'withdraw_page'=>4,'enabled'=>true,'auto_trade'=>false];
+// One market page is valid; obsolete delivery choices normalize to it.
+$queued=$m->command($fresh,$firstSetup,false);check($queued['queued']);check($m->command($fresh,$firstSetup,false)===$queued);
+$waiting=$m->browserSnapshot($fresh,false);check($waiting['profile']['settings']===null&&$waiting['profile']['seen']===0);
+check($waiting['profile']['desired']['page']===17&&$waiting['profile']['desired']['withdraw_page']===17);
+check(count($waiting['pending'])===1&&$waiting['pending'][0]['status']==='queued');check($waiting['local_items']===[]);
+check($m->browserSnapshot($fresh,true)['profile']===null);check($m->browserSnapshot($b,false)['profile']===null);
+refuses(fn()=>$m->command($fresh,array_replace($firstSetup,['id'=>Market::id()]),false),409);
+$handoff=$m->custody($freshAgent,['type'=>'web_sync','catalog'=>$catalog,'settings'=>$settings,'inventory'=>[]],false);
+check(count($handoff['intents'])===1&&$handoff['intents'][0]['id']===$firstSetup['id']);
+$applied=$handoff['intents'][0]['packet'];
+$m->custody($freshAgent,['type'=>'web_sync','catalog'=>$catalog,'settings'=>$applied,'inventory'=>[],'acknowledged'=>[['id'=>$firstSetup['id'],'status'=>'applied','message'=>'']]],false);
+$ready=$m->browserSnapshot($fresh,false);check(!isset($ready['profile']['desired'])&&$ready['profile']['settings']===$applied&&$ready['profile']['seen']>0);
+check($ready['pending'][0]['status']==='applied');
 $item=['code'=>'rin','saved_id'=>0,'quality'=>6,'index'=>-1,'ethereal'=>0,'identified'=>1,'quantity'=>1,'quantity_bit'=>-1,'tab'=>1,'page'=>11,'item_hex'=>str_repeat('ab',24),'display'=>['level'=>88,'saved_properties'=>[['id'=>0,'value'=>17,'param'=>0,'list'=>'base']],'socketed_items'=>[]]];
 $item['display']['saved_properties'][]=['id'=>194,'value'=>3];
 $item['display']['socketed_items']=[['code'=>'r33','quality'=>2,'flags'=>16,'saved_properties'=>[]],['code'=>'jew','quality'=>6,'identified'=>true,'name_ids'=>['rare_prefix'=>12,'rare_suffix'=>40],'saved_properties'=>[['id'=>17,'value'=>40]]]];

@@ -30,7 +30,7 @@ void StringEditTests(const std::filesystem::path& data,const nlohmann::json& con
         const auto owned=std::find_if(six.keys.begin(),six.keys.end(),[&](const auto& pair){return !five.keys.contains(pair.first);});
         assert(owned!=six.keys.end());edited[enabled.keys.at(owned->first)]["enUS"]="Custom Act VI label";
         LevelWrite(target,edited.dump(4)+'\n');
-        assert(ConfigureData(data,config,false,true,6)==Config::Enabled && pendingRestart);
+    assert(ConfigureData(data,config,false,true,6)==Config::Disabled && !pendingRestart);
         assert(Json::parse(LevelRead(target))==values && std::filesystem::exists(archive));
         LevelWrite(target,event);configured=false;configuredManifest={};configuredData.clear();
         assert(ConfigureData(data,config,true,true,5)==Config::Disabled);

@@ -55,4 +55,28 @@ check(count($m->conversations($a,$a['id'])['messages'])===1&&$m->conversations($
 check($m->conversations($c,$a['id'])['messages']===[]);
 $m->command($a,['id'=>Market::id(),'type'=>'direct_message','to'=>'Alice','message'=>'Self-test by public name'],false);
 check(count($m->conversations($a,$a['id'])['messages'])===2);
+// Reading one visible conversation must not acknowledge another conversation,
+// a trade update, a message arriving afterward, or another player's inbox.
+$reader=$m->user('Read test');$sender=$m->user('Read sender');$link($reader);$link($sender);
+$sendTo=fn($from,$to,$body)=>$m->command($from,['id'=>Market::id(),'type'=>'direct_message','to'=>$to['id'],'message'=>$body],false)['message_id'];
+$first=$sendTo($a,$reader,'First conversation');$second=$sendTo($sender,$reader,'Other conversation');
+$trade=Market::id();$m->run('INSERT INTO market_messages (id,sender,recipient,scope,kind,thread,body,created) VALUES (?,?,?,?,?,?,?,?)',[$trade,$a['id'],$reader['id'],'tcpip|RMD-MP|2.4|SC','trade',$o['offer_id'],'A trade update',time()]);
+check($m->inbox($reader)['unread']===3);
+$conversations=$m->conversations($reader)['conversations'];check($conversations[0]['id']===$sender['id']&&$conversations[0]['unread_seq']>0&&$conversations[1]['unread_seq']>0);
+$read=['id'=>Market::id(),'type'=>'message_read','messages'=>[$first,$first]];
+$ack=$m->command($reader,$read,false);check($ack['unread']===2&&$ack['messages']===[$first]);
+check($m->command($reader,$read,true)===$ack&&$m->inbox($reader)['unread']===2);
+$conversations=$m->conversations($reader)['conversations'];check($conversations[0]['unread_seq']>0&&$conversations[1]['unread_seq']===0);
+$later=$sendTo($a,$reader,'Arrived after reading');check($m->inbox($reader)['unread']===3);
+check($m->command($reader,['id'=>Market::id(),'type'=>'message_read','messages'=>[$trade]],false)['unread']===2);
+$otherUnread=$m->inbox($a)['unread'];
+refuses(fn()=>$m->command($a,['id'=>Market::id(),'type'=>'message_read','messages'=>[$second]],false),422);
+check($m->inbox($a)['unread']===$otherUnread&&$m->inbox($reader)['unread']===2);
+foreach([[],[$second,str_repeat('f',32)],array_fill(0,201,$second)] as $ids)refuses(fn()=>$m->command($reader,['id'=>Market::id(),'type'=>'message_read','messages'=>$ids],false),422);
+check($m->inbox($reader)['unread']===2); // Failed batches roll back every receipt.
+$through=$m->inbox($reader)['latest'];$last=$sendTo($a,$reader,'New arrival during mark all');
+check($m->command($reader,['id'=>Market::id(),'type'=>'message_read','through'=>$through],false)['unread']===1);
+check($m->command($reader,['id'=>Market::id(),'type'=>'message_read','messages'=>[$last]],false)['unread']===0);
+foreach($m->conversations($reader)['conversations'] as $conversation)check($conversation['unread_seq']===0);
+check(count($m->inbox($reader)['messages'])===5); // Reading never removes native chat delivery.
 echo "Players/messages: code-linked public directory, equipment/inventory/mercenary-only snapshots, stash exclusion, mode isolation, escaped-content preservation, private direct/trade threads, name lookup, read cursors, append-only trade replies and idempotency passed.\n";

@@ -19,7 +19,8 @@ $m->migrate();check($m->publicOffers(false,['listing_id'=>$listing['listing_id']
 refuses(fn()=>$m->publicOffers(true,['listing_id'=>$listing['listing_id']]),404);
 $rename=['id'=>Market::id(),'type'=>'profile_name','name'=>'New Seller','expected_name'=>'Seller'];check($m->command($seller,$rename,false)['name']==='New Seller');check($m->command($seller,$rename,false)['name']==='New Seller');
 check($m->snapshot($seller,false)['self']['name']==='New Seller'&&$m->snapshot($buyers[0],false)['listings'][0]['seller']==='New Seller');
-refuses(fn()=>$m->command($buyers[0],['id'=>Market::id(),'type'=>'profile_name','name'=>'new seller','expected_name'=>$buyers[0]['name']],false),409);
+$m->command($buyers[0],['id'=>Market::id(),'type'=>'profile_name','name'=>'new seller','expected_name'=>$buyers[0]['name']],false);
+check($m->snapshot($buyers[0],false)['self']['player_id']!==$m->snapshot($seller,false)['self']['player_id']);
 refuses(fn()=>$m->command($seller,['id'=>Market::id(),'type'=>'profile_name','name'=>'Again','expected_name'=>'Seller'],false),409);
 refuses(fn()=>$m->command($seller,['id'=>Market::id(),'type'=>'profile_name','name'=>'<script>','expected_name'=>'New Seller'],false),422);
 $favorite=['id'=>Market::id(),'type'=>'favorite','kind'=>'listing','target'=>$listing['listing_id'],'enabled'=>true];$m->command($buyers[0],$favorite,false);$m->command($buyers[0],$favorite,false);
@@ -27,4 +28,4 @@ check(count($m->snapshot($buyers[0],false)['social']['favorites'])===1&&count($m
 $favorite['id']=Market::id();$favorite['enabled']=false;$m->command($buyers[0],$favorite,false);check($m->snapshot($buyers[0],false)['social']['favorites']===[]);
 $m->command($buyers[0],['id'=>Market::id(),'type'=>'favorite','kind'=>'seller','target'=>$seller['id'],'enabled'=>true],false);
 $feed=$m->snapshot($buyers[0],false)['listings'][0];check($feed['offer_count']===7&&$feed['active_offer_count']===7&&$feed['other_offer_count']===6);
-echo "Profiles/favorites: owner/mode isolation, unique names, CAS/idempotency; public offers: stable aliases, pagination, counter terms and no third-party identities/messages passed.\n";
+echo "Profiles/favorites: owner/mode isolation, shared names and distinct stable IDs, CAS/idempotency; public offers: stable aliases, pagination, counter terms and no third-party identities/messages passed.\n";

@@ -82,6 +82,17 @@ void Parser() {
 void Preferences() {
     using namespace HudPreferences;
     Config config;
+    Check(config.ChatNotificationVolume==30,"notification sounds default to a quieter 30 percent");
+    Load(config,{{"ChatNotificationVolume",7}},false);Json audio;Save(config,audio);Config audioRestored;Load(audioRestored,audio,false);
+    Check(audioRestored.ChatNotificationVolume==7,"notification gain persists independently of game/system volume");
+    Load(audioRestored,{{"ChatNotificationVolume",-50}},false);Check(audioRestored.ChatNotificationVolume==0,"negative notification volume clamps to mute");
+    Load(audioRestored,{{"ChatNotificationVolume",500}},false);Check(audioRestored.ChatNotificationVolume==100,"notification volume cannot amplify beyond full scale");
+    Check(config.MultipleAurasPerItem,"multiple item auras default on");
+    Load(config,{{"MultipleAurasPerItem",false}},false);
+    Json auraDocument=Json::object();Save(config,auraDocument);Config auraRestored;Load(auraRestored,auraDocument,false);
+    Check(!auraRestored.MultipleAurasPerItem,"multiple item auras disabled preference survives roundtrip");
+    Load(auraRestored,{{"MultipleAurasPerItem",true}},false);
+    Check(auraRestored.MultipleAurasPerItem,"multiple item auras can be enabled independently");
     Check(config.Inspect,"Inspect is enabled by default");
     Check(!config.InspectLabels && config.InspectIconHeight==96 && config.InspectLabelSize==22,"Inspect defaults to raised icons without labels");
     Load(config,{{"InspectLabels",true},{"InspectIconHeight",128},{"InspectLabelSize",30}},false);
@@ -136,6 +147,8 @@ void Preferences() {
     Check(!LoadBindings(disabledInspect).hotkeys.contains("Inspect"),"obsolete Inspect bindings are removed");
     Check(bindings.hotkeys["Transmute"].second == "Disabled" && !bindings.hotkeys.contains("Bad"), "legacy disabled state retained");
     Check(bindings.commands.size() == 6 && bindings.commands[0].key.empty() && bindings.commands[1].key == "F2", "invalid command slots do not shift valid entries");
+    Check(!bindings.hotkeys.contains("Open Marketplace"),"marketplace shortcut starts unbound on existing configs");
+    bindings.hotkeys["Open Marketplace"]={"VK_CONTROL + VK_M",""};
     bindings.hotkeys["Transmute"].first.clear();
     bindings.commands[1].command = "say \"hello\"\n\x01";
     SaveBindings(bindings, keyDocument);
@@ -145,6 +158,8 @@ void Preferences() {
         keyDocument["Commands"]["Custom Commands"][1]["extension"] == "keep", "nested binding extensions preserved");
     const auto reloaded = LoadBindings(Json::parse(HudConfig::Serialize(keyDocument)));
     Check(reloaded.hotkeys.at("Transmute").first.empty() && reloaded.commands[1].command == bindings.commands[1].command, "bindings round-trip correctly");
+
+    Check(reloaded.hotkeys.at("Open Marketplace").first=="VK_CONTROL + VK_M","marketplace modifier chord survives save/reload");
 
     BindingState live;
     live.Publish(bindings);

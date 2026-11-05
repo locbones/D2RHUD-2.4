@@ -24,6 +24,7 @@ void EventAutomapPackets(){
     ++w.recipient;assert(!ReceiveAutomap(w));--w.recipient;++w.session;assert(!ReceiveAutomap(w));--w.session;
     ++p.sequence;p.eventPhase=EventPhase::Returning;assert(Receive(reinterpret_cast<uint8_t*>(&p),sizeof(p)));assert(!automapStreams[1].ready && !ReceiveAutomap(w));
     assert(SpriteFrame(0)==3 && SpriteFrame(1)==1 && SpriteFrame(2)==1 && SpriteFrame(3)==5);
+    for(uint8_t kind=0;kind<CompanionKind;++kind)assert(SpriteFrame(CompanionKind)!=SpriteFrame(kind));
     assert(MonsterKind(0,false,false)==0 && MonsterKind(4,false,false)==1 && MonsterKind(16,false,false)==2);
     for(uint8_t flags:{uint8_t(2),uint8_t(8)})assert(MonsterKind(flags,false,false)==3);
     assert(MonsterKind(12,false,false)==1); // Champions also carry UNIQUE.
@@ -52,17 +53,18 @@ void EventAutomapGeometry(){
     // Markers traverse all pinned rooms, not the client's nearby room list.
     std::array<D2DynamicPathStrc,3> paths{};
     for(int i=0;i<3;++i){fixture.old[i].pDynamicPath=&paths[i];Put(&paths[i],8,1000+i*100);Put(&paths[i],12,2000+i*100);run.pins.push_back({fixture.r2[i].data(),true});}
-    fixture.old[2].dwAnimMode=12;auto markers=EventMonsterMarkers(run);
+    fixture.old[2].dwAnimMode=12;auto markers=EventMonsterMarkers(fixture.GamePtr(),run);
     assert(markers.size()==2 && markers[0].x==101 && markers[0].y==197 && markers[1].x==111);
-    run.objectives.insert(fixture.old[0].dwUnitId);run.event=Event::GoblinGrotto;assert(EventMonsterMarkers(run)[0].kind==0);
-    run.event=Event::Trial;assert(EventMonsterMarkers(run)[0].kind==3);
+    run.objectives.insert(fixture.old[0].dwUnitId);run.event=Event::GoblinGrotto;assert(EventMonsterMarkers(fixture.GamePtr(),run)[0].kind==0);
+    run.event=Event::Trial;assert(EventMonsterMarkers(fixture.GamePtr(),run)[0].kind==3);
     assert(!run.census.dead.size());populationCode=nullptr;installed=false;
     std::cout<<"Full event geometry leaves room/tile exploration untouched; marker census includes distant pinned rooms and excludes corpses/duplicates.\n";
 }
 Unit automapPlayer{};uint32_t automapSelector=0;int automapIcons=0,automapResets=0;void* automapTree=nullptr;
 Unit* __fastcall AutomapLocal(uint32_t){return &automapPlayer;}
 void __fastcall CaptureMapCells(int,void* tree,uint8_t*,void*){automapTree=tree;}
-void __fastcall CaptureMapIcon(uint64_t,int,float){++automapIcons;}
+std::vector<int> automapIconFrames;
+void __fastcall CaptureMapIcon(uint64_t,int frame,float){++automapIcons;automapIconFrames.push_back(frame);}
 void __fastcall CaptureMapReset(){++automapResets;}
 void EventAutomapScope(){
     Reset();ClearEventAutomap();Put(fixture.level.data(),0x1f8,39);automapPlayer={};automapPlayer.dwUnitId=55;

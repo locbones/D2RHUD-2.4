@@ -63,6 +63,21 @@ void PersistenceTests(const std::filesystem::path& root){
     std::ofstream(path)<<"{\"schema\":1,\"native-note\":\"preserve\"}";assert(SaveRun(directory,run));HudConfig::Json j;assert(HudConfig::Read(path,j)&&j["native-note"]=="preserve");
     auto unfinished=run;unfinished.id+="-unfinished";unfinished.finished=false;assert(SaveRun(directory,unfinished));library=LoadLibrary(directory,100);assert(library.runs.size()==2);bool recovered=false;for(auto& entry:library.runs)recovered|=entry.endReason=="Interrupted / recovered";assert(recovered);
 }
+void CheckpointTests(const std::filesystem::path& root){
+    Initialize();auto& s=State();assert(!s.io.Busy());s.folder=root/"cadence";s.loaded=true;s.lastSave=s.retryAt=0;s.pending.clear();s.history.clear();
+    s.recorder=Recorder("cadence");s.recorder.settings.enabled=true;s.recorder.Tick(Context(1000,108));
+    for(uint64_t now=1000;now<10000;now+=10){auto frame=Context(now,108);s.recorder.Tick(frame);Checkpoint(now);assert(s.pending.empty()&&!s.io.Busy());}
+    s.recorder.Tick(Context(10000,108));Checkpoint(10000);assert(s.pending.size()==1);
+    const auto id=s.recorder.current->id;PumpIO(10000);
+    for(int n=0;n<2000&&s.io.Busy();++n){PumpIO(10000);std::this_thread::sleep_for(std::chrono::milliseconds(1));}
+    auto saved=LoadLibrary(s.folder/"runs",10);assert(saved.runs.size()==1&&!saved.runs[0].finished&&saved.runs[0].wallMs==9000);
+    s.recorder.Tick(Context(15000,108));Checkpoint(15000);assert(s.pending.empty());
+    // Finished runs bypass the periodic checkpoint delay.
+    s.recorder.Finish("manual");Collect();assert(s.pending.size()==1&&s.pending.at(id).finished);PumpIO(15000);
+    for(int n=0;n<2000&&s.io.Busy();++n){PumpIO(15000);std::this_thread::sleep_for(std::chrono::milliseconds(1));}
+    saved=LoadLibrary(s.folder/"runs",10);assert(saved.runs.size()==1&&saved.runs[0].finished&&saved.runs[0].wallMs==14000);
+    s.pending.clear();s.history.clear();s.recorder=Recorder("after-cadence");s.lastSave=0;
+}
 void ClearTests(const std::filesystem::path& root){
     const auto folder=root/("clear-"+std::to_string(GetCurrentProcessId())+"-"+std::to_string(GetTickCount64()));
     std::filesystem::create_directories(folder/"runs/nested");std::filesystem::create_directories(folder/"exports");
@@ -129,4 +144,4 @@ void UITests(const std::filesystem::path& root){
     assert(!s.io.Busy()&&!s.analysisLoad.Busy()&&!s.analysisWork.Busy());tracking.store(false);s.recorder.current.reset();s.recorder.settings.enabled=false;
     for(int i=0;i<10000;++i)Tick({},0,"Fixture");assert(samples==0); // no native scans while disabled
 }
-int main(int argc,char** argv){try{assert(argc==2);const auto root=std::filesystem::path(argv[1]);std::filesystem::create_directories(root);SetEnvironmentVariableW(L"LOCALAPPDATA",(root/L"profile").c_str());TimerTests();RetentionTests();PersistenceTests(root/("store-"+std::to_string(GetCurrentProcessId())+"-"+std::to_string(GetTickCount64())));UITests(root);ClearTests(root);std::cout<<"PASS: timers/town/loading/pause/splits/deaths/session changes; kept-only net quantities, stash transfers, later-loaded pages and discarded/consumed items; round trips, atomic preservation, recovery, stats and CSV; UI at 720p/1080p/4K; drag/lock/saved timer placement; 10000 disabled ticks make zero native samples; clear history/optional exports preserves settings and unrelated files, reports locked files, discards pending save/load/retry results and restarts a fresh baseline.\n";return 0;}catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}
+int main(int argc,char** argv){try{assert(argc==2);const auto root=std::filesystem::path(argv[1]);std::filesystem::create_directories(root);SetEnvironmentVariableW(L"LOCALAPPDATA",(root/L"profile").c_str());TimerTests();RetentionTests();PersistenceTests(root/("store-"+std::to_string(GetCurrentProcessId())+"-"+std::to_string(GetTickCount64())));CheckpointTests(root);UITests(root);ClearTests(root);std::cout<<"PASS: ten-second background checkpoints with immediate completed-run saves; timers/town/loading/pause/splits/deaths/session changes; kept-only net quantities, stash transfers, later-loaded pages and discarded/consumed items; round trips, atomic preservation, recovery, stats and CSV; UI at 720p/1080p/4K; drag/lock/saved timer placement; 10000 disabled ticks make zero native samples; clear history/optional exports preserves settings and unrelated files, reports locked files, discards pending save/load/retry results and restarts a fresh baseline.\n";return 0;}catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}

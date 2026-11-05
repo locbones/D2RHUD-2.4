@@ -103,8 +103,10 @@ trait MarketplaceBrowser {
         }return $out;
     }
     private function routeSettings(array $r): array {
-        $page=self::number($r['page']??null,1,64);$delivery=self::number($r['withdraw_page']??null,1,64);
-        if($page===$delivery||!is_bool($r['enabled']??null)||!is_bool($r['auto_trade']??null))throw new MarketError(422,'Choose different deposit and delivery pages.');
+        $page=self::number($r['page']??null,1,64);
+        if(!is_bool($r['enabled']??null)||!is_bool($r['auto_trade']??null))throw new MarketError(422,'Choose a valid market setup.');
+        // Older companions retain their routes until upgraded; web setup always uses one page.
+        $delivery=isset($r['withdraw_page'])?self::number($r['withdraw_page'],1,64):$page;
         return ['page'=>$page,'withdraw_page'=>$delivery,'enabled'=>$r['enabled'],'auto_trade'=>$r['auto_trade']];
     }
     public function browserAgentSync(array $agent,array $data,bool $hc): array {
@@ -113,6 +115,8 @@ trait MarketplaceBrowser {
             $this->lockScope($hc);$owner=$agent['owner'];$scope=$this->scope($hc);
             if(($data['catalog']??null)!==$agent['catalog']||!$this->run('SELECT id FROM custody_agents_scoped WHERE id=? AND owner=?',[$agent['id'],$owner])->fetch())throw new MarketError(401,'The save-agent pairing changed.');
             $this->touchCompanion($owner,$scope);
+            if(isset($data['companion_version'])){$version=self::text($data['companion_version'],32);if(!preg_match('/^[0-9]+\.[0-9]+\.[0-9]+$/D',$version))throw new MarketError(422,'Invalid companion version.');$this->run('DELETE FROM market_companion_versions WHERE owner=? AND scope=?',[$owner,$scope]);$this->run('INSERT INTO market_companion_versions VALUES (?,?,?,?)',[$owner,$scope,$version,time()]);}
+            if(isset($data['features'])){if(!is_array($data['features'])||!array_is_list($data['features'])||count($data['features'])>16)throw new MarketError(422,'Invalid companion capabilities.');$features=array_values(array_intersect($data['features'],['open_offers','torch_class','listing_comments']));$this->run('DELETE FROM market_browser_features WHERE owner=? AND scope=?',[$owner,$scope]);$this->run('INSERT INTO market_browser_features VALUES (?,?,?)',[$owner,$scope,self::json($features)]);}
             $settings=$this->routeSettings($data['settings']??[]);$inventory=$data['inventory']??[];
             if(!is_array($inventory)||!array_is_list($inventory)||count($inventory)>2048)throw new MarketError(422,'Invalid private inventory.');
             $items=[];foreach($inventory as $r){$row=$this->custodyItem($r);$key=hash('sha256',$row['page'].'|'.$row['tab'].'|'.$row['item_hex']);$row['key']=$key;$items[]=$row;}
@@ -130,17 +134,23 @@ trait MarketplaceBrowser {
             $this->lockScope($hc);$id=self::ticketId($data['id']??null);$owner=$actor['id'];$scope=$this->scope($hc);$hash=hash('sha256',$scope.'|'.self::json($data));
             $old=$this->run('SELECT hash,result FROM commands WHERE actor=? AND id=?',[$owner,$id])->fetch();if($old){if(!hash_equals($old['hash'],$hash))throw new MarketError(409,'Command ID reused.');return json_decode($old['result'],true,512,JSON_THROW_ON_ERROR);}
             if((int)$this->run("SELECT COUNT(*) FROM web_intents WHERE owner=? AND scope=? AND status='queued'",[$owner,$scope])->fetchColumn()>=128)throw new MarketError(409,'Start your marketplace companion to apply pending changes first.');
-            $profile=$this->run('SELECT * FROM web_profiles WHERE owner=? AND scope=?',[$owner,$scope])->fetch();if(!$profile)throw new MarketError(409,'Close the game once with the marketplace companion running to connect your stash.');
+            $profile=$this->run('SELECT * FROM web_profiles WHERE owner=? AND scope=?',[$owner,$scope])->fetch();
             if(($data['type']??'')==='web_setup'){
-                if(self::number($data['expected_revision']??null,1,2147483647)!==(int)$profile['revision'])throw new MarketError(409,'Setup changed. Refresh and review it again.');
-                $packet=$this->routeSettings($data);$kind='setup';$this->run('UPDATE web_profiles SET revision=revision+1 WHERE owner=? AND scope=?',[$owner,$scope]);
+                if(self::number($data['expected_revision']??null,0,2147483647)!==($profile?(int)$profile['revision']:0))throw new MarketError(409,'Setup changed. Refresh and review it again.');
+                $packet=$this->routeSettings(array_merge($data,['withdraw_page'=>$data['page']??null]));$kind='setup';
+                if($profile)$this->run('UPDATE web_profiles SET revision=revision+1 WHERE owner=? AND scope=?',[$owner,$scope]);
+                // A linked player can choose routes before their first stash sync.
+                // Null settings / seen=0 distinguish this receipt from applied PC settings.
+                else $this->run('INSERT INTO web_profiles VALUES (?,?,?,?,?,?)',[$owner,$scope,1,'null','[]',0]);
                 $this->run('DELETE FROM market_preferences WHERE owner=? AND scope=?',[$owner,$scope]);$this->run('INSERT INTO market_preferences VALUES (?,?,?)',[$owner,$scope,(int)($packet['enabled']&&$packet['auto_trade'])]);
                 $this->settleReady($hc);
             }elseif(($data['type']??'')==='web_price'){
+                if(!$profile)throw new MarketError(409,'Keep Pandemonium running to sync your stash before pricing an item.');
                 $key=self::digest($data['key']??null);$found=null;foreach(json_decode($profile['inventory'],true,512,JSON_THROW_ON_ERROR) as $r)if($r['key']===$key)$found=$r;
-                if(!$found||$this->run('SELECT source_key FROM custody_sources WHERE owner=? AND scope=? AND source_key=?',[$owner,$scope,$key])->fetch())throw new MarketError(409,'This stash item changed or entered escrow. Refresh and choose it again.');
+                if(!$found||$this->run('SELECT source_key FROM custody_sources WHERE owner=? AND scope=? AND source_key=?',[$owner,$scope,$key])->fetch())throw new MarketError(409,'This stash item changed or entered Vault. Refresh and choose it again.');
                 $this->identityAdmission($owner,$scope,$found['item_hex'],$found['ledger_id']??null,null,true);
-                $packet=['key'=>$key,'page'=>$found['page'],'tab'=>$found['tab'],'item_hex'=>$found['item_hex'],'price'=>($data['price']??null)===[]?[]:self::price($data['price']??null)];$kind='price';
+                $price=($data['price']??null)===[]?[]:self::price($data['price']??null);if(self::hasClassPrice($price)&&!in_array('torch_class',json_decode($this->run('SELECT features FROM market_browser_features WHERE owner=? AND scope=?',[$owner,$scope])->fetchColumn()?:'[]',true),true))throw new MarketError(409,'Update the HUD and marketplace companion before requesting a Torch class on a stash item. Vault items support it now.');if(self::isOpen($price)&&!in_array('open_offers',json_decode($this->run('SELECT features FROM market_browser_features WHERE owner=? AND scope=?',[$owner,$scope])->fetchColumn()?:'[]',true),true))throw new MarketError(409,'Update Pandemonium before listing a stash item as Open to Offers. Existing Vault items support it now.');
+                $packet=['key'=>$key,'page'=>$found['page'],'tab'=>$found['tab'],'item_hex'=>$found['item_hex'],'price'=>$price];if(array_key_exists('comment',$data)){$packet['comment']=self::listingComment($data['comment']);if($packet['comment']!==''&&!in_array('listing_comments',json_decode($this->run('SELECT features FROM market_browser_features WHERE owner=? AND scope=?',[$owner,$scope])->fetchColumn()?:'[]',true),true))throw new MarketError(409,'Update your HUD and marketplace companion before adding a comment to a stash listing. Vault listings support comments now.');}$kind='price';
             }else throw new MarketError(422,'Unknown website command.');
             $this->run('INSERT INTO web_intents (id,owner,scope,kind,packet,status,message,created) VALUES (?,?,?,?,?,?,?,?)',[$id,$owner,$scope,$kind,self::json($packet),'queued','',time()]);
             $result=['queued'=>true,'id'=>$id];$this->run('INSERT INTO commands VALUES (?,?,?,?)',[$owner,$id,$hash,self::json($result)]);return $result;
@@ -162,8 +172,11 @@ trait MarketplaceBrowser {
         $bundles=$this->browserBundles($scope,$map);
         foreach($snapshot['listings'] as &$r){unset($r['item_hex']);$r['item']=$map[$r['item_id']]??null;$r['bundle']=$bundles['listings'][$r['id']]??null;}unset($r);
         foreach($snapshot['offers'] as &$r){unset($r['item_hex']);$r['item_details']=$map[$r['item']]??null;$r['bundle']=$bundles['listings'][$r['listing']]??null;}unset($r);
-        foreach($snapshot['escrow']['items'] as &$r){$group=$bundles['items'][$r['item']]??null;$r=['bundle'=>$group?($bundles['listings'][$group]??null):null,'item_id'=>$r['item'],'state'=>$r['state'],'item'=>$map[$r['item']]??null,'price'=>$r['metadata']['price']??[]];}unset($r);
+        foreach($snapshot['escrow']['items'] as &$r){$group=$bundles['items'][$r['item']]??null;$r=['bundle'=>$group?($bundles['listings'][$group]??null):null,'item_id'=>$r['item'],'state'=>$r['state'],'item'=>$map[$r['item']]??null,'price'=>$r['metadata']['price']??[],'comment'=>($r['metadata']['comment_owner']??'')===($actor['id']??'')?($r['metadata']['comment']??''):''];}unset($r);
         $snapshot['experience']=$actor?$this->experienceSnapshot($actor,$hc):null;
+        $snapshot['wanted']=$this->wantedListings($hc);$snapshot['gifts']=$this->giftCampaigns($actor,$hc);
+        $snapshot['companion_version']=$actor?($this->run('SELECT version FROM market_companion_versions WHERE owner=? AND scope=?',[$actor['id'],$scope])->fetchColumn()?:null):null;
+        $snapshot['companion_features']=$actor?json_decode($this->run('SELECT features FROM market_browser_features WHERE owner=? AND scope=?',[$actor['id'],$scope])->fetchColumn()?:'[]',true):[];
         $snapshot['self']=$actor?$snapshot['self']:null;
         $snapshot['linked_mod']=$actor&&(bool)$this->run("SELECT owner FROM market_memberships WHERE owner=? AND `mod`=? AND game_mode='2.4' AND linked>0",[$actor['id'],$this->mod])->fetchColumn();
         $snapshot['moderation']=$this->moderationCapabilities($actor);$snapshot['owner_tools']=$this->isOwner($actor);$snapshot['market_control']=$this->controlState();$snapshot['market_reset']=$actor?$this->clientReset($actor['id'],$hc):null;
@@ -174,7 +187,7 @@ trait MarketplaceBrowser {
             $queued=$this->run("SELECT kind,packet FROM web_intents WHERE owner=? AND scope=? AND status='queued' ORDER BY seq LIMIT 128",[$actor['id'],$scope])->fetchAll();
             foreach($queued as $intent){$packet=json_decode($intent['packet'],true,512,JSON_THROW_ON_ERROR);
                 if($intent['kind']==='setup'&&$snapshot['profile'])$snapshot['profile']['desired']=$packet;
-                if($intent['kind']==='price')foreach($snapshot['local_items'] as &$local)if($local['key']===$packet['key']){$local['price']=$packet['price'];$local['price_pending']=true;}unset($local);
+                if($intent['kind']==='price')foreach($snapshot['local_items'] as &$local)if($local['key']===$packet['key']){$local['price']=$packet['price'];if(array_key_exists('comment',$packet))$local['comment']=$packet['comment'];$local['price_pending']=true;}unset($local);
             }
             $snapshot['pending']=$this->run('SELECT id,kind,status,message,created FROM web_intents WHERE owner=? AND scope=? ORDER BY seq DESC LIMIT 32',[$actor['id'],$scope])->fetchAll();
         }

@@ -5,6 +5,16 @@ uint32_t TimedRewardOwner(Game* game,Unit* player){
     if(auto avatar=AvatarFor(game,player);avatar && avatar->hero)return avatar->hero->dwUnitId;
     return player->dwUnitId;
 }
+bool TimedRewardsPaused(Game* game,const GameState& state,uint32_t guid){
+    if(!state.run || state.run->event==Event::None)return false;
+    bool participant=state.run->returns.contains(guid);
+    // Survivors rekeys the run to the temporary avatar; bonuses stay on its hero.
+    if(!participant)for(const auto& [client,a]:survivorAvatars)
+        if(a->game==game && a->hero && a->hero->dwUnitId==guid && a->avatar && state.run->returns.contains(a->avatar->dwUnitId)){participant=true;break;}
+    if(!participant)return false;
+    const auto phase=state.run->eventPhase;
+    return phase==EventPhase::Ceremony || phase==EventPhase::Briefing || phase==EventPhase::Entering;
+}
 bool HasTimedReward(Game* game,Unit* player,Event event){
     if(!game || !player || player->dwUnitType!=0 || RewardsData::Index(event)<0)return false;
     std::lock_guard lock(serverMutex);const auto found=games.find(game);
@@ -12,26 +22,30 @@ bool HasTimedReward(Game* game,Unit* player,Event event){
     const auto participant=found->second.timedRewards.find(TimedRewardOwner(game,player));
     if(participant==found->second.timedRewards.end())return false;
     const auto reward=participant->second.find(event);
-    return reward!=participant->second.end() && RewardsData::Remaining(game->dwGameFrame,reward->second,event)!=0;
+    return reward!=participant->second.end() && reward->second.RemainingAt(game->dwGameFrame,event)!=0;
 }
 void GrantTimedReward(Game* game,uint32_t guid,Event event){
     if(!game || RewardsData::Index(event)<0)return;
     std::lock_guard lock(serverMutex);auto& state=State(game);
     // Assignment refreshes one type while leaving every other reward intact.
-    state.timedRewards[guid][event]=game->dwGameFrame;
+    auto& timer=state.timedRewards[guid][event];timer=RewardsData::Timer(game->dwGameFrame);
+    timer.Pause(game->dwGameFrame,TimedRewardsPaused(game,state,guid));
 }
 void ProcessTimedRewards(Game* game,GameState& state,bool force=false){
     if(!game)return;
     std::lock_guard lock(serverMutex);const auto found=games.find(game);
     if(found==games.end() || &found->second!=&state || state.seed!=game->dwInitSeed)return;
+    bool pauseChanged=false;
     for(auto player=state.timedRewards.begin();player!=state.timedRewards.end();){
+        const bool paused=TimedRewardsPaused(game,state,player->first);
         for(auto reward=player->second.begin();reward!=player->second.end();){
-            if(RewardsData::Index(reward->first)<0 || !RewardsData::Remaining(game->dwGameFrame,reward->second,reward->first))reward=player->second.erase(reward);
+            pauseChanged=reward->second.Pause(game->dwGameFrame,paused)||pauseChanged;
+            if(RewardsData::Index(reward->first)<0 || !reward->second.RemainingAt(game->dwGameFrame,reward->first))reward=player->second.erase(reward);
             else ++reward;
         }
         if(player->second.empty())player=state.timedRewards.erase(player);else ++player;
     }
-    if(!force && game->dwGameFrame-state.lastRewardSent<RewardsData::FramesPerSecond)return;
+    if(!force && !pauseChanged && game->dwGameFrame-state.lastRewardSent<RewardsData::FramesPerSecond)return;
     state.lastRewardSent=game->dwGameFrame;if(!++state.rewardSequence)++state.rewardSequence;
     size_t count=0;
     for(auto client=game->pClientList;client && count++<64;client=client->pNext){
@@ -39,9 +53,10 @@ void ProcessTimedRewards(Game* game,GameState& state,bool force=false){
         auto player=Lookup(game,0,client->dwUnitGUID);if(!player || player->dwUnitType!=0)continue;
         RewardsData::Wire packet;packet.session=uint32_t(game->dwInitSeed);packet.epoch=state.layoutEpoch;
         packet.recipient=client->dwUnitGUID;packet.sequence=state.rewardSequence;
+        packet.paused=TimedRewardsPaused(game,state,TimedRewardOwner(game,player))?1:0;
         if(const auto participant=state.timedRewards.find(TimedRewardOwner(game,player));participant!=state.timedRewards.end())
-            for(const auto [event,start]:participant->second)if(const int index=RewardsData::Index(event);index>=0)
-                packet.remaining[size_t(index)]=RewardsData::Remaining(game->dwGameFrame,start,event);
+            for(const auto& [event,timer]:participant->second)if(const int index=RewardsData::Index(event);index>=0)
+                packet.remaining[size_t(index)]=timer.RemainingAt(game->dwGameFrame,event);
         Native<void(__fastcall*)(Client*)>(0x2d0130)(client);
         void* range[]{&packet,reinterpret_cast<uint8_t*>(&packet)+sizeof(packet)};
         Native<void(__fastcall*)(void*,uint32_t,void**)>(0x422ac0)(Native<void*>(0x18682b0),client->dwClientId,range);

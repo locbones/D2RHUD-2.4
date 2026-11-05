@@ -59,7 +59,7 @@ def main():
                        mod_data=str(data), catalog=a.catalog(data), game_directory=str(game), helper=str(helper),
                        helper_sha256=a.io.digest(helper.read_bytes()), launcher_path=str(launcher),
                        launcher_sha256=a.io.digest(launcher.read_bytes()), hud_sha256=a.io.digest(hud.read_bytes()))
-            settings = dict(schema=1, game_mode='2.4', mod='RMD-MP', hardcore=False, page=11, withdraw_page=2)
+            settings = dict(schema=1, game_mode='2.4', mod='RMD-MP', hardcore=False, page=11, withdraw_page=2, drafts=[])
             a.io.save(saves / 'Marketplace_2.4_SC.json', settings)
             window = dict(schema=1, session='fixture-session-1', phase='parked', pid=child.pid, started=started,
                           tick=a.ticks(), owner=cfg['owner'], catalog=cfg['catalog'], player=17, hardcore=False,
@@ -95,6 +95,37 @@ def main():
             with agent.save_access('SC', [11]):
                 pass
             refuses(pages=(2,))
+            # Polling, clicks and deposit checks never request visible reloads.
+            viewed = dict(per_page, refresh_supported=2, loaded=2, refresh_id='')
+            a.io.save(path, viewed)
+            for reason in ('deposit', 'browse', 'withdraw:', 'items:invalid'):
+                assert not agent.request_refresh('SC', 2, reason)
+            reason = 'withdraw:' + 'c' * 32
+            assert not agent.request_refresh('SC', 11, reason)
+            assert agent.request_refresh('SC', 2, reason)
+            request = a.io.document(state / 'live-refresh-request.json')
+            assert request['kind'] == 'delivery' and request['page'] == 2
+            assert agent.refresh_active()  # Skip optional uploads before native parking starts.
+            a.io.save(state / 'live-refresh-request.json', dict(request, tick='corrupt'))
+            assert not agent.refresh_active()
+            a.io.save(state / 'live-refresh-request.json', request)
+            assert agent.request_refresh('SC', 2, reason)
+            assert a.io.document(state / 'live-refresh-request.json')['id'] == request['id']
+            refuses(pages=(2,))
+            refreshed = dict(viewed, loaded=1, session='parked-refresh-session', refresh_id=request['id'])
+            a.io.save(path, refreshed)
+            assert agent.refresh_active()
+            agent.refresh_ready(refreshed)
+            result = a.io.document(state / 'live-refresh-result.json')
+            assert result == dict(schema=1, id=request['id'], session=refreshed['session'], ready=True)
+            # Neither time nor a new native grant re-arms the same delivery.
+            seen_path = state / 'refresh-seen.json'
+            seen = a.io.document(seen_path)
+            for value in seen.values(): value['at'] = 0
+            a.io.save(seen_path, seen)
+            a.io.save(path, dict(viewed, session='returned-session', edit_revision=999))
+            for _ in range(20): assert not agent.request_refresh('SC', 2, reason)
+            assert agent.request_refresh('SC', 2, 'withdraw:' + 'd' * 32)
             a.io.save(path, window)
             a.game_processes = lambda: {child.pid, child.pid+1}
             refuses()
@@ -124,6 +155,30 @@ def main():
             with a.lease(state / 'guard.lock'):
                 agent.recover()
             assert not agent.pending.exists() and page.read_bytes() == after
+            # Once the local receipt is durable, a lost cloud acknowledgement
+            # must not pin the page or replay it over legitimate native edits.
+            def applied_fault(stage):
+                if stage == 'locally_applied':
+                    raise InterruptedError('lost commit response')
+            agent.fault = applied_fault
+            try:
+                with a.lease(state / 'guard.lock'):
+                    agent.start('SC', dict(id='2'*32, type='deposit_prepare', items=[]),
+                                [(11, after, b'next authorized image')])
+                raise AssertionError('fault did not interrupt the commit')
+            except InterruptedError:
+                pass
+            pointer = a.io.document(agent.pending)
+            assert pointer['pages'] == [11] and pointer['reload_safe'] is True
+            record = a.io.document(state / 'transactions' / ('2'*32) / 'record.json')
+            assert record['phase'] == 'applied'
+            page.write_bytes(b'legitimate native item movement after delivery')
+            handles.append(shared(state / 'live.lock'))
+            agent.fault = lambda stage: None
+            with a.lease(state / 'guard.lock'):
+                agent.recover()  # Must need no save lease and perform no page replay.
+            close(handles.pop())
+            assert not agent.pending.exists() and page.read_bytes() == b'legitimate native item movement after delivery'
             # Wake notifications eliminate the old 15-second close/reopen race.
             event = a.WakeEvent(cfg['owner'])
             kernel = ctypes.WinDLL('kernel32', use_last_error=True)

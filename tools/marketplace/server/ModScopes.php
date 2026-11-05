@@ -62,9 +62,9 @@ trait MarketplaceModScopes {
     private array $identityDefinitions=[];
     private function itemIdentity(string $hex,?string $scope=null): ?array {
         $name=$scope===null?$this->mod:(explode('|',$scope)[1]??'');
-        if($name==='RMD-MP')return SavedItemIdentity::read($hex);
         if(!array_key_exists($name,$this->identityDefinitions)){
             $data=$this->run('SELECT identity_data FROM market_mods WHERE `mod`=?',[$name])->fetchColumn();
+            if(!$data&&$name==='RMD-MP')return SavedItemIdentity::read($hex);
             if(!$data)throw new MarketError(409,'Link this mod from Pandemonium to register its item definitions before trading.');
             $this->identityDefinitions[$name]=json_decode($data,true,512,JSON_THROW_ON_ERROR);
         }
@@ -92,6 +92,7 @@ trait MarketplaceModScopes {
             foreach($identity['items'] as $code=>$d){if(!is_string($code)||strlen($code)!==4||!is_array($d)||!is_int($d['quest_bits']??null)||$d['quest_bits']<0||$d['quest_bits']>32)throw new MarketError(422,'Invalid mod item definition.');foreach(['gold','charm','body','tome'] as $key)if(!is_bool($d[$key]??null))throw new MarketError(422,'Invalid mod item definition.');}
         }
         if($name!=='RMD-MP'&&$identity===null)throw new MarketError(422,'Pandemonium must supply this mod’s verified item definitions.');
-        $this->ensureMod($name,$fingerprint,$name==='RMD-MP'?null:$identity);$next=new self($this->db,$this->community,$name);$next->joinMod($actor['id']);return $next;
+        $versioned=(bool)$this->run('SELECT family FROM market_catalog_families WHERE `mod`=?',[$name])->fetchColumn();
+        $this->ensureMod($name,$fingerprint,$name==='RMD-MP'||$versioned?null:$identity);$next=new self($this->db,$this->community,$name);$next->joinMod($actor['id']);return $next;
     }
 }

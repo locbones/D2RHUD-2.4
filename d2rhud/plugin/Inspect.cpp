@@ -1,4 +1,5 @@
 #include "../ProcessLifetime.h"
+#include "../RuntimeTelemetry.h"
 #include "InspectNative.h"
 #include <Windows.h>
 #include <atomic>
@@ -108,6 +109,7 @@ void Refresh() {
         Begin(s, s.type, s.target);
 }
 void ClientTick(const HudFrame::Context& frame, uint64_t session) {
+    HudTelemetry::Scope measured(HudTelemetry::Feature::Inspect);
     auto& s = Client();
     // Do not hold the client mutex while entering the native read guard.
     const bool town = Enabled() && frame.inGame && !frame.loading && session && Native::InTown();

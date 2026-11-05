@@ -14,7 +14,7 @@ std::string Source(){return "description\tenabled\tnuminputs\top\tparam\tvalue\t
 Game game{};std::array<Unit,3> heroes{};std::array<D2PlayerDataStrc,3> playerData{};std::array<Client,3> clients{};std::array<D2InventoryStrc,3> inventories{};
 Unit* local=nullptr;uint32_t selector=0;
 struct Peer {
-    std::filesystem::path root;std::unique_ptr<Data::Store> store;View view;uint64_t received=0;uint32_t session=0,recipient=0;
+    std::filesystem::path root;std::unique_ptr<Data::ProgressStore> store;View view;uint64_t received=0;uint32_t session=0,recipient=0;
 };
 std::array<Peer,3> peers;
 struct PeerScope {
@@ -170,6 +170,26 @@ int main(int argc,char** argv){try{
         const auto target=actual->quests[4].target;for(int n=0;n<target;++n)Killed(&game,&heroes[0],uint32_t(n+1),1,0,-1);Pump();Check(Inspect(&game,&heroes[0]).objectiveReady,"kill objective not observed");
         SetRewardClaim(+[](Game*,Unit*,int quest){Check(quest==5,"wrong bonus quest");++awards;return true;});auto replay=CommandFor(0,5);Action(0,5);Command(&game,&heroes[0],reinterpret_cast<uint8_t*>(&replay),sizeof(replay));Pump();Check(awards==1&&Data::Current(peers[0].store->history).completed==5,"bonus was duplicated or not persisted");
     }
+    // Routine kills may update the view before storage completes, but cannot
+    // emit an ACK or a storage-failure command while that write is pending.
+    Reset(2);auto counterSave=Save("CounterPeer");Load(2,counterSave);
+    const auto counterHistory=peers[2].store->history;peers[2].store.reset();
+    std::vector<Data::ProgressStore::Task> counterTasks;uint64_t counterClock=0;bool immediateCounter=false;
+    peers[2].store=std::make_unique<Data::ProgressStore>([&](auto task){if(immediateCounter)task();else counterTasks.push_back(std::move(task));},Data::ProgressStore::Persist{},[&]{return counterClock;});
+    Check(peers[2].store->Open(peers[2].root,counterHistory.identity,error),"counter receiver fixture failed");
+    counterClock=10000;auto& counterSession=sessions.at({&game,3});++counterSession.state.kills;Send(&game,counterSession,*Bindings());
+    Check(downstream.size()==1,"counter snapshot missing");const auto counterPacket=downstream.front();downstream.pop_front();
+    {PeerScope peer(2);Receive(reinterpret_cast<const uint8_t*>(&counterPacket),sizeof(counterPacket));
+        Check(upstream.empty()&&!clientView.blocked&&clientView.kills==counterSession.state.kills,"pending counter blocked the view or acknowledged unflushed data");
+        Check(counterTasks.size()==1&&Data::Store::Read(clientStore->path)->revision==counterHistory.revision,"counter write ran on receiver");
+        counterTasks.front()();counterTasks.clear();Receive(reinterpret_cast<const uint8_t*>(&counterPacket),sizeof(counterPacket));
+        Check(upstream.size()==1&&upstream.front().command.action==8,"completed counter did not acknowledge on next packet");}
+    Pump();Check(counterSession.acknowledged==counterPacket.revision,"durable counter acknowledgement lost");
+    // A normal native autosave is also a barrier while the client still exists.
+    immediateCounter=true;++counterSession.state.kills;Saved(&game,&heroes[2],counterSave.data(),counterSave.size());
+    Check(downstream.size()==1&&(downstream.front().flags&Data::SaveCheckpoint),"native save omitted the counter checkpoint marker");
+    auto invalidFlags=downstream.front();invalidFlags.flags|=64;Check(!Data::Valid(invalidFlags),"unknown quest flags accepted");
+    Pump();Check(Data::Current(*Data::Store::Read(peers[2].store->path)).kills==counterSession.state.kills,"live-client autosave deferred counters until periodic deadline");
     Destroyed(&game);for(auto& peer:peers)peer.store.reset();clientStore.reset();
     // Store leases above intentionally remain live; cleanup after their destructors.
     std::cout<<"PASS: "<<checks<<" quest checks; existing journals, two-client TCP/IP sync, no checksum gating, durable writes, writer leases, replay and failure recovery. Fixtures: "<<root<<'\n';return 0;

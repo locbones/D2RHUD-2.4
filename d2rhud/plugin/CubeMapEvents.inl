@@ -51,6 +51,16 @@ bool BeginEvent(Game* game,Run& run){
 }
 bool ProcessEvent(Game* game,Run& run,GameState& state){
     if(run.event==Event::None)return false;
+    // Process() updates clocks before this state machine. Also settle a phase
+    // edge on this exact frame, so selection starts/stops without a lost tick or
+    // a countdown flicker. The run may be removed; never retain its reference.
+    struct RewardPhaseEdge {
+        Game* game;GameState& state;EventPhase before;
+        ~RewardPhaseEdge(){
+            const auto after=state.run?state.run->eventPhase:EventPhase::None;
+            if(after!=before)ProcessTimedRewards(game,state);
+        }
+    } rewardPhaseEdge{game,state,run.eventPhase};
     const auto frame=game->dwGameFrame;
     auto age=[&](){return frame-run.eventFrame;};
     auto connected=[&](){std::vector<Unit*> players;for(auto player:Players(game))if(run.returns.contains(player->dwUnitId))players.push_back(player);return players;};

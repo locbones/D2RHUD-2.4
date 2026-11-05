@@ -22,14 +22,14 @@ inline Json Read(const std::filesystem::path& path){
     if(!file||file.tellg()<0||file.tellg()>1024*1024)throw std::runtime_error("Live custody input is unavailable.");
     file.seekg(0);Json value;file>>value;return value;
 }
-inline void Write(const std::filesystem::path& path,const Json& value){
+inline void Write(const std::filesystem::path& path,const Json& value,bool durable=true){
     auto temporary=path;temporary+=L".hud-"+std::to_wstring(GetCurrentProcessId())+L".new";
     const auto bytes=value.dump();
     HANDLE file=CreateFileW(temporary.c_str(),GENERIC_WRITE,0,nullptr,CREATE_ALWAYS,FILE_ATTRIBUTE_NORMAL,nullptr);
     if(file==INVALID_HANDLE_VALUE)throw std::runtime_error("Cannot publish the live custody handoff.");
-    DWORD written=0;const bool ok=WriteFile(file,bytes.data(),DWORD(bytes.size()),&written,nullptr)&&written==bytes.size()&&FlushFileBuffers(file);
+    DWORD written=0;const bool ok=WriteFile(file,bytes.data(),DWORD(bytes.size()),&written,nullptr)&&written==bytes.size()&&(!durable||FlushFileBuffers(file));
     CloseHandle(file);
-    if(!ok||!MoveFileExW(temporary.c_str(),path.c_str(),MOVEFILE_REPLACE_EXISTING|MOVEFILE_WRITE_THROUGH)){
+    if(!ok||!MoveFileExW(temporary.c_str(),path.c_str(),MOVEFILE_REPLACE_EXISTING|(durable?MOVEFILE_WRITE_THROUGH:0))){
         DeleteFileW(temporary.c_str());throw std::runtime_error("Cannot commit the live custody handoff.");
     }
 }
@@ -44,6 +44,10 @@ class Window {
     bool hardcore=false,enabled=false,parked=false,passive=false;
     uint64_t began=0,published=0,sequence=0;
     HANDLE access=INVALID_HANDLE_VALUE;
+    std::string refreshId,lastRefreshId;
+    unsigned refreshPage=0,refreshTab=0;
+    uint64_t refreshBegan=0,refreshPoll=0;
+
     bool Shared(){
         if(access!=INVALID_HANDLE_VALUE)return true;
         access=CreateFileW((root/L"live.lock").c_str(),GENERIC_READ,FILE_SHARE_READ,nullptr,OPEN_ALWAYS,FILE_ATTRIBUTE_NORMAL,nullptr);
@@ -56,15 +60,29 @@ class Window {
         }
         parked=false;
     }
-    bool Done(uint64_t now){
-        try{const auto result=Read(root/L"live-result.json");if(result.value("session",std::string())==epoch&&result.value("terminal",false))return true;}catch(...){}
-        return now>=began&&now-began>=5000;
+    bool Pending(unsigned page){
+        std::error_code error;if(!std::filesystem::exists(root/L"pending.json",error))return bool(error);
+        try{const auto pending=Read(root/L"pending.json");
+            // Legacy/invalid journals remain conservatively blocked. New
+            // journals describe the exact page(s), not the entire stash.
+            const auto id=pending.at("id").get<std::string>(),mode=pending.at("mode").get<std::string>();
+            if(id.size()!=32||id.find_first_not_of("0123456789abcdef")!=std::string::npos||(mode!="SC"&&mode!="HC"))return true;
+            const auto& pages=pending.at("pages");if(!pages.is_array()||pages.empty()||pages.size()>2)return true;
+            bool affected=false;for(const auto& p:pages){if(!p.is_number_unsigned())return true;const auto n=p.get<unsigned>();if(n<1||n>64)return true;affected|=n==page;}
+            if(mode!=(hardcore?"HC":"SC")||!affected)return false;
+            if(pending.value("reload_safe",false)){
+                const auto record=Read(root/L"transactions"/id/L"record.json");
+                if(record.value("id",std::string())==id&&record.value("mode",std::string())==mode&&
+                    (record.value("phase",std::string())=="applied"||record.value("phase",std::string())=="complete"))return false;
+            }
+        }catch(...){}return true;
     }
     bool Publish(uint64_t now){
         try{
             Write(root/L"live-window.json",{{"schema",passive?2:1},{"session",epoch},{"phase",passive?"unloaded":"parked"},{"pid",GetCurrentProcessId()},
                 {"started",Started()},{"tick",now},{"owner",owner},{"catalog",catalog},{"player",player},{"hardcore",hardcore},
-                {"deposit",deposit},{"delivery",delivery},{"parking",parking},{"loaded",loaded},{"save_directory",folder.string()}});
+                {"deposit",deposit},{"delivery",delivery},{"parking",parking},{"loaded",loaded},{"save_directory",folder.string()},
+                {"refresh_supported",2},{"refresh_id",refreshId}},false);
             published=now;return true;
         }catch(const std::exception& e){status=e.what();return false;}
     }
@@ -86,7 +104,7 @@ public:
             if(capability.value("schema",0)!=1||capability.value("owner",std::string())!=cfg.at("owner").get<std::string>()||capability.value("catalog",std::string())!=cfg.at("catalog").get<std::string>())return false;
             const auto settings=Read(saves/(hc?L"Marketplace_2.4_HC.json":L"Marketplace_2.4_SC.json"));
             const auto in=settings.at("page").get<unsigned>(),out=settings.at("withdraw_page").get<unsigned>();
-            if(settings.at("mod")!="RMD-MP"||settings.at("game_mode")!="2.4"||settings.at("hardcore")!=hc||!in||in>64||!out||out>64||in==out)return false;
+            if(settings.at("mod")!="RMD-MP"||settings.at("game_mode")!="2.4"||settings.at("hardcore")!=hc||!in||in>64||!out||out>64)return false;
             if(enabled&&(player!=unit||hardcore!=hc||deposit!=in||delivery!=out||root!=state)){
                 if(!Shared())return false;Revoke();
             }
@@ -96,12 +114,41 @@ public:
             enabled=true;if(!parked&&!Shared())return false;return true;
         }catch(...){return false;}
     }
+    unsigned RefreshPage(){std::lock_guard lock(mutex);return refreshPage;}
+    unsigned RefreshTab(){std::lock_guard lock(mutex);return refreshTab;}
+    bool Refreshing(){std::lock_guard lock(mutex);return refreshPage!=0;}
+    unsigned BeginRefresh(unsigned page,unsigned tab,uint64_t now){
+        std::lock_guard lock(mutex);if(!enabled||refreshPage||tab>7||page!=loaded||page!=delivery||!parked||!passive||now<refreshPoll)return 0;
+        refreshPoll=now+500;
+        try{const auto r=Read(root/L"live-refresh-request.json");const auto id=r.at("id").get<std::string>();
+            const auto tick=r.at("tick").get<uint64_t>();
+            if(r.value("schema",0)!=1||r.value("kind",std::string())!="delivery"||id.size()!=32||id.find_first_not_of("0123456789abcdef")!=std::string::npos||id==lastRefreshId||
+                r.at("owner")!=owner||r.at("catalog")!=catalog||r.at("pid")!=GetCurrentProcessId()||r.at("started")!=Started()||
+                r.at("player")!=player||r.at("hardcore")!=hardcore||r.at("page")!=page||r.at("session")!=epoch||
+                (page!=deposit&&page!=delivery)||now<tick||now-tick>15000)return 0;
+            refreshId=id;lastRefreshId=id;refreshPage=page;refreshTab=tab;refreshBegan=now;restore=page;
+            return parking;
+        }catch(...){return 0;}
+    }
+    bool RefreshReady(uint64_t now){
+        std::lock_guard lock(mutex);if(!refreshPage||loaded!=parking||!parked)return false;
+        if(!Shared())return false;
+        // A durable local receipt releases the page before a slow cloud commit.
+        bool done=false;
+        try{const auto r=Read(root/L"live-refresh-result.json");done=r.at("id")==refreshId&&r.at("session")==epoch&&r.value("ready",false);}catch(...){}
+        if(!done&&now>=refreshBegan&&now-refreshBegan>=12000)done=true;
+        const bool ready=done&&!Pending(refreshPage);
+        if(!ready){CloseHandle(access);access=INVALID_HANDLE_VALUE;}
+        return ready;
+    }
+    void FinishRefresh(){std::lock_guard lock(mutex);refreshPage=0;refreshId.clear();}
     bool Protected(unsigned page){std::lock_guard lock(mutex);return enabled&&(page==deposit||page==delivery);}
     std::optional<std::filesystem::path> PageFile(unsigned page){std::lock_guard lock(mutex);if(!enabled||(page!=deposit&&page!=delivery))return {};return folder/(std::wstring(L"Stash_")+(hardcore?L"HC":L"SC")+L"_Page"+std::to_wstring(page)+L".d2i");}
     void Error(const std::string& value){std::lock_guard lock(mutex);status=value;}
-    unsigned Close(unsigned page,bool cursor){
+    void RememberClosed(unsigned page){std::lock_guard lock(mutex);if(enabled&&page>=1&&page<=64)restore=page;}
+    unsigned Close(unsigned page,bool cursor,bool remember=true){
         std::lock_guard lock(mutex);if(!enabled||cursor)return 0;
-        restore=page;loaded=page;
+        if(remember)restore=page;loaded=page;
         if(page==deposit||page==delivery)return parking;
         return 0;
     }
@@ -119,23 +166,21 @@ public:
         if(access!=INVALID_HANDLE_VALUE){CloseHandle(access);access=INVALID_HANDLE_VALUE;}
         status=pageOnly?std::string():"Trading sync in progress. Other stash pages remain available.";Wake();return true;
     }
-    bool Permit(unsigned page,bool waitForPass=true){
+    bool Permit(unsigned page){
         std::lock_guard lock(mutex);if(!enabled)return true;
         if(!Shared()){status="Finishing a stash update...";return false;}
         if(page==deposit||page==delivery){
-            std::error_code error;
-            const bool pending=std::filesystem::exists(root/L"pending.json",error);
-            if(error||pending||(parked&&!passive&&waitForPass&&!Done(GetTickCount64()))){
+            if(Pending(page)){
                 CloseHandle(access);access=INVALID_HANDLE_VALUE;
                 status="Trade sync pending. Your other stash pages are available.";return false;
             }
         }
         Revoke();loaded=page;status.clear();return true;
     }
-    unsigned Restore(){std::lock_guard lock(mutex);return enabled&&!passive?restore:0;}
+    unsigned Restore(bool reopening=false){std::lock_guard lock(mutex);return enabled&&(reopening||!passive)?restore:0;}
     void Tick(bool inGame){
         std::lock_guard lock(mutex);if(!enabled)return;
-        if(!inGame){if(Shared()){Revoke();enabled=false;}return;}
+        if(!inGame){if(Shared()){Revoke();enabled=false;refreshPage=0;refreshId.clear();}return;}
         const auto now=GetTickCount64();if(parked&&now>=published&&now-published>=1000)Publish(now);
     }
     View Snapshot(){std::lock_guard lock(mutex);return {enabled,parked,deposit,delivery,parking,status};}

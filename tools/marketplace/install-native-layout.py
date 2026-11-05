@@ -54,10 +54,10 @@ def patch(text, controls):
     return text
 
 
-def install(data):
+def install(data, source=None, backup_directory=None):
     data = data.resolve()
-    source = Path(__file__).parent / "layouts"
-    controls = [json.loads((source / name).read_text(encoding="utf-8")) for name in ("stash-shop-button.json", "marketplace-workspace.json")]
+    source = Path(source) if source is not None else Path(__file__).parent / "layouts"
+    controls = [json.loads((source / name).read_text(encoding="utf-8")) for name in ("stash-shop-button.json", "marketplace-workspace.json", "stash-sync-mask.json")]
     targets = [data / "global/ui/layouts/bankexpansionlayouthd.json", data / "Pandemonium/UI Theme/remodded/layouts/bankexpansionlayouthd.json"]
     if not targets[0].is_file():
         raise ValueError("The active RMD-MP stash layout is missing.")
@@ -71,18 +71,29 @@ def install(data):
             after = b"\xef\xbb\xbf" + after
         if before != after:
             changes.append((path, before, after))
+    # Runtime packages are flat; source checkouts keep artwork beside layouts.
+    for name in ('MarketplaceButton.sprite', 'MarketplaceButton.lowend.sprite', 'MarketplaceGift.sprite', 'MarketplaceGift.lowend.sprite'):
+        asset = source / name
+        if not asset.is_file(): asset = source.parent / 'assets' / name
+        after = asset.read_bytes()
+        if after[:4] != b'SpA1': raise ValueError('Invalid native marketplace button artwork.')
+        path = data / 'Pandemonium' / 'Marketplace' / name
+        before = path.read_bytes() if path.is_file() else None
+        if before != after: changes.append((path, before, after))
     if not changes:
         return {"changed": 0, "message": "Native marketplace already installed."}
-    backup = Path(tempfile.mkdtemp(prefix="d2rhud-native-marketplace-"))
+    backup = Path(backup_directory) if backup_directory is not None else Path(tempfile.mkdtemp(prefix="d2rhud-native-marketplace-"))
+    backup.mkdir(parents=True, exist_ok=True)
     done = []
     try:
         for path, before, after in changes:
             relative = path.relative_to(data)
             target = backup / relative
             target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(path, target)
-            if path.read_bytes() != before:
+            if before is not None: shutil.copy2(path, target)
+            if (path.read_bytes() if path.is_file() else None) != before:
                 raise ValueError("Stash layout changed during installation.")
+            path.parent.mkdir(parents=True, exist_ok=True)
             temporary = None
             try:
                 with tempfile.NamedTemporaryFile(dir=path.parent, delete=False) as file:
@@ -96,8 +107,10 @@ def install(data):
                 if temporary and temporary.exists():
                     temporary.unlink()
     except BaseException:
+        previous = {path: before for path, before, _ in changes}
         for path in reversed(done):
-            shutil.copy2(backup / path.relative_to(data), path)
+            if previous[path] is None: path.unlink()
+            else: shutil.copy2(backup / path.relative_to(data), path)
         raise
     report = {"changed": len(done), "backup": str(backup), "files": [str(p) for p in done]}
     (backup / "installation.json").write_text(json.dumps(report, indent=2))
@@ -107,5 +120,7 @@ def install(data):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("data", type=Path)
+    parser.add_argument("--source", type=Path)
+    parser.add_argument("--backup", type=Path)
     args = parser.parse_args()
-    print(json.dumps(install(args.data), indent=2))
+    print(json.dumps(install(args.data, args.source, args.backup), indent=2))

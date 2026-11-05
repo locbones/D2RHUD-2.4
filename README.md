@@ -5,7 +5,7 @@ A HUD and mod extension for Diablo II: Resurrected 2.4, adapted from
 Native features check executable compatibility and may require matching mod data
 on the host and clients.
 
-Current HUD release: **1.7.9**.
+Current HUD release: **1.8.0**.
 
 ## Features
 
@@ -67,6 +67,8 @@ Current HUD release: **1.7.9**.
   item visuals, and immunity sunder.
 - Random map/event rosters exclude water-dependent frog-demon and watcher/
   tentacle behaviors, including inherited families and linked spawns/minions.
+  Hostile aquatic monsters authored into map presets are replaced from the safe
+  roster as well; ordinary-world populations retain their original presets.
 - Temporary RMD-MP Candy Corn migration: legacy `Ev11` items gain quantity 1 on
   character preview, game load or shared-stash page load, with original-save/page backups and an
   on-screen notice. Both softcore and hardcore stash pages are supported.
@@ -76,6 +78,61 @@ Current HUD release: **1.7.9**.
 
 Some integrations are specific to RMD-MP. Experimental Workshop features default
 to off and need the corresponding mod content.
+
+## 1.8.0 changelog
+
+Changes since 1.7.9, including the accompanying marketplace and launcher updates:
+
+### Maps and events
+
+- Existing map-event bonus timers now pause while another event is being chosen and entered, even across repeated events.
+- Player summons, revived monsters, and mercenaries now use bright-blue map icons to distinguish them from enemies.
+- Fixed water-dependent monsters appearing in map areas where they could not behave correctly.
+
+### In-game marketplace and Vault
+
+- Refreshed the marketplace with its own shop icon, a higher panel, better-aligned buttons, and a clearer Setup page.
+- Added an optional Open Marketplace hotkey that works during normal gameplay without showing the stash.
+- Combined stored trade items, gold, and bag currencies into one place called the Vault.
+- Replaced separate deposit and delivery pages with one market stash page for sales and incoming items.
+- Items with asking prices move into the Vault, while unlisted items stay on the market page.
+- Gold and unpriced bag currencies on the market page are added to the Vault automatically.
+- Received bag currencies arrive in a new Storage Bag that can be merged with an existing bag.
+- Added wider red borders for unlisted items and green borders for newly delivered items.
+- Added a green glow around the market page in the stash page dropdown, including while scrolling.
+- Incoming deliveries can refresh the open market page automatically while keeping the same page and tab selected.
+- Added a large, centered gold reload notice and stopped unnecessary repeated stash refreshes.
+- Fixed stash pages flickering, appearing empty, or preventing page changes during marketplace updates.
+- Improved interrupted-transfer recovery to protect items and avoid repeating completed deliveries.
+- Marketplace problems no longer prevent players from launching the game.
+- Trade notifications now focus on trades involving you, with a separate in-game notification volume control.
+- Added community gift bundles with announcements, claim messages, optional deadlines, and one claim per linked account.
+- Hellfire Torch requests can now specify a character class in prices, counter-offers, and wanted listings.
+- RMD-MP Codex trade options now identify each Testament piece and completed Codex by name in-game and on the website.
+- Sellers can add a short public comment when listing an item, with compact comment indicators in website browsing.
+
+### Marketplace website and setup
+
+- Added Open to Offers listings so sellers can consider proposals without choosing a fixed price.
+- Added wanted listings for items you do not own, with either an offered payment or a request to message you.
+- Player profiles can show available Vault items and balances to help players find possible trades.
+- Added search across a player's entire available Vault, including items beyond the first page.
+- Added separate Direct Messages and Trade Messages views, with trade conversations grouped by transaction.
+- Fixed read-message indicators and automatically opened an unread or recent conversation when viewing messages.
+- Players can share a display name while remaining identifiable by their permanent player ID.
+- Improved website setup so linked players can request their market page before their first stash sync.
+- Fixed seller-name alignment, clipped large gold balances, and some incorrect item-stat descriptions.
+- Improved automatic marketplace setup and compatibility with mod updates while keeping different mods' trades separate.
+- Added automatic background companion updates and displayed the installed companion version in status information.
+- Added owner tools for viewing detailed trade and delivery history and troubleshooting through an impersonated player account.
+
+### Performance and troubleshooting
+
+- Reduced disk activity by saving routine quest kill counts and ongoing run progress about every ten seconds.
+- Moved chat presence updates into the background, reused unchanged messages, and removed repeated debug-file writes.
+- Added an optional hitch recorder under Setup > Diagnostics to help investigate brief freezes and slowdowns.
+
+Automatic marketplace save transfers currently require Windows; Linux packages include the shared HUD improvements.
 
 ## 1.7.9 changelog
 
@@ -150,9 +207,18 @@ crafting or purchases, so retained quantities are not proof of monster drops.
 CSV exports. **Charts** compares run times, retained quantities, rolling averages,
 duration distributions, item quality and time spent by area. Recovered partial
 snapshots can be included explicitly. Runs save locally under
-`%LOCALAPPDATA%\D2RHUD\RunTracker`, every five seconds and when a run finishes.
+`%LOCALAPPDATA%\D2RHUD\RunTracker`, about every ten seconds and when a run finishes.
 The most recent observed storage state is used; items on unopened stash pages
 cannot be classified. Character and stash save files are never modified.
+
+Routine quest kill counts stay in memory and checkpoint on a background writer
+about every ten seconds while updates arrive. Continuous combat does not reset
+that deadline, and unchanged counters do not schedule writes. Quest objectives,
+rewards and normal character-save checkpoints retain immediate durable commits.
+An abrupt crash can lose the latest ordinary counters since the last checkpoint.
+Chat keeps unchanged mailbox content in memory, checks metadata for new messages,
+and refreshes content at least every thirty seconds as a fallback. Presence is
+written every five seconds; legacy per-drop/treasure debug-file logging is removed.
 
 **Item Analysis** graphs retained item types and qualities as percentages of
 entries or stack units. Area rankings compare quantities, active-time rates,
@@ -254,6 +320,10 @@ readiness/diagnostics exports. HUD feature releases replace the DLL; Pandemonium
 startup changes ship with the app. Optional Act VI data issues do not block five-act BIN
 games, including a saved Act VI preference that cannot activate with those BINs.
 Six-act packages and requested TXT preparation still require valid Act VI data.
+The Act VI option takes effect on a full D2R restart. A six-act BIN package
+supports both settings: off exposes only the first five native ActInfo records,
+uses five-act panels and retains normal Baal difficulty progression. The sixth
+record, allocation and BIN files are preserved for a later enabled launch.
 Act VI validation accepts both
 GitHub LF and Windows CRLF line endings while checking file contents.
 
@@ -370,6 +440,23 @@ act's price or mercenary type. The server still verifies the exact purchase pric
 Invalid definitions and name ranges exceeding the native 69-name roster are
 not unlocked. The setting uses `MercSellerUnlock` in the existing per-mod HUD
 configuration; no additional configuration file is needed.
+
+## Multiple Auras Per Item
+
+**D2RHUD Options → Gameplay → Multiple Auras Per Item** defaults on and saves
+as `MultipleAurasPerItem` in the per-mod HUD configuration. Distinct auras
+granted by one item or by `monprop.txt` keep independent native refresh timers.
+This includes the Paladin Soul's Defiance and hidden clue-tracking aura.
+
+The fix narrows native timer deletion to the aura being activated, refreshed
+or removed. Aura strength, radius, native same-skill stacking, selected player
+auras and other event types retain their existing behavior. There is no added
+per-frame scan or replacement scheduler. This is host-side gameplay behavior;
+the TCP/IP host needs the updated DLL and option enabled. After toggling, start
+a new game or re-equip affected items and resummon affected companions.
+
+Unsupported native code or another hook at an adapter site disables this
+feature before any patch is written; the Gameplay option reports availability.
 
 ## Merc Icons Fix
 

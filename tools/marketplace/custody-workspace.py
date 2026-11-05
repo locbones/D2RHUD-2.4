@@ -1,6 +1,6 @@
 """Prepare/recover custody transactions in disposable save COPIES only.
 
-No network access, escrow acknowledgement, game launch or live save writes.
+No network access, Vault acknowledgement, game launch or live save writes.
 This is the recovery rehearsal for the future closed-game custody agent.
 """
 import argparse
@@ -174,6 +174,19 @@ def compatibility(data):
     name = "D2RHUD/table-metadata.json"
     rows[name] = digest(read(root / name)) if (root / name).exists() else None
     return rows
+
+
+def save_catalog(data, helper):
+    result = subprocess.run([str(Path(helper).resolve()), 'save-catalog', str(Path(data).resolve()), 'unused'],
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=20,
+                            creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+    raw = result.stdout.strip()
+    if result.returncode or len(raw) > 2 * 1024 * 1024:
+        raise ValueError('Could not read the mod save-format description: ' + result.stderr.decode('utf-8', errors='replace')[:512])
+    value = json.loads(raw)
+    if value.get('schema') != 2 or value.get('game_mode') != '2.4':
+        raise ValueError('Unsupported marketplace save-format description')
+    return digest(raw), value
 
 
 def history(root):

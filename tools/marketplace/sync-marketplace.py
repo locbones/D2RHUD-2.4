@@ -100,11 +100,21 @@ def sync(config, folder, hardcore=False, allow_local=False):
             return None
     opener = urllib.request.build_opener(NoRedirect)
 
+    # A newer companion may run beside an older HUD. Advertise native class
+    # support only for the HUD pinned by this signed runtime's manifest.
+    torch_class = False
+    try:
+        enrollment = json.loads((Path(config['custody_status']).parent.parent / 'custody-enrollment.json').read_text(encoding='utf-8-sig'))
+        features = json.loads((Path(config['managed_runtime']) / 'manifest.json').read_text(encoding='utf-8-sig')).get('features', {})
+        torch_class = enrollment.get('hud_sha256') in features.get('torch_class_hud_sha256', [])
+    except (OSError, ValueError, KeyError):
+        pass
+
     def request(action, command=None, bearer=None, extra=None):
         data = None if command is None else json.dumps(command, ensure_ascii=False).encode("utf-8")
         if data is not None and len(data) > (8 * 1024 * 1024 if action == "publish" else 32768):
             raise ValueError("Queued command is too large")
-        query = urllib.parse.urlencode({"action": action, "hardcore": int(hardcore), "mod": mod, "version": "2.4", **(extra or {})})
+        query = urllib.parse.urlencode({"action": action, "hardcore": int(hardcore), "mod": mod, "version": "2.4", **({"torch_class": 1} if action=="sync" and torch_class else {}), **(extra or {})})
         req = urllib.request.Request(endpoint + "?" + query, data=data, headers={"Authorization": "Bearer " + (token if bearer is None else bearer), "Content-Type": "application/json"})
         with opener.open(req, timeout=30) as response:
             raw = response.read(16 * 1024 * 1024 + 1)
@@ -291,10 +301,12 @@ def sync(config, folder, hardcore=False, allow_local=False):
         raise ValueError('Invalid incoming message preferences')
     muted = set(muted)
     def deliver(row):
-        category = row.get('category', row['kind'])
+        # Also handle queued notices written by companions predating categories.
+        category = 'search' if row.get('body', '').startswith('Saved search ') else row.get('category', row['kind'])
         if category not in {'direct', 'trade', 'search'}:
             category = row['kind']
-        return row.get('sender') not in muted and preferences.get('game_' + category, True)
+        row['category'] = category
+        return row.get('sender') not in muted and preferences.get('game_' + category, category != 'search')
     messages = [row for row in messages if deliver(row)]
     incoming = [row for row in rows if deliver(row)]
     if len(messages) + len(incoming) <= 256:
@@ -353,6 +365,8 @@ if __name__ == "__main__":
             config = {}
             try:
                 config = json.loads(args.config.read_text(encoding="utf-8-sig"))
+                if args.watch and config.get('managed_runtime') and Path(config['managed_runtime']).resolve() != Path(__file__).resolve().parent:
+                    break
                 before = watch_stamp(config, args.save_folder, args.hardcore)
                 result = sync(config, args.save_folder, args.hardcore)
                 wake_custody(config.get('player_id'))
