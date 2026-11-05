@@ -34,6 +34,7 @@ inline void MarketPage(const Settings& settings,const Panel::Frame& view,bool ma
     draw->PopClipRect();
 }
 inline void Draw(const std::filesystem::path& settingsPath,const Settings& settings,const Panel::Frame& view,const SaveTables& tables,bool marketOpen){
+    if(Panel::stashClosed.load())return;
     Panel::marketPage=settings.enabled?unsigned(settings.page):0;
     MarketPage(settings,view,marketOpen);
     if(!settings.enabled||marketOpen||view.page!=unsigned(settings.page)||view.cursorOccupied||view.suspended||tables.items.empty())return;

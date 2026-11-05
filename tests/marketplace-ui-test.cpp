@@ -123,7 +123,10 @@ int wmain(int argc,wchar_t** argv)try{
     };
     auto frame=[&]{
         if(state.walletOpen)state.socialPoll=UINT64_MAX; // Wallet fixture owns its response snapshots.
-        native.tick=GetTickCount64();Marketplace::Panel::Publish(native);ImGui::NewFrame();Marketplace::UI::DrawStash();ImGui::Render();
+        Marketplace::Panel::OpenStash();native.tick=GetTickCount64();Marketplace::Panel::Publish(native);
+        Marketplace::Panel::CloseStash();assert(!Marketplace::Panel::Current().owner&&Marketplace::Panel::Current().cells.empty());
+        Marketplace::Panel::Publish(native);assert(!Marketplace::Panel::Current().owner); // late paint cannot resurrect closed borders
+        Marketplace::Panel::OpenStash();Marketplace::Panel::Publish(native);ImGui::NewFrame();Marketplace::UI::DrawStash();ImGui::Render();
         assert(ImGui::GetDrawData()->TotalVtxCount==0); // No marketplace ImGui windows, buttons or glyphs.
         for(const auto& update:Marketplace::Panel::Presentation().widgets)assert(widgetNames.contains(update.name));
         for(const auto& update:Marketplace::Panel::Presentation().previews)assert(widgetNames.contains(update.name));
@@ -548,6 +551,18 @@ int wmain(int argc,wchar_t** argv)try{
         command("MarketReceiptNext");assert(state.receiptPage==1);command("MarketBackReceipt");assert(state.campaignOpen&&!state.receiptOpen);
         for(auto& g:state.snapshot.activity.gifts){g.claimed=true;g.claimable=false;g.message="Thank you for playing!";}frame();assert(!presented("MarketCampaignBadgeGlow").visible);command("MarketCampaignClaim");assert(state.receiptOpen&&state.local.commands.size()==count+1);command("MarketBackReceipt");command("MarketCampaignBack");assert(!state.campaignOpen);
         command("MarketCampaignOpen");command("MarketBrowse");assert(!state.campaignOpen);state.snapshot.activity=before;fixtureCatalog.namedItems=savedNamedItems;state.valid=wasValid;state.campaignId.clear();
+    }
+    {using namespace Marketplace;using namespace Marketplace::UI;
+        const auto before=state.snapshot.activity;const auto wasValid=state.valid;state.valid=false;state.snapshot.activity.self=std::string(32,'b');state.localValid=true;
+        GiftCampaign gift;gift.id=std::string(32,'d');gift.title="A gift for Sanctuary";gift.from="Bonesy";gift.announcement="Thank you for playing RMD-MP! Claim your community gift.";gift.claimable=true;
+        gift.items={ReadItem(Unique(),Tables(),1),ReadItem(Rune(),Tables(),1)};
+        Requirement gold;gold.kind="gold";gold.code="gld";gold.label="Gold";gold.quantity=1000000;
+        Requirement bag;bag.kind="bag";bag.code="Z01";bag.stat="RB_High";bag.label="High rune points";bag.quantity=3;gift.balances={gold,bag};
+        state.snapshot.activity.gifts={gift};state.status.clear();state.statusUntil=0;state.refresh=false;state.socialPoll=UINT64_MAX;state.campaignId=gift.id;frame();previewFrame("community-gift-announcement");
+        command("MarketCampaignOpen");assert(Panel::Presentation().previews.size()==4&&Panel::Presentation().previews[2].itemHex.empty()&&Panel::Presentation().previews[3].itemHex.empty());
+        assert(presented("MarketCampaignItemFacts2").text.find("1000000")!=std::string::npos&&presented("MarketCampaignItemFacts3").text.find("3")!=std::string::npos);previewFrame("community-gift-resources");
+        state.snapshot.activity.gifts[0].items.clear();frame();assert(Panel::Presentation().previews.size()==2&&Panel::Presentation().previews[0].itemHex.empty());previewFrame("community-gift-currency-only");
+        command("MarketCampaignBack");state.snapshot.activity=before;state.valid=wasValid;state.campaignId.clear();
     }
     {
         const auto notice=Json::parse(ReadFile(L"tools/marketplace/layouts/stash-sync-mask.json"));

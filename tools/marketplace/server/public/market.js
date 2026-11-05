@@ -232,7 +232,7 @@
   const stats=window.MarketStats.create({state,main,playerName,request,heading,esc,icon,itemImage,itemName,priceBundle,date});
   const experience=window.MarketExperience.create({state,main,esc,icon,heading,empty,request,navigate,requireAccount,itemImage,itemName,showModal,closeModal,notice,date,guid,refresh,command,priceBundle,openEditor,renderResults,route,live});
   const impersonation=window.MarketImpersonation.create({state,esc,playerName,icon,request,showModal,closeModal,refresh,notice,date,guid,scopes});
-  const gifts=window.MarketGifts.create({state,main,esc,icon,heading,empty,request,navigate,requireAccount,itemImage,itemName,showModal,closeModal,notice,date,guid,refresh,command,live});
+  const gifts=window.MarketGifts.create({state,main,esc,icon,heading,empty,request,navigate,requireAccount,itemImage,itemName,showModal,closeModal,notice,date,guid,refresh,command,live,paymentArt});
   const owner=window.MarketOwner.create({state,main,esc,icon,heading,request,notice,guid,refresh,navigate,scopes,people,closeModal,impersonationPanel:()=>impersonation.panel(),itemImage,itemName,priceBundle,playerName,date,resetRefine:()=>experience.reset()});
   boot();
 })();

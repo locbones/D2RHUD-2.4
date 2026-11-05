@@ -2,6 +2,9 @@
 // callbacks touch widgets/player pointers. The render tick renews value-only
 // handoff records and never calls inventory or page-loading functions.
 #include "MarketplacePagePackets.h"
+#include "MarketplaceGoldDeposit.h"
+static Marketplace::GoldDeposit::Detector gMarketGoldDeposit;
+static uint64_t gMarketGoldPoll=0,gMarketGoldRequestPoll=0;
 static std::mutex gLivePagePacketsMutex;
 static uint32_t gLivePacketPage=UINT32_MAX;
 static std::vector<std::vector<uint8_t>> gLivePagePackets;
@@ -87,7 +90,7 @@ static bool MarketplaceLiveCursor(){
     return !Marketplace::NativePanel::Read(player,value)||!value.pInventory||Marketplace::NativePanel::Field<void*>(value.pInventory,0x40)!=nullptr;
 }
 static void MarketplaceLiveClosed() try {
-    gLiveStashClosed=true;gLiveRestorePage=0;Marketplace::Panel::stashSyncing=false;
+    gMarketGoldDeposit.Reset();gLiveStashClosed=true;gLiveRestorePage=0;Marketplace::Panel::stashSyncing=false;
     gMarketplacePageRequests.Reset();
     Marketplace::LiveCustody::window.RememberClosed(Marketplace::LiveCustody::window.Refreshing()?gLiveRefreshReturn.load():gSelectedPage.load()+1);
     if(gMarketplacePageSwitching.load()||!MarketplaceLiveConfigure()||MarketplaceLiveCursor()){MarketplaceLiveObserve("close-deferred");return;}
@@ -106,7 +109,7 @@ static void MarketplaceLiveContinueClosed() try {
     else Marketplace::LiveCustody::window.OpenGrant(gSelectedPage+1);
 }catch(...){}
 static void MarketplaceLiveOpened() try {
-    gLiveStashClosed=false;Marketplace::Panel::stashSyncing=Marketplace::LiveCustody::window.Refreshing();
+    gMarketGoldDeposit.Reset();gMarketGoldPoll=0;gMarketGoldRequestPoll=0;gLiveStashClosed=false;Marketplace::Panel::stashSyncing=Marketplace::LiveCustody::window.Refreshing();
     const auto view=Marketplace::LiveCustody::window.Snapshot();
     if(view.enabled&&(view.parked||gMarketplacePageSwitching.load()))gLiveRestorePage=Marketplace::LiveCustody::window.Restore(true);
     if(!gLiveRestorePage.load()&&!gMarketplacePageSwitching.load()&&MarketplaceLiveConfigure())
@@ -117,6 +120,7 @@ static bool MarketplaceLiveAllowPage(uint32_t page) try {
     return Marketplace::LiveCustody::window.Permit(page+1);
 }catch(...){return false;}
 static void MarketplaceLiveLoaded(uint32_t page) try {
+    gMarketGoldDeposit.Reset();gMarketGoldPoll=0;gMarketGoldRequestPoll=0;
     if(Marketplace::LiveCustody::window.Refreshing()&&page+1==gLiveRefreshReturn){
         Marketplace::LiveCustody::window.FinishRefresh();Marketplace::Panel::stashSyncing=false;
     }
@@ -146,16 +150,47 @@ static void MarketplaceLivePollPage(void* panel) try {
     }
     MarketplaceLiveSelectPage(panel);
 }catch(...){}
+static bool MarketplaceLiveGold(void* panel,uint64_t now){
+    const auto view=Marketplace::LiveCustody::window.Snapshot();
+    if(!view.enabled||view.deposit!=gSelectedPage+1||gLiveStashClosed.load()||gMarketplacePageSwitching.load()||Marketplace::Panel::stashSyncing.load()){
+        gMarketGoldDeposit.Reset();return false;
+    }
+    if(now>=gMarketGoldPoll){
+        gMarketGoldPoll=now+100;
+        auto player=GetClientPlayerUnit();D2UnitStrc local{};D2InventoryStrc inventory{};
+        const auto tab=Marketplace::NativePanel::Tab(panel);
+        if(tab<1||tab>7||!Marketplace::NativePanel::Read(player,local)||local.dwUnitType||!Marketplace::NativePanel::Read(local.pInventory,inventory)||inventory.nSharedInvCount!=7){gMarketGoldDeposit.Reset();return false;}
+        std::array<uint8_t,16> code{};
+        if(!Marketplace::NativePanel::Read(reinterpret_cast<void*>(Pattern::Address(0x1e5620)),code)||code!=std::array<uint8_t,16>{0x48,0x83,0xec,0x28,0x45,0x0f,0xb7,0xc8,0x48,0x85,0xc9,0x74,0x42,0x48,0x8b,0x89})return false;
+        const auto stat=reinterpret_cast<int32_t(__fastcall*)(D2UnitStrc*,uint32_t,uint16_t)>(Pattern::Address(0x1e5620));
+        const auto carried=stat(player,14,0);if(carried<0)return false;
+        uint64_t gold=0;auto node=inventory.pFirstSharedInv;std::array<uint32_t,7> seen{};
+        for(unsigned i=0;i<7;++i){
+            D2SharedInventoryStrc part{};if(!Marketplace::NativePanel::Read(node,part)||!part.dwUnitId||std::find(seen.begin(),seen.begin()+i,part.dwUnitId)!=seen.begin()+i){gMarketGoldDeposit.Reset();return false;}
+            seen[i]=part.dwUnitId;auto unit=Marketplace::NativePanel::Field<D2UnitStrc*>(reinterpret_cast<void*>(Pattern::Address(0x1d442e0)),(part.dwUnitId&127)*sizeof(void*));bool found=false;
+            for(unsigned n=0;unit&&n<256;++n){D2UnitStrc value{};if(!Marketplace::NativePanel::Read(unit,value))break;
+                if(!value.dwUnitType&&value.dwUnitId==part.dwUnitId){const auto amount=stat(unit,15,0);if(amount<0)break;gold+=uint32_t(amount);found=true;break;}
+                if(value.pListNext==unit)break;unit=value.pListNext;
+            }
+            if(!found||(i==6&&(node!=inventory.pLastSharedInv||part.pNextCorpse))){gMarketGoldDeposit.Reset();return false;}node=part.pNextCorpse;
+        }
+        gMarketGoldDeposit.Observe(local.dwUnitId,gSelectedPage+1,unsigned(tab),uint32_t(carried),gold,now);
+    }
+    return gMarketGoldDeposit.Pending().has_value();
+}
 static void MarketplaceLivePaint(void* panel) try {
     MarketplaceLiveRefreshTick();
-    const auto now=GetTickCount64();
+    const auto now=GetTickCount64();const bool goldDeposit=MarketplaceLiveGold(panel,now);
     if(!gLiveStashClosed.load()&&!gMarketplacePageSwitching.load()&&!Marketplace::Panel::stashSyncing.load()&&!MarketplaceLiveCursor()&&
-        now>=Marketplace::Panel::stashLastInput.load()+1000&&!(GetAsyncKeyState(VK_LBUTTON)&0x8000)&&!(GetAsyncKeyState(VK_RBUTTON)&0x8000)){
+        now>=Marketplace::Panel::stashLastInput.load()+(goldDeposit?150:1000)&&!(GetAsyncKeyState(VK_LBUTTON)&0x8000)&&!(GetAsyncKeyState(VK_RBUTTON)&0x8000)){
         bool modal=false;
         for(const auto name:{"DropGoldModal","StackSplitModal","QuantityModal"})if(auto popup=WidgetFindChild(*gpPanelManager,name))modal|=Marketplace::NativePanel::Field<uint8_t>(popup,0x50)!=0;
         const auto tab=Marketplace::NativePanel::Tab(panel);
-        // Only a requested delivery may reload the page, with a native status label.
+        // Reload only for a queued delivery or a matched carried-to-stash gold deposit.
         if(!modal&&tab>=0&&WidgetFindChild(panel,"MarketplaceSyncMask")){
+            if(goldDeposit&&now>=gMarketGoldRequestPoll){gMarketGoldRequestPoll=now+500;const auto proof=gMarketGoldDeposit.Pending();
+                if(proof&&Marketplace::LiveCustody::window.RequestGoldDeposit(gSelectedPage+1,unsigned(tab),proof->carriedBefore,proof->carriedAfter,proof->stashBefore,proof->stashAfter,now))gMarketGoldDeposit.Taken();
+            }
             const auto park=Marketplace::LiveCustody::window.BeginRefresh(gSelectedPage+1,unsigned(tab),now);
             if(park){gLiveRefreshReturn=gSelectedPage+1;gLiveRefreshTab=unsigned(tab);Marketplace::Panel::stashSyncing=true;OnStashPageChanged(park-1);}
         }
@@ -176,7 +211,7 @@ static void MarketplaceLiveTick(bool inGame) try {
     if(!inGame){Marketplace::Panel::stashSyncing=false;gLiveRefreshReturn=0;gMarketplacePageSelection.Reset();gMarketplacePageRequests.Reset();gMarketplacePageRecovery=false;gMarketplaceRollbackAttempted=false;gLiveStashClosed=false;gLiveRestorePage=0;gMarketplacePageSwitching=false;gMarketplacePagePhase=-1;}
 }catch(...){}
 static void __fastcall HookedMarketplaceBankOpen(void* panel){
-    oMarketplaceBankOpen(panel);MarketplaceLiveOpened();
+    Marketplace::Panel::OpenStash();oMarketplaceBankOpen(panel);MarketplaceLiveOpened();
     try{
     if(Marketplace::LiveCustody::window.Snapshot().enabled){
         MarketplaceLiveSelectPage(panel);
@@ -184,5 +219,5 @@ static void __fastcall HookedMarketplaceBankOpen(void* panel){
     }catch(...){}
 }
 static void __fastcall HookedMarketplaceBankClose(void* panel){
-    oMarketplaceBankClose(panel);MarketplaceLiveClosed();
+    Marketplace::Panel::CloseStash();oMarketplaceBankClose(panel);MarketplaceLiveClosed();
 }

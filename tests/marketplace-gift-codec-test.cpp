@@ -24,6 +24,13 @@ int wmain(int argc,wchar_t** argv)try{
   const auto now=UnixNow();Json gift={{"id",std::string(32,'a')},{"title","A community gift"},{"announcement","Welcome!"},{"owner",{{"name","Owner"}}},{"claimed",false},{"claimable",true},{"expires",now+3600},{"claim",nullptr},{"items",Json::array({{{"item_hex",rows[0].at("after")}}})}};
   Json doc={{"schema",1},{"game_mode","2.4"},{"mod","GiftFixture"},{"hardcore",false},{"self",{{"id","player"},{"name","Player"}}},{"expires_at",now+3600},{"history",Json::array()},{"offers",Json::array()},{"gifts",Json::array({gift})}};
   auto parsed=ReadActivity(doc,"GiftFixture",false,now,&tables);assert(parsed.gifts.size()==1&&parsed.gifts[0].items.size()==1&&parsed.gifts[0].claimable);
+  const Json gold={{"kind","gold"},{"code","gld"},{"label","Gold"},{"quality",2},{"index",-1},{"ethereal",-1},{"quantity",1000000}};
+  const Json bag={{"kind","bag"},{"code","Z01"},{"stat","RB_High"},{"label","High rune points"},{"quality",2},{"index",-1},{"ethereal",-1},{"quantity",3}};
+  doc["gifts"][0]["balances"]=Json::array({gold,bag});assert(ReadActivity(doc,"GiftFixture",false,now,&tables).gifts[0].balances.size()==2);
+  auto only=doc;only["gifts"][0]["items"]=Json::array();assert(ReadActivity(only,"GiftFixture",false,now).gifts[0].items.empty());
+  only["gifts"][0]["balances"]=Json::array();Refuses([&]{ReadActivity(only,"GiftFixture",false,now);});
+  only["gifts"][0]["balances"]=PriceJson({{"r33","Zod Rune",2,-1,1,-1}});Refuses([&]{ReadActivity(only,"GiftFixture",false,now);});
+  only["gifts"][0]["balances"]=Json::array({gold,gold});Refuses([&]{ReadActivity(only,"GiftFixture",false,now);});
   doc["gifts"][0]["claimed"]=true;doc["gifts"][0]["claimable"]=false;doc["gifts"][0]["claim"]={{"message","A private message"}};assert(ReadActivity(doc,"GiftFixture",false,now,&tables).gifts[0].message=="A private message");
   Refuses([&]{ReadActivity(doc,"GiftFixture",true,now,&tables);});doc["gifts"][0]["items"][0]["item_hex"]="00";Refuses([&]{ReadActivity(doc,"GiftFixture",false,now,&tables);});
  }

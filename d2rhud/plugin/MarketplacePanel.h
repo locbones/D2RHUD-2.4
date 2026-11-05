@@ -40,6 +40,7 @@ struct Frame {
 };
 struct Pin {uint32_t unit=0,seed=0,owner=0;unsigned page=0,tab=0;bool hardcore=false;};
 inline std::atomic<bool> stashSyncing{false};
+inline std::atomic<bool> stashClosed{false};
 // Shortcut sessions retain the bank lifecycle but paint only the marketplace.
 inline std::atomic<bool> standaloneMarket{false};
 inline std::atomic<unsigned> marketPage{0};
@@ -138,7 +139,9 @@ inline void NativeInputs(std::map<std::string,NativeInput> next){std::lock_guard
 inline auto ReadNativeInputs(){std::lock_guard lock(mutex);return nativeInputs;}
 inline auto TakeNativeActions(){std::lock_guard lock(mutex);auto next=std::move(nativeActions);nativeActions.clear();return next;}
 inline bool Fresh(uint64_t now,uint64_t then){return then&&now>=then&&now-then<250;}
-inline void Publish(Frame next){std::lock_guard lock(mutex);frame=std::move(next);}
+inline void Publish(Frame next){std::lock_guard lock(mutex);if(!stashClosed.load())frame=std::move(next);}
+inline void OpenStash(){std::lock_guard lock(mutex);stashClosed=false;}
+inline void CloseStash(){std::lock_guard lock(mutex);stashClosed=true;frame={};}
 // Known capture gaps are not a stash-close event. Keep the workspace/session
 // while switching pages, serializing a scan, or temporarily losing focus.
 inline void SuspendCapture(){std::lock_guard lock(mutex);frame.suspended=true;frame.tick=GetTickCount64();}

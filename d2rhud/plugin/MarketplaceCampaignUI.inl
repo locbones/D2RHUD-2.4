@@ -7,7 +7,7 @@ inline const GiftCampaign* SelectedCampaign(State& s){
     if(found!=gifts.end())return &*found;s.campaignId=gifts.front().id;s.campaignItemOffset=0;return &gifts.front();
 }
 inline void CampaignReceipt(State& s,const std::string& title,const std::string& message){
-    OpenReceipt(s,"Gift claimed",title+"\n\nYour complete gift is in your Vault and queued for your market page.\n\n"+message,FreePrice());
+    OpenReceipt(s,"Gift claimed",title+"\n\nItems are queued for your market page. Gold and bag currencies are available in your Vault.\n\n"+message,FreePrice());
 }
 inline void PollCampaigns(State& s){
     if(s.campaignPending.empty()||!s.snapshot.activity.results.contains(s.campaignPending))return;
@@ -15,7 +15,7 @@ inline void PollCampaigns(State& s){
     if(r.contains("error")){Notice(s,r.at("error").get<std::string>());return;}
     const auto id=r.value("campaign_id",s.campaignId);const auto found=std::find_if(s.snapshot.activity.gifts.begin(),s.snapshot.activity.gifts.end(),[&](const auto& g){return g.id==id;});
     if(s.open&&s.campaignOpen&&s.campaignId==id)CampaignReceipt(s,found!=s.snapshot.activity.gifts.end()?found->title:"Community gift",r.value("message",std::string()));
-    Notice(s,"Gift claimed. The bundle is queued for your market page.");s.refresh=true;
+    Notice(s,"Gift claimed. Check your market page and Vault.");s.refresh=true;
 }
 inline bool CampaignCommand(State& s,uint64_t action){
     auto is=[&](const char* name){return action==Panel::MessageHash(name);};
@@ -29,7 +29,7 @@ inline bool CampaignCommand(State& s,uint64_t action){
         const auto& gifts=s.snapshot.activity.gifts;const auto index=size_t(g-gifts.data());const auto next=(index+gifts.size()+(is("MarketCampaignNext")?1:-1))%gifts.size();s.campaignId=gifts[next].id;s.campaignItemOffset=0;s.receiptOpen=false;return true;
     }
     if(is("MarketCampaignItemsPrev")){s.campaignItemOffset=(std::max)(0,s.campaignItemOffset-4);return true;}
-    if(is("MarketCampaignItemsNext")){if(s.campaignItemOffset+4<int(g->items.size()))s.campaignItemOffset+=4;return true;}
+    if(is("MarketCampaignItemsNext")){if(s.campaignItemOffset+4<int(g->items.size()+g->balances.size()))s.campaignItemOffset+=4;return true;}
     if(!is("MarketCampaignClaim"))return false;
     if(g->claimed){CampaignReceipt(s,g->title,g->message);return true;}
     if(!s.campaignPending.empty())return true;
@@ -56,16 +56,22 @@ inline void PresentCampaigns(State& s,Panel::NativeView& view,const LootFilterCo
     text("MarketCampaignAnnouncement",CompactActivity(g->announcement,80,3));
     text("MarketCampaignNumber","Gift "+std::to_string(size_t(g-gifts.data())+1)+" of "+std::to_string(gifts.size()));
     show("MarketCampaignPrevButton",gifts.size()>1);show("MarketCampaignNextButton",gifts.size()>1);
-    s.campaignItemOffset=(std::min)(s.campaignItemOffset,int((g->items.size()-1)/4)*4);
-    text("MarketCampaignItemsPage",std::to_string(g->items.size())+" item(s) | Bundle page "+std::to_string(s.campaignItemOffset/4+1));
-    for(int slot=0;slot<4;++slot){const auto i=s.campaignItemOffset+slot;show("MarketCampaignCard"+std::to_string(slot),i<int(g->items.size()));if(i>=int(g->items.size()))continue;const auto& item=g->items[i];
+    const auto total=g->items.size()+g->balances.size();
+    s.campaignItemOffset=(std::min)(s.campaignItemOffset,int((total?total-1:0)/4)*4);
+    text("MarketCampaignItemsPage",std::to_string(g->items.size())+" item(s) + "+std::to_string(g->balances.size())+" currencies | Bundle page "+std::to_string(s.campaignItemOffset/4+1));
+    for(int slot=0;slot<4;++slot){const auto i=s.campaignItemOffset+slot;show("MarketCampaignCard"+std::to_string(slot),i<int(total));if(i>=int(total))continue;
+        if(i>=int(g->items.size())){const auto& b=g->balances[i-g->items.size()];const auto art=s.visuals.Resolve(b.code,2,-1,-1);
+            view.images.push_back({"MarketCampaignItemImage"+std::to_string(slot),art.filename,112,180,bool(art)});
+            view.previews.push_back({"MarketCampaignItemLink"+std::to_string(slot),CompactActivity(b.label,30,2),{}});
+            text("MarketCampaignItemFacts"+std::to_string(slot),std::to_string(b.quantity)+"\nVault credit on claim");continue;}
+        const auto& item=g->items[i];
         const auto name=Name(item,catalog);const auto art=s.visuals.Resolve(item.code,item.quality,item.index,item.picture);
         view.images.push_back({"MarketCampaignItemImage"+std::to_string(slot),art.filename,112,180,bool(art)});
         view.previews.push_back({"MarketCampaignItemLink"+std::to_string(slot),CompactActivity(name,30,2),item.itemHex});
         text("MarketCampaignItemFacts"+std::to_string(slot),"Quantity "+std::to_string(item.quantity)+"\nSelect the name to inspect");
     }
-    show("MarketCampaignItemsPrevButton",s.campaignItemOffset>0);show("MarketCampaignItemsNextButton",s.campaignItemOffset+4<int(g->items.size()));
-    text("MarketCampaignHelp",g->claimed?"You have received this gift. View the owner's message anytime.":"Claim once per account. The complete bundle is delivered through your Vault.");
+    show("MarketCampaignItemsPrevButton",s.campaignItemOffset>0);show("MarketCampaignItemsNextButton",s.campaignItemOffset+4<int(total));
+    text("MarketCampaignHelp",g->claimed?"You have received this gift. View the owner's message anytime.":"Claim once. Items go to your market page; gold and currencies are added to your Vault.");
     show("MarketCampaignClaimButton",g->claimed||g->claimable);
     text("MarketCampaignClaimButtonLabel",!s.campaignPending.empty()?"Claiming...":g->claimed?"View message":"Claim gift");
 }

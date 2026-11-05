@@ -13,7 +13,7 @@ SCRIPTS = ('companion-host.py', 'companion-update.py', 'custody-agent.py', 'cust
 
 
 def build(helper, output, cache, version='0.0.0', hud=None):
-    supported = {name: set() for name in ('open_offers', 'torch_class', 'listing_comments')}
+    supported = {name: set() for name in ('open_offers', 'torch_class', 'listing_comments', 'gift_resources')}
     # Background updates must keep options supported by earlier HUD builds.
     # Carry only known capability fingerprints, never player/runtime state.
     if output.is_file():

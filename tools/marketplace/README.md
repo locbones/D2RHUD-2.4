@@ -524,11 +524,28 @@ Select Hellfire Torch as a payment, then choose Any class or one of the seven ch
 
 ### Community gift campaigns
 
-Owner tools → Community gifts creates an item bundle from 1–16 identified Vault
-items. Templates are frozen at publication; originals remain owned and tradable.
+Owner tools → Community gifts creates an item bundle from 1–16 identified items
+on the configured market page or in the Vault, including mixed bundles. Market-page
+items must be unpriced and synced by the companion; no asking price or Vault deposit
+is required. The picker shows both locations by default and refreshes newly synced items
+without clearing the gift form, selected currencies or existing selections.
+The source selector preserves selections when switching locations; Refresh items
+can request an immediate snapshot without rebuilding the form.
+Templates are frozen at publication; originals stay where they are and remain yours.
+Stale, consumed, foreign-player, other-page and pending-price selections are refused.
+Native gift visibility uses the frozen template, so moving the original later does
+not hide an existing campaign.
 The owner may set an announcement, a message revealed on claim, and an optional
 claim deadline. Campaigns belong to one mod, game mode and SC/HC scope. Any linked
 account, including an account linked after publication, may claim before expiry.
+
+The same gift can include up to 16 gold/bag-currency lines, with a quantity per
+account. Currency-only gifts are supported. Only currencies in the selected mod
+are offered. Owner balances are not spent: these are owner-created rewards.
+Claimed currencies credit the player’s Vault immediately and can be traded or
+withdrawn using the existing safe gold/bag delivery flow. Item copies remain
+queued for normal delivery. Both resources and items appear in the gift preview
+and owner claim audit. Older HUD builds omit resource campaigns until updated.
 
 Claims are transactional and unique per campaign/account. Retry commands return
 the original receipt. Every generated item and socket child gets a fresh native
@@ -564,3 +581,12 @@ existing UI/render path. The idle path performs no file I/O, item serialization,
 or stash inventory copying. `marketplace-hotkey-test.cpp` covers lifecycle policy;
 `marketplace-hotkey-native-test.cpp` checks the adapter against installed 2.4 code
 signatures with controlled native calls, including changed-signature rejection.
+
+An explicit gold deposit on the open market page is recognized only when carried
+gold falls by exactly the amount added to the shared page. The native client then
+saves and parks that page using the normal fenced handoff, the companion transfers
+gold through its durable transaction journal, and the same page/tab reloads.
+A fresh manual deposit releases an older withdrawn-gold holdback; an incoming
+withdrawal by itself never requests a deposit. Optional browser linking and
+character preview work runs independently of this transfer path. Stash highlights
+are invalidated on the native close event rather than waiting for snapshot expiry.

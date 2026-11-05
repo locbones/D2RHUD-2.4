@@ -59,6 +59,7 @@ trait MarketplaceOwnerTools {
         $items="item IN (SELECT id FROM items WHERE $scope)";
         $listings="listing IN (SELECT id FROM listings WHERE $items)";
         return [
+            'market_gift_balances'=>"campaign IN (SELECT id FROM market_gift_campaigns WHERE $scope)",
             'market_gift_notices'=>"campaign IN (SELECT id FROM market_gift_campaigns WHERE $scope)",
             'market_gift_claims'=>"campaign IN (SELECT id FROM market_gift_campaigns WHERE $scope)",
             'market_gift_campaigns'=>$scope,

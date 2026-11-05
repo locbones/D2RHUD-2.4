@@ -106,6 +106,8 @@ Changes since 1.7.9, including the accompanying marketplace and launcher updates
 - Improved interrupted-transfer recovery to protect items and avoid repeating completed deliveries.
 - Start / repair now retries unfinished transfers after launcher updates and shows recovery errors; completed save writes no longer wait for stash access to confirm delivery.
 - Moving or sorting an item no longer causes false ownership errors during deposits, and its trade history stays attached.
+- Gold deposited on the open market page now moves into the Vault automatically, including gold left from earlier withdrawals.
+- Item highlights disappear immediately when the stash closes.
 - Fixed Act VI startup rejecting quest and waypoint panels after changing UI colors or harmless file formatting.
 - Fixed a crash when extracting runes from Vault-created Storage Bags; existing affected bags are corrected when used in the cube.
 - Marketplace problems no longer prevent players from launching the game.

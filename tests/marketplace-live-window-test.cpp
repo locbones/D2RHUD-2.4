@@ -1,4 +1,5 @@
 #include "../d2rhud/plugin/MarketplaceLiveCustody.h"
+#include "../d2rhud/plugin/MarketplaceGoldDeposit.h"
 #include <cassert>
 #include <iostream>
 #include <vector>
@@ -27,6 +28,16 @@ static void VerifyGame(const std::filesystem::path& path){
 
 int wmain(int argc,wchar_t** argv){
     assert(argc==3);VerifyGame(argv[2]);using namespace Marketplace::LiveCustody;
+    Marketplace::GoldDeposit::Detector gold;
+    gold.Observe(17,11,1,1000,100,100);gold.Observe(17,11,1,900,100,200);assert(!gold.Pending());
+    gold.Observe(17,11,1,900,200,300);assert(gold.Pending()&&gold.Pending()->carriedBefore==1000&&gold.Pending()->stashAfter==200);
+    gold.Observe(17,11,3,900,200,400);assert(gold.Pending());gold.Taken();gold.Observe(17,11,3,900,200,500);assert(!gold.Pending());
+    gold.Observe(17,11,3,1000,100,600);assert(!gold.Pending()); // withdrawal never triggers
+    gold.Observe(17,11,3,1000,200,700);gold.Observe(17,11,3,1000,200,1800);assert(!gold.Pending()); // delivery alone
+    gold.Reset();gold.Observe(17,11,1,1000,100,100);gold.Observe(17,11,1,900,100,200);gold.Observe(17,11,1,900,100,1300);gold.Observe(17,11,1,900,200,1400);assert(!gold.Pending()); // unrelated changes outside the match window
+    gold.Reset();gold.Observe(17,11,1,1000,100,100);gold.Observe(18,11,1,900,200,200);assert(!gold.Pending());
+    gold.Observe(18,2,1,800,300,300);assert(!gold.Pending());
+
     const auto root=std::filesystem::absolute(argv[1]),state=root/L"state",saves=root/L"saves";
     std::filesystem::create_directories(state);std::filesystem::create_directories(saves);
     const auto enrollment=root/L"enrollment.json";
@@ -124,6 +135,19 @@ int wmain(int argc,wchar_t** argv){
     Write(state/L"live-refresh-request.json",request);assert(bridge.BeginRefresh(11,3,now+40000)==1);
     assert(!bridge.RefreshReady(now+40001));assert(bridge.RefreshPage()==11&&bridge.RefreshTab()==3);
     bridge.FinishRefresh();
+    assert(bridge.Permit(11));assert(bridge.OpenGrant(11,true));
+    const auto goldNow=now+50000;
+    Write(state/L"live-capability.json",{{"schema",1},{"owner","player"},{"catalog","catalog"},{"gold_deposit_refresh",1}});
+    auto settings=Read(saves/L"Marketplace_2.4_SC.json");settings["enabled"]=true;Write(saves/L"Marketplace_2.4_SC.json",settings);
+    assert(!bridge.RequestGoldDeposit(11,1,1000,900,100,201,goldNow));
+    assert(bridge.RequestGoldDeposit(11,1,1000,900,100,200,goldNow));
+    assert(bridge.BeginRefresh(11,1,goldNow)==1);assert(bridge.Refreshing());
+    assert(!bridge.RefreshReady(goldNow+1));assert(bridge.Permit(1));assert(bridge.OpenGrant(1,true));
+    auto goldWindow=Read(state/L"live-window.json");assert(goldWindow["refresh_kind"]=="gold_deposit"&&goldWindow["gold_deposit"]["carried_before"]==1000);
+    Write(state/L"live-refresh-result.json",{{"id",goldWindow["refresh_id"]},{"session",goldWindow["session"]},{"ready",true}});
+    assert(bridge.RefreshReady(goldNow+1));assert(bridge.Permit(11));bridge.FinishRefresh();assert(bridge.OpenGrant(11,true));
+    settings["enabled"]=false;Write(saves/L"Marketplace_2.4_SC.json",settings);
+    assert(!bridge.RequestGoldDeposit(11,1,1000,900,100,200,goldNow+1));
     assert(!bridge.Configure(enrollment,root/L"other-saves",17,false,11));
     std::cout<<"Live native window: cursor safety, confirmed parking, sync acknowledgement, atomic write exclusion, pending-page freeze, unrelated navigation and lease reacquisition passed.\n";
 }

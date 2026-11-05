@@ -22,7 +22,7 @@ struct Sale {
     int quality=2,index=-1,ethereal=0,sockets=0;int64_t at=0;
     std::vector<Requirement> price;
 };
-struct GiftCampaign {std::string id,title,announcement,from,message;int64_t expires=0;bool claimed=false,claimable=false;std::vector<SavedItem> items;};
+struct GiftCampaign {std::string id,title,announcement,from,message;int64_t expires=0;bool claimed=false,claimable=false;std::vector<SavedItem> items;std::vector<Requirement> balances;};
 struct Activity {std::string self,name,error;int64_t expires=0;std::vector<Sale> sales;std::vector<CounterThread> threads;Json results=Json::object();std::vector<GiftCampaign> gifts;};
 struct LocalActivity {std::vector<CounterThread> threads;Json commands=Json::array();};
 inline std::string ActivityId(){std::random_device random;std::array<uint8_t,16> bytes{};for(auto& b:bytes)b=uint8_t(random());return Hex(bytes);}
@@ -62,7 +62,8 @@ inline Activity ReadActivity(const Json& doc,const std::string& mod,bool hardcor
             if(!ids.insert(g.id).second||g.announcement.size()>512)throw std::runtime_error("Invalid gift announcement.");
             g.claimed=row.at("claimed").get<bool>();g.claimable=row.at("claimable").get<bool>();if(!row.at("expires").is_null())g.expires=Integer(row.at("expires"),1,INT32_MAX);
             if(g.claimed&&!row.at("claim").is_null()){g.message=row.at("claim").at("message").get<std::string>();if(g.message.size()>2048)throw std::runtime_error("Invalid gift message.");}
-            const auto& items=row.at("items");if(!tables||!items.is_array()||items.empty()||items.size()>16)throw std::runtime_error("Gift item definitions are unavailable.");
+            if(row.contains("balances")&&!row.at("balances").empty()){g.balances=ReadPrice(row.at("balances"));for(const auto& b:g.balances)if(b.kind!="gold"&&b.kind!="bag")throw std::runtime_error("Invalid gift currency.");}
+            const auto& items=row.at("items");if(!items.is_array()||items.size()>16||(!items.empty()&&!tables)||(items.empty()&&g.balances.empty()))throw std::runtime_error("Gift item definitions are unavailable.");
             for(const auto& item:items)g.items.push_back(ReadItem(Unhex(ActivityText(item,"item_hex",65536)),*tables,1));result.gifts.push_back(std::move(g));
         }
     }

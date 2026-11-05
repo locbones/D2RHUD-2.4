@@ -1,5 +1,7 @@
 #pragma once
 #include <Windows.h>
+#include <bcrypt.h>
+#pragma comment(lib,"bcrypt.lib")
 #include <array>
 #include <filesystem>
 #include <fstream>
@@ -44,7 +46,8 @@ class Window {
     bool hardcore=false,enabled=false,parked=false,passive=false;
     uint64_t began=0,published=0,sequence=0;
     HANDLE access=INVALID_HANDLE_VALUE;
-    std::string refreshId,lastRefreshId;
+    std::string refreshId,lastRefreshId,refreshKind;
+    Json goldDeposit;
     unsigned refreshPage=0,refreshTab=0;
     uint64_t refreshBegan=0,refreshPoll=0;
 
@@ -82,7 +85,7 @@ class Window {
             Write(root/L"live-window.json",{{"schema",passive?2:1},{"session",epoch},{"phase",passive?"unloaded":"parked"},{"pid",GetCurrentProcessId()},
                 {"started",Started()},{"tick",now},{"owner",owner},{"catalog",catalog},{"player",player},{"hardcore",hardcore},
                 {"deposit",deposit},{"delivery",delivery},{"parking",parking},{"loaded",loaded},{"save_directory",folder.string()},
-                {"refresh_supported",2},{"refresh_id",refreshId}},false);
+                {"refresh_supported",2},{"refresh_id",refreshId},{"refresh_kind",refreshKind},{"gold_deposit",goldDeposit}},false);
             published=now;return true;
         }catch(const std::exception& e){status=e.what();return false;}
     }
@@ -117,15 +120,43 @@ public:
     unsigned RefreshPage(){std::lock_guard lock(mutex);return refreshPage;}
     unsigned RefreshTab(){std::lock_guard lock(mutex);return refreshTab;}
     bool Refreshing(){std::lock_guard lock(mutex);return refreshPage!=0;}
+    bool RequestGoldDeposit(unsigned page,unsigned tab,uint64_t carriedBefore,uint64_t carriedAfter,uint64_t stashBefore,uint64_t stashAfter,uint64_t now){
+        std::lock_guard lock(mutex);
+        if(!enabled||refreshPage||page!=deposit||page!=loaded||!parked||!passive||tab<1||tab>7||
+           carriedBefore>INT32_MAX||carriedAfter>=carriedBefore||stashAfter<=stashBefore||stashAfter>uint64_t(INT32_MAX)*7||
+           carriedBefore-carriedAfter!=stashAfter-stashBefore)return false;
+        try{
+            if(Read(root/L"live-capability.json").value("gold_deposit_refresh",0)!=1)return false;
+            const auto settings=Read(folder/(hardcore?L"Marketplace_2.4_HC.json":L"Marketplace_2.4_SC.json"));
+            if(!settings.value("enabled",false)||settings.at("page")!=page)return false;
+            std::array<unsigned char,16> random{};
+            if(BCryptGenRandom(nullptr,random.data(),ULONG(random.size()),BCRYPT_USE_SYSTEM_PREFERRED_RNG)<0)return false;
+            std::string id;for(auto b:random){id+="0123456789abcdef"[b>>4];id+="0123456789abcdef"[b&15];}
+            Json proof={{"carried_before",carriedBefore},{"carried_after",carriedAfter},{"stash_before",stashBefore},{"stash_after",stashAfter}};
+            Write(root/L"live-refresh-request.json",{{"schema",1},{"kind","gold_deposit"},{"id",id},{"page",page},{"tab",tab},{"tick",now},
+                {"owner",owner},{"catalog",catalog},{"pid",GetCurrentProcessId()},{"started",Started()},{"player",player},{"hardcore",hardcore},
+                {"session",epoch},{"gold_deposit",proof}},false);
+            refreshPoll=0;Wake();return true;
+        }catch(...){return false;}
+    }
     unsigned BeginRefresh(unsigned page,unsigned tab,uint64_t now){
-        std::lock_guard lock(mutex);if(!enabled||refreshPage||tab>7||page!=loaded||page!=delivery||!parked||!passive||now<refreshPoll)return 0;
+        std::lock_guard lock(mutex);if(!enabled||refreshPage||tab>7||page!=loaded||!parked||!passive||now<refreshPoll)return 0;
         refreshPoll=now+500;
         try{const auto r=Read(root/L"live-refresh-request.json");const auto id=r.at("id").get<std::string>();
-            const auto tick=r.at("tick").get<uint64_t>();
-            if(r.value("schema",0)!=1||r.value("kind",std::string())!="delivery"||id.size()!=32||id.find_first_not_of("0123456789abcdef")!=std::string::npos||id==lastRefreshId||
+            const auto tick=r.at("tick").get<uint64_t>();const auto kind=r.value("kind",std::string());
+            if(r.value("schema",0)!=1||(kind!="delivery"&&kind!="gold_deposit")||id.size()!=32||id.find_first_not_of("0123456789abcdef")!=std::string::npos||id==lastRefreshId||
                 r.at("owner")!=owner||r.at("catalog")!=catalog||r.at("pid")!=GetCurrentProcessId()||r.at("started")!=Started()||
                 r.at("player")!=player||r.at("hardcore")!=hardcore||r.at("page")!=page||r.at("session")!=epoch||
                 (page!=deposit&&page!=delivery)||now<tick||now-tick>15000)return 0;
+            if((kind=="delivery"&&page!=delivery)||(kind=="gold_deposit"&&page!=deposit))return 0;
+            Json proof;
+            if(kind=="gold_deposit"){
+                proof=r.at("gold_deposit");
+                for(const auto key:{"carried_before","carried_after","stash_before","stash_after"})if(!proof.at(key).is_number_unsigned())return 0;
+                const auto cb=proof.at("carried_before").get<uint64_t>(),ca=proof.at("carried_after").get<uint64_t>(),sb=proof.at("stash_before").get<uint64_t>(),sa=proof.at("stash_after").get<uint64_t>();
+                if(cb>INT32_MAX||ca>=cb||sa<=sb||sa>uint64_t(INT32_MAX)*7||cb-ca!=sa-sb||r.at("tab")!=tab)return 0;
+            }
+            refreshKind=kind;goldDeposit=std::move(proof);
             refreshId=id;lastRefreshId=id;refreshPage=page;refreshTab=tab;refreshBegan=now;restore=page;
             return parking;
         }catch(...){return 0;}
@@ -141,7 +172,7 @@ public:
         if(!ready){CloseHandle(access);access=INVALID_HANDLE_VALUE;}
         return ready;
     }
-    void FinishRefresh(){std::lock_guard lock(mutex);refreshPage=0;refreshId.clear();}
+    void FinishRefresh(){std::lock_guard lock(mutex);refreshPage=0;refreshId.clear();refreshKind.clear();goldDeposit=nullptr;}
     bool Protected(unsigned page){std::lock_guard lock(mutex);return enabled&&(page==deposit||page==delivery);}
     std::optional<std::filesystem::path> PageFile(unsigned page){std::lock_guard lock(mutex);if(!enabled||(page!=deposit&&page!=delivery))return {};return folder/(std::wstring(L"Stash_")+(hardcore?L"HC":L"SC")+L"_Page"+std::to_wstring(page)+L".d2i");}
     void Error(const std::string& value){std::lock_guard lock(mutex);status=value;}
@@ -180,7 +211,7 @@ public:
     unsigned Restore(bool reopening=false){std::lock_guard lock(mutex);return enabled&&(reopening||!passive)?restore:0;}
     void Tick(bool inGame){
         std::lock_guard lock(mutex);if(!enabled)return;
-        if(!inGame){if(Shared()){Revoke();enabled=false;refreshPage=0;refreshId.clear();}return;}
+        if(!inGame){if(Shared()){Revoke();enabled=false;refreshPage=0;refreshId.clear();refreshKind.clear();goldDeposit=nullptr;}return;}
         const auto now=GetTickCount64();if(parked&&now>=published&&now-published>=1000)Publish(now);
     }
     View Snapshot(){std::lock_guard lock(mutex);return {enabled,parked,deposit,delivery,parking,status};}

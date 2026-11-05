@@ -165,6 +165,66 @@ def main():
                     assert sa.page('SC', 2).read_bytes() == page2
                     assert len(list((ba.root / 'transactions').glob('*/record.json'))) == 2
 
+                # Explicit carried-to-market gold wakes a gold-only handoff and releases
+                # an older withdrawal floor. Replaying the same request never debits again.
+                for point in ('intent', 'prepared_remote', 'authorized_remote', 'page_written', 'locally_applied', 'committed_remote'):
+                    community('manual-gold-' + point.replace(':', '-'))
+                    owner, ga = profile('Manual-gold-' + point.replace(':', '-'), [cap], gold=600)
+                    ga.migrate_market_page('SC')
+                    a.io.save(ga.root / 'lineage.json', dict(delivered={}, consumed={}, receipts=[], retained_gold={'SC': dict(page=11, quantity=100)}))
+                    handoff = dict(hardcore=False, deposit=11, delivery=11, loaded=1, refresh_id='b'*32, refresh_kind='gold_deposit',
+                                   session='manual-gold-test', gold_deposit=dict(carried_before=1000, carried_after=500, stash_before=100, stash_after=600))
+                    original_access = ga.save_access
+                    @contextmanager
+                    def gold_access(mode=None, pages=None):
+                        with original_access(mode, pages): yield handoff
+                    ga.save_access = gold_access
+                    operations=[]; original_transport=ga.transport
+                    def gold_transport(mode, packet):
+                        operations.append(packet['type']);return original_transport(mode, packet)
+                    ga.transport=gold_transport
+                    fired=[False]
+                    def interrupt(stage):
+                        if not fired[0] and stage==point: fired[0]=True;raise InterruptedError(point)
+                    ga.fault=interrupt
+                    try: ga.run()
+                    except InterruptedError: pass
+                    assert fired[0], point
+                    ga.fault=lambda stage: None
+                    ga.run(); ga.run()
+                    assert inventory(ga)['gold']==0
+                    assert [i['code'] for i in inventory(ga)['items']]==['cap']
+                    assert sum(b['quantity'] for b in snapshot(owner)['escrow']['balances'] if b['kind']=='gold')==600
+                    assert a.io.document(ga.root/'lineage.json')['retained_gold']['SC']['quantity']==0
+                    assert 'web_sync' not in operations and 'profile_sync' not in operations
+                    assert a.io.document(ga.root/'live-refresh-result.json')['ready'] is True
+                    assert len(list((ga.root/'transactions').glob('*/record.json')))==1
+                    assert not ga.pending.exists()
+                    # A late repeat of the completed handoff must not consume a new withdrawal.
+                    saved=bytearray(ga.page('SC',11).read_bytes());struct.pack_into('<I',saved,12,100);ga.page('SC',11).write_bytes(saved)
+                    retained=a.io.document(ga.root/'lineage.json');retained['retained_gold']['SC']=dict(page=11,quantity=100);a.io.save(ga.root/'lineage.json',retained)
+                    ga.run();assert inventory(ga)['gold']==100
+                    assert sum(b['quantity'] for b in snapshot(owner)['escrow']['balances'] if b['kind']=='gold')==600
+
+                # A mismatched saved balance must not release a withdrawal floor.
+                community('manual-gold-mismatch')
+                owner, ga = profile('Manual-gold-mismatch', gold=600)
+                ga.migrate_market_page('SC')
+                a.io.save(ga.root/'lineage.json', dict(delivered={}, consumed={}, receipts=[], retained_gold={'SC':dict(page=11,quantity=100)}))
+                bad_window=dict(hardcore=False,deposit=11,delivery=11,loaded=1,refresh_id='a'*32,refresh_kind='gold_deposit',session='bad-gold',
+                                gold_deposit=dict(carried_before=1000,carried_after=400,stash_before=100,stash_after=700))
+                original_access=ga.save_access
+                @contextmanager
+                def bad_access(mode=None,pages=None):
+                    with original_access(mode,pages):yield bad_window
+                ga.save_access=bad_access;ga.run()
+                assert inventory(ga)['gold']==600 and a.io.document(ga.root/'lineage.json')['retained_gold']['SC']['quantity']==100
+                assert not list((ga.root/'transactions').glob('*/record.json'))
+                for invalid in (dict(carried_before=True,carried_after=0,stash_before=0,stash_after=1),dict(carried_before=100,carried_after=0,stash_before=0,stash_after=101)):
+                    try:a.Agent.gold_deposit_proof(invalid)
+                    except ValueError:pass
+                    else:raise AssertionError('Invalid gold proof accepted')
+
                 # Unpriced unique goods stay local until needed for a mutually agreed trade.
                 community('agreed-barter')
                 barter = [dict(code=shield['code'], label='Shield', quality=7, index=shield['index'], ethereal=-1, quantity=1)]
@@ -210,7 +270,7 @@ def main():
                 assert inventory(agent)['gold'] == 100
                 assert next(r['quantity'] for r in snapshot(owner)['escrow']['balances'] if r['kind'] == 'gold') == 50
                 assert source.read_bytes() == original
-                print('Single market page: legacy route migration, priced-only ordinary items, unlisted unique/superior retention, agreed barter funding, six deposit/delivery interruption boundaries, exactly-once receipts, unchanged item/socket properties, gold retention, fresh UUID currency bags, no deposit/withdraw loops, old delivery page untouched and source immutability passed.')
+                print('Single market page: legacy route migration, priced-only ordinary items, unlisted unique/superior retention, agreed barter funding, six deposit/delivery interruption boundaries, exactly-once receipts, unchanged item/socket properties, gold retention, matched manual-gold deposits with full-balance sweep and six interruption/replay checks, invalid-proof refusal, fresh UUID currency bags, no deposit/withdraw loops, old delivery page untouched and source immutability passed.')
             finally:
                 server.terminate()
                 server.wait(timeout=10)

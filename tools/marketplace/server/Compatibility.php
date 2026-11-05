@@ -96,16 +96,19 @@ trait MarketplaceCompatibility {
         return $agent?$this->agentSaveDefinition($agent):null;
     }
     private function supportsEscrowItem(string $owner,string $item): bool {
-        $d=$this->playerSaveDefinition($owner);if(!$d)return true;
         $row=$this->run('SELECT i.code,e.metadata FROM items i LEFT JOIN escrow_items e ON e.item=i.id WHERE i.id=?',[$item])->fetch();
         if(!$row)return false;$metadata=$row['metadata']?json_decode($row['metadata'],true,512,JSON_THROW_ON_ERROR):[];
+        return $this->supportsItemMetadata($owner,$row['code'],$metadata['display']??[]);
+    }
+    private function supportsItemMetadata(string $owner,string $code,array $display): bool {
+        $d=$this->playerSaveDefinition($owner);if(!$d)return true;
         $check=function($code,$display)use(&$check,$d){
             if(!isset($d['items'][str_pad($code,4,' ')])&&!isset($d['items'][str_pad($code,4,"\0")]))return false;
             foreach($display['saved_properties']??[] as $property)if(!isset($d['stats']['s'.$property['id']]))return false;
             foreach($display['socketed_items']??[] as $child)if(!$check($child['code'],$child['display']??$child))return false;
             return true;
         };
-        return $check($row['code'],$metadata['display']??[]);
+        return $check($code,$display);
     }
     private function supportsBalance(string $owner,array $balance): bool {
         if(($balance['kind']??'')!=='bag')return true;

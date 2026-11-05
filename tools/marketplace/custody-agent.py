@@ -16,6 +16,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 import time
+import threading
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -35,7 +36,7 @@ def web_features(config):
             _RUNTIME_FEATURES = io.document(Path(__file__).with_name('manifest.json')).get('features', {})
         except (OSError, ValueError):
             _RUNTIME_FEATURES = {}
-    return [name for name in ('open_offers','torch_class','listing_comments') if config.get('hud_sha256') in _RUNTIME_FEATURES.get(name+'_hud_sha256', [])]
+    return [name for name in ('open_offers','torch_class','listing_comments','gift_resources') if config.get('hud_sha256') in _RUNTIME_FEATURES.get(name+'_hud_sha256', [])]
 
 
 _RUNTIME_VERSION = None
@@ -322,6 +323,9 @@ class Agent:
                 path = self.root / 'live-refresh-request.json'
                 if path.exists():
                     old = io.document(path)
+                    if old.get('kind') == 'gold_deposit' and all(old.get(k) == window[k] for k in ('owner', 'catalog', 'pid', 'started', 'player', 'hardcore', 'session')) and old.get('page') == page and type(old.get('tick')) is int and 0 <= ticks() - old['tick'] < 15000:
+                        self.gold_deposit_proof(old.get('gold_deposit'))
+                        return True
                     if old.get('session') == window['session'] and old.get('page') == page and old.get('trigger') == trigger and 0 <= ticks() - old.get('tick', 0) < 12000:
                         return True
                 request = {k: window[k] for k in ('owner', 'catalog', 'pid', 'started', 'player', 'hardcore', 'session')}
@@ -896,7 +900,17 @@ class Agent:
                 rows = []
             self.request(mode, dict(type="web_sync", features=web_features(self.config), companion_version=companion_version(), settings={key: settings[key] for key in ("page", "withdraw_page", "enabled", "auto_trade")}, inventory=rows, acknowledged=acknowledgements))
 
-    def deposit(self, mode):
+    @staticmethod
+    def gold_deposit_proof(value):
+        keys = ('carried_before', 'carried_after', 'stash_before', 'stash_after')
+        if not isinstance(value, dict) or any(type(value.get(k)) is not int or value[k] < 0 for k in keys):
+            raise ValueError('Invalid manual gold deposit proof')
+        cb, ca, sb, sa = (value[k] for k in keys)
+        if cb > 2147483647 or ca >= cb or sa <= sb or sa > 7 * 2147483647 or cb - ca != sa - sb:
+            raise ValueError('Carried gold and market gold do not match the deposit')
+        return {k: value[k] for k in keys}
+
+    def deposit(self, mode, *, gold_only=False, release_retained_gold=False):
         settings = self.settings(mode)
         if not settings["enabled"]:
             return False
@@ -919,7 +933,7 @@ class Agent:
             with self.save_access(mode, [page]):
                 io.save(self.root / 'lineage.json', state)
         retained_keys = {positionless(h) for h in retained_bags}
-        for row in inventory["items"]:
+        for row in ([] if gold_only else inventory["items"]):
             draft = next((d for d in settings["drafts"] if d["tab"] == row["tab"] and d["item_hex"] == row["item_hex"]), None)
             price = draft.get("price") if draft else None
             if len(items) < 64 and price:
@@ -943,7 +957,7 @@ class Agent:
                     resources[balance["stat"]] = min(2000000000, resources.get(balance["stat"], 0) + balance["quantity"])
         balances = [dict(kind="bag", code="Z01", label=stat, stat=stat, quality=2, index=-1, ethereal=-1, quantity=q) for stat, q in sorted(resources.items()) if q][:15]
         retained = state.setdefault('retained_gold', {}).get(mode, {})
-        floor = min(inventory['gold'], retained.get('quantity', 0)) if retained.get('page') == page else 0
+        floor = min(inventory['gold'], retained.get('quantity', 0)) if retained.get('page') == page and not release_retained_gold else 0
         if retained.get('quantity', 0) != floor:
             state['retained_gold'][mode] = dict(page=page, quantity=floor)
             with self.save_access(mode, [page]):
@@ -1059,6 +1073,58 @@ class Agent:
                 return str(error)
         return count
 
+    def deposit_parked_gold(self, window, warnings, rejected):
+        """Process an explicit carried-to-stash deposit before unrelated sync work."""
+        began = time.monotonic()
+        mode = 'HC' if window['hardcore'] else 'SC'
+        identity = window['refresh_id']
+        count = 0
+        try:
+            proof = self.gold_deposit_proof(window.get('gold_deposit'))
+            settings = self.settings(mode)
+            page = settings['page']
+            if not settings['enabled'] or window.get('deposit') != page or window.get('loaded') == page:
+                raise BlockingIOError('The market page must finish its native gold handoff')
+            state_path = self.root / 'lineage.json'
+            with self.save_access(mode, [page]):
+                state = io.document(state_path) if state_path.exists() else dict(delivered={}, consumed={})
+                requests = state.setdefault('gold_deposit_requests', {})
+                accepted = requests.get(identity)
+                if accepted and (accepted.get('mode') != mode or accepted.get('page') != page or accepted.get('proof') != proof):
+                    raise ValueError('Manual gold deposit identity changed')
+            if not accepted:
+                inventory = self.inventory(self.page(mode, page))
+                if inventory['gold'] != proof['stash_after']:
+                    raise ValueError('Market gold changed before the manual deposit was saved; your funds are preserved')
+                with self.save_access(mode, [page]):
+                    state = io.document(state_path) if state_path.exists() else dict(delivered={}, consumed={})
+                    requests = state.setdefault('gold_deposit_requests', {})
+                    requests[identity] = dict(mode=mode, page=page, proof=proof, complete=False)
+                    if len(requests) > 128:
+                        for old in list(requests):
+                            if old != identity and requests[old].get('complete') and len(requests) > 128:
+                                del requests[old]
+                    io.save(state_path, state)
+            if not accepted or not accepted.get('complete'):
+                while count < 32 and self.deposit(mode, gold_only=True, release_retained_gold=True):
+                    count += 1
+                with self.save_access(mode, [page]):
+                    state = io.document(state_path)
+                    state['gold_deposit_requests'][identity]['complete'] = True
+                    io.save(state_path, state)
+            warnings.pop(mode, None)
+        except DepositRejected as error:
+            rejected[mode] = str(error)
+        except (BlockingIOError, ValueError) as error:
+            if self.pending.exists():
+                raise
+            rejected[mode] = str(error)
+        io.save(self.root / 'status.json', dict(at=int(time.time()), pending=self.pending.exists(), result={mode: count}, deliveries={}, delivery_warnings=warnings, rejected_deposits=rejected))
+        self.live_result(window)
+        io.save(self.root / 'delivery-timing.json', dict(schema=1, kind='gold_deposit', refresh_id=identity,
+            at=int(time.time()), milliseconds=round((time.monotonic() - began) * 1000, 1), local_ready_tick=self.local_ready_tick, requests=self.timings))
+        return {mode: count}
+
     def refresh_active(self):
         # Priority hint only. Every read/write still obtains the real save lease.
         try:
@@ -1066,11 +1132,11 @@ class Agent:
             if re.fullmatch('[0-9a-f]{32}', str(window.get('refresh_id', ''))):
                 return True
             request = io.document(self.root / 'live-refresh-request.json')
-            return (request.get('kind') == 'delivery' and request.get('session') == window['session']
+            return (request.get('kind') in {'delivery', 'gold_deposit'} and request.get('session') == window['session']
                     and re.fullmatch('[0-9a-f]{32}', str(request.get('id', ''))) is not None
                     and request.get('owner') == window['owner'] and request.get('started') == window['started']
                     and request.get('pid') == window['pid'] and request.get('catalog') == window['catalog']
-                    and request.get('page') == window['delivery'] == window['loaded']
+                    and request.get('page') == window['delivery' if request.get('kind') == 'delivery' else 'deposit'] == window['loaded']
                     and type(request.get('tick')) is int and 0 <= ticks() - request['tick'] <= 15000)
         except (OSError, ValueError, KeyError):
             return False
@@ -1121,7 +1187,13 @@ class Agent:
             warnings = io.document(status_path).get("delivery_warnings", {}) if status_path.exists() else {}
             deliveries = {}
             if not preflight and window and re.fullmatch('[0-9a-f]{32}', str(window.get('refresh_id', ''))):
+                if window.get('refresh_kind') == 'gold_deposit':
+                    return self.deposit_parked_gold(window, warnings, rejected)
                 return self.deliver_parked_page(window, warnings, rejected)
+            if not preflight and window and self.refresh_active():
+                # A verified request is waiting for the native parking ACK.
+                # Do not queue unrelated HTTP work ahead of that short handoff.
+                return {live_mode: 0}
             for mode in ("SC", "HC"):
                 if live_mode is not None and mode != live_mode:
                     continue
@@ -1228,6 +1300,7 @@ def main():
     wake = WakeEvent(initial.get('owner', '')) if args.watch else None
     last_link = 0
     last_profiles = 0
+    optional = None
     while True:
         agent = None
         config = {}
@@ -1238,22 +1311,7 @@ def main():
                 break
             agent = Agent(config)
             if args.watch:
-                io.save(agent.root / 'live-capability.json', dict(schema=1, owner=agent.config['owner'], catalog=agent.config['catalog']))
-            urgent = agent.refresh_active() if args.watch else False
-            if not urgent and not args.preflight and time.monotonic() - last_link >= 15:
-                last_link = time.monotonic()
-                try:
-                    agent.publish_browser_link()
-                except (OSError, ValueError) as error:
-                    # Website linking is optional; it cannot stop custody or
-                    # create a pending save operation when the site is offline.
-                    print("Browser link: " + str(error), flush=True)
-            if args.watch and not urgent and time.monotonic() - last_profiles >= 60:
-                last_profiles = time.monotonic()
-                try:
-                    agent.publish_characters()
-                except (OSError, ValueError, KeyError) as error:
-                    print('Character profiles: ' + str(error), flush=True)
+                io.save(agent.root / 'live-capability.json', dict(schema=1, owner=agent.config['owner'], catalog=agent.config['catalog'], gold_deposit_refresh=1))
             delivery_request = agent.root / 'delivery-request.json'
             if args.watch and delivery_request.exists() and not game_running():
                 requested = io.read(delivery_request)
@@ -1261,6 +1319,21 @@ def main():
                 if delivery_request.exists() and io.read(delivery_request) == requested:
                     delivery_request.unlink()
             print(json.dumps(agent.run(args.preflight)), flush=True)
+            if args.watch and not args.preflight and not agent.refresh_active() and (optional is None or not optional.is_alive()):
+                now = time.monotonic()
+                link_due, profiles_due = now - last_link >= 15, now - last_profiles >= 60
+                if link_due or profiles_due:
+                    if link_due: last_link = now
+                    if profiles_due: last_profiles = now
+                    def publish_optional(snapshot=dict(config), link=link_due, profiles=profiles_due):
+                        try:
+                            publisher = Agent(snapshot)
+                            if link and not publisher.refresh_active(): publisher.publish_browser_link()
+                            if profiles and not publisher.refresh_active(): publisher.publish_characters()
+                        except (OSError, ValueError, KeyError) as error:
+                            print('Optional marketplace sync: ' + str(error), flush=True)
+                    optional = threading.Thread(target=publish_optional, daemon=True)
+                    optional.start()
         except (OSError, ValueError, KeyError) as error:
             if args.watch and config:
                 try:
