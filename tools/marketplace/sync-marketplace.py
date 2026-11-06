@@ -1,5 +1,6 @@
 """Sync private marketplace sidecars over HTTPS; never open a game save for writing."""
 import argparse
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -9,6 +10,10 @@ import urllib.parse
 import urllib.request
 import time
 import uuid
+
+_custody_spec = importlib.util.spec_from_file_location('sync_custody_io', Path(__file__).with_name('custody-workspace.py'))
+_custody_io = importlib.util.module_from_spec(_custody_spec)
+_custody_spec.loader.exec_module(_custody_io)
 
 
 def watch_stamp(config, folder, hardcore=False):
@@ -100,13 +105,13 @@ def sync(config, folder, hardcore=False, allow_local=False):
             return None
     opener = urllib.request.build_opener(NoRedirect)
 
-    # A newer companion may run beside an older HUD. Advertise native class
-    # support only for the HUD pinned by this signed runtime's manifest.
+    # Advertise the HUD's versioned interface, independently of its build hash.
+    # Signed-runtime fingerprints remain a fallback for previously released HUDs.
     torch_class = False
     try:
         enrollment = json.loads((Path(config['custody_status']).parent.parent / 'custody-enrollment.json').read_text(encoding='utf-8-sig'))
         features = json.loads((Path(config['managed_runtime']) / 'manifest.json').read_text(encoding='utf-8-sig')).get('features', {})
-        torch_class = enrollment.get('hud_sha256') in features.get('torch_class_hud_sha256', [])
+        torch_class = 'torch_class' in _custody_io.hud_features(enrollment, features)
     except (OSError, ValueError, KeyError):
         pass
 

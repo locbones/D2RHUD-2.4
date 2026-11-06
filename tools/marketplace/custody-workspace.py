@@ -11,11 +11,127 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import struct
 import tempfile
 import uuid
 
 LIMIT = 32 * 1024 * 1024
 MARKER = "custody-simulation.json"
+HUD_FEATURES = {name: 1 for name in ('open_offers', 'torch_class', 'listing_comments', 'gift_resources')}
+_HUD_CONTRACTS = {}
+
+
+def hud_contract(path):
+    """Read a bounded, exported data declaration; never load/execute the DLL.
+
+    Cache by file identity so normal sync polls do not repeatedly read a large
+    HUD. A replacement/change invalidates the cache, even at the same path.
+    """
+    path = Path(path).resolve()
+    def identity():
+        stat = path.stat()
+        return stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns
+    before = identity()
+    old = _HUD_CONTRACTS.get(path)
+    if old and old[0] == before:
+        return old[1]
+    raw = read(path, 256 * 1024 * 1024)
+    contract = parse_hud_contract(raw)
+    if before != identity():
+        raise BlockingIOError('The HUD is updating; marketplace sync will retry automatically')
+    if len(_HUD_CONTRACTS) >= 32:
+        _HUD_CONTRACTS.clear()
+    _HUD_CONTRACTS[path] = before, contract
+    return contract
+
+
+def parse_hud_contract(raw):
+    """Legacy HUDs have no export. Malformed/new contracts fail closed."""
+    if not raw.startswith(b'MZ'):
+        return None  # Includes old, non-executed compatibility test fixtures.
+    def value(fmt, at):
+        size = struct.calcsize(fmt)
+        if at < 0 or at > len(raw) - size:
+            raise ValueError('The HUD marketplace declaration is truncated')
+        return struct.unpack_from(fmt, raw, at)[0]
+    pe = value('<I', 0x3c)
+    if raw[pe:pe+4] != b'PE\0\0' or value('<H', pe+4) != 0x8664:
+        raise ValueError('The HUD is not a supported Windows x64 DLL')
+    count, optional = value('<H', pe+6), value('<H', pe+20)
+    if not 1 <= count <= 96 or optional < 120 or value('<H', pe+24) != 0x20b or not value('<H', pe+22) & 0x2000:
+        raise ValueError('The HUD has an invalid marketplace PE layout')
+    sections = pe+24+optional
+    def address(rva, size):
+        if rva < 0 or size < 0:
+            raise ValueError('Invalid HUD export address')
+        for n in range(count):
+            section = sections + n*40
+            start, length, offset = value('<I', section+12), value('<I', section+16), value('<I', section+20)
+            if start <= rva and rva-start <= length and size <= length-(rva-start):
+                at = offset+rva-start
+                if at <= len(raw)-size:
+                    return at
+        raise ValueError('The HUD marketplace export points outside the DLL')
+    def string(rva, limit):
+        data = bytearray()
+        for i in range(limit):
+            byte = raw[address(rva+i, 1)]
+            if not byte:
+                return bytes(data)
+            data.append(byte)
+        raise ValueError('The HUD marketplace export exceeds its size limit')
+    export, export_size = value('<I', pe+24+112), value('<I', pe+24+116)
+    contract, found = None, False
+    if export:
+        directory = address(export, 40)
+        functions, names = value('<I', directory+20), value('<I', directory+24)
+        if functions > 65536 or names > 65536:
+            raise ValueError('The HUD has too many exports')
+        if not names:
+            return None
+        function_rva, name_rva, ordinal_rva = (value('<I', directory+n) for n in (28, 32, 36))
+        function_at, name_at, ordinal_at = address(function_rva, functions*4), address(name_rva, names*4), address(ordinal_rva, names*2)
+        for i in range(names):
+            if string(value('<I', name_at+i*4), 256) != b'D2RHUD_MarketplaceProtocol':
+                continue
+            found = True
+            index = value('<H', ordinal_at+i*2)
+            if index >= functions:
+                raise ValueError('Invalid HUD marketplace export index')
+            target = value('<I', function_at+index*4)
+            if export <= target < export+export_size:
+                raise ValueError('The HUD marketplace declaration cannot be forwarded')
+            try:
+                def unique(pairs):
+                    result = {}
+                    for key, item in pairs:
+                        if key in result:
+                            raise ValueError('Duplicate HUD marketplace declaration key')
+                        result[key] = item
+                    return result
+                contract = json.loads(string(target, 4096), object_pairs_hook=unique)
+            except (UnicodeError, ValueError, RecursionError) as error:
+                raise ValueError('The HUD marketplace declaration is invalid: ' + str(error)) from None
+            break
+    if not found:
+        return None
+    if (not isinstance(contract, dict) or type(contract.get('schema')) is not int or contract['schema'] != 1 or
+            contract.get('game_mode') != '2.4' or type(contract.get('live_custody')) is not int or contract['live_custody'] != 2):
+        raise ValueError('This HUD uses an unsupported marketplace protocol; the companion needs a compatible update. Your account and Vault are preserved')
+    features = contract.get('features')
+    if (not isinstance(features, dict) or len(features) > 32 or any(not re.fullmatch('[a-z][a-z0-9_]{0,63}', key) or
+            type(version) is not int or not 1 <= version <= 255 for key, version in features.items())):
+        raise ValueError('The HUD marketplace feature declaration is invalid')
+    return contract
+
+
+def hud_features(config, legacy):
+    if config.get('game_directory'):
+        contract = hud_contract(Path(config['game_directory']) / 'd2rhud.dll')
+        if contract is not None:
+            return [name for name, version in HUD_FEATURES.items() if contract['features'].get(name) == version]
+    # Previously released HUDs remain supported during the transition.
+    return [name for name in HUD_FEATURES if config.get('hud_sha256') in legacy.get(name+'_hud_sha256', [])]
 
 
 def digest(raw):

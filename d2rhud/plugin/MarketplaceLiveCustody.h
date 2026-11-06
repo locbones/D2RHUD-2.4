@@ -9,6 +9,7 @@
 #include <optional>
 #include <string>
 #include "../json.hpp"
+#include "MarketplaceStore.h"
 
 // No game pointers, native inventory writes, network requests or worker threads.
 // The existing client/server page-change handshake proves that the trade pages
@@ -50,6 +51,10 @@ class Window {
     Json goldDeposit;
     unsigned refreshPage=0,refreshTab=0;
     uint64_t refreshBegan=0,refreshPoll=0;
+    struct Stamp {std::filesystem::file_time_type time;uintmax_t size;bool operator==(const Stamp&) const=default;};
+    std::optional<std::array<Stamp,3>> configuration;
+    std::filesystem::path configuredEnrollment;
+    static Stamp FileStamp(const std::filesystem::path& path){return {std::filesystem::last_write_time(path),std::filesystem::file_size(path)};}
 
     bool Shared(){
         if(access!=INVALID_HANDLE_VALUE)return true;
@@ -95,26 +100,43 @@ class Window {
         if(event){SetEvent(event);CloseHandle(event);}
     }
 public:
+    ~Window(){if(access!=INVALID_HANDLE_VALUE)CloseHandle(access);}
     bool Configure(const std::filesystem::path& enrollment,const std::filesystem::path& saveFolder,uint32_t unit,bool hc,unsigned page){
         std::lock_guard lock(mutex);
         try{
-            const auto cfg=Read(enrollment);
+            if(!unit||page<1||page>64)return false;
+            const auto settingsPath=saveFolder/(hc?L"Marketplace_2.4_HC.json":L"Marketplace_2.4_SC.json");
+            if(enabled&&configuredEnrollment==enrollment&&folder==saveFolder&&player==unit&&hardcore==hc&&loaded==page&&configuration){
+                const std::array stamps{FileStamp(enrollment),FileStamp(root/L"live-capability.json"),FileStamp(settingsPath)};
+                if(stamps==*configuration)return parked||Shared();
+            }
+            const auto enrollmentStamp=FileStamp(enrollment);const auto cfg=Read(enrollment);
             if(cfg.at("schema")!=1||cfg.at("enrolled")!=true||!unit||page<1||page>64)return false;
             const auto state=std::filesystem::path(cfg.at("state_directory").get<std::string>());
             const auto saves=std::filesystem::path(cfg.at("save_directory").get<std::string>());
             if(!state.is_absolute()||!saves.is_absolute()||_wcsicmp(saves.lexically_normal().c_str(),saveFolder.lexically_normal().c_str()))return false;
-            const auto capability=Read(state/L"live-capability.json");
+            const auto capabilityStamp=FileStamp(state/L"live-capability.json");const auto capability=Read(state/L"live-capability.json");
             if(capability.value("schema",0)!=1||capability.value("owner",std::string())!=cfg.at("owner").get<std::string>()||capability.value("catalog",std::string())!=cfg.at("catalog").get<std::string>())return false;
-            const auto settings=Read(saves/(hc?L"Marketplace_2.4_HC.json":L"Marketplace_2.4_SC.json"));
+            // Initialize JSON preferences under Setup's CAS lease. No game-save
+            // edit, replacement of player choices or automatic trading opt-in.
+            if(!std::filesystem::exists(settingsPath)){
+                if(std::filesystem::exists(state/L"pending.json"))return false;
+                SaveSettingsFile(settingsPath,"",SettingsJson(Settings{},"RMD-MP",hc).dump(2)+"\n");
+            }
+            const auto settingsStamp=FileStamp(settingsPath);const auto settings=Read(settingsPath);
             const auto in=settings.at("page").get<unsigned>(),out=settings.at("withdraw_page").get<unsigned>();
             if(settings.at("mod")!="RMD-MP"||settings.at("game_mode")!="2.4"||settings.at("hardcore")!=hc||!in||in>64||!out||out>64)return false;
-            if(enabled&&(player!=unit||hardcore!=hc||deposit!=in||delivery!=out||root!=state)){
+            const std::array stamps{enrollmentStamp,capabilityStamp,settingsStamp};
+            if(stamps!=std::array{FileStamp(enrollment),FileStamp(state/L"live-capability.json"),FileStamp(settingsPath)})return false;
+            if(enabled&&(player!=unit||hardcore!=hc||deposit!=in||delivery!=out||root!=state||owner!=cfg.at("owner").get<std::string>()||catalog!=cfg.at("catalog").get<std::string>())){
                 if(!Shared())return false;Revoke();
             }
             root=state;folder=saves;owner=cfg.at("owner");catalog=cfg.at("catalog");
             player=unit;hardcore=hc;deposit=in;delivery=out;loaded=page;
             parking=1;while(parking==deposit||parking==delivery)++parking;
-            enabled=true;if(!parked&&!Shared())return false;return true;
+            enabled=true;if(!parked&&!Shared())return false;
+            configuredEnrollment=enrollment;configuration=stamps;
+            return true;
         }catch(...){return false;}
     }
     unsigned RefreshPage(){std::lock_guard lock(mutex);return refreshPage;}

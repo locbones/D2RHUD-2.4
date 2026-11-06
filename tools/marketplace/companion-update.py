@@ -122,7 +122,10 @@ def apply(root, runtime, lease, atomic, document):
                         complete = False
                         continue
                     if Path(config.get('managed_runtime', '')).resolve() != runtime:
-                        shutil.copy2(config_path, profile / 'custody-enrollment.previous.json')
+                        # Stream explicitly: Python 3.14 copy2 uses CopyFile2,
+                        # which older supported Wine builds do not implement.
+                        with config_path.open('rb') as source, (profile / 'custody-enrollment.previous.json').open('wb') as backup:
+                            shutil.copyfileobj(source, backup)
                         # Existing owner, token paths, mod, catalog and guarded
                         # launcher/HUD hashes stay exactly as enrolled.
                         config.update(managed_runtime=str(runtime), python=str(runtime / 'python.exe'),

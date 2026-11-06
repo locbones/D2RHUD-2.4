@@ -72,7 +72,9 @@ def main():
         (root / 'pairing.json').write_text(json.dumps({'token':'f' * 64}), encoding='utf-8')
         (root / 'sync-config.json').write_text('{}', encoding='utf-8')
         (root / 'custody-enrollment.json').write_text(json.dumps({'enrolled':True, 'state_directory':str(state), 'save_directory':str(saves), 'managed_runtime':str(runtime)}), encoding='utf-8')
-        (root / 'managed-runtime.json').write_text(json.dumps({'runtime':str(runtime), 'profiles':[str(root)]}), encoding='utf-8')
+        broken=root/'profiles'/'Interrupted';broken.mkdir(parents=True)
+        (broken/'custody-enrollment.json').write_text('[]',encoding='utf-8')
+        (root / 'managed-runtime.json').write_text(json.dumps({'runtime':str(runtime), 'profiles':[str(broken),str(root)]}), encoding='utf-8')
         args = [str(runtime / 'pythonw.exe'), '-B', '-X', 'utf8', str(runtime / 'companion-host.py'), str(root)]
         flags = subprocess.CREATE_NO_WINDOW
         first = subprocess.Popen(args, creationflags=flags)
@@ -87,13 +89,22 @@ def main():
             until(lambda: host.record_alive(root / 'sync-SC.json') and read(root / 'sync-SC.json').get('pid') != original['pid'])
             assert first.poll() is None
             assert sentinel.read_bytes() == b'untouched fixture'
-            assert read(root / 'companion-status.json')['profiles'][0]['running']
+            until(lambda:len(read(root/'companion-status.json').get('profiles',[]))==2)
+            rows=read(root/'companion-status.json')['profiles']
+            assert not rows[0]['running'] and rows[1]['running']
+            repaired_state=broken/'custody';repaired_state.mkdir()
+            (broken/'pairing.json').write_text(json.dumps({'token':'e'*64}),encoding='utf-8')
+            (broken/'sync-config.json').write_text('{}',encoding='utf-8')
+            (broken/'custody-enrollment.json').write_text(json.dumps({'enrolled':True,'state_directory':str(repaired_state),'save_directory':str(saves),'managed_runtime':str(runtime)}),encoding='utf-8')
+            until(lambda:host.record_alive(repaired_state/'worker.json') and host.record_alive(broken/'sync-SC.json'))
+            assert first.poll() is None
             print('Companion host: bundled runtime, single supervisor, no duplicate workers, automatic worker restart, valid process identity, heartbeat and unchanged fixture save passed.')
         finally:
             first.terminate(); first.wait(8)
             if second is not None and second.poll() is None:
                 second.terminate(); second.wait(8)
             stop(read(state / 'worker.json')); stop(read(root / 'sync-SC.json'))
+            stop(read(broken/'custody'/'worker.json'));stop(read(broken/'sync-SC.json'))
             time.sleep(.4)
 
 

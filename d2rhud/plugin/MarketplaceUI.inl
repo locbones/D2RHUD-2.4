@@ -74,7 +74,10 @@ inline void Save(State& state,const std::string& mod){
     // A companion can reformat an equivalent document. Keep the actual CAS
     // against the bytes just read, while still refusing semantic conflicts.
     const auto current=ReadSettingsFile(state.path);
-    if(current!=state.original&&(current.empty()||state.original.empty()||Json::parse(current)!=Json::parse(state.original)))
+    // First-run initialization may have arrived after this editor opened.
+    // Only the exact disabled defaults can stand in for a missing original.
+    const auto original=state.original.empty()?SettingsJson(Settings{},mod,state.hardcore):Json::parse(state.original);
+    if(current!=state.original&&(current.empty()||Json::parse(current)!=original))
         throw std::runtime_error("Marketplace settings changed in another instance. Reload before saving.");
     SaveSettingsFile(state.path,current,next);state.original=next;
 }

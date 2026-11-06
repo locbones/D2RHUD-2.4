@@ -9,9 +9,70 @@ There are two distinct tools:
 The live agent requires the updated Pandemonium and HUD gameplay lease. It never edits character saves. While a game runs, it can edit only trade pages explicitly unloaded by the native stash handshake. See the
 [live protocol](#live-protocol-and-recovery) below before operating it.
 
-After replacing the launcher or HUD, close both applications and revalidate the installed files against the exact tested build artifacts with `revalidate-custody.ps1 -VerifiedHudPath <built-d2rhud.dll> -VerifiedLauncherPath <published-Pandemonium.exe>`. Omit the launcher argument for a HUD-only update. Revalidation backs up the enrollment and changes only the matching binary pins; helper/catalog drift, a pending transfer, or a mismatched artifact is refused. It never edits a save or starts a cloud transfer. Restart the companion after updating its installed scripts. A blocked companion now publishes its verification error to the native activity cache instead of leaving delivery apparently pending with no explanation.
+First setup initializes only disabled marketplace JSON preferences under the
+same per-file writer lease as native Setup. It never initializes stash saves,
+overwrites existing choices, or replaces missing preferences during recovery.
+The native event thread retries late enrollment/capability and route changes
+every two seconds; unchanged files are checked by stamp without reparsing or
+resetting the active handoff. Players need open the stash only once to establish
+the native page identity. Browser linking and character publishing continue
+independently while that first handoff is connecting. Interrupted enrollment
+reuses the persisted installation identity, and malformed profiles are isolated
+so other mods can continue syncing.
+
+Modern HUDs export `D2RHUD_MarketplaceProtocol`, a bounded JSON data declaration
+that the companion reads without loading the DLL. Interface schema 1 advertises
+the 2.4 live-custody protocol 2 and individual feature versions. An unrelated HUD
+rebuild keeps this declaration unchanged, requires no re-enrollment, and changes
+neither the companion payload nor the launcher. Unknown custody interfaces pause
+syncing until a compatible companion update arrives; individual unsupported
+feature versions are hidden. Game launch remains available.
+
+The save helper and legacy HUDs retain exact enrollment pins; save definitions,
+native process/session/page leases and before/after recovery checks still fence
+every save write. Signed companion downloads and authenticated cached updates
+remain mandatory. The launcher pin is refreshed through normal Start / repair
+when the launcher itself changes. Previously released HUD hashes are retained
+only for legacy feature detection, and new HUD hashes are never added to the
+companion build inputs. Read-only HUD declarations are cached by file identity
+and invalidated when the installed DLL changes.
 
 The native marketplace reloads saved price settings when reopened or refreshed, including identities repaired by the companion. The website checks for changes every five seconds while visible, with overlapping requests and modal edits excluded.
+
+## Linux / Wine / Proton
+
+The Linux launcher embeds a self-contained Windows marketplace endpoint. It runs
+in the same Wine prefix (or Proton compatibility-data directory) selected for D2R,
+and calls the existing Windows setup, browser-link and support-report services.
+It includes the same Python runtime, parser, signed updater and recovery worker
+as Windows. Players install neither Python nor a separate companion application.
+
+The account, managed runtime and recovery journals live under that prefix's
+Windows `USERPROFILE/.d2r-marketplace`, which is also where the HUD looks. The
+Linux host retains only private request files, cached endpoint code and runtime
+contexts in `~/.d2r-marketplace/wine`. Selecting another prefix does not silently
+copy credentials or adopt another prefix's unfinished transfer. Drive paths are
+resolved from the selected prefix's actual `dosdevices` mappings; missing mappings
+produce an actionable error rather than assuming `Z:` points at the host root.
+
+The Windows supervisor continues after Pandemonium closes. A Linux XDG autostart
+entry resumes existing connections on desktop login; it never launches the game.
+The same signed companion updates are checked inside Wine. Status includes the
+installed companion version, and Copy support report reads the same prefix's
+combined, redacted diagnostics. No new browser login method is introduced.
+
+Wine's Win32 process IDs, start times and `CreateFileW` share modes are used
+throughout. The native startup bridge retains the game lease in its newly created
+child, including before HUD injection. Linux file locks are never substituted
+for native game/live/save locks. Marketplace errors remain optional to gameplay;
+the game does not wait for enrollment or network work.
+
+Packaging checks inspect both archives. Runtime tests should separately exercise
+the Linux host → Wine endpoint, bundled Python/helper, first/repeat setup,
+missing-file repair and pending-journal preservation. Actual stash navigation and
+deliveries still require a real D2R session; a successful cross-build alone does
+not validate them. Proton environment/argument tests are separate from a real
+Steam/Proton gameplay run.
 
 `CustodyPlan.h` and `custody-save.exe` parse the same current-format seven-tab
 pages as the HUD. They prepare complete replacement page images in memory:

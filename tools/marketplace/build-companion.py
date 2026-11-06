@@ -23,9 +23,8 @@ def build(helper, output, cache, version='0.0.0', hud=None):
                 for digest in features.get(name + '_hud_sha256', []):
                     if isinstance(digest, str) and len(digest) == 64 and all(c in '0123456789abcdef' for c in digest):
                         hashes.add(digest)
-    if hud and hud.is_file():
-        for hashes in supported.values():
-            hashes.add(hashlib.sha256(hud.read_bytes()).hexdigest())
+    # Modern HUDs advertise versioned interfaces in their own PE export.
+    # --hud is retained for old build callers, but never affects this package.
     cache.mkdir(parents=True, exist_ok=True)
     archive = cache / 'python-3.14.10-embed-amd64.zip'
     if not archive.exists():
@@ -59,11 +58,10 @@ def build(helper, output, cache, version='0.0.0', hud=None):
         raise ValueError('Build the Windows custody helper before packaging')
     inputs = [Path(__file__), *[Path(__file__).with_name(name) for name in SCRIPTS],
               *Path(__file__).with_name('layouts').glob('*.json'), *Path(__file__).with_name('assets').glob('*.sprite'), Path(__file__).with_name('custody-save.cpp')]
-    if hud and hud.is_file(): inputs.append(hud)
     # An internal build timestamp allows fixes without changing the app version.
     # Stable input mtimes retain repeatable packaging of the same build.
     build_epoch = max(p.stat().st_mtime_ns // 1_000_000 for p in inputs)
-    manifest = {'version': version, 'build_epoch': build_epoch, 'features': {name+'_hud_sha256': sorted(hashes) for name,hashes in supported.items()}, 'schema': 1, 'platform': 'win-x64', 'python': '3.14.10',
+    manifest = {'version': version, 'build_epoch': build_epoch, 'hud_protocol': 1, 'features': {name+'_hud_sha256': sorted(hashes) for name,hashes in supported.items()}, 'schema': 1, 'platform': 'win-x64', 'python': '3.14.10',
                 'files': {name: hashlib.sha256(data).hexdigest() for name, data in sorted(entries.items())}}
     entries['manifest.json'] = (json.dumps(manifest, sort_keys=True, indent=2) + '\n').encode()
     output.parent.mkdir(parents=True, exist_ok=True)

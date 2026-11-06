@@ -13,9 +13,11 @@ server = between(source, 'int64_t __fastcall CCMD_HandleSharedStashMessage', 'vo
 pump = between(source, 'void OnStashPageChanged(uint32_t nSelectedPage) {', 'static void* __fastcall HookedMarketplaceBankMessage')
 recover = between(runtime, 'static void MarketplaceLiveRecoverPage() try', 'static std::atomic<bool> gLiveStashClosed')
 closed = between(runtime, 'static void MarketplaceLiveContinueClosed() try', 'static void MarketplaceLiveOpened() try')
+opened = between(runtime, 'static void MarketplaceLiveOpened() try', 'static bool MarketplaceLiveAllowPage')
+connect = between(runtime, 'static void MarketplaceLiveConnect(uint64_t now) try', 'static void MarketplaceLiveSelectPage')
 refresh = between(runtime, 'static std::atomic<unsigned> gLiveRefreshReturn', 'static void MarketplaceLiveObserve')
 draw = between(source, 'void __fastcall HookedBankPanelDraw(D2BankPanelWidget* pBankPanel) {', '#pragma endregion')
-selection = between(runtime, 'static void MarketplaceLiveSelectPage(void* panel) try', 'static void MarketplaceLivePaint(void* panel) try')
+selection = between(runtime, 'static void MarketplaceLiveSelectPage(void* panel) try', 'static bool MarketplaceLiveGold(void* panel,uint64_t now)')
 header = r'''
 #define NOMINMAX
 #include "d2rhud/RuntimeTelemetry.h"
@@ -36,13 +38,16 @@ void Shown(uint32_t page){memcpy(pageWidget.data()+0x178C,&page,sizeof(page));}
 uint32_t Shown(){uint32_t page;memcpy(&page,pageWidget.data()+0x178C,sizeof(page));return page;}
 namespace Marketplace::Panel{inline std::atomic<bool> stashSyncing{false};}
 namespace Marketplace::NativePanel {template<class T>T Field(void* p,size_t offset){T value;memcpy(&value,static_cast<uint8_t*>(p)+offset,sizeof(value));return value;}}
-namespace Marketplace::LiveCustody{struct Window{std::string error;bool refreshing=false,ready=false;bool Refreshing(){return refreshing;}bool RefreshReady(uint64_t){return ready;}void FinishRefresh(){refreshing=false;}struct View{std::string status;bool enabled;unsigned parking;};View Snapshot(){return {error,true,1};}unsigned RefreshPage(){return 2;}unsigned Close(unsigned page,bool,bool=true){return page==11||page==2?1:0;}bool OpenGrant(unsigned){return true;}void Error(const std::string& e){error=e;}};inline Window window;}
+namespace Marketplace::LiveCustody{struct Window{std::string error;bool refreshing=false,ready=false,parked=false,enabled=true;unsigned remembered=0;void RememberClosed(unsigned page){remembered=page;}unsigned granted=0;bool Refreshing(){return refreshing;}bool RefreshReady(uint64_t){return ready;}void FinishRefresh(){refreshing=false;}struct View{std::string status;bool enabled;unsigned parking;bool parked;};View Snapshot(){return {error,enabled,1,parked};}unsigned Restore(bool){return 2;}unsigned RefreshPage(){return 2;}unsigned Close(unsigned page,bool,bool=true){return page==11||page==2?1:0;}bool OpenGrant(unsigned page,bool=false){granted=page;parked=true;return true;}void Error(const std::string& e){error=e;}};inline Window window;}
 static std::atomic<uint32_t> gSelectedPage{10},gMarketplacePreviousPage{10};
-static std::atomic<bool> gLiveStashClosed{false};static std::atomic<unsigned> gLiveRestorePage{0};
+static std::atomic<bool> gLiveStashClosed{false},gLivePageKnown{false};static std::atomic<uint64_t> gLiveConnectPoll{0};static std::atomic<unsigned> gLiveRestorePage{0};
 static std::atomic<bool> gMarketplacePageSwitching{false},gMarketplacePageRecovery{false},gMarketplaceRollbackAttempted{false};
 static std::atomic<int> gMarketplacePagePhase{-1};static Marketplace::PageRequests gMarketplacePageRequests;static Marketplace::PageSelection gMarketplacePageSelection;
 static uint64_t clockNow=1000;uint64_t Clock(){return clockNow;}
 #define GetTickCount64 Clock
+static int configures=0;static bool configureReady=true;static bool MarketplaceLiveConfigure(){++configures;if(!configureReady)return false;Marketplace::LiveCustody::window.enabled=true;Marketplace::LiveCustody::window.parked=false;return true;}
+static void MarketplaceLiveObserve(const char*,uint32_t=0){}
+struct GoldDetector{void Reset(){}};static GoldDetector gMarketGoldDeposit;static uint64_t gMarketGoldPoll=0,gMarketGoldRequestPoll=0;
 static bool allowed=true,prepared=true,cursor=false;static int freshResult=1,saves=0,frees=0,parses=0,headers=0,parseError=0,loaded=-1,renamed=-1;
 static bool MarketplaceLiveAllowPage(uint32_t){return allowed;}
 static bool MarketplaceLivePreparePage(uint32_t){return prepared;}
@@ -55,6 +60,7 @@ static void MarketplaceLiveSelectPage(void*);static void MarketplaceLivePumpRequ
 static void MarketplaceStashNotice(const std::string&){}
 static std::optional<uint32_t> drawClick;
 void MarketplaceLivePaint(void*){MarketplaceLivePumpRequests();}void UpdateMarketplaceWidgets(void*){}
+bool DrawStandaloneMarketplace(void*){return false;}
 void CaptureMarketplacePanel(void*,bool){}void oBankPanelDraw(D2BankPanelWidget*){if(drawClick){Shown(*drawClick);drawClick.reset();}}
 void Save(D2GameStrc*){++saves;}void Free(D2GameStrc*,D2UnitStrc*){++frees;}
 int Parse(D2GameStrc*,D2ClientStrc*,D2UnitStrc*){++parses;return parseError;}void Headers(D2ClientStrc*){++headers;}
@@ -69,10 +75,26 @@ void CCMD_SendSharedStashMessage(SharedStashPhase phase,uint32_t page){commands.
 void SCMD_SendSharedStashMessage(D2ClientStrc*,SharedStashPhase phase,uint32_t page){acks.push_back({phase,page});}
 '''
 main = r'''
-void Reset(){lastTab=-1;Marketplace::LiveCustody::window.refreshing=false;Marketplace::LiveCustody::window.ready=false;gLiveRefreshReturn=0;gLiveRefreshTab=0;Marketplace::Panel::stashSyncing=false;drawClick.reset();widgets=false;gMarketplacePageSelection.Reset();gLiveRestorePage=0;gLiveStashClosed=false;gSelectedPage=10;gMarketplacePreviousPage=10;gMarketplacePageSwitching=false;gMarketplacePagePhase=-1;gMarketplacePageRequests.Reset();gMarketplacePageRecovery=false;gMarketplaceRollbackAttempted=false;allowed=prepared=true;cursor=false;freshResult=1;commands.clear();acks.clear();saves=frees=parses=headers=parseError=0;loaded=renamed=-1;clockNow=1000;}
+void Reset(){configures=0;configureReady=true;gLivePageKnown=false;gLiveConnectPoll=0;Marketplace::LiveCustody::window.enabled=true;Marketplace::LiveCustody::window.remembered=0;Marketplace::LiveCustody::window.parked=false;Marketplace::LiveCustody::window.granted=0;lastTab=-1;Marketplace::LiveCustody::window.refreshing=false;Marketplace::LiveCustody::window.ready=false;gLiveRefreshReturn=0;gLiveRefreshTab=0;Marketplace::Panel::stashSyncing=false;drawClick.reset();widgets=false;gMarketplacePageSelection.Reset();gLiveRestorePage=0;gLiveStashClosed=false;gSelectedPage=10;gMarketplacePreviousPage=10;gMarketplacePageSwitching=false;gMarketplacePagePhase=-1;gMarketplacePageRequests.Reset();gMarketplacePageRecovery=false;gMarketplaceRollbackAttempted=false;allowed=prepared=true;cursor=false;freshResult=1;commands.clear();acks.clear();saves=frees=parses=headers=parseError=0;loaded=renamed=-1;clockNow=1000;}
 void Ack(SharedStashPhase phase,uint32_t page){SCMD_STASH_PAGE_CHANGE packet{phase,page};SCMD_HandleSharedStashMessage(&packet);}
 int main(){
  D2GameStrc game;D2UnitStrc unit{};D2ClientStrc client{&game,&unit};PlayerData data{&client};unit.pPlayerData=&data;
+ // Late enrollment after the stash opens retries on the native timer,
+ // never forcing a page switch or configuring while holding an item.
+ Reset();configureReady=false;Marketplace::LiveCustody::window.enabled=false;MarketplaceLiveOpened();
+ assert(gLivePageKnown&&Marketplace::LiveCustody::window.granted==0);
+ MarketplaceLiveConnect(1000);assert(configures==2&&commands.empty());
+ configureReady=true;MarketplaceLiveConnect(1500);assert(configures==2);
+ cursor=true;MarketplaceLiveConnect(3000);assert(configures==2);cursor=false;
+ MarketplaceLiveConnect(5000);assert(configures==3&&Marketplace::LiveCustody::window.granted==11&&commands.empty());
+ Reset();configureReady=false;Marketplace::LiveCustody::window.enabled=false;MarketplaceLiveOpened();gLiveStashClosed=true;
+ configureReady=true;MarketplaceLiveConnect(1000);assert(Marketplace::LiveCustody::window.remembered==11&&commands.empty());
+ MarketplaceLiveContinueClosed();assert(commands.size()==1&&gSelectedPage==0);
+ Reset();gLivePageKnown=true;gMarketplacePageSwitching=true;MarketplaceLiveConnect(1000);assert(configures==0);
+ // A parked handoff must not skip settings refresh on a real stash open.
+ Reset();Marketplace::LiveCustody::window.parked=true;MarketplaceLiveOpened();
+ assert(configures==1&&Marketplace::LiveCustody::window.granted==11&&gLiveRestorePage==0);
+ Reset();gMarketplacePageSwitching=true;MarketplaceLiveOpened();assert(configures==0); // never configure an unfinished load
  Reset();allowed=false;OnStashPageChanged(1);assert(commands.empty()&&!gMarketplacePageSwitching&&gSelectedPage==10);
  OnStashPageChanged(3);allowed=true;clockNow+=100;MarketplaceLivePumpRequests();assert(commands.size()==1&&commands.back().nPage==3);
  // A newer request during loading survives. Stale acknowledgements do nothing.
@@ -133,4 +155,4 @@ int main(){
  std::cout<<"PASS: production client/server stash handlers; stable widget selection, navigation during loading, queued latest navigation, short-lock/cursor retries, stale/duplicate ACKs, preflight refusal, parse-error ACK and rollback without saving partial pages. No game code executed.\n";
 }
 '''
-Path(sys.argv[1]).write_text(header+enum+wire+recover+closed+refresh+selection+client+server+pump+draw+main, encoding='utf-8')
+Path(sys.argv[1]).write_text(header+enum+wire+recover+closed+refresh+opened+connect+selection+client+server+pump+draw+main, encoding='utf-8')

@@ -36,7 +36,7 @@ def web_features(config):
             _RUNTIME_FEATURES = io.document(Path(__file__).with_name('manifest.json')).get('features', {})
         except (OSError, ValueError):
             _RUNTIME_FEATURES = {}
-    return [name for name in ('open_offers','torch_class','listing_comments','gift_resources') if config.get('hud_sha256') in _RUNTIME_FEATURES.get(name+'_hud_sha256', [])]
+    return io.hud_features(config, _RUNTIME_FEATURES)
 
 
 _RUNTIME_VERSION = None
@@ -191,6 +191,10 @@ class DepositRejected(ValueError):
     """The server refused admission, with no ticket and no native save write."""
 
 
+class RepairInProgress(BlockingIOError):
+    """A launcher repair owns the scheduling gate; this is not a sync failure."""
+
+
 class Agent:
     def __init__(self, config, transport=None, fault=None):
         self.config = config
@@ -234,11 +238,17 @@ class Agent:
         elif catalog(self.data) != self.config["catalog"]:
             raise ValueError("The legacy item catalog changed; use the updated Pandemonium Start / repair to migrate compatibility")
         if not self.test:
-            binaries = [(Path(self.config["game_directory"]) / "d2rhud.dll", self.config["hud_sha256"]),
-                        (Path(self.config["launcher_path"]), self.config["launcher_sha256"])]
+            hud = Path(self.config["game_directory"]) / "d2rhud.dll"
+            binaries = [(Path(self.config["launcher_path"]), self.config["launcher_sha256"])]
+            # The exported interface, rather than unrelated DLL bytes, defines
+            # HUD compatibility. Exact pins remain for legacy HUDs and helpers.
+            # This declaration never grants save access: native per-page leases,
+            # process/session identity and the journal still fence every write.
+            if io.hud_contract(hud) is None:
+                binaries.append((hud, self.config["hud_sha256"]))
             for path, expected in binaries:
                 if io.digest(io.read(path, 256 * 1024 * 1024)).lower() != expected.lower():
-                    raise ValueError("The guarded launcher or HUD changed; revalidate custody before writing saves")
+                    raise ValueError("The guarded launcher or legacy HUD changed; revalidate custody with Start / repair before writing saves")
 
     def live_window(self, mode=None, pages=None):
         window = io.document(self.root / 'live-window.json')
@@ -262,8 +272,9 @@ class Agent:
             raise BlockingIOError('Live stash handoff belongs to another character mode')
         settings = self.settings(active_mode)
         allowed = {settings['page'], settings['withdraw_page']}
-        if (window.get('deposit') != settings['page'] or window.get('delivery') != settings['withdraw_page'] or
-                type(window.get('loaded')) is not int or not 1 <= window['loaded'] <= 64 or
+        if window.get('deposit') != settings['page'] or window.get('delivery') != settings['withdraw_page']:
+            raise BlockingIOError('The stash is using older market page settings. Close and reopen the stash; if this persists, leave the game and use Pandemonium Start / repair')
+        if (type(window.get('loaded')) is not int or not 1 <= window['loaded'] <= 64 or
                 legacy and window['loaded'] in allowed or
                 type(window.get('parking')) is not int or not 1 <= window['parking'] <= 64 or window['parking'] in allowed or
                 not set(allowed if pages is None else pages) <= allowed or
@@ -481,6 +492,28 @@ class Agent:
         if type(deposit) is not int or type(delivery) is not int or not 1 <= deposit <= 64 or not 1 <= delivery <= 64:
             raise ValueError("Choose a market page between 1 and 64")
         return value
+
+    def bootstrap(self):
+        """Initialize JSON preferences only; never initialize or edit a save.
+
+        A first handoff needs preferences, and preferences used to wait for that
+        handoff. The same per-file lease as native Setup breaks this dependency
+        without overwriting player choices or enabling deposits.
+        """
+        path = self.folder / 'Marketplace_2.4_SC.json'
+        with self.guard_access():
+            if not path.exists() and not self.pending.exists():
+                with lease(str(path) + '.lock'):
+                    if not path.exists() and not self.pending.exists():
+                        io.save(path, dict(schema=1, game_mode='2.4', mod=self.mod, hardcore=False,
+                            enabled=False, page=1, withdraw_page=1, single_market_page=True,
+                            auto_trade=False, drafts=[], agreements=[], simulation=dict(enabled=False, page=3, drafts=[])))
+            capability = dict(schema=1, owner=self.config['owner'], catalog=self.config['catalog'], gold_deposit_refresh=1)
+            target = self.root / 'live-capability.json'
+            try: previous = io.document(target)
+            except (OSError, ValueError): previous = None
+            if previous != capability:
+                io.save(target, capability)
 
     def migrate_market_page(self, mode):
         old = self.settings(mode)
@@ -1170,8 +1203,25 @@ class Agent:
             local_ready_tick=self.local_ready_tick, requests=self.timings))
         return {mode: 0}
 
+    @contextmanager
+    def guard_access(self):
+        # Hold the scheduling gate only while acquiring the transfer lock.
+        # Repair can then claim it while a current operation finishes, without
+        # letting another polling cycle beat it to guard.lock. Actual save
+        # writes still require their separate native/closed-game leases.
+        with ExitStack() as guard:
+            with ExitStack() as gate:
+                try:
+                    gate.enter_context(lease(self.root / 'repair.lock'))
+                except OSError as error:
+                    if isinstance(error, BlockingIOError) or getattr(error, 'winerror', None) in (32, 33):
+                        raise RepairInProgress('Marketplace repair is in progress; background sync will resume automatically') from None
+                    raise
+                guard.enter_context(lease(self.root / 'guard.lock'))
+            yield
+
     def run(self, preflight=False):
-        with lease(self.root / "guard.lock"):
+        with self.guard_access():
             rejected = {}
             try:
                 # A durable applied receipt only needs its cloud acknowledgement.
@@ -1264,7 +1314,7 @@ class Agent:
                         warnings[mode] = value
                     else:
                         warnings.pop(mode, None)
-            io.save(status_path, dict(at=int(time.time()), pending=self.pending.exists(), result=results, deliveries=deliveries, delivery_warnings=warnings, rejected_deposits=rejected))
+            io.save(status_path, dict(at=int(time.time()), phase='ready', error='', pending=self.pending.exists(), result=results, deliveries=deliveries, delivery_warnings=warnings, rejected_deposits=rejected))
             self.live_result(window)
             return results
 
@@ -1275,7 +1325,7 @@ def report_failure(config, error):
     status_path = root / 'status.json'
     status = io.document(status_path) if status_path.exists() else {}
     message = str(error)[:512]
-    status.update(at=int(time.time()), error=message, pending=(root / 'pending.json').exists())
+    status.update(at=int(time.time()), phase='retrying', error=message, pending=(root / 'pending.json').exists())
     io.save(status_path, status)
     try:
         window = io.document(root / 'live-window.json')
@@ -1288,6 +1338,19 @@ def report_failure(config, error):
                 terminal=True, pending=status['pending'], error=message))
     except (OSError, ValueError):
         pass
+
+
+def report_waiting(config):
+    # A missing/contended native grant is an ordinary startup transition, not a
+    # reason to relaunch. Preserve real pending recovery errors and receipts.
+    root = Path(config['state_directory'])
+    if (root / 'pending.json').exists():
+        return
+    path = root / 'status.json'
+    status = io.document(path) if path.exists() else {}
+    status.update(at=int(time.time()), phase='waiting_for_stash', pending=False, error='',
+                  message='Connecting to the game. Open the stash once; syncing then continues automatically.')
+    io.save(path, status)
 
 
 def main():
@@ -1311,7 +1374,7 @@ def main():
                 break
             agent = Agent(config)
             if args.watch:
-                io.save(agent.root / 'live-capability.json', dict(schema=1, owner=agent.config['owner'], catalog=agent.config['catalog'], gold_deposit_refresh=1))
+                agent.bootstrap()
             delivery_request = agent.root / 'delivery-request.json'
             if args.watch and delivery_request.exists() and not game_running():
                 requested = io.read(delivery_request)
@@ -1319,21 +1382,16 @@ def main():
                 if delivery_request.exists() and io.read(delivery_request) == requested:
                     delivery_request.unlink()
             print(json.dumps(agent.run(args.preflight)), flush=True)
-            if args.watch and not args.preflight and not agent.refresh_active() and (optional is None or not optional.is_alive()):
-                now = time.monotonic()
-                link_due, profiles_due = now - last_link >= 15, now - last_profiles >= 60
-                if link_due or profiles_due:
-                    if link_due: last_link = now
-                    if profiles_due: last_profiles = now
-                    def publish_optional(snapshot=dict(config), link=link_due, profiles=profiles_due):
-                        try:
-                            publisher = Agent(snapshot)
-                            if link and not publisher.refresh_active(): publisher.publish_browser_link()
-                            if profiles and not publisher.refresh_active(): publisher.publish_characters()
-                        except (OSError, ValueError, KeyError) as error:
-                            print('Optional marketplace sync: ' + str(error), flush=True)
-                    optional = threading.Thread(target=publish_optional, daemon=True)
-                    optional.start()
+        except RepairInProgress as error:
+            if not args.watch:
+                raise SystemExit(str(error)) from None
+            # Do not replace a real transfer receipt/error with a normal pause.
+        except BlockingIOError as error:
+            if not args.watch:
+                raise SystemExit(str(error)) from None
+            if config:
+                try: report_waiting(config)
+                except (OSError, ValueError, KeyError): pass
         except (OSError, ValueError, KeyError) as error:
             if args.watch and config:
                 try:
@@ -1343,6 +1401,23 @@ def main():
             if not args.watch:
                 raise SystemExit(str(error)) from None
             print(str(error), flush=True)
+        # Read-only account linking/character uploads do not depend on acquiring
+        # the native page lease. A player can link before ever opening the stash.
+        if agent is not None and args.watch and not args.preflight and not agent.refresh_active() and (optional is None or not optional.is_alive()):
+            now = time.monotonic()
+            link_due, profiles_due = now - last_link >= 15, now - last_profiles >= 60
+            if link_due or profiles_due:
+                if link_due: last_link = now
+                if profiles_due: last_profiles = now
+                def publish_optional(snapshot=dict(config), link=link_due, profiles=profiles_due):
+                    try:
+                        publisher = Agent(snapshot)
+                        if link and not publisher.refresh_active(): publisher.publish_browser_link()
+                        if profiles and not publisher.refresh_active(): publisher.publish_characters()
+                    except (OSError, ValueError, KeyError) as error:
+                        print('Optional marketplace sync: ' + str(error), flush=True)
+                optional = threading.Thread(target=publish_optional, daemon=True)
+                optional.start()
         if not args.watch:
             break
         path = Path(initial['state_directory']) / 'live-window.json'

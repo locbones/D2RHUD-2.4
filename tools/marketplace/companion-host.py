@@ -12,7 +12,10 @@ import time
 
 def document(path):
     with Path(path).open('r', encoding='utf-8-sig') as stream:
-        return json.load(stream)
+        value = json.load(stream)
+    if not isinstance(value, dict):
+        raise ValueError('Marketplace configuration must be an object')
+    return value
 
 
 def atomic(path, value):
@@ -109,6 +112,29 @@ def launch(config, profile, mode, runtime, diagnostics_root):
     return child
 
 
+def supervise_profile(root, profile_name, runtime, children):
+    profile = Path(profile_name).resolve()
+    if profile != root and root not in profile.parents:
+        raise ValueError('Invalid managed marketplace profile')
+    config = document(profile / 'custody-enrollment.json')
+    if config.get('enrolled') is not True:
+        return None
+    profile_runtime = Path(config.get('managed_runtime', str(runtime))).resolve()
+    if root / 'runtime' not in profile_runtime.parents:
+        raise ValueError('Invalid managed marketplace runtime')
+    modes = ['custody', 'SC']
+    if (Path(config['save_directory']) / 'Marketplace_2.4_HC.json').exists():
+        modes.append('HC')
+    for mode in modes:
+        key = (str(profile), mode)
+        child = children.get(key)
+        if child is None or child.poll() is not None:
+            child = launch(config, profile, mode, profile_runtime, root)
+            if child is not None:
+                children[key] = child
+    return {'mod': config.get('mod', 'RMD-MP'), 'profile': str(profile), 'running': True}
+
+
 def run(root, once=False):
     root = Path(root).resolve()
     from ctypes import wintypes
@@ -156,26 +182,14 @@ def run(root, once=False):
                 if runtime != Path(__file__).resolve().parent:
                     return 0  # Launcher has staged a newer supervisor.
                 for profile_name in settings['profiles']:
-                    profile = Path(profile_name).resolve()
-                    if profile != root and root not in profile.parents:
-                        raise ValueError('Invalid managed marketplace profile')
-                    config = document(profile / 'custody-enrollment.json')
-                    if config.get('enrolled') is not True:
-                        continue
-                    profile_runtime = Path(config.get('managed_runtime', str(runtime))).resolve()
-                    if root / 'runtime' not in profile_runtime.parents:
-                        raise ValueError('Invalid managed marketplace runtime')
-                    modes = ['custody', 'SC']
-                    if (Path(config['save_directory']) / 'Marketplace_2.4_HC.json').exists():
-                        modes.append('HC')
-                    for mode in modes:
-                        key = (str(profile), mode)
-                        child = children.get(key)
-                        if child is None or child.poll() is not None:
-                            child = launch(config, profile, mode, profile_runtime, root)
-                            if child is not None:
-                                children[key] = child
-                    status.append({'mod': config.get('mod', 'RMD-MP'), 'profile': str(profile), 'running': True})
+                    try:
+                        row = supervise_profile(root, profile_name, runtime, children)
+                        if row is not None: status.append(row)
+                    except (OSError, ValueError, KeyError, TypeError) as error:
+                        # One interrupted profile must not starve every other
+                        # mod, nor require restarting the supervisor to recover.
+                        log_line(root / 'diagnostics.log', str(error)[:512], 'profile')
+                        status.append({'profile': str(profile_name), 'running': False, 'error': str(error)[:512]})
                 atomic(root / 'companion-status.json', {'schema': 1, 'at': int(time.time()), 'profiles': status})
             except (OSError, ValueError, KeyError) as error:
                 log_line(root / 'diagnostics.log', str(error)[:512] + '\n')

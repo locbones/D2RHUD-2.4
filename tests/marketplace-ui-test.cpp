@@ -29,6 +29,17 @@ int wmain(int argc,wchar_t** argv)try{
     fixtureCatalog.namedItems={{"Stone of Jordan","rin","Unique",42},{"Bul-Kathos' Wedding Band","rin","Unique",43}};
     const auto folder=std::filesystem::path(savedFolder)/L"Diablo II Resurrected"/L"Mods"/L"MarketplaceFixture";std::filesystem::create_directories(folder);
     auto& state=Marketplace::UI::EditorState();state.path=folder/L"Marketplace_2.4_SC.json";state.valid=true;state.settings.enabled=true;state.settings.page=17;state.tables=Tables();state.tablesStarted=true;
+    {
+        Marketplace::UI::State first;first.path=folder/L"first-run.json";
+        Marketplace::UI::Load(first,modName);assert(first.original.empty());
+        const auto initialized=Marketplace::SettingsJson(Marketplace::Settings{},modName,false).dump();
+        Marketplace::SaveSettingsFile(first.path,"",initialized);
+        first.settings.enabled=true;first.settings.page=11;Marketplace::UI::Save(first,modName);
+        assert(Marketplace::Json::parse(Marketplace::ReadSettingsFile(first.path)).at("page")==11);
+        first.original.clear();first.settings.page=20;bool refused=false;
+        try{Marketplace::UI::Save(first,modName);}catch(const std::runtime_error&){refused=true;}
+        assert(refused&&Marketplace::Json::parse(Marketplace::ReadSettingsFile(first.path)).at("page")==11);
+    }
     // Optional render fixture: real artwork mappings with the fixture's two
     // synthetic named IDs. This never writes to the installed game data.
     if(const auto assets=std::getenv("D2_MARKET_UI_ASSETS")){

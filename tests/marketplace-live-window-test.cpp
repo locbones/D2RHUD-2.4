@@ -41,6 +41,34 @@ int wmain(int argc,wchar_t** argv){
     const auto root=std::filesystem::absolute(argv[1]),state=root/L"state",saves=root/L"saves";
     std::filesystem::create_directories(state);std::filesystem::create_directories(saves);
     const auto enrollment=root/L"enrollment.json";
+    {
+        const auto fresh=root/L"fresh";std::filesystem::create_directories(fresh);
+        const auto prefs=fresh/L"Marketplace_2.4_SC.json",cap=state/L"live-capability.json";
+        Write(enrollment,{{"schema",1},{"enrolled",true},{"state_directory",state.string()},{"save_directory",fresh.string()},{"owner","player"},{"catalog","catalog"}});
+        Window first;
+        assert(!first.Configure(enrollment,fresh,17,false,11)&&!std::filesystem::exists(prefs));
+        Write(cap,{{"schema",1},{"owner","player"},{"catalog","catalog"}});
+        Write(state/L"pending.json",{{"id","preserved recovery"}});
+        assert(!first.Configure(enrollment,fresh,17,false,11)&&!std::filesystem::exists(prefs));
+        std::filesystem::remove(state/L"pending.json");
+        auto lockPath=prefs;lockPath+=L".lock";
+        const auto held=CreateFileW(lockPath.c_str(),GENERIC_WRITE,0,nullptr,OPEN_ALWAYS,FILE_ATTRIBUTE_NORMAL,nullptr);
+        assert(held!=INVALID_HANDLE_VALUE&&!first.Configure(enrollment,fresh,17,false,11));CloseHandle(held);
+        assert(first.Configure(enrollment,fresh,17,false,11));
+        const auto defaults=Read(prefs);assert(defaults==Marketplace::SettingsJson(Marketplace::Settings{},"RMD-MP",false));
+        assert(defaults.at("enabled")==false&&defaults.at("auto_trade")==false);
+        assert(first.OpenGrant(11,true));const auto same=Read(state/L"live-window.json");
+        const auto stamp=std::filesystem::last_write_time(prefs);
+        for(int i=0;i<30;++i)assert(first.Configure(enrollment,fresh,17,false,11));
+        assert(Read(state/L"live-window.json")==same&&std::filesystem::last_write_time(prefs)==stamp);
+        first.Tick(false);
+        assert(first.Configure(enrollment,fresh,17,true,11));
+        assert(Read(fresh/L"Marketplace_2.4_HC.json")==Marketplace::SettingsJson(Marketplace::Settings{},"RMD-MP",true));
+        first.Tick(false);
+        {std::ofstream file(prefs);file<<"malformed existing preferences";}
+        assert(!first.Configure(enrollment,fresh,17,false,11));
+        assert(Marketplace::ReadSettingsFile(prefs)=="malformed existing preferences");
+    }
     Write(enrollment,{{"schema",1},{"enrolled",true},{"state_directory",state.string()},{"save_directory",saves.string()},{"owner","player"},{"catalog","catalog"}});
     Write(state/L"live-capability.json",{{"schema",1},{"owner","player"},{"catalog","catalog"}});
     Write(saves/L"Marketplace_2.4_SC.json",{{"mod","RMD-MP"},{"game_mode","2.4"},{"hardcore",false},{"page",11},{"withdraw_page",2}});
@@ -148,6 +176,26 @@ int wmain(int argc,wchar_t** argv){
     assert(bridge.RefreshReady(goldNow+1));assert(bridge.Permit(11));bridge.FinishRefresh();assert(bridge.OpenGrant(11,true));
     settings["enabled"]=false;Write(saves/L"Marketplace_2.4_SC.json",settings);
     assert(!bridge.RequestGoldDeposit(11,1,1000,900,100,200,goldNow+1));
+    // Reproduce a closed stash still granting the old route after Setup (or
+    // a website intent) changes it. The next open/load callback must re-read
+    // settings even when the previous grant was already parked.
+    assert(bridge.Permit(11));bridge.Tick(false);
+    settings["page"]=settings["withdraw_page"]=1;Write(saves/L"Marketplace_2.4_SC.json",settings);
+    assert(bridge.Configure(enrollment,saves,17,false,11));
+    assert(bridge.Close(11,false)==0&&bridge.OpenGrant(11));
+    const auto oldRoute=Read(state/L"live-window.json");assert(oldRoute["deposit"]==1&&oldRoute["loaded"]==11);
+    settings["page"]=settings["withdraw_page"]=11;Write(saves/L"Marketplace_2.4_SC.json",settings);
+    handle=writer();assert(handle!=INVALID_HANDLE_VALUE);
+    assert(!bridge.Configure(enrollment,saves,17,false,11));
+    assert(Read(state/L"live-window.json")==oldRoute); // never bypass an active writer
+    CloseHandle(handle);
+    assert(bridge.Configure(enrollment,saves,17,false,11));
+    assert(!std::filesystem::exists(state/L"live-window.json"));
+    assert(bridge.OpenGrant(11,true));grant=Read(state/L"live-window.json");
+    assert(grant["schema"]==2&&grant["deposit"]==11&&grant["delivery"]==11&&grant["loaded"]==11&&grant["session"]!=oldRoute["session"]);
+    // A page switch acknowledges its real loaded page under the new routes.
+    assert(bridge.Permit(5));assert(bridge.Configure(enrollment,saves,17,false,5));assert(bridge.OpenGrant(5,true));
+    grant=Read(state/L"live-window.json");assert(grant["loaded"]==5&&grant["deposit"]==11);
     assert(!bridge.Configure(enrollment,root/L"other-saves",17,false,11));
     std::cout<<"Live native window: cursor safety, confirmed parking, sync acknowledgement, atomic write exclusion, pending-page freeze, unrelated navigation and lease reacquisition passed.\n";
 }

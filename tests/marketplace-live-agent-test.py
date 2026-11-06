@@ -44,7 +44,8 @@ def main():
         for name in ('weapons', 'armor', 'misc', 'itemstatcost', 'itemtypes'):
             (data / f'global/excel/{name}.bin').write_bytes(b'fixture')
         fake = game / 'D2R.exe'
-        shutil.copy2(Path(os.environ['SystemRoot']) / 'System32/ping.exe', fake)
+        with (Path(os.environ['SystemRoot']) / 'System32/ping.exe').open('rb') as source, fake.open('wb') as target:
+            shutil.copyfileobj(source, target)
         helper, launcher, hud = root / 'helper.exe', root / 'launcher.exe', game / 'd2rhud.dll'
         for path in (helper, launcher, hud):
             path.write_bytes(path.name.encode())
@@ -67,8 +68,77 @@ def main():
             path = state / 'live-window.json'
             a.io.save(path, window)
             agent = a.Agent(cfg)
+            # Late first-run setup is independent of the game/live-save leases.
+            # Only disabled preferences and capability metadata are initialized.
+            fresh_saves=root/'first-saves';fresh_saves.mkdir()
+            first_state=root/'first-state';first_state.mkdir()
+            fresh=a.Agent(dict(cfg,save_directory=str(fresh_saves),state_directory=str(first_state)))
+            unchanged=fresh_saves/'Stash_SC_Page1.d2i';unchanged.write_bytes(b'never edit at bootstrap')
+            game_lease=shared(first_state/'game.lock');live_lease=shared(first_state/'live.lock')
+            try:
+                prefs=fresh_saves/'Marketplace_2.4_SC.json'
+                with a.lease(str(prefs)+'.lock'):
+                    try: fresh.bootstrap();raise AssertionError('Bootstrap bypassed settings writer')
+                    except OSError: pass
+                fresh.bootstrap()
+                defaults=a.io.document(prefs)
+                assert defaults['enabled'] is False and defaults['auto_trade'] is False
+                assert defaults['drafts']==[] and defaults['page']==defaults['withdraw_page']==1
+                before=prefs.read_bytes();stamp=(first_state/'live-capability.json').stat().st_mtime_ns
+                fresh.bootstrap();assert prefs.read_bytes()==before
+                assert (first_state/'live-capability.json').stat().st_mtime_ns==stamp
+                (first_state/'live-capability.json').write_text('interrupted derived metadata',encoding='utf-8')
+                fresh.bootstrap();assert a.io.document(first_state/'live-capability.json')['owner']==cfg['owner']
+                changed=dict(defaults,enabled=True,page=20,withdraw_page=20,drafts=[{'preserved':'price'}])
+                a.io.save(prefs,changed);fresh.bootstrap();assert a.io.document(prefs)==changed
+                prefs.unlink();a.io.save(first_state/'pending.json',{'preserved':'journal'})
+                fresh.bootstrap();assert not prefs.exists()
+                a.io.save(first_state/'status.json',{'error':'real recovery error','pending':True})
+                a.report_waiting(fresh.config);assert a.io.document(first_state/'status.json')['error']=='real recovery error'
+                (first_state/'pending.json').unlink();a.report_waiting(fresh.config)
+                assert a.io.document(first_state/'status.json')['error']==''
+                assert unchanged.read_bytes()==b'never edit at bootstrap'
+            finally:
+                close(game_lease);close(live_lease)
+            # Continue the real Windows lease/process tests with a modern HUD
+            # whose whole-file hash differs from its enrolled legacy build.
+            protocol_spec = importlib.util.spec_from_file_location('live_protocol_fixture', repo / 'tests/marketplace-hud-protocol-test.py')
+            protocol_fixture = importlib.util.module_from_spec(protocol_spec)
+            protocol_spec.loader.exec_module(protocol_fixture)
+            hud.write_bytes(protocol_fixture.pe())
+            assert a.io.digest(hud.read_bytes()) != cfg['hud_sha256']
+            agent.verify()
+            assert a.io.hud_features(cfg, {}) == list(a.io.HUD_FEATURES)
+            # A running transfer releases the repair scheduling gate while
+            # retaining its actual transfer lock. Repair can queue fairly.
+            with agent.guard_access():
+                with a.lease(state / 'repair.lock'):
+                    try:
+                        with a.lease(state / 'guard.lock'):
+                            raise AssertionError('A running transfer lost its guard')
+                    except OSError:
+                        pass
+            with a.lease(state / 'repair.lock'):
+                try:
+                    agent.run()
+                    raise AssertionError('A sync cycle started during repair')
+                except a.RepairInProgress:
+                    pass
+                assert not agent.pending.exists()
+                with a.lease(state / 'guard.lock'):
+                    pass
+            with agent.guard_access():
+                pass  # Closing/cancelling repair resumes the existing worker.
             with agent.save_access('SC', [11, 2]) as granted:
                 assert granted['session'] == window['session']
+            # Stale HUD routes must never authorize access, even for sidecars.
+            a.io.save(path, dict(window, deposit=1, delivery=1, parking=2, loaded=11))
+            try:
+                with agent.save_access('SC', []):
+                    raise AssertionError('Stale market routes authorized a save')
+            except BlockingIOError as error:
+                assert 'older market page settings' in str(error) and 'Start / repair' in str(error)
+            a.io.save(path, window)
             def refuses(mode='SC', pages=(11,)):
                 try:
                     with agent.save_access(mode, pages):
@@ -140,6 +210,11 @@ def main():
             page.write_bytes(before)
             intercept = True
             def transport(mode, packet):
+                # Simulate native heartbeat updates while slow Wine filesystem
+                # flushes run; keep the separate stale-heartbeat refusals above.
+                current = a.io.document(path)
+                current['tick'] = a.ticks()
+                a.io.save(path, current)
                 if packet['type'] == 'write_authorize' and intercept:
                     handles.append(shared(state / 'live.lock'))
                 return dict(kind='deposit', status='prepared')
@@ -152,6 +227,7 @@ def main():
                 assert agent.pending.exists() and page.read_bytes() == before
             close(handles.pop())
             intercept = False
+            a.io.save(path, dict(window, tick=a.ticks()))
             with a.lease(state / 'guard.lock'):
                 agent.recover()
             assert not agent.pending.exists() and page.read_bytes() == after
@@ -161,6 +237,7 @@ def main():
                 if stage == 'locally_applied':
                     raise InterruptedError('lost commit response')
             agent.fault = applied_fault
+            a.io.save(path, dict(window, tick=a.ticks()))
             try:
                 with a.lease(state / 'guard.lock'):
                     agent.start('SC', dict(id='2'*32, type='deposit_prepare', items=[]),

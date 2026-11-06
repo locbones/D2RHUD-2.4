@@ -211,6 +211,11 @@ struct Run {
     int eventTreasureClass=-1;
     bool soulDropObserved=false;
 };
+struct DemoShortcut {
+    uint8_t held=0;
+    uint64_t since=0,last=0;
+    bool fired=false,blocked=false;
+};
 struct GameState {
     int seed=0;uint32_t frame=0;
     std::map<uint32_t,Position> towns;
@@ -225,7 +230,7 @@ struct GameState {
     uint32_t rewardSequence=0,lastRewardSent=0;
     std::map<uint32_t,std::pair<int,uint32_t>> revealSent;
     uint32_t revealRevision=0,lastRevealSent=0;
-    uint8_t demoKeys=0;
+    DemoShortcut demoShortcut;
 };
 void EventTrace(Game* game,const Run& run,const char* stage,int monster=-1,int unique=-1){
     if(run.event!=Event::None)CrashDiagnostics::Event(stage,run.id,unsigned(run.event),game->dwGameFrame,monster,unique);
@@ -912,17 +917,24 @@ bool DemoSixHeld(Unit* player){
 #include "CubeMapRewards.inl"
 #include "CubeMapMonsterReveal.inl"
 #include "CubeMapEvents.inl"
-// One request per press, including presses refused while busy or outside town.
-// Simultaneous function keys are ambiguous; require a fresh single-key press.
-uint8_t TakeDemoShortcut(uint8_t& previous,uint8_t held){
-    const auto pressed=uint8_t(held & ~previous);previous=held;
-    if(!held || (held & (held-1)) || !pressed)return 0;
-    for(uint8_t key=1;key<=7;++key)if(pressed & (1u<<(key-1)))return key;
+// Require five continuously observed seconds of the exact focused chord.
+// One request per hold, including requests refused while busy/outside town.
+uint8_t TakeDemoShortcut(DemoShortcut& input,uint8_t held,bool control,bool shift,bool focused,uint64_t now){
+    if(!focused||!control||!shift||!held){input={};return 0;}
+    if(held&(held-1)){input.blocked=true;return 0;}
+    if(input.blocked)return 0; // Ambiguous function keys require a release.
+    if(input.held!=held){input={held,now,now};return 0;}
+    // Never turn a pause/loading gap into an instant activation on resuming.
+    if(now<input.last||now-input.last>1000)input.since=now;
+    input.last=now;
+    if(input.fired||now-input.since<5000)return 0;
+    input.fired=true;
+    for(uint8_t key=1;key<=7;++key)if(held & (1u<<(key-1)))return key;
     return 0;
 }
 bool StartDemoEvent(Game* game,GameState& state,Unit* player,uint8_t key){
     if(!player || player->dwUnitType!=0 || key<1 || key>7 || Dead(player) || !Town(Level(player))){
-        status.store("Event test: use Ctrl+F1-F7 while alive in town.");return false;
+        status.store("Event test: hold Shift+Ctrl+F1-F7 for 5 seconds while alive in town.");return false;
     }
     const auto client=Field<Client*>(player->pPlayerData,0xf0);
     if(!client || client->pGame!=game || client->dwClientState!=4 || client->dwUnitGUID!=player->dwUnitId || Lookup(game,0,player->dwUnitId)!=player)return false;
@@ -950,9 +962,11 @@ bool StartDemoEvent(Game* game,GameState& state,Unit* player,uint8_t key){
 }
 void PollDemoEvents(Game* game,GameState& state){
     uint8_t held=0;DWORD foreground=0;GetWindowThreadProcessId(GetForegroundWindow(),&foreground);
-    if(foreground==GetCurrentProcessId() && (GetAsyncKeyState(VK_CONTROL)&0x8000))
+    const bool focused=foreground==GetCurrentProcessId();
+    const bool control=(GetAsyncKeyState(VK_CONTROL)&0x8000)!=0,shift=(GetAsyncKeyState(VK_SHIFT)&0x8000)!=0;
+    if(focused&&control&&shift)
         for(unsigned i=0;i<7;++i)if(GetAsyncKeyState(VK_F1+i)&0x8000)held|=uint8_t(1u<<i);
-    const auto key=TakeDemoShortcut(state.demoKeys,held);if(!key)return;
+    const auto key=TakeDemoShortcut(state.demoShortcut,held,control,shift,focused,GetTickCount64());if(!key)return;
     // Only the local hosting process owns this game tick. Never send a remote
     // request or choose an event from another client's keyboard.
     const auto local=LocalPlayer();if(!local || local->dwUnitType!=0)return;

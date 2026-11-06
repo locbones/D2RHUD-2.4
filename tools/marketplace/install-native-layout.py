@@ -7,7 +7,6 @@ import argparse
 import json
 from pathlib import Path
 import os
-import shutil
 import tempfile
 
 
@@ -90,7 +89,9 @@ def install(data, source=None, backup_directory=None):
             relative = path.relative_to(data)
             target = backup / relative
             target.parent.mkdir(parents=True, exist_ok=True)
-            if before is not None: shutil.copy2(path, target)
+            # Python 3.14 copy2 calls CopyFile2, unimplemented in older Wine.
+            # These are byte-preserving layout backups, not save-file copies.
+            if before is not None: target.write_bytes(before)
             if (path.read_bytes() if path.is_file() else None) != before:
                 raise ValueError("Stash layout changed during installation.")
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -110,7 +111,7 @@ def install(data, source=None, backup_directory=None):
         previous = {path: before for path, before, _ in changes}
         for path in reversed(done):
             if previous[path] is None: path.unlink()
-            else: shutil.copy2(backup / path.relative_to(data), path)
+            else: path.write_bytes((backup / path.relative_to(data)).read_bytes())
         raise
     report = {"changed": len(done), "backup": str(backup), "files": [str(p) for p in done]}
     (backup / "installation.json").write_text(json.dumps(report, indent=2))

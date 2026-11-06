@@ -63,6 +63,7 @@
 #include "../HUDControls.h"
 #include "../CandyCornSaveUI.h"
 #include "../MarketplacePanel.h"
+#include "../MarketplaceCompatibility.h"
 #include "../MarketplaceLiveCustody.h"
 #include "../MarketplacePageRequests.h"
 #include <imgui.h>
@@ -6966,6 +6967,7 @@ static VOID CALLBACK MarketplaceChatWindowTick(HWND hwnd,UINT,UINT_PTR timer,DWO
     gMarketplaceChatScheduled=false;
     if(modName!="RMD-MP"||GetClientStatus()!=1)return;
     const auto now=GetTickCount64();
+    MarketplaceLiveConnect(now);
     MarketplaceLiveRefreshTick();
     MarketplaceLiveContinueClosed();
     MarketplaceLivePumpRequests(); // Deferred page changes also progress while the stash is closed.

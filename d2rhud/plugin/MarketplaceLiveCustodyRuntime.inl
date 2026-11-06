@@ -46,6 +46,8 @@ static void MarketplaceLiveRecoverPage() try {
     CCMD_SendSharedStashMessage(NewSharedStashLoadedAndAttachMessagesSent,previous);
 }catch(...){Marketplace::LiveCustody::window.Error("Unable to restore the stash page. Existing files were preserved.");}
 static std::atomic<bool> gLiveStashClosed{false};
+static std::atomic<bool> gLivePageKnown{false};
+static std::atomic<uint64_t> gLiveConnectPoll{0};
 static std::atomic<unsigned> gLiveRestorePage{0};
 static std::atomic<unsigned> gLiveRefreshReturn{0},gLiveRefreshTab{0};
 static int MarketplaceLiveReloadTab(uint32_t page){
@@ -109,10 +111,15 @@ static void MarketplaceLiveContinueClosed() try {
     else Marketplace::LiveCustody::window.OpenGrant(gSelectedPage+1);
 }catch(...){}
 static void MarketplaceLiveOpened() try {
+    gLivePageKnown=true;gLiveConnectPoll=0;
     gMarketGoldDeposit.Reset();gMarketGoldPoll=0;gMarketGoldRequestPoll=0;gLiveStashClosed=false;Marketplace::Panel::stashSyncing=Marketplace::LiveCustody::window.Refreshing();
+    // Website changes and route migrations can finish while the panel is
+    // closed. Re-read them before restoring a parked grant; otherwise that
+    // grant can keep advertising the old market page indefinitely.
+    const bool configured=!gMarketplacePageSwitching.load()&&MarketplaceLiveConfigure();
     const auto view=Marketplace::LiveCustody::window.Snapshot();
     if(view.enabled&&(view.parked||gMarketplacePageSwitching.load()))gLiveRestorePage=Marketplace::LiveCustody::window.Restore(true);
-    if(!gLiveRestorePage.load()&&!gMarketplacePageSwitching.load()&&MarketplaceLiveConfigure())
+    if(!gLiveRestorePage.load()&&!gMarketplacePageSwitching.load()&&configured)
         Marketplace::LiveCustody::window.OpenGrant(gSelectedPage+1,true);
     MarketplaceLiveObserve("stash-opened");
 }catch(...){}
@@ -120,11 +127,17 @@ static bool MarketplaceLiveAllowPage(uint32_t page) try {
     return Marketplace::LiveCustody::window.Permit(page+1);
 }catch(...){return false;}
 static void MarketplaceLiveLoaded(uint32_t page) try {
+    gLivePageKnown=true;gLiveConnectPoll=0;
     gMarketGoldDeposit.Reset();gMarketGoldPoll=0;gMarketGoldRequestPoll=0;
     if(Marketplace::LiveCustody::window.Refreshing()&&page+1==gLiveRefreshReturn){
         Marketplace::LiveCustody::window.FinishRefresh();Marketplace::Panel::stashSyncing=false;
     }
     {std::lock_guard lock(gLivePagePacketsMutex);gLivePacketPage=UINT32_MAX;gLivePagePackets.clear();}
+    // Only the final native load acknowledgement establishes which page is
+    // in memory. Refresh routes here too, including changes made in Setup
+    // while the stash stayed open. Configure reacquires the write exclusion
+    // before revoking an older grant.
+    MarketplaceLiveConfigure();
     if(gLiveStashClosed.load()&&!MarketplaceLiveCursor()){
         const auto parking=Marketplace::LiveCustody::window.Close(page+1,false,false);
         if(parking)gMarketplacePageRequests.Request(parking-1);
@@ -132,6 +145,18 @@ static void MarketplaceLiveLoaded(uint32_t page) try {
     }
     else Marketplace::LiveCustody::window.OpenGrant(page+1,true);
     MarketplaceLiveObserve("page-loaded");
+}catch(...){}
+static void MarketplaceLiveConnect(uint64_t now) try {
+    // Native event thread only. Enrollment/capability may arrive after OnOpen.
+    // Reconcile the handshake without resetting navigation or reloading goods.
+    if(!gLivePageKnown.load()||gMarketplacePageSwitching.load()||now<gLiveConnectPoll)return;
+    gLiveConnectPoll=now+2000;
+    if(MarketplaceLiveCursor())return;
+    const auto before=Marketplace::LiveCustody::window.Snapshot();
+    if(!MarketplaceLiveConfigure())return;
+    const auto after=Marketplace::LiveCustody::window.Snapshot();
+    if(!before.enabled&&gLiveStashClosed.load())Marketplace::LiveCustody::window.RememberClosed(gSelectedPage+1);
+    if(!gLiveStashClosed.load()&&!after.parked)Marketplace::LiveCustody::window.OpenGrant(gSelectedPage+1,true);
 }catch(...){}
 static void MarketplaceLiveSelectPage(void* panel) try {
     const auto pages=WidgetFindChild(panel,"BankPages");if(!pages)return;
@@ -208,6 +233,7 @@ static void MarketplaceLivePaint(void* panel) try {
 }catch(...){}
 static void MarketplaceLiveTick(bool inGame) try {
     Marketplace::LiveCustody::window.Tick(inGame);
+    if(!inGame){gLivePageKnown=false;gLiveConnectPoll=0;}
     if(!inGame){Marketplace::Panel::stashSyncing=false;gLiveRefreshReturn=0;gMarketplacePageSelection.Reset();gMarketplacePageRequests.Reset();gMarketplacePageRecovery=false;gMarketplaceRollbackAttempted=false;gLiveStashClosed=false;gLiveRestorePage=0;gMarketplacePageSwitching=false;gMarketplacePagePhase=-1;}
 }catch(...){}
 static void __fastcall HookedMarketplaceBankOpen(void* panel){
