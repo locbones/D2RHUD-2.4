@@ -55,6 +55,19 @@ int wmain(int argc,wchar_t** argv){
     const auto savedStack=ReadItem(stack.bytes,stackTables.save,1);assert(Quantity(savedStack,15,stackTables).quantity==15);
     auto stackPage=Read(raw,tables);for(auto& rows:stackPage.tabs)rows.clear();stackPage.tabs[0]={savedStack};Parcel units;Debit(stackPage,{{"rin","Ring",2,-1,15,-1}},settings,stackTables,units);
     assert(stackPage.tabs[0][0].quantity==25&&units.items[0].quantity==15&&units.items[0].id==savedStack.id);
+    // Affixed ammunition is ONE payment item. Transfer the exact record with
+    // its ammunition count intact; do not attempt a normal-stack bit edit.
+    for(int quality:{1,3,4,5,6,7,8,9}){
+        auto whole=savedStack;whole.quality=quality;whole.index=42;
+        assert(whole.Payment().quantity==1&&whole.quantity==40);
+        Refuses([&]{Quantity(whole,1,stackTables);});
+        if(quality!=5&&quality!=7)continue; // Payment catalog supports set/unique variants.
+        auto p=stackPage;for(auto& rows:p.tabs)rows.clear();p.tabs[0]={whole};Parcel paid;
+        Debit(p,{{"rin","Affixed stack",quality,42,1,-1}},settings,stackTables,paid);
+        assert(p.tabs[0].empty()&&paid.items.size()==1&&paid.items[0].itemHex==whole.itemHex&&paid.items[0].quantity==40);
+        p.tabs[0]={whole};Refuses([&]{Parcel two;Debit(p,{{"rin","Affixed stack",quality,42,2,-1}},settings,stackTables,two);});
+    }
+    auto socketed=savedStack;socketed.children.push_back(Json::object());assert(socketed.Payment().quantity==1);
     // Bag fields use hash-bound symbolic metadata, preserve unrelated fields,
     // and refuse absent/ambiguous stats or bit-width overflow.
     auto bagTables=tables;bagTables.save.items.insert(bagTables.save.items.begin(),{{'Z','0','1',' '}});bagTables.save.bagStats={{"GB_Total",100},{"RB_Low",101}};

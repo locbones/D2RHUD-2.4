@@ -19,6 +19,9 @@ static void VerifyGame(const std::filesystem::path& path){
     };
     assert((at.operator()<std::array<uint8_t,8>>(raw(0x18ee80))==BankOpenCode));
     assert((at.operator()<std::array<uint8_t,8>>(raw(0x18f050))==BankCloseCode));
+    assert((at.operator()<std::array<uint8_t,7>>(raw(0x57e22f))==std::array<uint8_t,7>{0x4c,0x63,0x91,0x68,0x0d,0,0}));
+    assert((at.operator()<std::array<uint8_t,18>>(raw(0x57e2e8))==std::array<uint8_t,18>{
+        0x48,0x83,0xbb,0xf8,0x0a,0,0,0,0x74,0x36,0x48,0x83,0xbb,0,0x0b,0,0,0}));
     // Same native vtable owns the established draw/message and open/close slots.
     const std::array<std::pair<uint32_t,uint32_t>,4> slots{{{0x18,0x18eb90},{0x20,0x18ee50},{0x30,0x18ee80},{0x38,0x18f050}}};
     for(const auto [slot,rva]:slots)

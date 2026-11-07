@@ -18,15 +18,16 @@ public:
     void Show(uint32_t page){std::lock_guard lock(mutex);observed=page;}
     void Reset(){std::lock_guard lock(mutex);observed.reset();}
 };
+struct PageRequest {uint32_t page=0;bool carry=false;};
 class PageRequests {
-    std::mutex mutex;std::optional<uint32_t> next;uint64_t retryAt=0;
+    std::mutex mutex;std::optional<PageRequest> next;uint64_t retryAt=0;
 public:
-    void Request(uint32_t page){if(page>=64)return;std::lock_guard lock(mutex);next=page;retryAt=0;}
-    std::optional<uint32_t> Take(uint32_t loaded,uint64_t now){
+    void Request(uint32_t page,bool carry=false){if(page>=64)return;std::lock_guard lock(mutex);next=PageRequest{page,carry};retryAt=0;}
+    std::optional<PageRequest> Take(uint32_t loaded,uint64_t now){
         std::lock_guard lock(mutex);if(!next||now<retryAt)return {};
-        const auto page=*next;next.reset();if(page==loaded)return {};return page;
+        const auto request=*next;next.reset();if(request.page==loaded)return {};return request;
     }
-    void Defer(uint32_t page,uint64_t now){std::lock_guard lock(mutex);if(!next)next=page;retryAt=now+100;}
+    void Defer(PageRequest request,uint64_t now){std::lock_guard lock(mutex);if(!next)next=request;retryAt=now+100;}
     void Reset(){std::lock_guard lock(mutex);next.reset();retryAt=0;}
 };
 }

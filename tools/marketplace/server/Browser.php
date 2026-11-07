@@ -14,6 +14,14 @@ trait MarketplaceBrowser {
         ] as $name=>$columns)$this->db->exec("CREATE TABLE IF NOT EXISTS $name ($columns)$engine");
     }
     public function browserTicket(array $actor,array $context=[]): array {
+        // Linking an already-enrolled player is account access, not save setup.
+        // Require an existing membership; never register a mod/catalog here.
+        if(($context['existing_profile']??false)===true){
+            if(count(array_diff(array_keys($context),['existing_profile','mod','game_mode']))||!is_string($context['mod']??null)||($context['game_mode']??'')!=='2.4')throw new MarketError(422,'Invalid existing player link.');
+            $selected=$this->selectMod($context['mod']??'', '2.4');$selected->requireMod($actor['id']);
+            if(!$this->run("SELECT id FROM custody_agents_scoped WHERE owner=? AND `mod`=? AND game_mode='2.4'",[$actor['id'],$selected->mod])->fetchColumn())throw new MarketError(403,'Connect this player to the selected mod first.');
+            return $selected->browserTicket($actor);
+        }
         if($context)return $this->transaction(fn()=>$this->registerLinkContext($actor,$context))->browserTicket($actor);
         $this->requireMod($actor['id']);
         return $this->transaction(function()use($actor){
@@ -168,7 +176,7 @@ trait MarketplaceBrowser {
     public function browserSnapshot(?array $actor,bool $hc): array {
         $guest=['id'=>'','name'=>'Guest'];$snapshot=$this->snapshot($actor??$guest,$hc,true);unset($snapshot['publication'],$snapshot['escrow']['lineage']);
         $scope=$this->scope($hc);$all=$this->run('SELECT i.id,i.code,i.quality,i.item_index,i.seed,i.ethereal,i.sockets,i.item_hex,e.metadata,d.metadata AS discovery FROM items i LEFT JOIN escrow_items e ON e.item=i.id LEFT JOIN web_item_display d ON d.item=i.id WHERE i.scope=?',[$scope])->fetchAll();$map=[];
-        foreach($all as $i){$metadata=$i['metadata']?json_decode($i['metadata'],true,512,JSON_THROW_ON_ERROR):[];$map[$i['id']]=['code'=>$i['code'],'quality'=>(int)$i['quality'],'index'=>(int)$i['item_index'],'saved_id'=>(int)$i['seed'],'item_uuid'=>$this->itemIdentity($i['item_hex'])['item_uuid']??'','ledger_id'=>$i['id'],'ethereal'=>(bool)$i['ethereal'],'sockets'=>(int)$i['sockets'],'quantity'=>$metadata['quantity']??1,'identified'=>$metadata['identified']??1,'display'=>$metadata['display']??($i['discovery']?json_decode($i['discovery'],true,512,JSON_THROW_ON_ERROR):null)];$map[$i['id']]=$this->browserItemNames($map[$i['id']],$i['item_hex']);}
+        foreach($all as $i){$metadata=$i['metadata']?json_decode($i['metadata'],true,512,JSON_THROW_ON_ERROR):[];$map[$i['id']]=['code'=>$i['code'],'quality'=>(int)$i['quality'],'index'=>(int)$i['item_index'],'saved_id'=>(int)$i['seed'],'item_uuid'=>$this->itemIdentity($i['item_hex'])['item_uuid']??'','ledger_id'=>$i['id'],'ethereal'=>(bool)$i['ethereal'],'sockets'=>(int)$i['sockets'],'quantity'=>$metadata['quantity']??1,'trade_quantity'=>self::tradeQuantity($metadata),'identified'=>$metadata['identified']??1,'display'=>$metadata['display']??($i['discovery']?json_decode($i['discovery'],true,512,JSON_THROW_ON_ERROR):null)];$map[$i['id']]=$this->browserItemNames($map[$i['id']],$i['item_hex']);}
         $bundles=$this->browserBundles($scope,$map);
         foreach($snapshot['listings'] as &$r){unset($r['item_hex']);$r['item']=$map[$r['item_id']]??null;$r['bundle']=$bundles['listings'][$r['id']]??null;}unset($r);
         foreach($snapshot['offers'] as &$r){unset($r['item_hex']);$r['item_details']=$map[$r['item']]??null;$r['bundle']=$bundles['listings'][$r['listing']]??null;}unset($r);

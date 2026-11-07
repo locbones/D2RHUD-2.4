@@ -109,7 +109,8 @@ inline void Debit(Page& page,const std::vector<Requirement>& price,const Setting
             if(r.kind=="bag"){
                 const auto amount=Balance(item,r.stat);const auto take=(std::min)(remaining,uint64_t(amount));if(take)item=Bag(item,r.stat,uint32_t(amount-take),tables);remaining-=take;++n;
             }else if(Matches(r,item.Payment())){
-                const auto take=(std::min)(remaining,uint64_t(item.quantity));if(take==item.quantity){parcel.items.push_back(item);rows.erase(rows.begin()+n);}
+                const auto units=item.Payment().quantity;
+                const auto take=(std::min)(remaining,uint64_t(units));if(take==units){parcel.items.push_back(item);rows.erase(rows.begin()+n);}
                 else{parcel.items.push_back(Quantity(item,uint32_t(take),tables));item=Quantity(item,uint32_t(item.quantity-take),tables);++n;}remaining-=take;
             }else ++n;
         }

@@ -11,6 +11,10 @@ import urllib.request
 import time
 import uuid
 
+_http_spec = importlib.util.spec_from_file_location('sync_http', Path(__file__).with_name('marketplace-http.py'))
+_http = importlib.util.module_from_spec(_http_spec)
+_http_spec.loader.exec_module(_http)
+
 _custody_spec = importlib.util.spec_from_file_location('sync_custody_io', Path(__file__).with_name('custody-workspace.py'))
 _custody_io = importlib.util.module_from_spec(_custody_spec)
 _custody_spec.loader.exec_module(_custody_io)
@@ -116,16 +120,10 @@ def sync(config, folder, hardcore=False, allow_local=False):
         pass
 
     def request(action, command=None, bearer=None, extra=None):
-        data = None if command is None else json.dumps(command, ensure_ascii=False).encode("utf-8")
-        if data is not None and len(data) > (8 * 1024 * 1024 if action == "publish" else 32768):
-            raise ValueError("Queued command is too large")
+        data = None if command is None else _http.encode(command, 8 * 1024 * 1024 if action == "publish" else 32768)
         query = urllib.parse.urlencode({"action": action, "hardcore": int(hardcore), "mod": mod, "version": "2.4", **({"torch_class": 1} if action=="sync" and torch_class else {}), **(extra or {})})
         req = urllib.request.Request(endpoint + "?" + query, data=data, headers={"Authorization": "Bearer " + (token if bearer is None else bearer), "Content-Type": "application/json"})
-        with opener.open(req, timeout=30) as response:
-            raw = response.read(16 * 1024 * 1024 + 1)
-        if len(raw) > 16 * 1024 * 1024:
-            raise ValueError("Service response is too large")
-        return json.loads(raw)
+        return _http.read_json(opener, req, f'{action} ({mode})')
 
     def validate(snapshot, expected_player=None):
         if snapshot.get("schema") != 1 or snapshot.get("game_mode") != "2.4" or snapshot.get("mod") != mod or snapshot.get("hardcore") is not hardcore:

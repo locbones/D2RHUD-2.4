@@ -8,6 +8,7 @@
 #include <map>
 
 static D2UnitStrc player{},item{};
+static void* panelManager=nullptr;static void** gpPanelManager=&panelManager;
 static unsigned gSelectedPage=16;
 static bool IsHardcore(){return false;}
 static D2UnitStrc* GetClientPlayerUnit(){return &player;}
@@ -18,6 +19,8 @@ static void* WidgetFindChild(void*,const char* name){return widgets[name];}
 #include "../d2rhud/plugin/MarketplaceNative.inl"
 
 template<class T>void Put(void* target,size_t at,T value){memcpy(static_cast<uint8_t*>(target)+at,&value,sizeof(value));}
+static int nativeTabSelections=0;
+static void __fastcall SelectNativeTab(void* tabs,int selected,bool sound){assert(!sound);++nativeTabSelections;Put(tabs,0xd68,selected);}
 static void* gridWidget=nullptr;
 static uint64_t __fastcall Resolve(void* widget,uint64_t* out){const int x=widget==gridWidget?40:50,y=widget==gridWidget?200:40;return *out=uint32_t(x)|(uint64_t(uint32_t(y))<<32);}
 static bool writeFailure=false;
@@ -125,8 +128,21 @@ int main(){
     std::array<uint8_t,0xe40> nativeTabs{};std::array<uint8_t,0x28> tabsVtable{};
     std::array<uint8_t,18> tabsCode{0x48,0x83,0xbb,0xf8,0x0a,0,0,0,0x74,0x36,0x48,0x83,0xbb,0,0x0b,0,0,0};
     addresses[0x57e2e8]=reinterpret_cast<uintptr_t>(tabsCode.data());addresses[0x57da20]=1;
+    addresses[0x57e220]=reinterpret_cast<uintptr_t>(&SelectNativeTab);
     addresses[0x576960]=reinterpret_cast<uintptr_t>(&Dispatch);
     Put(tabsVtable.data(),0x20,uintptr_t(1));Put(nativeTabs.data(),0,tabsVtable.data());Put(nativeTabs.data(),0x520,int(4));
+    // The real selection lives at +d68. A BankPanel SelectTab message alone
+    // does not write it; page switching must call native SetSelection.
+    widgets["BankTabs"]=nativeTabs.data();Put(nativeTabs.data(),0x520,int(8));Put(nativeTabs.data(),0xd68,int(5));
+    assert(NativePanel::BankTab(nullptr)==5&&NativePanel::SelectBankTab(nullptr,0));
+    assert(nativeTabSelections==1&&NativePanel::BankTab(nullptr)==0);
+    assert(NativePanel::SelectBankTab(nullptr,5)&&NativePanel::BankTab(nullptr)==5&&nativeTabSelections==2);
+    assert(!NativePanel::SelectBankTab(nullptr,8)&&nativeTabSelections==2);
+    Put(grid.data(),0x58c,player.dwUnitId);Put(grid.data(),0x590,uint32_t(0));Put(grid.data(),0x598,&player);
+    assert(NativePanel::PersonalBankGrid(nullptr,&player));
+    Put(grid.data(),0x58c,player.dwUnitId+1);assert(!NativePanel::PersonalBankGrid(nullptr,&player));Put(grid.data(),0x58c,player.dwUnitId);
+    Put(tabsVtable.data(),0x20,uintptr_t(2));assert(!NativePanel::SelectBankTab(nullptr,0));Put(tabsVtable.data(),0x20,uintptr_t(1));
+    widgets["BankTabs"]=tabs.data();Put(nativeTabs.data(),0x520,int(4));Put(nativeTabs.data(),0xd68,int(0));
     for(size_t n=0;n<4;++n)Put(nativeTabs.data(),0xb18+n*0x20,Panel::MessageHash("BankPanelMessage"));
     std::array<uint8_t,0xb0> buttonVtable{};
     std::array<uint8_t,18> clickCode{0x48,0x83,0xb9,0x20,0x05,0,0,0,0x74,0x16,0x48,0x83,0xb9,0x28,0x05,0,0,0};

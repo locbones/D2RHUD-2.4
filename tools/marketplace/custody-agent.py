@@ -22,6 +22,10 @@ import urllib.parse
 import urllib.request
 import uuid
 
+_http_spec = importlib.util.spec_from_file_location('custody_http', Path(__file__).with_name('marketplace-http.py'))
+_http = importlib.util.module_from_spec(_http_spec)
+_http_spec.loader.exec_module(_http)
+
 spec = importlib.util.spec_from_file_location("custody_io", Path(__file__).with_name("custody-workspace.py"))
 io = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(io)
@@ -395,13 +399,11 @@ class Agent:
         if pairing["catalog"] != self.config["catalog"] or pairing["owner"] != self.config["owner"] or pairing.get("mod", "RMD-MP") != self.mod or pairing.get("game_mode", "2.4") != "2.4":
             raise ValueError("Agent pairing belongs to another player or catalog")
         req = urllib.request.Request(endpoint + "?" + urllib.parse.urlencode(dict(action="custody", hardcore=int(mode == "HC"), mod=self.mod, version="2.4")),
-            json.dumps(data, ensure_ascii=False).encode(), {"Authorization": "Bearer " + pairing["token"], "Content-Type": "application/json"})
+            _http.encode(data), {"Authorization": "Bearer " + pairing["token"], "Content-Type": "application/json"})
         try:
-            with urllib.request.build_opener(NoRedirect).open(req, timeout=30) as response:
-                raw = response.read(16 * 1024 * 1024 + 1)
-            if len(raw) > 16 * 1024 * 1024:
-                raise ValueError("Custody response exceeds the size limit")
-            return json.loads(raw)
+            operation = data.get('type', '')
+            if not isinstance(operation, str) or not re.fullmatch('[a-z_]{1,32}', operation): operation = 'request'
+            return _http.read_json(urllib.request.build_opener(NoRedirect), req, f'custody/{operation} ({mode})')
         except urllib.error.HTTPError as error:
             try:
                 message = json.loads(error.read(4096)).get("error", "Custody request failed")
@@ -1325,6 +1327,7 @@ def report_failure(config, error):
     status_path = root / 'status.json'
     status = io.document(status_path) if status_path.exists() else {}
     message = str(error)[:512]
+    status.pop('message', None)  # A previous startup wait is not the current failure.
     status.update(at=int(time.time()), phase='retrying', error=message, pending=(root / 'pending.json').exists())
     io.save(status_path, status)
     try:

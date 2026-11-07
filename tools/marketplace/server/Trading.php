@@ -35,7 +35,7 @@ trait MarketplaceTrading {
         return $id!==null?$rows[0]:$rows;
     }
     private function wantedMatches(array $target,array $item,array $meta): bool {
-        return self::paymentClassMatches($target,$meta)&&($meta['identified']??false)&&$item['code']===$target['code']&&($target['any_quality']||(int)$item['quality']===$target['quality']&&($target['index']===-1||(int)$item['item_index']===$target['index']))&&($target['ethereal']===-1||(int)$item['ethereal']===$target['ethereal'])&&($meta['quantity']??1)>=$target['quantity'];
+        return self::paymentClassMatches($target,$meta)&&($meta['identified']??false)&&$item['code']===$target['code']&&($target['any_quality']||(int)$item['quality']===$target['quality']&&($target['index']===-1||(int)$item['item_index']===$target['index']))&&($target['ethereal']===-1||(int)$item['ethereal']===$target['ethereal'])&&self::tradeQuantity($meta)>=$target['quantity'];
     }
     private function wantedCommand(array $actor,array $data,bool $hc): array {
         return $this->transaction(function()use($actor,$data,$hc){

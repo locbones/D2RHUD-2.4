@@ -63,6 +63,7 @@
 #include "../HUDControls.h"
 #include "../CandyCornSaveUI.h"
 #include "../MarketplacePanel.h"
+#include "../MarketplaceStashCursor.h"
 #include "../MarketplaceCompatibility.h"
 #include "../MarketplaceLiveCustody.h"
 #include "../MarketplacePageRequests.h"
@@ -361,12 +362,14 @@ enum SharedStashPhase : uint8_t {
     OldSharedStashFreed,
     NewSharedStashLoadedAndAttachMessagesSent,
     NewSharedStashUnitsCreated,
-    SharedStashLoadFailed
+    SharedStashLoadFailed,
+    SharedStashCursorBusy
 };
 
 struct CCMD_STASH_PAGE_CHANGE : CCMD_CUSTOM {
     SharedStashPhase nPhase;
     uint32_t nPage;
+    uint32_t nCursorItem;
 };
 
 struct SCMD_STASH_PAGE_CHANGE : SCMD_CUSTOM {
@@ -441,9 +444,14 @@ static Marketplace::PageSelection gMarketplacePageSelection;
 static std::atomic<uint32_t> gMarketplacePreviousPage{0};
 static std::atomic<bool> gMarketplacePageRecovery{false};
 static std::atomic<bool> gMarketplaceRollbackAttempted{false};
+static std::atomic<bool> gMarketplacePageCarry{false};
+static std::atomic<int> gMarketplacePageTab{0};
 static void MarketplaceLivePumpRequests();
 static void MarketplaceLiveRecoverPage();
 static bool MarketplaceLiveCursor();
+static bool MarketplaceLiveCanNavigate(bool,uint32_t* cursor=nullptr);
+static bool MarketplaceLiveParkView();
+static void MarketplaceLiveRestoreView(int);
 static void MarketplaceStashNotice(const std::string&);
 using MarketplaceBankLifecycle=void(__fastcall*)(void*);
 static MarketplaceBankLifecycle oMarketplaceBankOpen=nullptr,oMarketplaceBankClose=nullptr;
@@ -492,10 +500,10 @@ void __fastcall CCMD_SendNewEmptyStashMessage() {
     CCMD_QueuePacket(&pBuffer, sizeof(pBuffer));
 }
 
-void __fastcall CCMD_SendSharedStashMessage(SharedStashPhase phase, uint32_t page) {
+void __fastcall CCMD_SendSharedStashMessage(SharedStashPhase phase, uint32_t page,uint32_t cursor=0) {
     // send 0x3. with our magic to let us know it's a custom packet
     // there seems to be validation on op code to size. need to make sure our packet is the same size of a 0x3 packet.
-    CCMD_STASH_PAGE_CHANGE tStashPageChange = { CCMD_CUSTOM_OP_CODE, CMD_MAGIC, CCMD_SHARED_STASH_OP2, phase, page };
+    CCMD_STASH_PAGE_CHANGE tStashPageChange = { CCMD_CUSTOM_OP_CODE, CMD_MAGIC, CCMD_SHARED_STASH_OP2, phase, page, cursor };
     byte pBuffer[0xD2] = { };
     memset(&pBuffer, 0, sizeof(pBuffer));
     memcpy(&pBuffer, &tStashPageChange, sizeof(tStashPageChange));
@@ -519,8 +527,20 @@ void __fastcall SCMD_HandleSharedStashMessage(SCMD_STASH_PAGE_CHANGE* pData) {
     // Only the acknowledged, currently requested page may open a live window.
     // A delayed/duplicate packet from an earlier switch must not release it.
     if(!pData||pData->nPage>=64||!gMarketplacePageSwitching.load()||pData->nPage!=gSelectedPage||
-        (int(pData->nPhase)!=gMarketplacePagePhase.load()&&!(pData->nPhase==SharedStashLoadFailed&&gMarketplacePagePhase.load()==NewSharedStashUnitsCreated)))return;
+        (int(pData->nPhase)!=gMarketplacePagePhase.load()&&
+        !(pData->nPhase==SharedStashLoadFailed&&gMarketplacePagePhase.load()==NewSharedStashUnitsCreated)&&
+        !(pData->nPhase==SharedStashCursorBusy&&gMarketplacePagePhase.load()==OldSharedStashFreed)))return;
     switch (pData->nPhase) {
+    case SharedStashCursorBusy:
+        // The server kept the old page intact. Restore its view and retry once
+        // native pickup ownership has settled, without reloading any records.
+        gSelectedPage=gMarketplacePreviousPage.load();
+        gMarketplacePagePhase=-1;gMarketplacePageRecovery=false;
+        gMarketplacePageRequests.Defer({pData->nPage,gMarketplacePageCarry},GetTickCount64());
+        MarketplaceLiveRestoreView(gMarketplacePageTab);
+        if(auto panel=WidgetFindChild(*gpPanelManager,"BankExpansionLayout"))MarketplaceLiveSelectPage(panel);
+        gMarketplacePageSwitching=false;
+        break;
     case SaveStarted:
         std::cout << "Client saved" << std::endl;
         CCMD_SendSharedStashMessage(SaveCompleted, pData->nPage);
@@ -555,13 +575,7 @@ void __fastcall SCMD_HandleSharedStashMessage(SCMD_STASH_PAGE_CHANGE* pData) {
         auto pBankPanel = WidgetFindChild(*gpPanelManager, "BankExpansionLayout");
         if (pBankPanel) {
             std::cout << "Selecting tab" << std::endl;
-            int32_t nSelectedTab = MarketplaceLiveReloadTab(pData->nPage);
-            Message m = {
-                "BankPanelMessage"_hash64,
-                "SelectTab"_hash64,
-                (uint64_t)&nSelectedTab
-            };
-            BankPanelMessage(pBankPanel, m);
+            MarketplaceLiveRestoreView(MarketplaceLiveReloadTab(pData->nPage));
             MarketplaceLiveSelectPage(pBankPanel);
         }
         gMarketplacePageSwitching=false;
@@ -575,11 +589,23 @@ int64_t __fastcall CCMD_HandleSharedStashMessage(D2GameStrc* pGame, D2UnitStrc* 
     auto pClient = pUnit->pPlayerData->pClient;
     if(!pClient||pClient->pGame!=pGame||pClient->pPlayer!=pUnit)return 1;
     switch (pData->nPhase) {
-    case PageChanged:
+    case PageChanged: {
+        // A completed native pickup is on the real player's cursor, whose
+        // inventory survives shared-page replacement. Never unload an item
+        // still owned by a shared container or an unreadable inventory.
+        uint32_t cursor=0;
+        if(Marketplace::StashCursor::Inspect(pUnit,&cursor)==Marketplace::StashCursor::State::Unknown||cursor!=pData->nCursorItem){
+            SCMD_SendSharedStashMessage(pClient,SharedStashCursorBusy,pData->nPage);
+            break;
+        }
         // First server packet
         // Think I could maybe mash this and the SUNIT_RemoveAllSharedStashes together...
         std::cout << "Saving all clients" << std::endl;
         reinterpret_cast<void(__fastcall*)(D2GameStrc*)>(Pattern::Address(0x28f510))(pClient->pGame);    // GAME_SaveClients
+        // Never free the source if a native save callback changed the pickup.
+        if(Marketplace::StashCursor::Inspect(pUnit,&cursor)==Marketplace::StashCursor::State::Unknown||cursor!=pData->nCursorItem){
+            SCMD_SendSharedStashMessage(pClient,SharedStashCursorBusy,pData->nPage);break;
+        }
         //    SCMD_SendSharedStashMessage(pClient, SaveStarted, pData->nPage);
         //    break;
         //case SaveCompleted:
@@ -587,6 +613,7 @@ int64_t __fastcall CCMD_HandleSharedStashMessage(D2GameStrc* pGame, D2UnitStrc* 
         reinterpret_cast<void(__fastcall*)(D2GameStrc*, D2UnitStrc*)>(Pattern::Address(0x28bf00))(pClient->pGame, pClient->pPlayer); // SUNIT_RemoveAllSharedStashes
         SCMD_SendSharedStashMessage(pClient, OldSharedStashFreed, pData->nPage);
         break;
+    }
     case NewSharedStashLoadedAndAttachMessagesSent:
         std::cout << "Loading new shared stash" << std::endl;
         std::cout << "# of saves attached: " << pClient->nSaveHeaderSize << std::endl;
@@ -644,6 +671,7 @@ int64_t __fastcall CCMDHANDLER_Custom(D2GameStrc* pGame, D2UnitStrc* pUnit, uint
     if (magic == CMD_MAGIC) {
         CCMD_CUSTOM* pData = (CCMD_CUSTOM*)pPacket;
         if (pData->opcode2 == CCMD_SHARED_STASH_OP2) {
+            if(nPacketSize<int(sizeof(CCMD_STASH_PAGE_CHANGE)))return 1;
             return CCMD_HandleSharedStashMessage(pGame, pUnit, (CCMD_STASH_PAGE_CHANGE*)pPacket);
         }
         return 1;
@@ -677,12 +705,12 @@ void __fastcall GenerateSharedStash() {
     }
 }
 
-void OnStashPageChanged(uint32_t nSelectedPage) {
+void OnStashPageChanged(uint32_t nSelectedPage,bool carry=true) {
     if(Marketplace::Panel::stashSyncing.load()){
         const auto target=Marketplace::LiveCustody::window.RefreshPage(),park=Marketplace::LiveCustody::window.Snapshot().parking;
         if(nSelectedPage+1!=target&&nSelectedPage+1!=park)return;
     }
-    gMarketplacePageRequests.Request(nSelectedPage);
+    gMarketplacePageRequests.Request(nSelectedPage,carry);
     MarketplaceLivePumpRequests();
 }
 
@@ -690,30 +718,42 @@ static void MarketplaceLivePumpRequests(){
     HudTelemetry::Scope measured(HudTelemetry::Feature::StashSwitch);
     bool idle=false;
     if(!gMarketplacePageSwitching.compare_exchange_strong(idle,true))return;
-    const auto page=gMarketplacePageRequests.Take(gSelectedPage,GetTickCount64());
-    if(!page){gMarketplacePageSwitching=false;return;}
-    if(MarketplaceLiveCursor()||!MarketplaceLiveAllowPage(*page)){
-        gMarketplacePageRequests.Defer(*page,GetTickCount64());gMarketplacePageSwitching=false;return;
+    const auto request=gMarketplacePageRequests.Take(gSelectedPage,GetTickCount64());
+    if(!request){gMarketplacePageSwitching=false;return;}
+    const auto page=request->page;
+    if(!MarketplaceLiveCanNavigate(request->carry)||!MarketplaceLiveAllowPage(page)){
+        gMarketplacePageRequests.Defer(*request,GetTickCount64());gMarketplacePageSwitching=false;return;
     }
-    if(!MarketplaceLivePreparePage(*page)){
+    if(!MarketplaceLivePreparePage(page)){
         const auto error=Marketplace::LiveCustody::window.Snapshot().status;
         MarketplaceLiveLoaded(gSelectedPage);
         if(!error.empty())Marketplace::LiveCustody::window.Error(error);
         if(!error.empty())MarketplaceStashNotice(error);
-        MarketplaceLiveObserve("page-load-rejected",*page+1);
+        MarketplaceLiveObserve("page-load-rejected",page+1);
         gMarketplacePageSwitching=false;return;
     }
+    // Recheck pickup ownership after file preflight. Point the native grid at
+    // the personal inventory before destroying any shared-owner units; the
+    // held item stays on the character's cursor throughout the switch.
+    if(!MarketplaceLiveCanNavigate(request->carry)||!MarketplaceLiveParkView()){
+        gMarketplacePageRequests.Defer(*request,GetTickCount64());gMarketplacePageSwitching=false;return;
+    }
+    uint32_t cursor=0;
+    if(!MarketplaceLiveCanNavigate(request->carry,&cursor)){
+        MarketplaceLiveRestoreView(gMarketplacePageTab);
+        gMarketplacePageRequests.Defer(*request,GetTickCount64());gMarketplacePageSwitching=false;return;
+    }
     gMarketplacePreviousPage=gSelectedPage.load();gMarketplaceRollbackAttempted=false;gMarketplacePageRecovery=false;
-    gMarketplacePagePhase=OldSharedStashFreed;gSelectedPage=*page;
-    CCMD_SendSharedStashMessage(PageChanged,*page);
+    gMarketplacePageCarry=request->carry;
+    gMarketplacePagePhase=OldSharedStashFreed;gSelectedPage=page;
+    CCMD_SendSharedStashMessage(PageChanged,page,cursor);
 }
 
 static void* __fastcall HookedMarketplaceBankMessage(void* widget,Message& message){
-    if((Marketplace::Panel::stashSyncing.load()||
+    if((gMarketplacePageSwitching.load()||Marketplace::Panel::stashSyncing.load()||
         (Marketplace::Panel::standaloneMarket.load()&&!Marketplace::Panel::NativeOpen()))&&message.o1==0x4ae067c6248b6042ULL)return widget;
     static_assert(Marketplace::Panel::MessageHash("BankPanelMessage")=="BankPanelMessage"_hash64);
     if(WidgetFindChild(widget,"MarketplaceWorkspace")){
-        if(gMarketplacePageSwitching.load()&&message.o1==0x4ae067c6248b6042ULL)return widget;
         if(InspectMarketplaceItem(widget,message.o1,message.o2)||Marketplace::Panel::NativeMessage(message.o1,message.o2)||DispatchMarketplaceInput(widget,message.o1,&message))return widget;
     }
     return BankPanelMessage(widget,message);

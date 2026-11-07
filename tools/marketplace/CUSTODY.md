@@ -6,6 +6,16 @@ There are two distinct tools:
 - `custody-agent.py` is the enrolled Windows save agent. It connects guarded
   removals and deliveries to separately authenticated DreamHost custody tickets.
 
+Companion POST requests use the `json-base64-v1` wire envelope to avoid shared
+hosting JSON inspectors expanding thousands of nested item-property fields.
+The envelope is JSON with exactly `market_transport` and a canonical base64
+`payload`. The authenticated API decodes it once, retains its existing decoded
+byte/depth limits and runs the same command, ownership and transaction checks.
+Legacy JSON clients remain supported. This is transport framing only: request
+IDs, item bytes, authorizations and recovery receipts are unchanged. HTTP
+validation errors are preserved; network errors identify the failing operation
+without printing URLs, credentials or item payloads.
+
 The live agent requires the updated Pandemonium and HUD gameplay lease. It never edits character saves. While a game runs, it can edit only trade pages explicitly unloaded by the native stash handshake. See the
 [live protocol](#live-protocol-and-recovery) below before operating it.
 
@@ -82,6 +92,8 @@ pages as the HUD. They prepare complete replacement page images in memory:
 - Match exact item/set/unique, ethereal and identified payment requirements;
   priced items, including a listed bag's contents, cannot fund another trade.
 - Split supported normal item stacks without changing the other saved bits.
+- Keep affixed or socketed ammunition as one whole tradable item. Its saved
+  quantity is displayed and preserved, but never authorizes a partial split.
 - Debit gold across the seven tab headers. Gold credits require an explicit
   per-tab capacity supplied to the rehearsal, not an inferred game limit.
 - Debit/credit supported existing normal Storage Bag stats using symbolic names
@@ -229,6 +241,14 @@ excluded from every save read/plan/write permission. A page switch first
 reacquires the shared gate and revokes the handoff; it remains revoked through
 the save, unload, load and final server acknowledgement. Only after that ack
 does the HUD publish a fresh handoff and release `live.lock`.
+Manual navigation permits a native cursor item owned by the real player, with
+its mode and inventory backpointer verified on both client and server. The
+page-change packet includes the expected cursor unit ID; a mismatched or
+unfinished pickup is retried before any shared owners are freed. The grid is
+temporarily pointed at the personal inventory using native TabBar selection,
+then returned to the saved tab after the destination's final acknowledgement.
+The held item is never dropped, cloned or recreated. Automatic trade reloads
+and closed-stash parking still require an empty cursor.
 The companion validates the process ID and creation time, game/save paths,
 owner, catalog, mode, routes and heartbeat under an exclusive `live.lock` before
 publishing a journal or replacing trade pages. Multiple running D2R processes

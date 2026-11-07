@@ -1,6 +1,7 @@
 <?php
 declare(strict_types=1);
 require dirname(__DIR__).'/bootstrap.php';
+require dirname(__DIR__).'/HttpTransport.php';
 if(!isset($_GET['action'])){
     header("Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
     header('X-Content-Type-Options: nosniff');header('Referrer-Policy: same-origin');header('Cache-Control: no-cache');
@@ -41,8 +42,8 @@ try {
     }
     elseif($method==='POST'&&in_array($action,['command','publish','custody'],true)){
         if(!str_starts_with(strtolower($_SERVER['CONTENT_TYPE']??''),'application/json'))throw new MarketError(415,'Use JSON.');
-        $limit=in_array($action,['publish','custody'],true)?8*1024*1024:32768;$raw=file_get_contents('php://input',false,null,0,$limit+1);if(strlen($raw)>$limit)throw new MarketError(413,'Request too large.');
-        $data=json_decode($raw,true,32,JSON_THROW_ON_ERROR);if(!is_array($data))throw new MarketError(422,'Invalid command.');
+        $limit=in_array($action,['publish','custody'],true)?8*1024*1024:32768;$raw=file_get_contents('php://input',false,null,0,MarketplaceHttpTransport::wireLimit($limit)+1);
+        $data=MarketplaceHttpTransport::decode($raw,$limit);
         $result=$service->controlledRequest($actor,$action,$data,$hc==='1',fn()=>match($action){'publish'=>$service->publish($actor,$data,$hc==='1'),'custody'=>$service->custody($actor,$data,$hc==='1'),default=>$service->command($actor,$data,$hc==='1')});
     }else throw new MarketError(404,'Endpoint not found.');
     echo json_encode($result,JSON_THROW_ON_ERROR|JSON_UNESCAPED_UNICODE);

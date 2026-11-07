@@ -51,7 +51,7 @@ static std::atomic<uint64_t> gLiveConnectPoll{0};
 static std::atomic<unsigned> gLiveRestorePage{0};
 static std::atomic<unsigned> gLiveRefreshReturn{0},gLiveRefreshTab{0};
 static int MarketplaceLiveReloadTab(uint32_t page){
-    if(gLiveRefreshReturn.load()!=page+1)return 0;
+    if(gLiveRefreshReturn.load()!=page+1)return gMarketplacePageTab;
     const auto tab=int(gLiveRefreshTab.load());
     if(!Marketplace::LiveCustody::window.Refreshing())gLiveRefreshReturn=0;
     return tab;
@@ -62,7 +62,7 @@ static void MarketplaceLiveRefreshTick() try {
     if(gLiveStashClosed.load()){
         Marketplace::LiveCustody::window.FinishRefresh();Marketplace::Panel::stashSyncing=false;return;
     }
-    if(!MarketplaceLiveCursor())OnStashPageChanged(gLiveRefreshReturn-1);
+    if(!MarketplaceLiveCursor())OnStashPageChanged(gLiveRefreshReturn-1,false);
 }catch(...){}
 
 static void MarketplaceLiveObserve(const char* event,uint32_t requestedPage){
@@ -88,8 +88,31 @@ static bool MarketplaceLiveConfigure() try {
     return Marketplace::LiveCustody::window.Configure(std::filesystem::path(profile)/L".d2r-marketplace/custody-enrollment.json",folder,value.dwUnitId,IsHardcore(),gSelectedPage+1);
 }catch(...){return false;}
 static bool MarketplaceLiveCursor(){
-    const auto player=GetClientPlayerUnit();D2UnitStrc value{};
-    return !Marketplace::NativePanel::Read(player,value)||!value.pInventory||Marketplace::NativePanel::Field<void*>(value.pInventory,0x40)!=nullptr;
+    return Marketplace::StashCursor::Busy(GetClientPlayerUnit());
+}
+static bool MarketplaceLiveCanNavigate(bool carry,uint32_t* cursor){
+    const auto state=Marketplace::StashCursor::Inspect(GetClientPlayerUnit(),cursor);
+    return state==Marketplace::StashCursor::State::Empty||(carry&&!gLiveStashClosed.load()&&
+        !Marketplace::Panel::stashSyncing.load()&&state==Marketplace::StashCursor::State::Carried);
+}
+static void MarketplaceLiveRestoreView(int tab){
+    auto panel=WidgetFindChild(*gpPanelManager,"BankExpansionLayout");if(!panel)return;
+    if(!Marketplace::NativePanel::SelectBankTab(panel,tab))return;
+    Message update{"BankPanelMessage"_hash64,"SelectTab"_hash64};
+    BankPanelMessage(panel,update);
+}
+static bool MarketplaceLiveParkView(){
+    auto panel=WidgetFindChild(*gpPanelManager,"BankExpansionLayout");
+    if(!panel){gMarketplacePageTab=0;return !MarketplaceLiveCursor();}
+    const auto tab=Marketplace::NativePanel::BankTab(panel);if(tab<0)return false;
+    if(!Marketplace::NativePanel::SelectBankTab(panel,0))return false;
+    gMarketplacePageTab=tab;
+    // This changes only the grid's owner/context, never the held item's mode,
+    // inventory or identity. No shared-owner pointer remains in the grid.
+    Message update{"BankPanelMessage"_hash64,"SelectTab"_hash64};
+    BankPanelMessage(panel,update);
+    if(Marketplace::NativePanel::PersonalBankGrid(panel,GetClientPlayerUnit()))return true;
+    MarketplaceLiveRestoreView(tab);return false;
 }
 static void MarketplaceLiveClosed() try {
     gMarketGoldDeposit.Reset();gLiveStashClosed=true;gLiveRestorePage=0;Marketplace::Panel::stashSyncing=false;
@@ -98,7 +121,7 @@ static void MarketplaceLiveClosed() try {
     if(gMarketplacePageSwitching.load()||!MarketplaceLiveConfigure()||MarketplaceLiveCursor()){MarketplaceLiveObserve("close-deferred");return;}
     MarketplaceLiveObserve("stash-closed");
     const auto page=Marketplace::LiveCustody::window.Close(gSelectedPage+1,false,!Marketplace::LiveCustody::window.Refreshing());
-    if(page)OnStashPageChanged(page-1);
+    if(page)OnStashPageChanged(page-1,false);
     else Marketplace::LiveCustody::window.OpenGrant(gSelectedPage+1);
 }catch(...){}
 static void MarketplaceLiveContinueClosed() try {
@@ -107,7 +130,7 @@ static void MarketplaceLiveContinueClosed() try {
     if(!gLiveStashClosed.load()||gMarketplacePageSwitching.load()||MarketplaceLiveCursor())return;
     const auto view=Marketplace::LiveCustody::window.Snapshot();if(!view.enabled)return;
     const auto parking=Marketplace::LiveCustody::window.Close(gSelectedPage+1,false,false);
-    if(parking)OnStashPageChanged(parking-1);
+    if(parking)OnStashPageChanged(parking-1,false);
     else Marketplace::LiveCustody::window.OpenGrant(gSelectedPage+1);
 }catch(...){}
 static void MarketplaceLiveOpened() try {
@@ -217,7 +240,7 @@ static void MarketplaceLivePaint(void* panel) try {
                 if(proof&&Marketplace::LiveCustody::window.RequestGoldDeposit(gSelectedPage+1,unsigned(tab),proof->carriedBefore,proof->carriedAfter,proof->stashBefore,proof->stashAfter,now))gMarketGoldDeposit.Taken();
             }
             const auto park=Marketplace::LiveCustody::window.BeginRefresh(gSelectedPage+1,unsigned(tab),now);
-            if(park){gLiveRefreshReturn=gSelectedPage+1;gLiveRefreshTab=unsigned(tab);Marketplace::Panel::stashSyncing=true;OnStashPageChanged(park-1);}
+            if(park){gLiveRefreshReturn=gSelectedPage+1;gLiveRefreshTab=unsigned(tab);Marketplace::Panel::stashSyncing=true;OnStashPageChanged(park-1,false);}
         }
     }
     if(auto mask=WidgetFindChild(panel,"MarketplaceSyncMask"))Marketplace::NativePanel::Visibility(mask,Marketplace::Panel::stashSyncing.load(),false);
@@ -227,14 +250,14 @@ static void MarketplaceLivePaint(void* panel) try {
     if(!requested||gMarketplacePageSwitching.load()||MarketplaceLiveCursor())return;
     const auto pages=WidgetFindChild(panel,"BankPages");
     if(!pages)return;
-    if(requested!=gSelectedPage+1)OnStashPageChanged(requested-1);
+    if(requested!=gSelectedPage+1)OnStashPageChanged(requested-1,false);
     if(requested==gSelectedPage+1)gLiveRestorePage=0;
     MarketplaceLiveSelectPage(panel);
 }catch(...){}
 static void MarketplaceLiveTick(bool inGame) try {
     Marketplace::LiveCustody::window.Tick(inGame);
     if(!inGame){gLivePageKnown=false;gLiveConnectPoll=0;}
-    if(!inGame){Marketplace::Panel::stashSyncing=false;gLiveRefreshReturn=0;gMarketplacePageSelection.Reset();gMarketplacePageRequests.Reset();gMarketplacePageRecovery=false;gMarketplaceRollbackAttempted=false;gLiveStashClosed=false;gLiveRestorePage=0;gMarketplacePageSwitching=false;gMarketplacePagePhase=-1;}
+    if(!inGame){Marketplace::Panel::stashSyncing=false;gLiveRefreshReturn=0;gMarketplacePageSelection.Reset();gMarketplacePageRequests.Reset();gMarketplacePageRecovery=false;gMarketplaceRollbackAttempted=false;gLiveStashClosed=false;gLiveRestorePage=0;gMarketplacePageSwitching=false;gMarketplacePagePhase=-1;gMarketplacePageCarry=false;gMarketplacePageTab=0;}
 }catch(...){}
 static void __fastcall HookedMarketplaceBankOpen(void* panel){
     Marketplace::Panel::OpenStash();oMarketplaceBankOpen(panel);MarketplaceLiveOpened();

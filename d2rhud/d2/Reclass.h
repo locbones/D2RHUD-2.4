@@ -61,7 +61,9 @@ public:
 	char pad_0040[72]; //0x0040
 	class D2StatListExStrc* pStatListEx; //0x0088
 	class D2InventoryStrc* pInventory; //0x0090
-	char pad_0098[140]; //0x0098
+	class D2InventoryStrc* pInventoryReference; //0x0098
+	void* pInventoryControl; //0x00A0 (native shared reference control)
+	char pad_00A8[124]; //0x00A8
 	uint32_t dwFlags; //0x0124
 	uint32_t dwFlagsEx; //0x0128
 	char pad_012C[36]; //0x012C
@@ -337,7 +339,9 @@ public:
 	class D2UnitStrc* pFirstItem; //0x0010
 	class D2UnitStrc* pLastItem; //0x0018
 	class D2InventoryGridStrc* pGrids; //0x0020
-	char pad_0028[64]; //0x0028
+	char pad_0028[24]; //0x0028
+	class D2UnitStrc* pCursorItem; //0x0040 (2.4 inventory cursor)
+	char pad_0048[32]; //0x0048
 	class D2SharedInventoryStrc* pFirstSharedInv; //0x0068
 	class D2SharedInventoryStrc* pLastSharedInv; //0x0070
 	uint32_t nSharedInvCount; //0x0078

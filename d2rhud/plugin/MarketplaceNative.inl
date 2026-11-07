@@ -22,6 +22,28 @@ inline int Tab(void* panel){
     }
     return -1;
 }
+inline int BankTab(void* panel){
+    const auto tabs=WidgetFindChild(panel,"BankTabs");
+    const auto count=Field<int>(tabs,0x520),selected=Field<int>(tabs,0xd68);
+    return tabs&&count>0&&count<=8&&selected>=0&&selected<count?selected:-1;
+}
+inline bool SelectBankTab(void* panel,int selected){
+    const auto tabs=WidgetFindChild(panel,"BankTabs");
+    const auto table=Field<void*>(tabs);const auto count=Field<int>(tabs,0x520);
+    std::array<uint8_t,18> code{};
+    if(!table||Field<uintptr_t>(table,0x20)!=Pattern::Address(0x57da20)||selected<0||selected>=count||count>8||
+        !Read(reinterpret_cast<void*>(Pattern::Address(0x57e2e8)),code)||code!=std::array<uint8_t,18>{
+            0x48,0x83,0xbb,0xf8,0x0a,0,0,0,0x74,0x36,0x48,0x83,0xbb,0,0x0b,0,0,0})return false;
+    // Native TabBarWidget::SetSelection. Sending BankPanelMessage:SelectTab
+    // alone merely refreshes the grid; it ignores the supplied tab number.
+    reinterpret_cast<void(__fastcall*)(void*,int,bool)>(Pattern::Address(0x57e220))(tabs,selected,false);
+    return BankTab(panel)==selected;
+}
+inline bool PersonalBankGrid(void* panel,const D2UnitStrc* player){
+    D2UnitStrc local{};const auto grid=WidgetFindChild(panel,"grid");
+    return grid&&Read(player,local)&&!local.dwUnitType&&Field<uint32_t>(grid,0x58c)==local.dwUnitId&&
+        Field<uint32_t>(grid,0x590)==0&&Field<const D2UnitStrc*>(grid,0x598)==player;
+}
 struct ItemBits {uint8_t* data;uint64_t bits,bytes=0,bit=0;uint32_t error=0,padding=0;};
 static_assert(sizeof(ItemBits)==0x28);
 inline bool SerializerSupported(){

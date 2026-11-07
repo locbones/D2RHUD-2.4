@@ -9,7 +9,7 @@ import zipfile
 
 PYTHON_URL = 'https://www.python.org/ftp/python/3.14.10/python-3.14.10-embed-amd64.zip'
 PYTHON_SHA256 = '90905e64a840557d8c1bc4f5b74db3d7ee85e3ffb217611cac1c7813acea4159'
-SCRIPTS = ('companion-host.py', 'companion-update.py', 'custody-agent.py', 'custody-workspace.py', 'sync-marketplace.py', 'install-native-layout.py')
+SCRIPTS = ('companion-host.py', 'companion-update.py', 'custody-agent.py', 'custody-workspace.py', 'sync-marketplace.py', 'install-native-layout.py', 'marketplace-http.py')
 
 
 def build(helper, output, cache, version='0.0.0', hud=None):
@@ -56,7 +56,9 @@ def build(helper, output, cache, version='0.0.0', hud=None):
         entries[name] = Path(__file__).with_name('assets').joinpath(name).read_bytes()
     if not entries['custody-save.exe'].startswith(b'MZ'):
         raise ValueError('Build the Windows custody helper before packaging')
-    inputs = [Path(__file__), *[Path(__file__).with_name(name) for name in SCRIPTS],
+    inputs = [Path(__file__), *Path(__file__).parent.glob('*.h'),
+              *Path(__file__).resolve().parents[2].joinpath('d2rhud/plugin').rglob('*.h'),
+              *[Path(__file__).with_name(name) for name in SCRIPTS],
               *Path(__file__).with_name('layouts').glob('*.json'), *Path(__file__).with_name('assets').glob('*.sprite'), Path(__file__).with_name('custody-save.cpp')]
     # An internal build timestamp allows fixes without changing the app version.
     # Stable input mtimes retain repeatable packaging of the same build.

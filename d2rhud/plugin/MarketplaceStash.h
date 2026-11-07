@@ -65,7 +65,9 @@ struct SavedItem {
     std::string escrowId,escrowState,ledgerId;
     Draft escrowDraft;
     PaymentItem Payment() const {
-        PaymentItem result{code,quality,index,quantity,bool(flags&(1u<<4)),bool(flags&(1u<<22))};
+        // Affixed/socketed stacks are one complete item, never ammunition
+        // units available for a partial payment. Keep quantity for tooltips.
+        PaymentItem result{code,quality,index,(quality==2&&children.empty())?quantity:1u,bool(flags&(1u<<4)),bool(flags&(1u<<22))};
         if(code!="cm2"||quality!=7)return result;
         // Stat 83 is the native STAT_ITEM_ADDCLASSSKILLS. Only the root
         // item's base list counts; socket children cannot supply this roll.

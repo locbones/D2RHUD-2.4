@@ -68,12 +68,18 @@ trait MarketplaceEscrow {
         if($comment!==null)$r['comment']=$comment;
         if($r['quantity_bit']!==-1){
             if($r['quality']!==2||$r['sockets']||$r['quantity_bit']+9>strlen($hex)*4||self::readBits($hex,$r['quantity_bit'],9)!==$r['quantity'])throw new MarketError(422,'Unsafe stack metadata.');
-        }elseif($r['quantity']!==1)throw new MarketError(422,'Stack edit metadata is required.');
+        }
+        // No edit offset means an indivisible saved record. Its ammunition
+        // count remains useful for display, but never supplies multiple items
+        // or authorizes a partial byte edit (e.g. a rare javelin stack).
         if($native=$this->itemIdentity($hex)){$r['saved_id']=$native['saved_id'];$r['item_uuid']=$native['item_uuid'];}
         if($lineage)$r['ledger_id']=$lineage;$r['display']=$display;return $r;
     }
     private static function readBits(string $hex,int $at,int $n): int {
         $bytes=hex2bin($hex);$value=0;for($i=0;$i<$n;$i++)$value|=((ord($bytes[intdiv($at+$i,8)])>>(($at+$i)%8))&1)<<$i;return $value;
+    }
+    private static function tradeQuantity(array $item): int {
+        return ($item['quantity_bit']??-1)===-1?1:($item['quantity']??1);
     }
     private static function patchBits(string $hex,int $at,int $n,int $value): string {
         $bytes=hex2bin($hex);for($i=0;$i<$n;$i++){$p=intdiv($at+$i,8);$mask=1<<(($at+$i)%8);$bytes[$p]=chr((ord($bytes[$p])&~$mask)|((($value>>$i)&1)?$mask:0));}return bin2hex($bytes);
@@ -348,7 +354,7 @@ trait MarketplaceEscrow {
                 }$remaining=$r['quantity'];
                 foreach($stock as $i){$m=json_decode($i['metadata'],true,512,JSON_THROW_ON_ERROR);
                     if(isset($used[$i['item']])||!self::paymentClassMatches($r,$m)||!$m['identified']||$i['code']!==$r['code']||(int)$i['quality']!==$r['quality']||(int)$i['item_index']!==$r['index']||($r['ethereal']!==-1&&(int)$i['ethereal']!==$r['ethereal']))continue;
-                    $q=min($remaining,$m['quantity']);if($q!==$m['quantity']&&$m['quantity_bit']===-1)continue;$remaining-=$q;$used[$i['item']]=true;if(!$remaining)break;
+                    $q=min($remaining,self::tradeQuantity($m));$remaining-=$q;$used[$i['item']]=true;if(!$remaining)break;
                 }
                 if($remaining){$r['quantity']=$remaining;$needed[]=$r;}
             }
@@ -367,7 +373,7 @@ trait MarketplaceEscrow {
             foreach($this->run("SELECT e.*,i.code,i.quality,i.item_index,i.ethereal FROM escrow_items e JOIN items i ON i.id=e.item WHERE e.owner=? AND e.scope=? AND e.state='available' ORDER BY e.item",[$buyer,$scope])->fetchAll() as $i){
                 $m=json_decode($i['metadata'],true,512,JSON_THROW_ON_ERROR);
                 if(isset($used[$i['item']])||!self::paymentClassMatches($r,$m)||!$m['identified']||$i['code']!==$r['code']||(int)$i['quality']!==$r['quality']||(int)$i['item_index']!==$r['index']||($r['ethereal']!==-1&&(int)$i['ethereal']!==$r['ethereal']))continue;
-                $q=min($remaining,$m['quantity']);if($q!==$m['quantity']&&$m['quantity_bit']===-1)continue;
+                $q=min($remaining,self::tradeQuantity($m));
                 $out[]=['item'=>$i,'metadata'=>$m,'quantity'=>$q];$used[$i['item']]=true;$remaining-=$q;if(!$remaining)break;
             }
             if($remaining)return null;
@@ -403,7 +409,7 @@ trait MarketplaceEscrow {
             foreach($allocation as $a){
                 if(isset($a['balance'])){$b=$a['balance'];$this->balance($o['buyer'],$scope,$b,-$b['quantity'],'trade_payment',$receipt);$this->balance($o['seller'],$scope,$b,$b['quantity'],'trade_proceeds',$receipt);$this->recordTradeAsset($receipt,$scope,'payment',$o['buyer'],$o['seller'],null,$b);continue;}
                 $m=$a['metadata'];$item=$a['item']['item'];$q=$a['quantity'];
-                if($q<$m['quantity']){
+                if($q<self::tradeQuantity($m)){
                     $remaining=$m;$remaining['quantity']-=$q;$remaining['item_hex']=self::patchBits($m['item_hex'],$m['quantity_bit'],9,$remaining['quantity']);
                     $this->run('UPDATE escrow_items SET metadata=? WHERE item=?',[self::json($remaining),$item]);$this->run('UPDATE items SET item_hex=? WHERE id=?',[$remaining['item_hex'],$item]);
                     $child=self::id();$m['quantity']=$q;$m['item_hex']=self::patchBits($m['item_hex'],$m['quantity_bit'],9,$q);
@@ -422,7 +428,7 @@ trait MarketplaceEscrow {
                     $this->run('INSERT INTO items VALUES (?,?,?,?,?,?,?,?,?,?)',[$child,$scope,$m['saved_id'],$m['code'],$m['quality'],$m['index'],$m['ethereal'],$m['sockets'],$o['seller'],$m['item_hex']]);
                     $this->run('INSERT INTO escrow_items VALUES (?,?,?,?,?,?)',[$child,$o['seller'],$scope,'available',self::json($m),$receipt]);$this->recordIdentity($child,$scope,$m['item_hex']);$this->event($child,null,['id'=>$o['buyer']],'stack_split','Payment fragment split from ledger '.$item.'.',[],$o['buyer'],$o['seller']);
                 }else{$m['delivery_requested']=true;$this->run('UPDATE escrow_items SET owner=?,metadata=? WHERE item=?',[$o['seller'],self::json($m),$item]);$this->run('UPDATE items SET owner=? WHERE id=?',[$o['seller'],$item]);}
-                $this->recordTradeAsset($receipt,$scope,'payment',$o['buyer'],$o['seller'],$q<$a['metadata']['quantity']?$child:$item,[],$item);
+                $this->recordTradeAsset($receipt,$scope,'payment',$o['buyer'],$o['seller'],$q<self::tradeQuantity($a['metadata'])?$child:$item,[],$item);
             }
             foreach($members as $member){
                 $goods=json_decode($this->run("SELECT metadata FROM escrow_items WHERE item=?",[$member])->fetchColumn(),true,512,JSON_THROW_ON_ERROR);$goods['price']=[];$goods['delivery_requested']=true;
