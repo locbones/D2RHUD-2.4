@@ -1,5 +1,14 @@
 # DreamHost marketplace service
 
+RMD-MP's website catalog includes all 68 Enhancement Crystal variants, with
+effect names, usage limits and the normal/Blacksmith descriptions exported from
+`Pandemonium/Filters/override_rules.lua`. Refresh the checked-in reference with
+`python tools/marketplace/build-crystal-reference.py PATH_TO_OVERRIDE_RULES --apply-catalog`
+after changing those descriptions. The normal `build-web-catalog.cjs` build
+also applies this reference. Exporting reads the Lua text without executing it;
+only display labels change, while saved codes and trade matching stay intact.
+Other mods receive their own catalogs and do not inherit RMD-MP descriptions.
+
 Marketplace compatibility protocol 2 fingerprints the native helper's normalized
 saved item flags, dimensions, stat widths/addends, code dictionary and bag stat
 mapping. Whole BIN hashes and unrelated HUD metadata no longer define a market.
@@ -408,6 +417,29 @@ settlement and delivery. Publishing a WTB budget is not purchase consent. A
 completed response marks the wanted post fulfilled. Existing conversations remain
 available after a wanted post closes.
 
+`player-escrow` accepts `sort=name`, `name-desc`, `quality`, or `quality-asc`.
+Sorting applies to all matching available items before pagination, with stable
+item IDs breaking equal-name ties. The website remembers Browse and Vault sorting
+separately in its existing display preferences. Native Filters also offers both
+name directions, both quality directions, and seller/tab directions.
+
+Background load is bounded: companion workers share one HTTP request gate and a
+5–120 second exponential cooldown plus jitter (up to 300 seconds for `Retry-After`). Failed
+requests are never replayed inside the transport. The existing durable journals
+retain mutation IDs and save-write authorization. Steady custody polls run about
+every 12 seconds in game or 30 seconds idle; actual local page changes and remote
+transfer notifications wake them immediately. Chat can poll every five seconds
+without downloading a full trade snapshot each time. Website listing refreshes
+run every 15 seconds, pause in hidden tabs, and share overload cooldowns across
+tabs. Read-only delivery hints avoid the market-wide transaction lock; all
+reservation, authorization, settlement and save-commit checks retain their locks.
+An acknowledged `web_sync` returns an `inventory_hash`. If the locally parsed
+inventory is unchanged, the companion uses `web_poll` with that hash, without
+uploading item properties. The server compares the scoped stored snapshot and
+requests a full upload with `inventory_required` when necessary. Missing
+inventory is never accepted as an empty inventory by this protocol; older
+servers reject `web_poll`, allowing a safe fallback to full `web_sync`.
+
 `player-escrow` exposes safe item display metadata and available wallet balances
 for a code-linked player in the selected mod/mode. It excludes delivery reservations
 and never exposes save bytes, tokens, private paths or recovery records. Trade
@@ -453,3 +485,18 @@ The browser's Setup status and Pandemonium show the **installed companion versio
 website status updates after an authenticated agent sync and does not assume an
 older PC has already updated. Linux launcher packages remain paired; managed save
 synchronization and its runtime updater are currently Windows-only.
+# Delivery sync
+
+The Vault and delivery activity have a **Sync now** action. The native marketplace
+footer offers the same action. It wakes the existing companion and retries queued
+deliveries through the usual unloaded-page leases and durable transfer receipts;
+it cannot bypass a held item, authorize an in-memory save edit, or duplicate a
+claimed item. A website request is scoped to the linked player, mod and character
+mode. Repeated clicks coalesce for 15 seconds, and network overload backoff remains
+in effect.
+
+A native reload acknowledgement is not a delivery receipt. Outstanding queues
+may request another reload after 30 seconds if an earlier handoff did not deliver
+them. Progress distinguishes an idle-cursor wait, missing stash connection, full
+market page and transfer recovery. The progress record is informational and never
+grants custody authority. Companion failures remain non-blocking for game launch.

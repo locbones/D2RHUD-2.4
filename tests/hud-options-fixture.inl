@@ -1,5 +1,6 @@
 #include "../d2rhud/plugin/D2RHUD/OptionsLayout.h"
 #include "../d2rhud/plugin/D2RHUD/OptionsCatalog.h"
+#include "../d2rhud/plugin/D2RHUD/ChatAppearance.h"
 #include <tuple>
 
 static bool showD2RHUDMenu=true;
@@ -13,10 +14,15 @@ struct OptionSettings {
     bool NoWidescreenBars=false,DisableRightClickItemPickup=false,QuantityRightClicks=true,MinimalistQuantityPopup=false;
     bool PersistentSummons=false,D3StyleWhirlwind=false,ExtendedItemcodes=false,ChatSounds=false,FloatingDamage=false;
     bool HPRolloverMods=false,SurvivorArena=false,ActVI=false;
+    bool DynamicAutomap=false,MercSellerUnlock=false,MercIconsFix=false,MultipleAurasPerItem=false;
+    int DynamicAutomapInterval=100;
     bool ExtendedCubeConditions=false,MultipleUseitemOutputs=false,MultipleUseitemInputs=false,BulkCubeOutputs=false,ExtendedCubeOutputs=false;
     int HPRolloverDifficulty=0,HPRolloverPercent=0,SunderValue=99;
     std::string ChatSoundPath;
+    int ChatNotificationVolume=30;
+    HudChatAppearance::Settings ChatAppearance;
 } d2rHUDConfig;
+namespace HudChatAppearance {const char* Status(){return "Native chat ready";}}
 struct Cached {
     bool HPRollover=false,sunderedMonUMods=false,monsterStatsDisplay=false,minionEquality=false,gambleForce=false;
     bool CombatLog=false,TransmogVisuals=false,ExtendedItemcodes=false,FloatingDamage=false;
@@ -51,7 +57,21 @@ namespace SummonPersistence {void SetEnabled(bool){}const char* Status(){return 
 namespace LegacyTransmog {void SetQuantityRightClicks(bool){}void SetMinimalistQuantityPopup(bool){}const char* StackSplitStatus(){return "Ready";}}
 namespace D3Whirlwind {void SetEnabled(bool){}void SetRightClickPickupDisabled(bool){}}
 namespace ItemCodes {bool Installed(){return false;}}
+namespace DynamicAutomap {void Configure(bool,int){}bool Available(){return true;}const char* Status(){return "Ready";}}
+namespace MercSeller {void SetEnabled(bool){}bool Available(){return true;}const char* Status(){return "Ready";}}
+namespace MercIcons {void SetEnabled(bool){}bool Available(){return true;}const char* Status(){return "Ready";}}
+namespace MultipleAuras {void SetEnabled(bool){}bool Available(){return true;}const char* Status(){return "Ready";}}
 namespace ExtendedActs {bool enabled=false;void SetRequested(bool value){enabled=value;}bool Requested(){return enabled;}bool Active(){return false;}const char* Status(){return "Ready";}}
 namespace CubeMap {void SetSurvivorsEnabled(bool){}const char* Status(){return "Ready";}}
 namespace CubeVisual {void SetExtendedConditions(bool){}void SetMultipleUseOutputs(bool){}void SetMultipleUseInputs(bool){}void SetBulkOutputs(bool){}void SetExtendedOutputs(bool){}}
+namespace ImGui {
+static bool ChatFixtureSlider(const char* label,int* value,int low,int high,const char* format="%d",ImGuiSliderFlags flags=0){
+    const bool changed=SliderInt(label,value,low,high,format,flags);
+    if(std::string_view(label).starts_with("##chat-"))optionRects[label]=GetCurrentContext()->LastItemData.Rect;
+    return changed;
+}
+}
+namespace HudText {static bool ChatFixtureSlider(const char* label,int* value,int low,int high,const char* format="%d",ImGuiSliderFlags flags=0){return SliderInt(label,value,low,high,format,flags);}}
+#define SliderInt ChatFixtureSlider
 #include "../d2rhud/plugin/D2RHUD/OptionsUI.inl"
+#undef SliderInt

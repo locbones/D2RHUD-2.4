@@ -47,6 +47,6 @@ try {
         $result=$service->controlledRequest($actor,$action,$data,$hc==='1',fn()=>match($action){'publish'=>$service->publish($actor,$data,$hc==='1'),'custody'=>$service->custody($actor,$data,$hc==='1'),default=>$service->command($actor,$data,$hc==='1')});
     }else throw new MarketError(404,'Endpoint not found.');
     echo json_encode($result,JSON_THROW_ON_ERROR|JSON_UNESCAPED_UNICODE);
-}catch(MarketError $e){http_response_code($e->status);echo json_encode(['error'=>$e->getMessage()]);}
+}catch(MarketError $e){http_response_code($e->status);if($e->status===503)header('Retry-After: 15');echo json_encode(['error'=>$e->getMessage()]);}
 catch(JsonException $e){http_response_code(422);echo json_encode(['error'=>'Malformed JSON.']);}
 catch(Throwable $e){http_response_code(500);error_log('D2 marketplace: '.$e->getMessage());echo json_encode(['error'=>'The marketplace service is unavailable.']);}

@@ -39,13 +39,17 @@ trait MarketplaceOwnerTools {
     // HTTP mutation boundary: reset and ordinary requests take the same DB lock.
     // Existing domain transactions join this outer transaction (no partial commit).
     public function controlledRequest(array $actor,string $action,array $data,bool $hc,callable $callback): array {
+        if($action==='custody'&&in_array($data['type']??'',['delivery_queue','profile_state'],true)){
+            if($this->run('SELECT role FROM actors WHERE id=?',[$actor['owner']??$actor['id']])->fetchColumn()==='retired')throw new MarketError(401,'This player account has been retired. Link your current player.');
+            return $callback(); // Authenticated hints only; no transfer authorization.
+        }
         return $this->transaction(function()use($actor,$action,$data,$hc,$callback){
             $control=$this->run('SELECT phase FROM market_control WHERE community=?'.$this->lock(),[$this->community])->fetchColumn();
             if($this->run('SELECT role FROM actors WHERE id=?',[$actor['owner']??$actor['id']])->fetchColumn()==='retired')throw new MarketError(401,'This player account has been retired. Link your current player.');
             $type=$data['type']??'';
             $operating=$action==='owner';
             if($operating)$this->requireOwner($actor);
-            $recovery=$action==='custody'&&in_array($type,['web_sync','delivery_queue','claim_prepare','write_authorize','commit','cancel','status','wallet_notice','browser_link','profile_state'],true);
+            $recovery=$action==='custody'&&in_array($type,['web_sync','web_poll','delivery_queue','claim_prepare','write_authorize','commit','cancel','status','wallet_notice','browser_link','profile_state'],true);
             if(!$operating&&!$recovery){
                 if($control==='draining')throw new MarketError(409,'The owner is clearing the marketplace. Vault returns are still available.');
                 $reset=$this->clientReset($actor['owner']??$actor['id'],$hc);
@@ -79,6 +83,7 @@ trait MarketplaceOwnerTools {
             'wallet_entries'=>$scope,'wallet_withdrawals'=>$scope,'market_favorites'=>$scope,
             'market_messages'=>$scope,'market_characters'=>$scope,'web_intents'=>$scope,
             'web_profiles'=>$scope,'market_preferences'=>$scope,'custody_sources'=>$scope,'inventory_sources'=>$scope,
+            'market_delivery_sync'=>$scope,
             'listings'=>$items,'items'=>$scope,
         ];
     }

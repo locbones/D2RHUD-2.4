@@ -97,6 +97,7 @@
     <ClCompile Include="plugin\D2RHUD\D2RHUD.cpp" />
     <ClCompile Include="plugin\D2RHUD\CombatFeedback.cpp" />
     <ClCompile Include="plugin\D2RHUD\ChatNotifications.cpp" />
+    <ClCompile Include="plugin\D2RHUD\ChatAppearance.cpp" />
     <ClCompile Include="plugin\D2RHUD\HudSoundLibrary.cpp" />
     <ClCompile Include="plugin\D2RHUD\NotificationSound.cpp" />
     <ClCompile Include="plugin\D2RHUD\HudCommands.cpp" />
@@ -370,6 +371,7 @@
     <ClInclude Include="plugin\D2RHUD\D2RHUD.h" />
     <ClInclude Include="plugin\D2RHUD\CombatFeedback.h" />
     <ClInclude Include="plugin\D2RHUD\ChatNotifications.h" />
+    <ClInclude Include="plugin\D2RHUD\ChatAppearance.h" />
     <ClInclude Include="plugin\D2RHUD\HudSoundLibrary.h" />
     <ClInclude Include="plugin\D2RHUD\HudCommands.h" />
     <ClInclude Include="plugin\D2RHUD\CommandSession.h" />

@@ -2,7 +2,7 @@
 // before the real application scripts. No production API or game saves are used.
 (() => {
   const fixture=JSON.parse(document.getElementById('live-fixture').textContent),intervals=new Map(),originalFetch=window.fetch.bind(window);
-  let scenario='same',snapshots=0,delayNext=false,release=null,setupRequest=null;
+  let scenario='same',snapshots=0,delayNext=false,release=null,setupRequest=null,syncRequest=null;
   let mailMode=false;const mailSeen=new Set(),mailReads=[],mailOwner=fixture.snapshot.self.id,mailPeer=fixture.snapshot.offers[0].seller;
   const mailRows=[['direct',mailPeer],['direct','e'.repeat(32)],['trade',mailPeer]].map(([kind,sender],i)=>({id:String(i+1).repeat(32),seq:i+1,kind,sender,recipient:mailOwner,sender_name:'Fixture trader',sender_player_id:'P-000001',body:'Read receipt fixture '+i,created:1700000000,scope:'tcpip|RMD-MP|2.4|SC',thread:fixture.snapshot.offers[0].id}));
   localStorage.setItem('market-display',JSON.stringify({view:'tiles',size:'medium',lines:20}));sessionStorage.setItem('market-mode','0');
@@ -14,15 +14,20 @@
     let body;
     if(action==='catalog')return originalFetch('/assets/catalog.json');
     if(action==='markets')body=fixture.markets;
+    else if(action==='history')body={rows:[],next_before:null,averages:null};
+    else if(action==='listing-offers')body={rows:[],total:0,next_before:null};
+    else if(action==='trade-messages')body=parsed.searchParams.get('thread')==='updates'?{messages:mailRows.filter(m=>m.kind==='trade'),next_before:null}:{conversations:[],next_before:null,updates_count:mailMode?1:0,updates_unread:mailMode&&!mailSeen.has(mailRows[2].id)?3:0};
     else if(action==='inbox')body={owner:mailOwner,messages:mailMode?mailRows.filter(m=>m.seq>Number(parsed.searchParams.get('after'))):[],next:mailMode?3:0,unread:mailMode?mailRows.filter(m=>!mailSeen.has(m.id)).length:0};
     else if(action==='messages')body=parsed.searchParams.has('peer')?{peer:{id:parsed.searchParams.get('peer'),name:'Fixture trader',player_id:'P-000001'},messages:mailRows.filter(m=>m.kind==='direct'&&m.sender===parsed.searchParams.get('peer'))}:{conversations:mailMode?mailRows.filter(m=>m.kind==='direct').map(m=>({id:m.sender,name:'Fixture trader',body:m.body,last_seq:m.seq,unread_seq:mailSeen.has(m.id)?0:m.seq})).reverse():[]};
     else if(action==='command'){
       const packet=JSON.parse(options.body);if(packet.type==='message_read'){mailReads.push(packet);for(const id of packet.messages||[])mailSeen.add(id);return new Response(JSON.stringify({unread:mailRows.filter(m=>!mailSeen.has(m.id)).length}),{headers:{'Content-Type':'application/json'}});}
+      if(packet.type==='web_delivery_sync'){syncRequest=packet;return new Response(JSON.stringify({requested:true,request_id:'a'.repeat(32)}),{headers:{'Content-Type':'application/json'}});}
       setupRequest=packet;
       if(setupRequest.type!=='web_setup')throw new Error('Unexpected fixture command.');
       scenario='setup-pending';body={queued:true};
     }else if(action==='snapshot'){
       body=copy(fixture.snapshot);body.generated_at+=++snapshots;body.expires_at+=snapshots;
+      if(syncRequest)body.stash_sync={request_id:'a'.repeat(32),requested:Math.floor(Date.now()/1000),updated:0,progress:{}};
       for(const row of body.listings)row.expires_at+=snapshots;
       if(scenario==='changed'){body.listings[0].price[0].quantity=987654;body.listings[0].active_offer_count=3;}
       if(scenario==='inserted')body.listings.unshift({...copy(body.listings[1]),id:'new-test-listing',item_id:'new-test-item',item:{...copy(body.listings[1].item),ledger_id:'new-test-item'}});
@@ -44,11 +49,12 @@
   const assert=(ok,message)=>{if(!ok)throw new Error(message);};
   const $=selector=>document.querySelector(selector);
   const input=value=>{const node=$('#listing-search');node.value=value;node.dispatchEvent(new Event('input',{bubbles:true}));return node;};
-  const tick=()=>intervals.get(5000)();
+  const tick=()=>intervals.get(15000)();
   async function route(page){location.hash=page;await until(()=>page==='browse'?!!$('#listing-results'):page==='items'?!!$('.inventory-toolbar'):page.startsWith('item/')?!!$('.trade-detail'):page==='messages'||page.startsWith('messages/')?!!$('#direct-log'):page==='offers'?!!$('.offer-list'):page==='wallet'?!!$('.wallet-requests'):!!$('#setup-form'));}
   async function run(output){
     try{
       await until(()=>!!$('.exchange-card')&&intervals.has(5000));
+      await document.fonts.ready;
       const main=$('#main'),heading=main.firstElementChild,account=$('#account-control').firstElementChild;
       const search=input('War');search.focus();search.setSelectionRange(1,2);
       let tile=$('.exchange-card'),image=tile.querySelector('img'),trigger=tile.querySelector('[data-item-tip]');
@@ -71,10 +77,11 @@
       scenario='same';await tick();
       $('[data-action="display-view"][data-id="list"]').click();
       const row=$('.exchange-row'),rowImage=row.querySelector('img'),price=row.querySelector('.row-price');price.open=true;price.querySelector('summary').focus();await frame();
+      await until(()=>price.querySelector('.compact-popover').style.position==='fixed');await frame();
       const sellerHeading=$('.list-heading-seller'),sellerName=row.querySelector('.row-seller .player-display-name');
       if(sellerHeading.getBoundingClientRect().width)assert(Math.abs(sellerName.getBoundingClientRect().left-sellerHeading.getBoundingClientRect().left)<1,'Seller name is not aligned with its column heading.');
       const listRecords=[],listWatch=new MutationObserver(rows=>listRecords.push(...rows));listWatch.observe(main,{subtree:true,childList:true,attributes:true,characterData:true});
-      for(let n=0;n<3;n++)await tick();await Promise.resolve();listWatch.disconnect();assert(!listRecords.length,'Unchanged list polling mutated an open price menu.');
+      for(let n=0;n<3;n++)await tick();await Promise.resolve();listWatch.disconnect();assert(!listRecords.length,'Unchanged list polling mutated an open price menu: '+listRecords.map(r=>r.type+':'+r.attributeName+':'+r.target.className).join(','));
       assert($('.exchange-row')===row&&row.querySelector('img')===rowImage&&price.open&&document.activeElement===price.querySelector('summary'),'List refresh lost a row, image, disclosure or focus.');
       scenario='free';await tick();const free=$('#free-filter');free.checked=true;free.dispatchEvent(new Event('change',{bubbles:true}));
       assert(main.querySelectorAll('.exchange-row').length===1&&$('.exchange-row').dataset.liveKey==='listing/free-test-listing','Free-only browsing included a paid listing.');
@@ -83,6 +90,9 @@
       scenario='same';await tick();assert(!$('.exchange-row')&&main.textContent.includes('No matching trades'),'Free filter did not handle the last giveaway being claimed.');
       $('[data-action="clear-filters"]').click();assert(!$('#free-filter').checked&&main.querySelectorAll('.exchange-row').length===fixture.snapshot.listings.length,'Clear filters did not reset Free only.');
       await route('items');const own=$('.exchange-row'),ownImage=own.querySelector('img');await tick();assert($('.exchange-row')===own&&own.querySelector('img')===ownImage,'My Items refresh replaced an unchanged item.');
+      $('[data-action="stash-sync"]').click();await until(()=>!!syncRequest&&main.textContent.includes('Sync requested · waiting for your companion'));
+      assert($('.exchange-row')===own&&own.querySelector('img')===ownImage,'Manual sync replaced the Vault item or navigated away.');
+      assert($('[data-action="stash-sync"]').disabled,'Repeated manual sync requests are not throttled.');
       scenario='deposit-disabled';await tick();await route('item/'+fixture.snapshot.local_items[0].key);
       assert(!$('[data-action="set-price"]').disabled,'Disabled deposits hide or disable price drafts.');
       assert($('[data-transfer="gift-item"]').disabled,'A local item can be gifted without custody.');
@@ -90,8 +100,9 @@
       assert($('.trade-note').textContent.includes('deposit is disabled')&&$('.trade-note a').getAttribute('href')==='#setup','A disabled deposit incorrectly tells the player to switch pages.');
       $('[data-action="set-price"]').click();await until(()=>!!$('#payment-search'));
       $('[data-action="close-modal"]').click();
+      await until(()=>!$('#modal').open);await frame();
       scenario='deposit-enabling';await tick();await route('items');await route('item/'+fixture.snapshot.local_items[0].key);
-      assert($('.trade-note').textContent.includes('enablement is waiting for Pandemonium'),'Pending enablement is reported as an active deposit.');
+      assert($('.trade-note').textContent.includes('enablement is waiting for Pandemonium'),'Pending enablement is reported as an active deposit: '+$('.trade-note').textContent);
       scenario='same';await tick();await route('items');await route('item/'+fixture.snapshot.local_items[0].key);
       assert($('.trade-note').textContent.includes('Keep Pandemonium running and switch away'),'Enabled deposits lost their page-switch instructions.');
       await route('offers');const offer=$('.offer-card');offer.focus();await tick();assert($('.offer-card')===offer&&document.activeElement===offer,'Offers refresh replaced the focused offer.');
@@ -112,10 +123,10 @@
       scenario='setup-empty';await tick();await route('browse');await route('setup');
       const fresh=$('#setup-form'),save=fresh.querySelector('button[type="submit"]');
       assert(!save.disabled,'First-sync setup Save button is disabled.');
-      fresh.elements.page.value='17';fresh.elements.withdraw_page.value='4';fresh.requestSubmit();
+      fresh.elements.page.value='17';fresh.requestSubmit();
       await until(()=>!!setupRequest&&!!$('#setup-form')?.textContent.includes('Save trading setup')&&main.textContent.includes('Waiting for Pandemonium'));
-      assert(setupRequest.expected_revision===0&&setupRequest.page===17&&setupRequest.withdraw_page===4,'First-sync setup submitted incorrect pages or revision.');
-      assert($('#setup-form').elements.page.value==='17'&&$('#setup-form').elements.withdraw_page.value==='4','Queued setup lost the chosen pages.');
+      assert(setupRequest.expected_revision===0&&setupRequest.page===17&&setupRequest.withdraw_page===17,'First-sync setup submitted incorrect market page or revision.');
+      assert($('#setup-form').elements.page.value==='17','Queued setup lost the chosen market page.');
       assert(!main.textContent.includes('1970'),'Unsynced setup displays an epoch date.');
       scenario='same';
       await route('browse');delayNext=true;const pending=tick();await until(()=>!!release);
@@ -123,7 +134,7 @@
       release();await pending;assert(mode.value==='1'&&!$('.exchange-row')&&!$('.exchange-card'),'A late Softcore response overwrote the Hardcore page.');
       mode.value='0';mode.dispatchEvent(new Event('change',{bubbles:true}));await until(()=>!!$('.exchange-row'));
       scenario='setup-pending';await tick();await route('setup');
-      output.textContent='PASS · First-sync setup saved pages 17 / 4 with revision 0 and a pending receipt. 20 unchanged polls caused zero listing mutations. Images, menus, search/caret, offers, wallet history and setup edits stayed intact; live updates and filters passed.';
+      output.textContent='PASS · First-sync setup saved market page 17 with revision 0 and a pending receipt. 20 unchanged polls caused zero listing mutations. Images, menus, search/caret, messages, offers, wallet history and setup edits stayed intact; live updates and filters passed.';
       output.dataset.result='passed';
     }catch(error){output.textContent='FAIL · '+error.message;output.dataset.result='failed';console.error(error);}
   }

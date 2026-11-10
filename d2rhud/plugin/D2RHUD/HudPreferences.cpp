@@ -104,6 +104,11 @@ void Load(Config& config, const HudConfig::Json& document, bool rmdDefaults) {
     config.MessageColor = Text(document, "Message Color", config.MessageColor);
     config.ChatSoundPath = Text(document, "ChatSoundPath", config.ChatSoundPath);
     config.ChatNotificationVolume = std::clamp(Integer(document, "ChatNotificationVolume", config.ChatNotificationVolume), 0, 100);
+    if (const auto chat = Field(document, "ChatAppearance"); chat && chat->is_object()) {
+        config.ChatAppearance = HudChatAppearance::Normalize({Boolean(*chat, "Enabled", config.ChatAppearance.enabled),
+            Integer(*chat, "Size", config.ChatAppearance.size), Integer(*chat, "BackgroundOpacity", config.ChatAppearance.background),
+            Integer(*chat, "LiveAreaHeight", config.ChatAppearance.height)});
+    }
     config.CameraLastPresetIndex = Integer(document, "CameraLastPresetIndex", config.CameraLastPresetIndex);
     if (config.CameraLastPresetIndex < 0 || config.CameraLastPresetIndex > 3)
         config.CameraLastPresetIndex = 0;
@@ -142,6 +147,12 @@ void Save(const Config& config, HudConfig::Json& document) {
     document["Message Color"] = config.MessageColor;
     document["ChatSoundPath"] = config.ChatSoundPath;
     document["ChatNotificationVolume"] = std::clamp(config.ChatNotificationVolume, 0, 100);
+    const auto appearance = HudChatAppearance::Normalize(config.ChatAppearance);
+    auto& chat = Object(document, "ChatAppearance");
+    chat["Enabled"] = appearance.enabled;
+    chat["Size"] = appearance.size;
+    chat["BackgroundOpacity"] = appearance.background;
+    chat["LiveAreaHeight"] = appearance.height;
     document["DLLsToLoad"] = config.DLLsToLoad;
     document["CameraLastPresetIndex"] = config.CameraLastPresetIndex;
     auto& presets = document["CameraPresets"];

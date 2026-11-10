@@ -11,6 +11,7 @@ import tempfile
 import time
 import urllib.error
 import urllib.request
+from unittest.mock import patch
 
 repo = Path(__file__).resolve().parents[1]
 php = Path(sys.argv[1]).resolve()
@@ -62,7 +63,13 @@ with tempfile.TemporaryDirectory(prefix="d2-market-http-") as directory:
             outbox = {"schema": 1, "game_mode": "2.4", "mod": "RMD-MP", "hardcore": False, "threads": [], "commands": [{"id": "http-offer", "type": "propose", "listing_id": listing["listing_id"], "listing_revision": 1, "price": gold, "message": "A real API integration test message"}]}
             (root / "MarketplaceActivityLocal_2.4_SC.json").write_text(json.dumps(outbox))
             assert client.sync(settings, root, allow_local=True)["offers"] == 1
-            assert client.sync(settings, root, allow_local=True)["offers"] == 1
+            with patch.object(client._http,'read_json',wraps=client._http.read_json) as calls:
+                assert client.sync(settings, root, allow_local=True)["offers"] == 1
+                operations=[call.args[2] for call in calls.call_args_list]
+                assert operations.count('sync (SC)')==1 and operations.count('inbox (SC)')==1,operations
+            with patch.object(client._http,'read_json',wraps=client._http.read_json) as calls:
+                client.sync(settings, root, allow_local=True,refresh_feed=False)
+                assert [call.args[2] for call in calls.call_args_list]==['inbox (SC)']
             custody_status = root / 'custody-status.json'
             settings['custody_status'] = str(custody_status)
             custody_status.write_text(json.dumps({'error':'The guarded launcher or HUD changed; revalidate custody before writing saves'}))

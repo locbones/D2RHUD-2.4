@@ -1,0 +1,1776 @@
+{
+  "schema": 1,
+  "mod": "RMD-MP",
+  "source": "Pandemonium/Filters/override_rules.lua",
+  "source_sha256": "f7a6f4de6b5f1cf60519689ddcf4d4e4b4e2053fafd346abf579a3a5fd96475a",
+  "items": [
+    {
+      "code": "Z60",
+      "name": "Enhancement Crystal - Strength (Unlimited)",
+      "description": [
+        {
+          "text": "+2 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "+3 Strength",
+          "kind": "magic"
+        },
+        {
+          "text": "For Blacksmiths:",
+          "kind": "recipe-note"
+        },
+        {
+          "text": "+2 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "+2 Strength",
+          "kind": "magic"
+        }
+      ]
+    },
+    {
+      "code": "Z61",
+      "name": "Enhancement Crystal - Dexterity (Unlimited)",
+      "description": [
+        {
+          "text": "+2 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "+3 Dexterity",
+          "kind": "magic"
+        },
+        {
+          "text": "For Blacksmiths:",
+          "kind": "recipe-note"
+        },
+        {
+          "text": "+2 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "+2 Dexterity",
+          "kind": "magic"
+        }
+      ]
+    },
+    {
+      "code": "Z62",
+      "name": "Enhancement Crystal - Vitality (Unlimited)",
+      "description": [
+        {
+          "text": "+2 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "+3 Vitality",
+          "kind": "magic"
+        },
+        {
+          "text": "For Blacksmiths:",
+          "kind": "recipe-note"
+        },
+        {
+          "text": "+2 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "+2 Vitality",
+          "kind": "magic"
+        }
+      ]
+    },
+    {
+      "code": "Z63",
+      "name": "Enhancement Crystal - Energy (Unlimited)",
+      "description": [
+        {
+          "text": "+2 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "+3 Energy",
+          "kind": "magic"
+        },
+        {
+          "text": "For Blacksmiths:",
+          "kind": "recipe-note"
+        },
+        {
+          "text": "+2 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "+2 Energy",
+          "kind": "magic"
+        }
+      ]
+    },
+    {
+      "code": "Z64",
+      "name": "Enhancement Crystal - Faster Run/Walk (Unlimited)",
+      "description": [
+        {
+          "text": "+3 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "+2% Faster Run/Walk",
+          "kind": "magic"
+        },
+        {
+          "text": "For Blacksmiths:",
+          "kind": "recipe-note"
+        },
+        {
+          "text": "+3 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "+1% Faster Run/Walk",
+          "kind": "magic"
+        }
+      ]
+    },
+    {
+      "code": "Z65",
+      "name": "Enhancement Crystal - Faster Hit Recovery (Unlimited)",
+      "description": [
+        {
+          "text": "+3 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "+2% Faster Hit Recovery",
+          "kind": "magic"
+        },
+        {
+          "text": "For Blacksmiths:",
+          "kind": "recipe-note"
+        },
+        {
+          "text": "+3 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "+1% Faster Hit Recovery",
+          "kind": "magic"
+        }
+      ]
+    },
+    {
+      "code": "Z66",
+      "name": "Enhancement Crystal - Faster Block Rate (Unlimited)",
+      "description": [
+        {
+          "text": "+3 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "+2% Faster Block Rate",
+          "kind": "magic"
+        },
+        {
+          "text": "For Blacksmiths:",
+          "kind": "recipe-note"
+        },
+        {
+          "text": "+3 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "+1% Faster Block Rate",
+          "kind": "magic"
+        }
+      ]
+    },
+    {
+      "code": "Z67",
+      "name": "Enhancement Crystal - Faster Attack Speed (Unlimited)",
+      "description": [
+        {
+          "text": "+3 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "+2% Faster Attack Speed",
+          "kind": "magic"
+        },
+        {
+          "text": "For Blacksmiths:",
+          "kind": "recipe-note"
+        },
+        {
+          "text": "+3 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "+1% Faster Attack Speed",
+          "kind": "magic"
+        }
+      ]
+    },
+    {
+      "code": "Z68",
+      "name": "Enhancement Crystal - Faster Cast Rate (Unlimited)",
+      "description": [
+        {
+          "text": "+3 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "+2% Faster Cast Rate",
+          "kind": "magic"
+        },
+        {
+          "text": "For Blacksmiths:",
+          "kind": "recipe-note"
+        },
+        {
+          "text": "+3 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "+1% Faster Cast Rate",
+          "kind": "magic"
+        }
+      ]
+    },
+    {
+      "code": "Z69",
+      "name": "Enhancement Crystal - Summon HP (Unlimited)",
+      "description": [
+        {
+          "text": "+3 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "+4% Summon HP",
+          "kind": "magic"
+        },
+        {
+          "text": "For Blacksmiths:",
+          "kind": "recipe-note"
+        },
+        {
+          "text": "+3 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "+2% Summon HP",
+          "kind": "magic"
+        }
+      ]
+    },
+    {
+      "code": "Z70",
+      "name": "Enhancement Crystal - Summon Damage (Unlimited)",
+      "description": [
+        {
+          "text": "+3 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "+4% Summon Damage",
+          "kind": "magic"
+        },
+        {
+          "text": "For Blacksmiths:",
+          "kind": "recipe-note"
+        },
+        {
+          "text": "+3 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "+2% Summon Damage",
+          "kind": "magic"
+        }
+      ]
+    },
+    {
+      "code": "Z71",
+      "name": "Enhancement Crystal - Summon Combat Rating (Unlimited)",
+      "description": [
+        {
+          "text": "+3 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "+2% Summon Combat Rating",
+          "kind": "magic"
+        },
+        {
+          "text": "For Blacksmiths:",
+          "kind": "recipe-note"
+        },
+        {
+          "text": "+3 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "+1% Summon Combat Rating",
+          "kind": "magic"
+        }
+      ]
+    },
+    {
+      "code": "Z72",
+      "name": "Enhancement Crystal - Increase Curse Duration by 2 seconds (Unlimited)",
+      "description": [
+        {
+          "text": "+3 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "Increase Curse Duration by 2 seconds",
+          "kind": "magic"
+        },
+        {
+          "text": "For Blacksmiths:",
+          "kind": "recipe-note"
+        },
+        {
+          "text": "+3 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "Increase Curse Duration by 1 second",
+          "kind": "magic"
+        }
+      ]
+    },
+    {
+      "code": "Z73",
+      "name": "Enhancement Crystal - Increase Curse Radius by 2 (Unlimited)",
+      "description": [
+        {
+          "text": "+5 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "Increase Curse Radius by 2",
+          "kind": "magic"
+        },
+        {
+          "text": "For Blacksmiths:",
+          "kind": "recipe-note"
+        },
+        {
+          "text": "+5 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "Increase Curse Radius by 1",
+          "kind": "magic"
+        }
+      ]
+    },
+    {
+      "code": "Z74",
+      "name": "Enhancement Crystal - Curse Duration on Self Reduced by 5% (Unlimited)",
+      "description": [
+        {
+          "text": "+5 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "Curse Duration on Self Reduced by 5%",
+          "kind": "magic"
+        },
+        {
+          "text": "For Blacksmiths:",
+          "kind": "recipe-note"
+        },
+        {
+          "text": "+5 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "Curse Duration on Self Reduced by 3%",
+          "kind": "magic"
+        }
+      ]
+    },
+    {
+      "code": "Z75",
+      "name": "Enhancement Crystal - Block Chance (Unlimited)",
+      "description": [
+        {
+          "text": "+3 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "+2% Block Chance",
+          "kind": "magic"
+        },
+        {
+          "text": "For Blacksmiths:",
+          "kind": "recipe-note"
+        },
+        {
+          "text": "+3 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "+1% Block Chance",
+          "kind": "magic"
+        }
+      ]
+    },
+    {
+      "code": "Z76",
+      "name": "Enhancement Crystal - Fire Resist (Unlimited)",
+      "description": [
+        {
+          "text": "+3 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "+4% Fire Resist",
+          "kind": "magic"
+        },
+        {
+          "text": "For Blacksmiths:",
+          "kind": "recipe-note"
+        },
+        {
+          "text": "+3 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "+2% Fire Resist",
+          "kind": "magic"
+        }
+      ]
+    },
+    {
+      "code": "Z77",
+      "name": "Enhancement Crystal - Cold Resist (Unlimited)",
+      "description": [
+        {
+          "text": "+3 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "+4% Cold Resist",
+          "kind": "magic"
+        },
+        {
+          "text": "For Blacksmiths:",
+          "kind": "recipe-note"
+        },
+        {
+          "text": "+3 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "+2% Cold Resist",
+          "kind": "magic"
+        }
+      ]
+    },
+    {
+      "code": "Z78",
+      "name": "Enhancement Crystal - Lightning Resist (Unlimited)",
+      "description": [
+        {
+          "text": "+3 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "+4% Lightning Resist",
+          "kind": "magic"
+        },
+        {
+          "text": "For Blacksmiths:",
+          "kind": "recipe-note"
+        },
+        {
+          "text": "+3 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "+2% Lightning Resist",
+          "kind": "magic"
+        }
+      ]
+    },
+    {
+      "code": "Z79",
+      "name": "Enhancement Crystal - Poison Resist (Unlimited)",
+      "description": [
+        {
+          "text": "+3 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "+4% Poison Resist",
+          "kind": "magic"
+        },
+        {
+          "text": "For Blacksmiths:",
+          "kind": "recipe-note"
+        },
+        {
+          "text": "+3 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "+2% Poison Resist",
+          "kind": "magic"
+        }
+      ]
+    },
+    {
+      "code": "Z80",
+      "name": "Enhancement Crystal - Bonus to Attack Rating (Unlimited)",
+      "description": [
+        {
+          "text": "+5 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "+8% Bonus to Attack Rating",
+          "kind": "magic"
+        },
+        {
+          "text": "For Blacksmiths:",
+          "kind": "recipe-note"
+        },
+        {
+          "text": "+5 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "+5% Bonus to Attack Rating",
+          "kind": "magic"
+        }
+      ]
+    },
+    {
+      "code": "Z81",
+      "name": "Enhancement Crystal - Attack Rating (Unlimited)",
+      "description": [
+        {
+          "text": "+4 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "+250 Attack Rating",
+          "kind": "magic"
+        },
+        {
+          "text": "For Blacksmiths:",
+          "kind": "recipe-note"
+        },
+        {
+          "text": "+4 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "+150 Attack Rating",
+          "kind": "magic"
+        }
+      ]
+    },
+    {
+      "code": "Z82",
+      "name": "Enhancement Crystal - Damage (Unlimited)",
+      "description": [
+        {
+          "text": "+2 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "+3 Damage",
+          "kind": "magic"
+        },
+        {
+          "text": "For Blacksmiths:",
+          "kind": "recipe-note"
+        },
+        {
+          "text": "+2 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "+2 Damage",
+          "kind": "magic"
+        }
+      ]
+    },
+    {
+      "code": "Z83",
+      "name": "Enhancement Crystal - Enhanced Damage (Unlimited)",
+      "description": [
+        {
+          "text": "+3 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "+7% Enhanced Damage",
+          "kind": "magic"
+        },
+        {
+          "text": "For Blacksmiths:",
+          "kind": "recipe-note"
+        },
+        {
+          "text": "+3 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "+4% Enhanced Damage",
+          "kind": "magic"
+        }
+      ]
+    },
+    {
+      "code": "Z84",
+      "name": "Enhancement Crystal - Fire Damage (Unlimited)",
+      "description": [
+        {
+          "text": "+2 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "+7-10 Fire Damage",
+          "kind": "magic"
+        },
+        {
+          "text": "For Blacksmiths:",
+          "kind": "recipe-note"
+        },
+        {
+          "text": "+2 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "+4-7 Fire Damage",
+          "kind": "magic"
+        }
+      ]
+    },
+    {
+      "code": "Z85",
+      "name": "Enhancement Crystal - Cold Damage (Unlimited)",
+      "description": [
+        {
+          "text": "+2 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "+7-10 Cold Damage",
+          "kind": "magic"
+        },
+        {
+          "text": "For Blacksmiths:",
+          "kind": "recipe-note"
+        },
+        {
+          "text": "+2 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "+4-7 Cold Damage",
+          "kind": "magic"
+        }
+      ]
+    },
+    {
+      "code": "Z86",
+      "name": "Enhancement Crystal - Lightning Damage (Unlimited)",
+      "description": [
+        {
+          "text": "+2 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "+1-28 Lightning Damage",
+          "kind": "magic"
+        },
+        {
+          "text": "For Blacksmiths:",
+          "kind": "recipe-note"
+        },
+        {
+          "text": "+2 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "+1-14 Lightning Damage",
+          "kind": "magic"
+        }
+      ]
+    },
+    {
+      "code": "Z87",
+      "name": "Enhancement Crystal - Poison Damage over 2 Seconds (Unlimited)",
+      "description": [
+        {
+          "text": "+2 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "+40 Poison Damage over 2 Seconds",
+          "kind": "magic"
+        },
+        {
+          "text": "For Blacksmiths:",
+          "kind": "recipe-note"
+        },
+        {
+          "text": "+2 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "+20 Poison Damage over 2 Seconds",
+          "kind": "magic"
+        }
+      ]
+    },
+    {
+      "code": "Z88",
+      "name": "Enhancement Crystal - Magic Find (10 Uses Per Item)",
+      "description": [
+        {
+          "text": "+3 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "+5% Magic Find",
+          "kind": "magic"
+        },
+        {
+          "text": "For Blacksmiths:",
+          "kind": "recipe-note"
+        },
+        {
+          "text": "+5 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "+5% Magic Find",
+          "kind": "magic"
+        }
+      ]
+    },
+    {
+      "code": "Z89",
+      "name": "Enhancement Crystal - Gold Find (10 Uses Per Item)",
+      "description": [
+        {
+          "text": "+3 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "+10% Gold Find",
+          "kind": "magic"
+        },
+        {
+          "text": "For Blacksmiths:",
+          "kind": "recipe-note"
+        },
+        {
+          "text": "+5 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "+10% Gold Find",
+          "kind": "magic"
+        }
+      ]
+    },
+    {
+      "code": "Z90",
+      "name": "Enhancement Crystal - Life Steal (10 Uses Per Item)",
+      "description": [
+        {
+          "text": "+2 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "+1% Life Steal",
+          "kind": "magic"
+        },
+        {
+          "text": "For Blacksmiths:",
+          "kind": "recipe-note"
+        },
+        {
+          "text": "+5 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "+1% Life Steal",
+          "kind": "magic"
+        }
+      ]
+    },
+    {
+      "code": "Z91",
+      "name": "Enhancement Crystal - Mana Steal (10 Uses Per Item)",
+      "description": [
+        {
+          "text": "+2 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "+1% Mana Steal",
+          "kind": "magic"
+        },
+        {
+          "text": "For Blacksmiths:",
+          "kind": "recipe-note"
+        },
+        {
+          "text": "+5 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "+1% Mana Steal",
+          "kind": "magic"
+        }
+      ]
+    },
+    {
+      "code": "Z92",
+      "name": "Enhancement Crystal - Mana Regen (10 Uses Per Item)",
+      "description": [
+        {
+          "text": "+1 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "+5% Mana Regen",
+          "kind": "magic"
+        },
+        {
+          "text": "For Blacksmiths:",
+          "kind": "recipe-note"
+        },
+        {
+          "text": "+2 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "+5% Mana Regen",
+          "kind": "magic"
+        }
+      ]
+    },
+    {
+      "code": "Z93",
+      "name": "Enhancement Crystal - Hits Reduce Enemy Defense by 10 (10 Uses Per Item)",
+      "description": [
+        {
+          "text": "+1 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "Hits Reduce Enemy Defense by 10",
+          "kind": "magic"
+        },
+        {
+          "text": "For Blacksmiths:",
+          "kind": "recipe-note"
+        },
+        {
+          "text": "+2 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "Hits Reduce Enemy Defense by 10",
+          "kind": "magic"
+        }
+      ]
+    },
+    {
+      "code": "Z94",
+      "name": "Enhancement Crystal - Physical Damage Reduction (10 Uses Per Item)",
+      "description": [
+        {
+          "text": "+3 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "+5 Physical Damage Reduction",
+          "kind": "magic"
+        },
+        {
+          "text": "For Blacksmiths:",
+          "kind": "recipe-note"
+        },
+        {
+          "text": "+5 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "+5 Physical Damage Reduction",
+          "kind": "magic"
+        }
+      ]
+    },
+    {
+      "code": "Z95",
+      "name": "Enhancement Crystal - Magical Damage Reduction (10 Uses Per Item)",
+      "description": [
+        {
+          "text": "+3 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "+5 Magical Damage Reduction",
+          "kind": "magic"
+        },
+        {
+          "text": "For Blacksmiths:",
+          "kind": "recipe-note"
+        },
+        {
+          "text": "+5 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "+5 Magical Damage Reduction",
+          "kind": "magic"
+        }
+      ]
+    },
+    {
+      "code": "Z96",
+      "name": "Enhancement Crystal - Enemy Elemental Resistances (1 Use Per Item)",
+      "description": [
+        {
+          "text": "+25 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "-10% to Enemy Elemental Resistances",
+          "kind": "magic"
+        },
+        {
+          "text": "For Blacksmiths (No Usage Limit):",
+          "kind": "recipe-note"
+        },
+        {
+          "text": "+20 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "-10% to Enemy Elemental Resistances",
+          "kind": "magic"
+        }
+      ]
+    },
+    {
+      "code": "Z97",
+      "name": "Enhancement Crystal - All Resistances (1 Use Per Item)",
+      "description": [
+        {
+          "text": "+20 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "+15% to All Resistances",
+          "kind": "magic"
+        },
+        {
+          "text": "For Blacksmiths (No Usage Limit):",
+          "kind": "recipe-note"
+        },
+        {
+          "text": "+15 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "+15% to All Resistances",
+          "kind": "magic"
+        }
+      ]
+    },
+    {
+      "code": "Z98",
+      "name": "Enhancement Crystal - Crushing Blow (1 Use Per Item)",
+      "description": [
+        {
+          "text": "+20 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "+5% Crushing Blow",
+          "kind": "magic"
+        },
+        {
+          "text": "For Blacksmiths (No Usage Limit):",
+          "kind": "recipe-note"
+        },
+        {
+          "text": "+15 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "+5% Crushing Blow",
+          "kind": "magic"
+        }
+      ]
+    },
+    {
+      "code": "Z99",
+      "name": "Enhancement Crystal - Open Wounds (1 Use Per Item)",
+      "description": [
+        {
+          "text": "+20 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "+5% Open Wounds",
+          "kind": "magic"
+        },
+        {
+          "text": "For Blacksmiths (No Usage Limit):",
+          "kind": "recipe-note"
+        },
+        {
+          "text": "+15 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "+5% Open Wounds",
+          "kind": "magic"
+        }
+      ]
+    },
+    {
+      "code": "z00",
+      "name": "Enhancement Crystal - Deadly Strike (1 Use Per Item)",
+      "description": [
+        {
+          "text": "+20 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "+5% Deadly Strike",
+          "kind": "magic"
+        },
+        {
+          "text": "For Blacksmiths (No Usage Limit):",
+          "kind": "recipe-note"
+        },
+        {
+          "text": "+15 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "+5% Deadly Strike",
+          "kind": "magic"
+        }
+      ]
+    },
+    {
+      "code": "z01",
+      "name": "Enhancement Crystal - Summoning Power (1 Use Per Item)",
+      "description": [
+        {
+          "text": "+20 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "+1 Summoning Power",
+          "kind": "magic"
+        },
+        {
+          "text": "For Blacksmiths (No Usage Limit):",
+          "kind": "recipe-note"
+        },
+        {
+          "text": "+15 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "+1 Summoning Power",
+          "kind": "magic"
+        }
+      ]
+    },
+    {
+      "code": "z02",
+      "name": "Enhancement Crystal - Combat Power (1 Use Per Item)",
+      "description": [
+        {
+          "text": "+20 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "+1 Combat Power",
+          "kind": "magic"
+        },
+        {
+          "text": "For Blacksmiths (No Usage Limit):",
+          "kind": "recipe-note"
+        },
+        {
+          "text": "+15 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "+1 Combat Power",
+          "kind": "magic"
+        }
+      ]
+    },
+    {
+      "code": "z03",
+      "name": "Enhancement Crystal - Spell Power (1 Use Per Item)",
+      "description": [
+        {
+          "text": "+20 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "+1 Spell Power",
+          "kind": "magic"
+        },
+        {
+          "text": "For Blacksmiths (No Usage Limit):",
+          "kind": "recipe-note"
+        },
+        {
+          "text": "+15 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "+1 Spell Power",
+          "kind": "magic"
+        }
+      ]
+    },
+    {
+      "code": "z04",
+      "name": "Enhancement Crystal - Maximum Fire Resist (1 Use Per Item)",
+      "description": [
+        {
+          "text": "+35 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "+5% Maximum Fire Resist",
+          "kind": "magic"
+        },
+        {
+          "text": "For Blacksmiths (No Usage Limit):",
+          "kind": "recipe-note"
+        },
+        {
+          "text": "+25 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "+5% Maximum Fire Resist",
+          "kind": "magic"
+        }
+      ]
+    },
+    {
+      "code": "z05",
+      "name": "Enhancement Crystal - Maximum Cold Resist (1 Use Per Item)",
+      "description": [
+        {
+          "text": "+35 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "+5% Maximum Cold Resist",
+          "kind": "magic"
+        },
+        {
+          "text": "For Blacksmiths (No Usage Limit):",
+          "kind": "recipe-note"
+        },
+        {
+          "text": "+25 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "+5% Maximum Cold Resist",
+          "kind": "magic"
+        }
+      ]
+    },
+    {
+      "code": "z06",
+      "name": "Enhancement Crystal - Maximum Lightning Resist (1 Use Per Item)",
+      "description": [
+        {
+          "text": "+35 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "+5% Maximum Lightning Resist",
+          "kind": "magic"
+        },
+        {
+          "text": "For Blacksmiths (No Usage Limit):",
+          "kind": "recipe-note"
+        },
+        {
+          "text": "+25 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "+5% Maximum Lightning Resist",
+          "kind": "magic"
+        }
+      ]
+    },
+    {
+      "code": "z07",
+      "name": "Enhancement Crystal - Maximum Poison Resist (1 Use Per Item)",
+      "description": [
+        {
+          "text": "+35 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "+5% Maximum Poison Resist",
+          "kind": "magic"
+        },
+        {
+          "text": "For Blacksmiths (No Usage Limit):",
+          "kind": "recipe-note"
+        },
+        {
+          "text": "+25 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "+5% Maximum Poison Resist",
+          "kind": "magic"
+        }
+      ]
+    },
+    {
+      "code": "z08",
+      "name": "Enhancement Crystal - Enemy Fire Resistance (1 Use Per Item)",
+      "description": [
+        {
+          "text": "+15 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "-10% Enemy Fire Resistance",
+          "kind": "magic"
+        },
+        {
+          "text": "For Blacksmiths (No Usage Limit):",
+          "kind": "recipe-note"
+        },
+        {
+          "text": "+10 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "-10% Enemy Fire Resistance",
+          "kind": "magic"
+        }
+      ]
+    },
+    {
+      "code": "z09",
+      "name": "Enhancement Crystal - Enemy Cold Resistance (1 Use Per Item)",
+      "description": [
+        {
+          "text": "+15 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "-10% Enemy Cold Resistance",
+          "kind": "magic"
+        },
+        {
+          "text": "For Blacksmiths (No Usage Limit):",
+          "kind": "recipe-note"
+        },
+        {
+          "text": "+10 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "-10% Enemy Cold Resistance",
+          "kind": "magic"
+        }
+      ]
+    },
+    {
+      "code": "z10",
+      "name": "Enhancement Crystal - Enemy Lightning Resistance (1 Use Per Item)",
+      "description": [
+        {
+          "text": "+15 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "-10% Enemy Lightning Resistance",
+          "kind": "magic"
+        },
+        {
+          "text": "For Blacksmiths (No Usage Limit):",
+          "kind": "recipe-note"
+        },
+        {
+          "text": "+10 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "-10% Enemy Lightning Resistance",
+          "kind": "magic"
+        }
+      ]
+    },
+    {
+      "code": "z11",
+      "name": "Enhancement Crystal - Enemy Poison Resistance (1 Use Per Item)",
+      "description": [
+        {
+          "text": "+15 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "-10% Enemy Poison Resistance",
+          "kind": "magic"
+        },
+        {
+          "text": "For Blacksmiths (No Usage Limit):",
+          "kind": "recipe-note"
+        },
+        {
+          "text": "+10 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "-10% Enemy Poison Resistance",
+          "kind": "magic"
+        }
+      ]
+    },
+    {
+      "code": "z12",
+      "name": "Enhancement Crystal - Enemy Cold immunity Reduced by 10% (1 Use Per Item)",
+      "description": [
+        {
+          "text": "+20 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "Enemy Cold immunity Reduced by 10%",
+          "kind": "magic"
+        },
+        {
+          "text": "For Blacksmiths (No Usage Limit):",
+          "kind": "recipe-note"
+        },
+        {
+          "text": "+15 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "Enemy Cold Immunity Reduced by 10%",
+          "kind": "magic"
+        }
+      ]
+    },
+    {
+      "code": "z13",
+      "name": "Enhancement Crystal - Enemy Fire Immunity Reduced by 10% (1 Use Per Item)",
+      "description": [
+        {
+          "text": "+20 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "Enemy Fire Immunity Reduced by 10%",
+          "kind": "magic"
+        },
+        {
+          "text": "For Blacksmiths (No Usage Limit):",
+          "kind": "recipe-note"
+        },
+        {
+          "text": "+15 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "Enemy Fire Immunity Reduced by 10%",
+          "kind": "magic"
+        }
+      ]
+    },
+    {
+      "code": "z14",
+      "name": "Enhancement Crystal - Enemy Lightning Immunity Reduced by 10% (1 Use Per Item)",
+      "description": [
+        {
+          "text": "+20 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "Enemy Lightning Immunity Reduced by 10%",
+          "kind": "magic"
+        },
+        {
+          "text": "For Blacksmiths (No Usage Limit):",
+          "kind": "recipe-note"
+        },
+        {
+          "text": "+15 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "Enemy Lightning Immunity Reduced by 10%",
+          "kind": "magic"
+        }
+      ]
+    },
+    {
+      "code": "z15",
+      "name": "Enhancement Crystal - Enemy Poison Immunity Reduced by 10% (1 Use Per Item)",
+      "description": [
+        {
+          "text": "+20 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "Enemy Poison Immunity Reduced by 10%",
+          "kind": "magic"
+        },
+        {
+          "text": "For Blacksmiths (No Usage Limit):",
+          "kind": "recipe-note"
+        },
+        {
+          "text": "+15 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "Enemy poison immunity reduced by 10%",
+          "kind": "magic"
+        }
+      ]
+    },
+    {
+      "code": "z16",
+      "name": "Enhancement Crystal - Enemy Physical Immunity Reduced by 10% (1 Use Per Item)",
+      "description": [
+        {
+          "text": "+20 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "Enemy Physical Immunity Reduced by 10%",
+          "kind": "magic"
+        },
+        {
+          "text": "For Blacksmiths (No Usage Limit):",
+          "kind": "recipe-note"
+        },
+        {
+          "text": "+15 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "Enemy physical immunity reduced by 10%",
+          "kind": "magic"
+        }
+      ]
+    },
+    {
+      "code": "z17",
+      "name": "Enhancement Crystal - Enemy Magic Immunity Reduced by 10% (1 Use Per Item)",
+      "description": [
+        {
+          "text": "+20 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "Enemy Magic Immunity Reduced by 10%",
+          "kind": "magic"
+        },
+        {
+          "text": "For Blacksmiths (No Usage Limit):",
+          "kind": "recipe-note"
+        },
+        {
+          "text": "+15 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "Enemy magic immunity reduced by 10%",
+          "kind": "magic"
+        }
+      ]
+    },
+    {
+      "code": "z18",
+      "name": "Enhancement Crystal - All Enemy Immunities Reduced by 10% (1 Use Per Item)",
+      "description": [
+        {
+          "text": "+30 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "All Enemy Immunities Reduced by 10%",
+          "kind": "magic"
+        },
+        {
+          "text": "For Blacksmiths (No Usage Limit):",
+          "kind": "recipe-note"
+        },
+        {
+          "text": "+40 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "All Enemy Immunities Reduced by 10%",
+          "kind": "magic"
+        }
+      ]
+    },
+    {
+      "code": "z19",
+      "name": "Enhancement Crystal - Forces 6 sockets on any max-socket item (LB Only) (1 Use Per Item)",
+      "description": [
+        {
+          "text": "+30 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "Forces 6 sockets on any max-socket item (LB Only)",
+          "kind": "magic"
+        },
+        {
+          "text": "For Blacksmiths (No Usage Limit):",
+          "kind": "recipe-note"
+        },
+        {
+          "text": "+40 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "Forces 6 sockets on any max-socket item (LB Only)",
+          "kind": "magic"
+        }
+      ]
+    },
+    {
+      "code": "z20",
+      "name": "Enhancement Crystal - Buff Durations Increased by 10% (1 Use Per Item)",
+      "description": [
+        {
+          "text": "+20 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "Buff Durations Increased by 10%",
+          "kind": "magic"
+        },
+        {
+          "text": "For Blacksmiths (No Usage Limit):",
+          "kind": "recipe-note"
+        },
+        {
+          "text": "+15 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "Buff Durations Increased by 10%",
+          "kind": "magic"
+        }
+      ]
+    },
+    {
+      "code": "z21",
+      "name": "Enhancement Crystal - Cooldowns Reduced by 10% (1 Use Per Item)",
+      "description": [
+        {
+          "text": "+20 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "Cooldowns Reduced by 10%",
+          "kind": "magic"
+        },
+        {
+          "text": "For Blacksmiths (No Usage Limit):",
+          "kind": "recipe-note"
+        },
+        {
+          "text": "+15 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "Cooldowns Reduced by 10%",
+          "kind": "magic"
+        }
+      ]
+    },
+    {
+      "code": "z22",
+      "name": "Enhancement Crystal - All Skills (1 Use Per Item)",
+      "description": [
+        {
+          "text": "+35 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "+1 to All Skills",
+          "kind": "magic"
+        },
+        {
+          "text": "For Blacksmiths (No Usage Limit):",
+          "kind": "recipe-note"
+        },
+        {
+          "text": "+30 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "+1 to All Skills",
+          "kind": "magic"
+        }
+      ]
+    },
+    {
+      "code": "z23",
+      "name": "Enhancement Crystal - Cold Skills (1 Use Per Item)",
+      "description": [
+        {
+          "text": "+30 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "+2 to Cold Skills",
+          "kind": "magic"
+        },
+        {
+          "text": "For Blacksmiths (No Usage Limit):",
+          "kind": "recipe-note"
+        },
+        {
+          "text": "+25 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "+2 to Cold Skills",
+          "kind": "magic"
+        }
+      ]
+    },
+    {
+      "code": "z24",
+      "name": "Enhancement Crystal - Fire Skills (1 Use Per Item)",
+      "description": [
+        {
+          "text": "+30 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "+2 to Fire Skills",
+          "kind": "magic"
+        },
+        {
+          "text": "For Blacksmiths (No Usage Limit):",
+          "kind": "recipe-note"
+        },
+        {
+          "text": "+25 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "+2 to Fire Skills",
+          "kind": "magic"
+        }
+      ]
+    },
+    {
+      "code": "z25",
+      "name": "Enhancement Crystal - Lightning Skills (1 Use Per Item)",
+      "description": [
+        {
+          "text": "+30 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "+2 to Lightning Skills",
+          "kind": "magic"
+        },
+        {
+          "text": "For Blacksmiths (No Usage Limit):",
+          "kind": "recipe-note"
+        },
+        {
+          "text": "+25 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "+2 to Lightning Skills",
+          "kind": "magic"
+        }
+      ]
+    },
+    {
+      "code": "z26",
+      "name": "Enhancement Crystal - Poison Skills (1 Use Per Item)",
+      "description": [
+        {
+          "text": "+30 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "+2 to Poison Skills",
+          "kind": "magic"
+        },
+        {
+          "text": "For Blacksmiths (No Usage Limit):",
+          "kind": "recipe-note"
+        },
+        {
+          "text": "+25 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "+2 to Poison Skills",
+          "kind": "magic"
+        }
+      ]
+    },
+    {
+      "code": "z27",
+      "name": "Enhancement Crystal - Magic Skills (1 Use Per Item)",
+      "description": [
+        {
+          "text": "+35 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "+2 to Magic Skills",
+          "kind": "magic"
+        },
+        {
+          "text": "For Blacksmiths (No Usage Limit):",
+          "kind": "recipe-note"
+        },
+        {
+          "text": "+30 Level Requirement",
+          "kind": "magic"
+        },
+        {
+          "text": "+2 to Magic Skills",
+          "kind": "magic"
+        }
+      ]
+    }
+  ]
+}

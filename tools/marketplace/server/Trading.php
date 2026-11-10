@@ -77,23 +77,35 @@ trait MarketplaceTrading {
             $this->run('INSERT INTO commands VALUES (?,?,?,?)',[$owner,$id,$hash,self::json($result)]);return $result;
         });
     }
-    public function publicEscrow(string $owner,bool $hc,string $after='',string $query=''): array {
+    public function publicEscrow(string $owner,bool $hc,string $after='',string $query='',string $sort=''): array {
         $player=$this->playerProfile($owner,$hc)['player'];$scope=$this->scope($hc);if($after!=='')self::ticketId($after);
-        $query=trim(self::text($query===''?' ':$query,128));$catalog=$query!==''?$this->browserCatalog():[];$cursor=$after;$out=[];
+        if(!in_array($sort,['','name','name-desc','quality','quality-asc'],true))throw new MarketError(422,'Unknown Vault sort order.');
+        $query=trim(self::text($query===''?' ':$query,128));$catalog=($query!==''||$sort!=='')?$this->browserCatalog():[];$cursor=$sort!==''?'':$after;$out=[];
         // Search before pagination, including items beyond the first visible page.
         // Read bounded batches and only build full display/price data for matches.
         do{
             $rows=$this->run("SELECT i.*,e.item,e.state,e.metadata FROM escrow_items e JOIN items i ON i.id=e.item WHERE e.owner=? AND i.owner=? AND e.scope=? AND e.state IN ('available','listed') AND e.item>? ORDER BY e.item LIMIT 128",[$owner,$owner,$scope,$cursor])->fetchAll();
             foreach($rows as $r){
                 $cursor=$r['item'];$meta=json_decode($r['metadata'],true,512,JSON_THROW_ON_ERROR);if($meta['delivery_requested']??false)continue;
-                if($query!==''){
+                if($query!==''||$sort!==''){
                     $base=$catalog['bases'][$r['code']]??[];
                     $name=($meta['identified']??true)?$this->notificationItemName($r):'Unidentified '.($base['name']??$r['code']);
-                    if(!self::searchTextMatches(implode(' ',[$name,$base['name']??'',$r['code'],$base['type']??'']),$query))continue;
+                    if($query!==''&&!self::searchTextMatches(implode(' ',[$name,$base['name']??'',$r['code'],$base['type']??'']),$query))continue;
+                    $r['_sort_name']=$name;
                 }
-                $out[]=$r;if(count($out)>48)break 2;
+                $out[]=$r;if($sort===''&&count($out)>48)break 2;
             }
         }while(count($rows)===128);
+        // Sort all matches before taking a page, with the saved item ID breaking
+        // ties. Never sort only the first 48 items or compare hidden unique names.
+        if($sort!==''){
+            usort($out,static function($a,$b)use($sort){
+                $quality=in_array($sort,['quality','quality-asc'],true)?((int)$a['quality']<=>(int)$b['quality'])*($sort==='quality'?-1:1):0;
+                return $quality?:strnatcasecmp($a['_sort_name'],$b['_sort_name'])*($sort==='name-desc'?-1:1)?:strcmp($a['item'],$b['item']);
+            });
+            if($after!==''){$at=array_search($after,array_column($out,'item'),true);$out=$at===false?[]:array_slice($out,$at+1);}
+            $out=array_slice($out,0,49);
+        }
         $more=count($out)>48;if($more)array_pop($out);$next=$more?end($out)['item']:null;
         foreach($out as &$r){$listing=$this->run("SELECT l.id,l.price,c.comment FROM listings l LEFT JOIN market_listing_comments c ON c.listing=l.id WHERE l.item=? AND l.status='open' ORDER BY l.created DESC LIMIT 1",[$r['item']])->fetch();$r=['item_id'=>$r['item'],'item'=>$this->statsItem($r['item']),'state'=>$r['state'],'listing_id'=>$listing['id']??null,'price'=>$listing?json_decode($listing['price'],true,512,JSON_THROW_ON_ERROR):[],'comment'=>$listing['comment']??''];}unset($r);
         $balances=$this->run('SELECT kind,stat,quantity FROM escrow_balances WHERE owner=? AND scope=? AND quantity>0 ORDER BY kind,stat',[$owner,$scope])->fetchAll();foreach($balances as &$b){$b['quantity']=(int)$b['quantity'];$b+=['code'=>$b['kind']==='gold'?'gld':'Z01','label'=>$b['kind']==='gold'?'Gold':$b['stat'],'quality'=>2,'index'=>-1,'ethereal'=>-1];}unset($b);

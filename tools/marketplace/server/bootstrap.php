@@ -5,7 +5,7 @@ function market(): Market {
     $path=getenv('D2_MARKET_CONFIG')?:__DIR__.'/config.php';
     if(!$path||!is_file($path))throw new RuntimeException('Server configuration is missing.');
     $c=require $path;
-    return new Market(new PDO($c['dsn'],$c['username']??null,$c['password']??null),$c['community']??'tcpip',$c['mod']??'RMD-MP');
+    return new Market(new PDO($c['dsn'],$c['username']??null,$c['password']??null,[PDO::ATTR_TIMEOUT=>5]),$c['community']??'tcpip',$c['mod']??'RMD-MP');
 }
 
 function marketOwnerDirectory(): string {

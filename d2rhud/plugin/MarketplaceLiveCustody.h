@@ -3,6 +3,7 @@
 #include <bcrypt.h>
 #pragma comment(lib,"bcrypt.lib")
 #include <array>
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <mutex>
@@ -41,11 +42,11 @@ struct View {bool enabled=false,parked=false;unsigned deposit=0,delivery=0,parki
 class Window {
     std::mutex mutex;
     std::filesystem::path root,folder;
-    std::string owner,catalog,epoch,status;
+    std::string owner,catalog,epoch,status,syncHint;
     unsigned deposit=0,delivery=0,parking=0,restore=0,loaded=0;
     uint32_t player=0;
     bool hardcore=false,enabled=false,parked=false,passive=false;
-    uint64_t began=0,published=0,sequence=0;
+    uint64_t began=0,published=0,sequence=0,syncPoll=0;
     HANDLE access=INVALID_HANDLE_VALUE;
     std::string refreshId,lastRefreshId,refreshKind;
     Json goldDeposit;
@@ -101,6 +102,19 @@ class Window {
     }
 public:
     ~Window(){if(access!=INVALID_HANDLE_VALUE)CloseHandle(access);}
+    bool RequestSync(uint64_t now){
+        std::lock_guard lock(mutex);if(!enabled)return false;
+        try{
+            const auto path=root/L"sync-request.json";
+            try{const auto old=Read(path);const auto at=old.value("tick",uint64_t(0));if(now>=at&&now-at<5000){Wake();return true;}}catch(...){}
+            std::array<unsigned char,16> random{};
+            if(BCryptGenRandom(nullptr,random.data(),ULONG(random.size()),BCRYPT_USE_SYSTEM_PREFERRED_RNG)<0)return false;
+            std::string id;for(auto b:random){id+="0123456789abcdef"[b>>4];id+="0123456789abcdef"[b&15];}
+            const auto at=std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+            Write(path,{{"schema",1},{"id",id},{"mode",hardcore?"HC":"SC"},{"at",at},{"tick",now}});
+            Wake();return true;
+        }catch(...){return false;}
+    }
     bool Configure(const std::filesystem::path& enrollment,const std::filesystem::path& saveFolder,uint32_t unit,bool hc,unsigned page){
         std::lock_guard lock(mutex);
         try{
@@ -235,8 +249,21 @@ public:
         std::lock_guard lock(mutex);if(!enabled)return;
         if(!inGame){if(Shared()){Revoke();enabled=false;refreshPage=0;refreshId.clear();refreshKind.clear();goldDeposit=nullptr;}return;}
         const auto now=GetTickCount64();if(parked&&now>=published&&now-published>=1000)Publish(now);
+        if(now>=syncPoll){
+            syncPoll=now+2000;syncHint.clear();
+            try{const auto report=Read(root/L"status.json");const auto at=report.value("at",int64_t(0));
+                const auto utc=std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+                if(utc>=at&&utc-at<90){const auto progress=report.at("stash_sync").at(hardcore?"HC":"SC");const auto phase=progress.value("state",std::string());
+                    if(phase=="no_space")syncHint="Make room on your market page. Your remaining delivery is protected in the Vault.";
+                    else if(phase=="waiting_for_idle")syncHint="Delivery queued. Leave the stash idle with an empty cursor to sync.";
+                    else if(phase=="waiting_for_stash")syncHint="Waiting for the stash connection. Sync retries automatically.";
+                    else if(phase=="recovering")syncHint="Safely recovering a previous transfer. Your items are protected.";
+                    else if(phase=="retrying")syncHint="Marketplace connection interrupted. Retrying automatically.";
+                }
+            }catch(...){}
+        }
     }
-    View Snapshot(){std::lock_guard lock(mutex);return {enabled,parked,deposit,delivery,parking,status};}
+    View Snapshot(){std::lock_guard lock(mutex);return {enabled,parked,deposit,delivery,parking,status.empty()?syncHint:status};}
 };
 inline Window window;
 }

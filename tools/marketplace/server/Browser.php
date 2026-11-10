@@ -11,6 +11,7 @@ trait MarketplaceBrowser {
             'web_attempts'=>'identity CHAR(64) PRIMARY KEY, started BIGINT NOT NULL, attempts INT NOT NULL',
             'web_profiles'=>'owner VARCHAR(64) NOT NULL, scope VARCHAR(255) NOT NULL, revision INT NOT NULL, settings TEXT NOT NULL, inventory MEDIUMTEXT NOT NULL, seen BIGINT NOT NULL, PRIMARY KEY(owner,scope)',
             'web_intents'=>($engine?'seq BIGINT AUTO_INCREMENT PRIMARY KEY':'seq INTEGER PRIMARY KEY AUTOINCREMENT').', id CHAR(32) NOT NULL UNIQUE, owner VARCHAR(64) NOT NULL, scope VARCHAR(255) NOT NULL, kind VARCHAR(16) NOT NULL, packet TEXT NOT NULL, status VARCHAR(16) NOT NULL, message TEXT NOT NULL, created BIGINT NOT NULL',
+            'market_delivery_sync'=>'owner VARCHAR(64) NOT NULL, scope VARCHAR(255) NOT NULL, request_id VARCHAR(32) NOT NULL, requested BIGINT NOT NULL, report TEXT NOT NULL, updated BIGINT NOT NULL, PRIMARY KEY(owner,scope)',
         ] as $name=>$columns)$this->db->exec("CREATE TABLE IF NOT EXISTS $name ($columns)$engine");
     }
     public function browserTicket(array $actor,array $context=[]): array {
@@ -117,6 +118,32 @@ trait MarketplaceBrowser {
         $delivery=isset($r['withdraw_page'])?self::number($r['withdraw_page'],1,64):$page;
         return ['page'=>$page,'withdraw_page'=>$delivery,'enabled'=>$r['enabled'],'auto_trade'=>$r['auto_trade']];
     }
+    // Informational progress and a bounded wake request only. This endpoint
+    // cannot claim goods, authorize a save write, or acknowledge a delivery.
+    private function deliverySyncState(string $owner,string $scope,mixed $report=null): array {
+        $row=$this->run('SELECT * FROM market_delivery_sync WHERE owner=? AND scope=?',[$owner,$scope])->fetch();
+        if($report!==null){
+            if(!is_array($report))throw new MarketError(422,'Invalid stash sync progress.');
+            $state=$report['state']??'';
+            if(!in_array($state,['checking','ready','waiting_for_game','waiting_for_stash','waiting_for_idle','reloading','recovering','no_space','retrying'],true))throw new MarketError(422,'Invalid stash sync progress.');
+            $clean=['state'=>$state,'page'=>self::number($report['page']??1,1,64),'pending'=>self::number($report['pending']??0,0,128),'request_id'=>($report['request_id']??'')===''?'':self::ticketId($report['request_id'])];
+            $encoded=self::json($clean);
+            if(!$row){$this->run(($this->db->getAttribute(PDO::ATTR_DRIVER_NAME)==='mysql'?'INSERT IGNORE':'INSERT OR IGNORE').' INTO market_delivery_sync VALUES (?,?,?,?,?,?)',[$owner,$scope,'',0,$encoded,time()]);}
+            elseif($row['report']!==$encoded||(int)$row['updated']<time()-20)$this->run('UPDATE market_delivery_sync SET report=?,updated=? WHERE owner=? AND scope=?',[$encoded,time(),$owner,$scope]);
+            $row=$this->run('SELECT * FROM market_delivery_sync WHERE owner=? AND scope=?',[$owner,$scope])->fetch();
+        }
+        if(!$row)return ['request_id'=>'','requested'=>0,'updated'=>0,'state'=>'unknown'];
+        return ['request_id'=>$row['request_id'],'requested'=>(int)$row['requested'],'updated'=>(int)$row['updated'],'progress'=>json_decode($row['report'],true,512,JSON_THROW_ON_ERROR)];
+    }
+    private function requestDeliverySync(array $actor,bool $hc): array {
+        $owner=$actor['id'];$scope=$this->scope($hc);$this->requireMod($owner);
+        $old=$this->run('SELECT * FROM market_delivery_sync WHERE owner=? AND scope=?'.$this->lock(),[$owner,$scope])->fetch();
+        if($old&&(int)$old['requested']>time()-15)return ['requested'=>true,'request_id'=>$old['request_id']];
+        $id=self::id();
+        if($old)$this->run('UPDATE market_delivery_sync SET request_id=?,requested=? WHERE owner=? AND scope=?',[$id,time(),$owner,$scope]);
+        else $this->run('INSERT INTO market_delivery_sync VALUES (?,?,?,?,?,?)',[$owner,$scope,$id,time(),'{}',0]);
+        return ['requested'=>true,'request_id'=>$id];
+    }
     public function browserAgentSync(array $agent,array $data,bool $hc): array {
         $this->requireAgentMod($agent);
         return $this->transaction(function()use($agent,$data,$hc){
@@ -125,22 +152,36 @@ trait MarketplaceBrowser {
             $this->touchCompanion($owner,$scope);
             if(isset($data['companion_version'])){$version=self::text($data['companion_version'],32);if(!preg_match('/^[0-9]+\.[0-9]+\.[0-9]+$/D',$version))throw new MarketError(422,'Invalid companion version.');$this->run('DELETE FROM market_companion_versions WHERE owner=? AND scope=?',[$owner,$scope]);$this->run('INSERT INTO market_companion_versions VALUES (?,?,?,?)',[$owner,$scope,$version,time()]);}
             if(isset($data['features'])){if(!is_array($data['features'])||!array_is_list($data['features'])||count($data['features'])>16)throw new MarketError(422,'Invalid companion capabilities.');$features=array_values(array_intersect($data['features'],['open_offers','torch_class','listing_comments','gift_resources']));$this->run('DELETE FROM market_browser_features WHERE owner=? AND scope=?',[$owner,$scope]);$this->run('INSERT INTO market_browser_features VALUES (?,?,?)',[$owner,$scope,self::json($features)]);}
-            $settings=$this->routeSettings($data['settings']??[]);$inventory=$data['inventory']??[];
-            if(!is_array($inventory)||!array_is_list($inventory)||count($inventory)>2048)throw new MarketError(422,'Invalid private inventory.');
-            $items=[];foreach($inventory as $r){$row=$this->custodyItem($r);$key=hash('sha256',$row['page'].'|'.$row['tab'].'|'.$row['item_hex']);$row['key']=$key;$items[]=$row;}
+            $settings=$this->routeSettings($data['settings']??[]);
+            $old=$this->run('SELECT * FROM web_profiles WHERE owner=? AND scope=?',[$owner,$scope])->fetch();
+            if(($data['type']??'')==='web_poll'){
+                $hash=self::digest($data['inventory_hash']??null);
+                if(!$old||!hash_equals(hash('sha256',$old['inventory']),$hash))return ['inventory_required'=>true];
+                $inventoryJson=$old['inventory']; // No item arrays or revalidation for unchanged bytes.
+            }else{
+                $inventory=$data['inventory']??[];
+                if(!is_array($inventory)||!array_is_list($inventory)||count($inventory)>2048)throw new MarketError(422,'Invalid private inventory.');
+                $items=[];foreach($inventory as $r){$row=$this->custodyItem($r);$key=hash('sha256',$row['page'].'|'.$row['tab'].'|'.$row['item_hex']);$row['key']=$key;$items[]=$row;}
+                $inventoryJson=self::json($items);
+            }
             $acks=$data['acknowledged']??[];if(!is_array($acks)||!array_is_list($acks)||count($acks)>128)throw new MarketError(422,'Invalid setting acknowledgements.');
             foreach($acks as $a){$id=self::ticketId($a['id']??null);$status=$a['status']??'';if(!in_array($status,['applied','failed'],true))throw new MarketError(422,'Invalid setting result.');$message=$a['message']??'';if($message!=='')self::text($message,512);$this->run("UPDATE web_intents SET status=?,message=? WHERE id=? AND owner=? AND scope=? AND status='queued'",[$status,$message,$id,$owner,$scope]);if($status==='applied')$this->run('UPDATE market_client_resets SET acknowledged=1 WHERE owner=? AND scope=? AND id=?',[$owner,$scope,$id]);}
-            $old=$this->run('SELECT * FROM web_profiles WHERE owner=? AND scope=?',[$owner,$scope])->fetch();$encoded=self::json($settings);$rev=$old?(int)$old['revision']+(int)($old['settings']!==$encoded):1;
-            if($old)$this->run('UPDATE web_profiles SET revision=?,settings=?,inventory=?,seen=? WHERE owner=? AND scope=?',[$rev,$encoded,self::json($items),time(),$owner,$scope]);
-            else $this->run('INSERT INTO web_profiles VALUES (?,?,?,?,?,?)',[$owner,$scope,$rev,$encoded,self::json($items),time()]);
+            $encoded=self::json($settings);$rev=$old?(int)$old['revision']+(int)($old['settings']!==$encoded):1;
+            if($old){
+                if($old['settings']!==$encoded||$old['inventory']!==$inventoryJson)$this->run('UPDATE web_profiles SET revision=?,settings=?,inventory=?,seen=? WHERE owner=? AND scope=?',[$rev,$encoded,$inventoryJson,time(),$owner,$scope]);
+                elseif((int)$old['seen']<time()-20)$this->run('UPDATE web_profiles SET seen=? WHERE owner=? AND scope=?',[time(),$owner,$scope]);
+            }else $this->run('INSERT INTO web_profiles VALUES (?,?,?,?,?,?)',[$owner,$scope,$rev,$encoded,$inventoryJson,time()]);
             $intents=$this->run("SELECT id,kind,packet FROM web_intents WHERE owner=? AND scope=? AND status='queued' ORDER BY seq LIMIT 128",[$owner,$scope])->fetchAll();foreach($intents as &$i)$i['packet']=json_decode($i['packet'],true,512,JSON_THROW_ON_ERROR);unset($i);
-            return ['intents'=>$intents,'delivery_items'=>$this->requestedDeliveries($owner,$scope),'wallet_withdrawals'=>$this->walletRows($owner,$scope,true)];
+            return ['intents'=>$intents,'delivery_items'=>$this->requestedDeliveries($owner,$scope),'wallet_withdrawals'=>$this->walletRows($owner,$scope,true),'funding_requests'=>$this->fundingRequests($owner,$scope),'inventory_hash'=>hash('sha256',$inventoryJson),'stash_sync'=>$this->deliverySyncState($owner,$scope,$data['stash_sync']??null)];
         });
     }
     private function browserCommand(array $actor,array $data,bool $hc): array {
         return $this->transaction(function()use($actor,$data,$hc){
             $this->lockScope($hc);$id=self::ticketId($data['id']??null);$owner=$actor['id'];$scope=$this->scope($hc);$hash=hash('sha256',$scope.'|'.self::json($data));
             $old=$this->run('SELECT hash,result FROM commands WHERE actor=? AND id=?',[$owner,$id])->fetch();if($old){if(!hash_equals($old['hash'],$hash))throw new MarketError(409,'Command ID reused.');return json_decode($old['result'],true,512,JSON_THROW_ON_ERROR);}
+            if(($data['type']??'')==='web_delivery_sync'){
+                $result=$this->requestDeliverySync($actor,$hc);$this->run('INSERT INTO commands VALUES (?,?,?,?)',[$owner,$id,$hash,self::json($result)]);return $result;
+            }
             if((int)$this->run("SELECT COUNT(*) FROM web_intents WHERE owner=? AND scope=? AND status='queued'",[$owner,$scope])->fetchColumn()>=128)throw new MarketError(409,'Start your marketplace companion to apply pending changes first.');
             $profile=$this->run('SELECT * FROM web_profiles WHERE owner=? AND scope=?',[$owner,$scope])->fetch();
             if(($data['type']??'')==='web_setup'){
@@ -175,7 +216,15 @@ trait MarketplaceBrowser {
     }
     public function browserSnapshot(?array $actor,bool $hc): array {
         $guest=['id'=>'','name'=>'Guest'];$snapshot=$this->snapshot($actor??$guest,$hc,true);unset($snapshot['publication'],$snapshot['escrow']['lineage']);
-        $scope=$this->scope($hc);$all=$this->run('SELECT i.id,i.code,i.quality,i.item_index,i.seed,i.ethereal,i.sockets,i.item_hex,e.metadata,d.metadata AS discovery FROM items i LEFT JOIN escrow_items e ON e.item=i.id LEFT JOIN web_item_display d ON d.item=i.id WHERE i.scope=?',[$scope])->fetchAll();$map=[];
+        $scope=$this->scope($hc);
+        // Build display data only for items actually present in this response,
+        // rather than every item ever sold or delivered in the market.
+        $ids=array_merge(array_column($snapshot['listings'],'item_id'),array_column($snapshot['offers'],'item'),array_column($snapshot['escrow']['items'],'item'));
+        $listingIds=array_unique(array_merge(array_column($snapshot['listings'],'id'),array_column($snapshot['offers'],'listing')));
+        if($listingIds){$marks=implode(',',array_fill(0,count($listingIds),'?'));$ids=array_merge($ids,$this->run("SELECT m.item FROM market_bundle_items m JOIN items i ON i.id=m.item WHERE i.scope=? AND m.listing IN ($marks)",array_merge([$scope],array_values($listingIds)))->fetchAll(PDO::FETCH_COLUMN));}
+        $ids=array_values(array_unique($ids));$all=[];
+        foreach(array_chunk($ids,512) as $batch){$marks=implode(',',array_fill(0,count($batch),'?'));$all=array_merge($all,$this->run("SELECT i.id,i.code,i.quality,i.item_index,i.seed,i.ethereal,i.sockets,i.item_hex,e.metadata,d.metadata AS discovery FROM items i LEFT JOIN escrow_items e ON e.item=i.id LEFT JOIN web_item_display d ON d.item=i.id WHERE i.scope=? AND i.id IN ($marks)",array_merge([$scope],$batch))->fetchAll());}
+        $map=[];
         foreach($all as $i){$metadata=$i['metadata']?json_decode($i['metadata'],true,512,JSON_THROW_ON_ERROR):[];$map[$i['id']]=['code'=>$i['code'],'quality'=>(int)$i['quality'],'index'=>(int)$i['item_index'],'saved_id'=>(int)$i['seed'],'item_uuid'=>$this->itemIdentity($i['item_hex'])['item_uuid']??'','ledger_id'=>$i['id'],'ethereal'=>(bool)$i['ethereal'],'sockets'=>(int)$i['sockets'],'quantity'=>$metadata['quantity']??1,'trade_quantity'=>self::tradeQuantity($metadata),'identified'=>$metadata['identified']??1,'display'=>$metadata['display']??($i['discovery']?json_decode($i['discovery'],true,512,JSON_THROW_ON_ERROR):null)];$map[$i['id']]=$this->browserItemNames($map[$i['id']],$i['item_hex']);}
         $bundles=$this->browserBundles($scope,$map);
         foreach($snapshot['listings'] as &$r){unset($r['item_hex']);$r['item']=$map[$r['item_id']]??null;$r['bundle']=$bundles['listings'][$r['id']]??null;}unset($r);
@@ -184,6 +233,7 @@ trait MarketplaceBrowser {
         $snapshot['experience']=$actor?$this->experienceSnapshot($actor,$hc):null;
         $snapshot['wanted']=$this->wantedListings($hc);$snapshot['gifts']=$this->giftCampaigns($actor,$hc);
         $snapshot['companion_version']=$actor?($this->run('SELECT version FROM market_companion_versions WHERE owner=? AND scope=?',[$actor['id'],$scope])->fetchColumn()?:null):null;
+        $snapshot['stash_sync']=$actor?$this->deliverySyncState($actor['id'],$scope):null;
         $snapshot['companion_features']=$actor?json_decode($this->run('SELECT features FROM market_browser_features WHERE owner=? AND scope=?',[$actor['id'],$scope])->fetchColumn()?:'[]',true):[];
         $snapshot['self']=$actor?$snapshot['self']:null;
         $snapshot['linked_mod']=$actor&&(bool)$this->run("SELECT owner FROM market_memberships WHERE owner=? AND `mod`=? AND game_mode='2.4' AND linked>0",[$actor['id'],$this->mod])->fetchColumn();

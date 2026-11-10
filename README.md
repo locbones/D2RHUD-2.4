@@ -5,12 +5,18 @@ A HUD and mod extension for Diablo II: Resurrected 2.4, adapted from
 Native features check executable compatibility and may require matching mod data
 on the host and clients.
 
-Current HUD release: **1.8.0**.
+Current HUD release: **1.8.1**.
 
 ## Features
 
 - One HUD menu with grouped options, search, a Sanctuary theme, and remembered
   window sizes and pane layouts.
+- **Options > Chat** has native chat size, background opacity and live message
+  area controls, together with notification sounds and volume. Enable
+  **Customize chat** to preview changes immediately; turn it off or select
+  **Restore default chat** to return to the game's layout. Chat history and item
+  links remain available. Slider changes save after release rather than on every
+  frame, using the existing HUD configuration file.
 - Editable HUD and quest translations for all 13 game language codes, an offline
   translation editor, and bundled Unicode font support. See
   [translation instructions](translations/README.md).
@@ -78,6 +84,30 @@ Current HUD release: **1.8.0**.
 
 Some integrations are specific to RMD-MP. Experimental Workshop features default
 to off and need the corresponding mod content.
+
+## 1.8.1 changelog
+
+Changes since 1.8.0, including the accompanying marketplace updates:
+
+- Adjust chat size, background opacity and the live message area in Options > Chat, with clickable item links preserved.
+- Sort trades and Vault items A–Z or Z–A, with clearer quality and seller sorting options in game and on the website.
+- Use Sync now in the marketplace footer or website Vault to retry queued deliveries safely.
+- Interrupted deliveries retry automatically, with clearer messages for a full page, an occupied cursor or transfer recovery.
+- The stash returns to use as soon as a delivery is safely written, without waiting for an extra website status check.
+- Move held items between stash pages without losing the item or crashing the game.
+- Gold deposits on an open market page transfer promptly and include small amounts left by earlier withdrawals.
+- Item highlights disappear immediately when you close the stash.
+- Fixed rune extraction crashing with Vault-created Storage Bags, including older affected bags.
+- Fixed Act VI startup rejecting layouts after changing UI colors or harmless file formatting.
+- Starting a map event requires holding Shift + Ctrl + F1–F7 continuously for five seconds.
+- Community gifts can combine unpriced market-page items, Vault items, gold and bag currencies.
+- Marketplace setup reconnects more reliably after interrupted connections or moving the game folder.
+- Marketplace updates use less background traffic and memory, and slow retries when the service is busy.
+- Enhancement Crystals show their exact effects and usage limits in website listings and trade choices.
+- Open an item's recorded trade history from the magnifying glass beside its History ID on the website.
+
+Companion 0.1.15 updates automatically and is bundled with Pandemonium 0.2.2 for
+Windows and Linux. Linux/Wine gameplay validation remains pending.
 
 ## 1.8.0 changelog
 

@@ -92,7 +92,7 @@ try{
     elseif($method==='GET'&&$action==='activity'){if(!$actor)throw new MarketError(401,'Link your player to see activity.');$result=$m->activity($actor,$hc);}
     elseif($method==='GET'&&$action==='stats'){$result=$m->tradeStats($hc,$_GET);}
     elseif($method==='GET'&&$action==='wanted'){$result=$m->wantedListings($hc,$_GET['id']??null);}
-    elseif($method==='GET'&&$action==='player-escrow'){$result=$m->publicEscrow($_GET['id']??'',$hc,$_GET['after']??'',$_GET['q']??'');}
+    elseif($method==='GET'&&$action==='player-escrow'){$result=$m->publicEscrow($_GET['id']??'',$hc,$_GET['after']??'',$_GET['q']??'',$_GET['sort']??'');}
     elseif($method==='GET'&&$action==='trade-messages'){if(!$actor)throw new MarketError(401,'Link your player to read messages.');$before=$_GET['before']??(string)PHP_INT_MAX;if(!preg_match('/^[0-9]{1,19}$/D',$before))throw new MarketError(422,'Invalid message cursor.');$result=$m->tradeMessages($actor,$hc,$_GET['thread']??null,(int)$before);}
     elseif($method==='GET'&&$action==='players'){$result=$m->players($hc,$_GET);}
     elseif($method==='GET'&&$action==='player'){$result=$m->playerProfile($_GET['id']??'',$hc,$_GET['character']??null);}
@@ -109,6 +109,6 @@ try{
         $query=$_GET;foreach(['seed','quality','item_index','ethereal','sockets','before'] as $key)if(isset($query[$key])){if(!preg_match('/^-?\d{1,18}$/D',$query[$key]))throw new MarketError(422,'Invalid history selector.');$query[$key]=(int)$query[$key];}$query['similar']=($query['similar']??'0')==='1';$query['averages']=($query['averages']??'0')==='1';$result=$m->historyPage($hc,$query);
     }else throw new MarketError(404,'Endpoint not found.');
     session_write_close();echo json_encode($result,JSON_THROW_ON_ERROR|JSON_UNESCAPED_UNICODE);
-}catch(MarketError $e){http_response_code($e->status);echo json_encode(['error'=>$e->getMessage()]);}
+}catch(MarketError $e){http_response_code($e->status);if($e->status===503)header('Retry-After: 15');echo json_encode(['error'=>$e->getMessage()]);}
 catch(JsonException $e){http_response_code(422);echo json_encode(['error'=>'Malformed JSON.']);}
 catch(Throwable $e){http_response_code(500);error_log('D2 marketplace web: '.$e->getMessage());echo json_encode(['error'=>'The marketplace is temporarily unavailable.']);}

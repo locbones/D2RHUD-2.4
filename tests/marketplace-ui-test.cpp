@@ -172,6 +172,14 @@ int wmain(int argc,wchar_t** argv)try{
         state.liveDeposit=false;
     }
     assert(presented("MarketCollection").visible&&!presented("MarketFocus").visible);previewFrame("browse-collection");
+    { // Native dropdown choices sort the complete collection before its six-card page.
+        const auto original=state.snapshot.feed.listings;
+        state.sort=0;auto az=Marketplace::UI::MenuRows(state,fixtureCatalog);
+        state.sort=4;auto za=Marketplace::UI::MenuRows(state,fixtureCatalog);std::reverse(az.begin(),az.end());assert(az==za);
+        for(int choice:{4,5,6}){Marketplace::Panel::NativeChoices({{"MarketSort",{choice,state.filterRevision}}});frame();assert(state.sort==choice);}
+        Marketplace::Panel::NativeChoices({});command("MarketSort");assert(state.sort==0);
+        assert(state.snapshot.feed.listings.size()==original.size());
+    }
     command("MarketFilterOpen");assert(state.filtersOpen&&presented("MarketFilterPanel").visible&&!presented("MarketCollection").visible);previewFrame("browse-filters");
     state.hideOwn=true;state.quality=2;command("MarketFilterReset");assert(!state.hideOwn&&state.quality==0);
     command("MarketFilterBack");assert(!state.filtersOpen&&presented("MarketCollection").visible);

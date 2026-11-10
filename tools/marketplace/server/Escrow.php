@@ -107,8 +107,20 @@ trait MarketplaceEscrow {
         if(($data['type']??'')==='profile_state')return ['linked'=>$this->profileAgent($agent,$data)];
         if(($data['type']??'')==='profile_manifest')return $this->characterManifest($agent,$data,$hc);
         if(($data['type']??'')==='browser_link')return $this->browserFolderLink($agent,$data);
-        if(($data['type']??'')==='web_sync')return $this->browserAgentSync($agent,$data,$hc);
+        if(in_array($data['type']??'',['web_sync','web_poll'],true))return $this->browserAgentSync($agent,$data,$hc);
         $this->requireAgentMod($agent);$id=self::ticketId($data['id']??null);$type=$data['type']??'';
+        // Polling never reserves or moves goods. Do not queue this read behind
+        // every market-wide transfer. Claim/authorize/commit still revalidate
+        // all ownership, balances and catalog data under the original locks.
+        if($type==='delivery_queue'){
+            $owner=$agent['owner'];$scope=$this->scope($hc);
+            if(!$this->run('SELECT id FROM custody_agents_scoped WHERE id=? AND owner=?',[$agent['id'],$owner])->fetch())throw new MarketError(401,'The save-agent pairing was replaced.');
+            if(($data['catalog']??null)!==$agent['catalog'])throw new MarketError(409,'The installed save catalog changed. Revalidate the agent.');
+            $catalog=$this->run('SELECT catalog FROM custody_catalogs WHERE scope=?',[$scope])->fetchColumn();
+            if($catalog!==false&&$catalog!==$agent['catalog'])throw new MarketError(409,'This save catalog differs from the community custody catalog.');
+            $this->touchCompanion($owner,$scope);
+            return ['delivery_items'=>$this->requestedDeliveries($owner,$scope),'wallet_withdrawals'=>$this->walletRows($owner,$scope,true),'funding_requests'=>$this->fundingRequests($owner,$scope),'stash_sync'=>$this->deliverySyncState($owner,$scope,$data['stash_sync']??null)];
+        }
         return $this->transaction(function()use($agent,$data,$hc,$id,$type){
             $this->lockScope($hc);$scope=$this->scope($hc);$owner=$agent['owner'];
             if(!$this->run('SELECT id FROM custody_agents_scoped WHERE id=? AND owner=?',[$agent['id'],$owner])->fetch())throw new MarketError(401,'The save-agent pairing was replaced.');
@@ -118,9 +130,6 @@ trait MarketplaceEscrow {
             if($this->run('SELECT catalog FROM custody_catalogs WHERE scope=?',[$scope])->fetchColumn()!==$agent['catalog'])throw new MarketError(409,'This save catalog differs from the community custody catalog.');
             $this->touchCompanion($owner,$scope);
             if($type==='wallet_notice')return $this->walletNotice($owner,$scope,$data);
-            // Read-only queue polling must not replace the private inventory
-            // snapshot when the deposit page is currently loaded in the game.
-            if($type==='delivery_queue')return ['delivery_items'=>$this->requestedDeliveries($owner,$scope),'wallet_withdrawals'=>$this->walletRows($owner,$scope,true),'funding_requests'=>$this->fundingRequests($owner,$scope)];
             $old=$this->run('SELECT * FROM custody_tickets WHERE id=?',[$id])->fetch();
             if($old&&($old['owner']!==$owner||$old['scope']!==$scope||$old['agent']!==$agent['id']))throw new MarketError(404,'Custody transaction not found.');
             if($type==='status'){if(!$old)throw new MarketError(404,'Custody transaction not found.');return $this->ticket($old);}
@@ -336,6 +345,7 @@ trait MarketplaceEscrow {
     private function fundingRequests(string $owner,string $scope): array {
         $result=[];
         $rows=$this->run("SELECT o.*,l.price AS asking,l.status AS listing_status FROM offers o JOIN listings l ON l.id=o.listing JOIN escrow_items e ON e.item=l.item WHERE o.buyer=? AND e.scope=? AND e.state='listed' AND e.owner=o.seller AND o.status IN ('accepted','pending') ORDER BY o.created,o.id LIMIT 64",[$owner,$scope])->fetchAll();
+        if(!$rows)return [];
         $stock=$this->run("SELECT e.*,i.code,i.quality,i.item_index,i.ethereal FROM escrow_items e JOIN items i ON i.id=e.item WHERE e.owner=? AND e.scope=? AND e.state='available' ORDER BY e.item",[$owner,$scope])->fetchAll();
         $classSupport=in_array('torch_class',json_decode($this->run('SELECT features FROM market_browser_features WHERE owner=? AND scope=?',[$owner,$scope])->fetchColumn()?:'[]',true),true);
         foreach($rows as $o){$price=json_decode($o['price'],true,512,JSON_THROW_ON_ERROR);

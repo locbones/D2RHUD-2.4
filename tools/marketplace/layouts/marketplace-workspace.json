@@ -236,7 +236,7 @@
                         "rect": {
                             "x": 470,
                             "y": 1484,
-                            "width": 1670,
+                            "width": 1260,
                             "height": 68
                         },
                         "color": [
@@ -301,7 +301,7 @@
                         "rect": {
                             "x": 470,
                             "y": 1488,
-                            "width": 1660,
+                            "width": 1240,
                             "height": 58
                         },
                         "text": "No items transferred.",
@@ -7212,7 +7212,7 @@
                                                 "rect": {
                                                     "x": 470,
                                                     "y": 1488,
-                                                    "width": 1660,
+                                                    "width": 1240,
                                                     "height": 58
                                                 },
                                                 "text": "",
@@ -11733,10 +11733,13 @@
                                         "hoveredFrame": 3,
                                         "focusIndicatorFilename": "$OptionsDropDownFocusIndicatorFilename",
                                         "states": [
-                                            "Name",
-                                            "Quality",
-                                            "Seller / Tab",
-                                            "Payment types"
+                                            "Name: A-Z",
+                                            "Quality: high-low",
+                                            "Seller / Tab: A-Z",
+                                            "Payment types",
+                                            "Name: Z-A",
+                                            "Quality: low-high",
+                                            "Seller / Tab: Z-A"
                                         ],
                                         "text/style": "$StyleSettingsCarousel",
                                         "textColor": "$FontColorLightGold"
@@ -16782,6 +16785,51 @@
                         "sound": "cursor_close_window_hd"
                     },
                     "children": []
+                },
+                {
+                    "type": "ButtonWidget",
+                    "name": "MarketSyncButton",
+                    "fields": {
+                        "rect": {
+                            "x": 1774,
+                            "y": 1484,
+                            "width": 366,
+                            "height": 68
+                        },
+                        "filename": "..\\..\\..\\ReMoDDeD\\Panels\\Buttons\\ButtonSmall_R",
+                        "pressedFrame": 1,
+                        "disabledFrame": 2,
+                        "hoveredFrame": 3,
+                        "onClickMessage": "BankPanelMessage:MarketSync"
+                    },
+                    "children": [
+                        {
+                            "type": "TextBoxWidget",
+                            "name": "MarketSyncButtonLabel",
+                            "fields": {
+                                "rect": {
+                                    "x": 12,
+                                    "y": 0,
+                                    "width": 342,
+                                    "height": 68
+                                },
+                                "text": "Sync now",
+                                "style": {
+                                    "fontColor": "$FontColorLightGold",
+                                    "pointSize": "$SmallPanelFontSize",
+                                    "alignment": {
+                                        "h": "center",
+                                        "v": "center"
+                                    },
+                                    "options": {
+                                        "lineWrap": true,
+                                        "newlineHandling": "standard",
+                                        "pipeCharacterBehavior": "handle"
+                                    }
+                                }
+                            }
+                        }
+                    ]
                 }
             ]
         }

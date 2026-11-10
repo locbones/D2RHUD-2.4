@@ -1,6 +1,6 @@
 'use strict';
 window.MarketTrading={create(env){
-  const {state,main,esc,playerName,icon,heading,empty,request,navigate,requireAccount,itemImage,itemName,art,priceBundle,cardPrice,showModal,modalError,command,openEditor,ownItems,collection,viewControls,date,renderResults,torchClassChoice,torchClassOf,torchClassOptions}=env;
+  const {state,main,esc,playerName,icon,heading,empty,request,navigate,requireAccount,itemImage,itemName,art,priceBundle,cardPrice,showModal,modalError,command,openEditor,ownItems,collection,viewControls,itemSortControl,date,renderResults,torchClassChoice,torchClassOf,torchClassOptions}=env;
   let generation=0,draft=null,options=[],escrowPage=null,escrowOwner='',escrowQuery='',escrowTimer=null;
   state.listingType='all';
   const openPrice=()=>[{kind:'open',code:'open',label:'Open to Offers',quality:2,index:-1,ethereal:-1,quantity:1}];
@@ -33,7 +33,7 @@ window.MarketTrading={create(env){
   }
   function escrowResults(){
     const r=escrowPage,p=r.player;
-    return `<div class="collection-toolbar"><p role="status">${r.items.length}${r.next_after?'+':''} ${escrowQuery?'matching ':''}item${r.items.length===1?'':'s'}</p>${viewControls(false)}</div><div class="public-escrow exchange-grid" data-view="${state.view}" data-size="${state.tileSize}">${r.items.map(row=>`<article class="exchange-card public-escrow-card"><h3 class="tile-name q${row.item.quality}">${esc(itemName(row.item))}</h3><div class="tile-art">${itemImage(row.item)}</div><div class="tile-price">${row.price.length?cardPrice(row.price):'<span class="no-price">Not listed</span>'}</div><div class="tile-toolbar">${row.listing_id?`<a class="quiet small" href="#listing/${esc(row.listing_id)}">View trade ${icon('arrow')}</a>`:control('message',p.id,'Ask about this item','quiet small')}</div></article>`).join('')||empty(escrowQuery?'No matching items':'No available items',escrowQuery?'Try another item name or type, or clear your search.':'This player’s available Vault items will appear here.')}</div>${r.next_after?control('more-escrow',p.id,'More items'):''}`;
+    return `<div class="collection-toolbar"><p role="status">${r.items.length}${r.next_after?'+':''} ${escrowQuery?'matching ':''}item${r.items.length===1?'':'s'}</p>${itemSortControl()}${viewControls(false)}</div><div class="public-escrow exchange-grid" data-view="${state.view}" data-size="${state.tileSize}">${r.items.map(row=>`<article class="exchange-card public-escrow-card"><h3 class="tile-name q${row.item.quality}">${esc(itemName(row.item))}</h3><div class="tile-art">${itemImage(row.item)}</div><div class="tile-price">${row.price.length?cardPrice(row.price):'<span class="no-price">Not listed</span>'}</div><div class="tile-toolbar">${row.listing_id?`<a class="quiet small" href="#listing/${esc(row.listing_id)}">View trade ${icon('arrow')}</a>`:control('message',p.id,'Ask about this item','quiet small')}</div></article>`).join('')||empty(escrowQuery?'No matching items':'No available items',escrowQuery?'Try another item name or type, or clear your search.':'This player’s available Vault items will appear here.')}</div>${r.next_after?control('more-escrow',p.id,'More items'):''}`;
   }
   async function escrow(owner,append=false){
     clearTimeout(escrowTimer);
@@ -44,7 +44,7 @@ window.MarketTrading={create(env){
     const results=main.querySelector('#vault-search-results');if(results)results.setAttribute('aria-busy','true');
     const more=main.querySelector('[data-trading="more-escrow"]');if(more)more.disabled=true;
     try{
-      const r=await request('player-escrow',undefined,{id:owner,q:query,...(append&&escrowPage?.next_after?{after:escrowPage.next_after}:{})});
+      const r=await request('player-escrow',undefined,{id:owner,q:query,sort:state.itemSort,...(append&&escrowPage?.next_after?{after:escrowPage.next_after}:{})});
       if(token!==generation||location.hash!=='#escrow/'+owner)return;
       escrowPage=append?{...r,items:[...escrowPage.items,...r.items]}:r;
       if(!existing){

@@ -180,9 +180,10 @@ class WakeEvent:
         if self.handle:
             wait = self.kernel.WaitForSingleObject
             wait.argtypes = (ctypes.c_void_p, ctypes.c_uint32)
-            wait(self.handle, int(seconds * 1000))
+            return wait(self.handle, int(seconds * 1000)) == 0
         else:
             time.sleep(seconds)
+            return False
 
 
 class CapacityError(ValueError):
@@ -229,6 +230,37 @@ class Agent:
         self.timings = []
         self.local_ready_tick = None
         self.verify()
+        try:
+            status = io.document(self.root / 'status.json')
+            self._web_sync_cache = status.get('web_sync_cache', {}) if isinstance(status, dict) else {}
+        except (OSError, ValueError): self._web_sync_cache = {}
+        if not isinstance(self._web_sync_cache, dict): self._web_sync_cache = {}
+        self.sync_progress = status.get('stash_sync', {}) if isinstance(locals().get('status'), dict) else {}
+        if not isinstance(self.sync_progress, dict): self.sync_progress = {}
+        self.sync_progress = {mode: value for mode, value in self.sync_progress.items() if mode in ('SC', 'HC') and isinstance(value, dict)}
+        if isinstance(locals().get('status'), dict) and status.get('phase') in ('retrying', 'waiting_for_stash'):
+            state = 'recovering' if self.pending.exists() else 'retrying' if status['phase'] == 'retrying' else 'waiting_for_stash'
+            for value in self.sync_progress.values(): value['state'] = state
+        self.sync_requests = {}
+        self.manual_sync = set()
+        self.wallet_blocked = set()
+        try:
+            request = io.document(self.root / 'sync-request.json')
+            mode = request.get('mode')
+            if (mode in ('SC', 'HC') and re.fullmatch('[a-f0-9]{32}', str(request.get('id', '')))
+                    and type(request.get('at')) is int and 0 <= time.time() - request['at'] < 600
+                    and self.sync_progress.get(mode, {}).get('local_request') != request['id']):
+                self.manual_sync.add(mode)
+                self.sync_progress.setdefault(mode, {})['local_request'] = request['id']
+        except (OSError, ValueError, KeyError): pass
+
+    def sync_report(self, mode, state=None):
+        previous = self.sync_progress.get(mode, {})
+        result = dict(state=state or previous.get('state', 'checking'), page=self.settings(mode)['withdraw_page'],
+                      pending=len(self.delivery_items.get(mode, [])) + len(self.wallet_withdrawals.get(mode, [])),
+                      request_id=self.sync_requests.get(mode, previous.get('request_id', '')))
+        self.sync_progress[mode] = dict(previous, **result)
+        return result
 
     def verify(self):
         if io.digest(io.read(self.helper)) != self.config["helper_sha256"]:
@@ -333,15 +365,23 @@ class Agent:
                 seen_path = self.root / 'refresh-seen.json'
                 seen = io.document(seen_path) if seen_path.exists() else {}
                 previous = seen.get(key, {})
-                if previous.get('trigger') == trigger:
+                # A native reload ACK is not a delivery receipt. Network or
+                # capacity failures may release the page without moving goods.
+                # Retry an outstanding queue, but never continuously flicker it.
+                at = previous.get('at', 0)
+                elapsed = time.time() - at if type(at) in (int, float) else 30
+                if mode not in self.manual_sync and previous.get('trigger') == trigger and 0 <= elapsed < 30:
                     return False
                 path = self.root / 'live-refresh-request.json'
                 if path.exists():
                     old = io.document(path)
-                    if old.get('kind') == 'gold_deposit' and all(old.get(k) == window[k] for k in ('owner', 'catalog', 'pid', 'started', 'player', 'hardcore', 'session')) and old.get('page') == page and type(old.get('tick')) is int and 0 <= ticks() - old['tick'] < 15000:
+                    result_path = self.root / 'live-refresh-result.json'
+                    completed = io.document(result_path) if result_path.exists() else {}
+                    acknowledged = completed.get('id') == old.get('id') and completed.get('session') == old.get('session') and completed.get('ready') is True
+                    if not acknowledged and old.get('kind') == 'gold_deposit' and all(old.get(k) == window[k] for k in ('owner', 'catalog', 'pid', 'started', 'player', 'hardcore', 'session')) and old.get('page') == page and type(old.get('tick')) is int and 0 <= ticks() - old['tick'] < 15000:
                         self.gold_deposit_proof(old.get('gold_deposit'))
                         return True
-                    if old.get('session') == window['session'] and old.get('page') == page and old.get('trigger') == trigger and 0 <= ticks() - old.get('tick', 0) < 12000:
+                    if not acknowledged and old.get('session') == window['session'] and old.get('page') == page and old.get('trigger') == trigger and 0 <= ticks() - old.get('tick', 0) < 12000:
                         return True
                 request = {k: window[k] for k in ('owner', 'catalog', 'pid', 'started', 'player', 'hardcore', 'session')}
                 request.update(schema=1, kind="delivery", id=uuid.uuid4().hex, page=page, tick=ticks(), key=key, trigger=trigger)
@@ -363,7 +403,7 @@ class Agent:
         request_path = self.root / 'live-refresh-request.json'
         if request_path.exists():
             request = io.document(request_path)
-            if request.get('id') == identity:
+            if request.get('id') == identity and request.get('kind') == 'delivery' and isinstance(request.get('key'), str) and isinstance(request.get('trigger'), str):
                 seen_path = self.root / 'refresh-seen.json'
                 seen = io.document(seen_path) if seen_path.exists() else {}
                 # Bound this housekeeping file across game sessions.
@@ -378,6 +418,8 @@ class Agent:
                     terminal=True, pending=self.pending.exists(), error=str(error)[:512] if error else ''))
 
     def request(self, mode, data):
+        if data.get('type') in ('delivery_queue', 'web_sync', 'web_poll'):
+            data = dict(data, stash_sync=self.sync_report(mode))
         began = time.monotonic()
         try:
             return self._request(mode, data)
@@ -403,7 +445,7 @@ class Agent:
         try:
             operation = data.get('type', '')
             if not isinstance(operation, str) or not re.fullmatch('[a-z_]{1,32}', operation): operation = 'request'
-            return _http.read_json(urllib.request.build_opener(NoRedirect), req, f'custody/{operation} ({mode})')
+            return _http.read_json(urllib.request.build_opener(NoRedirect), req, f'custody/{operation} ({mode})', state_directory=self.root)
         except urllib.error.HTTPError as error:
             try:
                 message = json.loads(error.read(4096)).get("error", "Custody request failed")
@@ -480,7 +522,7 @@ class Agent:
                         current[path.name] = old[path.name]
             if self.refresh_active():
                 return
-            if not errors:
+            if not errors and (current != old or not state_path.exists()):
                 for mode in ('SC', 'HC'):
                     self.request(mode, dict(type='profile_manifest', characters=[r['key'] for r in current.values() if r['mode'] == mode]))
             io.save(state_path, current)
@@ -798,6 +840,12 @@ class Agent:
         if not isinstance(funding, list) or len(funding) > 64 or any(not isinstance(r, dict) or not re.fullmatch('[0-9a-f]{32}', str(r.get('id', ''))) or not isinstance(r.get('price'), list) for r in funding):
             raise ValueError('Invalid agreed trade funding queue')
         self.funding_requests[mode] = funding
+        sync = response.get('stash_sync', {})
+        identity = sync.get('request_id', '') if isinstance(sync, dict) else ''
+        if re.fullmatch('[a-f0-9]{32}', str(identity)):
+            if self.sync_progress.get(mode, {}).get('request_id') != identity:
+                self.manual_sync.add(mode)
+            self.sync_requests[mode] = identity
 
     def clear_market_sidecars(self, mode):
         """Clear trade-only drafts after a server reset; never edit game saves."""
@@ -881,11 +929,31 @@ class Agent:
                     row["price"] = draft["price"]
                     if "comment" in draft:
                         row["comment"] = draft["comment"]
-            response = self.request(mode, dict(type="web_sync", features=web_features(self.config), companion_version=companion_version(), settings={key: settings[key] for key in ("page", "withdraw_page", "enabled", "auto_trade")}, inventory=rows, acknowledged=acknowledgements))
+            packet = dict(type="web_sync", features=web_features(self.config), companion_version=companion_version(), settings={key: settings[key] for key in ("page", "withdraw_page", "enabled", "auto_trade")}, inventory=rows, acknowledged=acknowledgements)
+            fingerprint = io.digest(json.dumps([self.config['owner'],self.config['catalog'],packet], sort_keys=True).encode())
+            cached = getattr(self, '_web_sync_cycle', {}).get(mode)
+            if not acknowledgements and cached and cached[0] == fingerprint:
+                return cached[1]
+            prior = self._web_sync_cache.get(mode, {})
+            light = (not acknowledgements and isinstance(prior, dict) and prior.get('fingerprint') == fingerprint
+                     and re.fullmatch('[a-f0-9]{64}', str(prior.get('inventory_hash', ''))))
+            if light:
+                poll = dict(packet, type='web_poll', inventory_hash=prior['inventory_hash']);del poll['inventory']
+                try: response = self.request(mode, poll)
+                except ValueError as error:
+                    if not str(error).startswith('Marketplace 422:'): raise
+                    response = {'inventory_required': True}  # Older server: use the established full protocol.
+                if response.get('inventory_required'): response = self.request(mode, packet)
+            else:
+                response = self.request(mode, packet)
+            if re.fullmatch('[a-f0-9]{64}', str(response.get('inventory_hash', ''))):
+                self._web_sync_cache[mode] = dict(fingerprint=fingerprint, inventory_hash=response['inventory_hash'])
+            if not hasattr(self, '_web_sync_cycle'): self._web_sync_cycle = {}
+            self._web_sync_cycle[mode] = (fingerprint, 'funding_requests' in response)
             self.delivery_queue(mode, response)
             acknowledgements = []
             if not response["intents"]:
-                return
+                return 'funding_requests' in response
             for intent in response["intents"]:
                 packet = intent["packet"]
                 try:
@@ -933,7 +1001,9 @@ class Agent:
                 raise
             except (OSError, ValueError):
                 rows = []
-            self.request(mode, dict(type="web_sync", features=web_features(self.config), companion_version=companion_version(), settings={key: settings[key] for key in ("page", "withdraw_page", "enabled", "auto_trade")}, inventory=rows, acknowledged=acknowledgements))
+            response = self.request(mode, dict(type="web_sync", features=web_features(self.config), companion_version=companion_version(), settings={key: settings[key] for key in ("page", "withdraw_page", "enabled", "auto_trade")}, inventory=rows, acknowledged=acknowledgements))
+            self.delivery_queue(mode, response)
+            return 'funding_requests' in response
 
     @staticmethod
     def gold_deposit_proof(value):
@@ -1087,6 +1157,7 @@ class Agent:
                 message = ''
             except CapacityError:
                 message = 'Make room on your market page for gold or a new currency bag. The remaining amount stays reserved.'
+                self.wallet_blocked.add(mode)
             self.request(mode, dict(id=uuid.uuid4().hex, type='wallet_notice', withdrawal_id=identity, message=message))
         return delivered
 
@@ -1185,6 +1256,7 @@ class Agent:
         """
         began = time.monotonic()
         mode = 'HC' if window['hardcore'] else 'SC'
+        self.sync_report(mode, 'reloading')
         self.delivery_queue(mode)
         delivered = 0
         try:
@@ -1197,8 +1269,15 @@ class Agent:
                 warnings.pop(mode, None)
         except BlockingIOError:
             warnings[mode] = 'Delivery will refresh automatically when the stash is idle.'
-        io.save(self.root / 'status.json', dict(at=int(time.time()), pending=self.pending.exists(), result={mode: 0}, deliveries={mode: delivered}, delivery_warnings=warnings, rejected_deposits=rejected))
+        self.sync_report(mode, 'no_space' if mode in self.wallet_blocked or mode in warnings and isinstance(delivered, str) else 'checking')
+        # Release a safe native page before optional progress reconciliation.
+        # A slow status response must not keep the stash parked unnecessarily.
         self.live_result(window)
+        # Re-read the authoritative queue after a write; only a server commit
+        # can turn a delivery into "complete". Never infer it from a reload ACK.
+        self.delivery_queue(mode)
+        if not self.delivery_items.get(mode) and not self.wallet_withdrawals.get(mode): self.sync_report(mode, 'ready')
+        io.save(self.root / 'status.json', dict(at=int(time.time()), pending=self.pending.exists(), result={mode: 0}, deliveries={mode: delivered}, delivery_warnings=warnings, rejected_deposits=rejected, stash_sync=self.sync_progress, web_sync_cache=self._web_sync_cache))
         # One compact diagnostic per refresh, without per-request disk writes.
         io.save(self.root / 'delivery-timing.json', dict(schema=1, refresh_id=window['refresh_id'],
             at=int(time.time()), milliseconds=round((time.monotonic() - began) * 1000, 1),
@@ -1223,6 +1302,7 @@ class Agent:
             yield
 
     def run(self, preflight=False):
+        self._web_sync_cycle = {}  # Only deduplicate within this exact guarded pass.
         with self.guard_access():
             rejected = {}
             try:
@@ -1232,8 +1312,19 @@ class Agent:
                 self.recover()
             except DepositRejected as error:
                 rejected['recovered'] = str(error)
-            with self.save_access(pages=[]) as window:
-                live_mode = ("HC" if window["hardcore"] else "SC") if window else None
+            try:
+                with self.save_access(pages=[]) as window:
+                    live_mode = ("HC" if window["hardcore"] else "SC") if window else None
+            except BlockingIOError:
+                # Queue discovery and progress do not require save access.
+                for mode in ('SC', 'HC'):
+                    if (self.folder / f'Marketplace_2.4_{mode}.json').exists():
+                        self.sync_report(mode, 'waiting_for_stash')
+                        self.delivery_queue(mode)
+                path = self.root / 'status.json'
+                old = io.document(path) if path.exists() else {}
+                io.save(path, dict(old, stash_sync=self.sync_progress))
+                raise
             results = {}
             status_path = self.root / "status.json"
             warnings = io.document(status_path).get("delivery_warnings", {}) if status_path.exists() else {}
@@ -1251,12 +1342,24 @@ class Agent:
                     continue
                 if not (self.folder / f"Marketplace_2.4_{mode}.json").exists():
                     continue
+                synced = False
                 try:
                     self.migrate_market_page(mode)
-                    self.web_sync(mode)
+                    synced = self.web_sync(mode)
                 except BlockingIOError:
                     pass  # Deposit is loaded; its private snapshot stays intact.
-                self.delivery_queue(mode)
+                if not synced: self.delivery_queue(mode)
+                queued = self.delivery_items.get(mode) or self.wallet_withdrawals.get(mode)
+                if not preflight and queued and window and window.get('loaded') == self.settings(mode)['withdraw_page']:
+                    # Do not run publication/deposit helper work ahead of a
+                    # native delivery handoff that can already be requested.
+                    if self.delivery_items.get(mode): reason = 'items:' + ','.join(self.delivery_items[mode])
+                    else: reason = 'withdraw:' + ','.join(io.digest((w['id'] + ':' + str(w.get('revision', 0))).encode())[:32] for w in self.wallet_withdrawals[mode])
+                    self.request_refresh(mode, self.settings(mode)['withdraw_page'], reason)
+                    self.sync_report(mode, 'waiting_for_idle')
+                    warnings[mode] = 'Delivery queued. Leave the stash idle with an empty cursor to sync automatically.'
+                    results[mode] = 0
+                    continue
                 if preflight:
                     try:
                         results[mode] = self.collect_deliveries(mode, self.delivery_items.get(mode, []))
@@ -1281,11 +1384,12 @@ class Agent:
                             raise
                         results[mode] = str(error)
                         rejected[mode] = str(error)
+                    synced = False
                     try:
-                        self.web_sync(mode)
+                        synced = self.web_sync(mode)
                     except BlockingIOError:
                         pass
-                    self.delivery_queue(mode)
+                    if count: self.delivery_queue(mode)
                     try:
                         if self.fund_agreed_trade(mode):
                             self.delivery_queue(mode)
@@ -1310,13 +1414,18 @@ class Agent:
                     warnings[mode] = 'Delivery will refresh automatically when the stash is idle.'
                     ids = ','.join(io.digest((w['id'] + ':' + str(w.get('revision', 0))).encode())[:32] for w in self.wallet_withdrawals.get(mode, []))
                     self.request_refresh(mode, self.settings(mode)['withdraw_page'], 'withdraw:' + ids)
+                if self.delivery_items.get(mode) or self.wallet_withdrawals.get(mode):
+                    if mode in self.manual_sync or deliveries.get(mode) or self.wallet_withdrawals.get(mode): self.delivery_queue(mode)
+                    self.sync_report(mode, 'no_space' if mode in self.wallet_blocked or warnings.get(mode) and 'room' in warnings[mode].lower() else 'checking')
+                else:
+                    self.sync_report(mode, 'ready')
             if preflight:
                 for mode, value in results.items():
                     if isinstance(value, str):
                         warnings[mode] = value
                     else:
                         warnings.pop(mode, None)
-            io.save(status_path, dict(at=int(time.time()), phase='ready', error='', pending=self.pending.exists(), result=results, deliveries=deliveries, delivery_warnings=warnings, rejected_deposits=rejected))
+            io.save(status_path, dict(at=int(time.time()), phase='ready', error='', pending=self.pending.exists(), result=results, deliveries=deliveries, delivery_warnings=warnings, rejected_deposits=rejected, web_sync_cache=self._web_sync_cache, stash_sync=self.sync_progress))
             self.live_result(window)
             return results
 
@@ -1356,6 +1465,34 @@ def report_waiting(config):
     io.save(path, status)
 
 
+def watch_stamp(config):
+    """Real page/settings changes wake work; native heartbeat ticks do not."""
+    if not config.get('save_directory') or not config.get('state_directory'): return None
+    folder, root = Path(config['save_directory']), Path(config['state_directory'])
+    paths = [root / 'pending.json', root / 'delivery-request.json', root / 'live-refresh-request.json', root / 'sync-request.json']
+    for mode in ('SC', 'HC'):
+        path = folder / f'Marketplace_2.4_{mode}.json'
+        paths.append(path)
+        try:
+            settings = io.document(path)
+            for page in {settings['page'], settings['withdraw_page']}:
+                paths.append(folder / f'Stash_{mode}_Page{page}.d2i')
+        except (OSError, ValueError, KeyError):
+            pass
+    stamps = []
+    for path in paths:
+        try:
+            stat = path.stat(); stamps.append((str(path), stat.st_mtime_ns, stat.st_size))
+        except OSError:
+            stamps.append((str(path), None))
+    try:
+        window = io.document(root / 'live-window.json')
+        stamps.append(tuple(window.get(key) for key in ('session', 'hardcore', 'loaded', 'phase', 'refresh_id', 'refresh_kind')))
+    except (OSError, ValueError):
+        stamps.append(None)
+    return tuple(stamps)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("config", type=Path)
@@ -1367,14 +1504,28 @@ def main():
     last_link = 0
     last_profiles = 0
     optional = None
+    next_run, previous_stamp = 0, None
     while True:
         agent = None
         config = {}
+        delay = 30
         try:
             config = io.document(args.config)
             # Managed upgrades stop between operations, with every receipt durable.
             if args.watch and config.get('managed_runtime') and Path(config['managed_runtime']).resolve() != Path(__file__).resolve().parent and not (Path(config['state_directory']) / 'pending.json').exists():
                 break
+            stamp = watch_stamp(config) if args.watch else None
+            if args.watch and stamp == previous_stamp and time.monotonic() < next_run:
+                if wake.wait(1): next_run = 0
+                continue
+            # Poll remote-only changes modestly. Local deposits, page switches,
+            # pending receipts and native refresh requests still run immediately.
+            path = Path(config['state_directory']) / 'live-window.json'
+            try: active = time.time() - path.stat().st_mtime < 10
+            except OSError: active = False
+            delay = 12 if active else 30
+            if (Path(config['state_directory']) / 'pending.json').exists(): delay = 2
+            next_run = time.monotonic() + delay * _http.random.uniform(1, 1.2)
             agent = Agent(config)
             if args.watch:
                 agent.bootstrap()
@@ -1406,15 +1557,21 @@ def main():
             print(str(error), flush=True)
         # Read-only account linking/character uploads do not depend on acquiring
         # the native page lease. A player can link before ever opening the stash.
-        if agent is not None and args.watch and not args.preflight and not agent.refresh_active() and (optional is None or not optional.is_alive()):
+        if agent is not None and args.watch and not args.preflight and not agent.refresh_active() and not _http.in_cooldown(agent.root) and (optional is None or not optional.is_alive()):
             now = time.monotonic()
-            link_due, profiles_due = now - last_link >= 15, now - last_profiles >= 60
+            link_due, profiles_due = now - last_link >= 30, now - last_profiles >= 60
             if link_due or profiles_due:
                 if link_due: last_link = now
                 if profiles_due: last_profiles = now
                 def publish_optional(snapshot=dict(config), link=link_due, profiles=profiles_due):
                     try:
                         publisher = Agent(snapshot)
+                        if link and not publisher.refresh_active():
+                            # Report a blocked handoff without touching saves;
+                            # otherwise the website can only say "waiting".
+                            for mode in ('SC', 'HC'):
+                                if publisher.sync_progress.get(mode, {}).get('state') in ('recovering', 'retrying', 'waiting_for_stash'):
+                                    publisher.delivery_queue(mode)
                         if link and not publisher.refresh_active(): publisher.publish_browser_link()
                         if profiles and not publisher.refresh_active(): publisher.publish_characters()
                     except (OSError, ValueError, KeyError) as error:
@@ -1423,12 +1580,9 @@ def main():
                 optional.start()
         if not args.watch:
             break
-        path = Path(initial['state_directory']) / 'live-window.json'
-        try:
-            active = time.time() - path.stat().st_mtime < 10
-        except OSError:
-            active = False
-        wake.wait(2 if active else 15)
+        previous_stamp = watch_stamp(config) if config else None
+        next_run = max(next_run, time.monotonic() + delay)
+        if wake.wait(1): next_run = 0
 
 
 if __name__ == "__main__":

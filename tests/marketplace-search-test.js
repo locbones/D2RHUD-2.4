@@ -3,7 +3,7 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('nod
 const source=fs.readFileSync('tools/marketplace/server/public/market.js','utf8');
 const names=['torchClassChoice','torchClassOf','torchClassName','catalogName','isFree','definition','itemName','paymentDefinition','paymentName','searchWords','searchTextMatches','paymentOptions'];
 const functions=names.map(name=>source.split('\n').find(line=>line.startsWith(`  function ${name}(`))).join('\n');
-const predicate=source.slice(source.indexOf('  function listingMatches('),source.indexOf('  function results('));
+const predicate=source.slice(source.indexOf('  function sortItems('),source.indexOf('  function pageSize('))+source.slice(source.indexOf('  function listingMatches('),source.indexOf('  function results('));
 const state={query:'zod rune',searchScope:'both',sellerQuery:'',sellerId:'',favorites:'all',hideOwn:false,hideOffers:false,quality:'',category:'',sort:'new',affordable:false,ready:false,
   catalog:{bases:{r33:{name:'Zod Rune',category:'misc'},rin:{name:'Ring',category:'jewellery'},gld:{name:'Gold',category:'misc'},Z01:{name:'Storage Bag',category:'misc'}},unique:{42:{name:'Stone of Jordan',code:'rin'}},set:{}}};
 const zod={code:'r33',quality:2,index:-1,quantity:40},ring={code:'rin',quality:7,index:42,quantity:1};

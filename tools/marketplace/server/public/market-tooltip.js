@@ -31,8 +31,9 @@ window.MarketTooltip={create(catalog){
   }
   function lines(item){
     if(item.identified===false||item.identified===0)return [{text:'Unidentified',kind:'unidentified'}];
-    if(!item.display?.saved_properties)return [{text:'Properties awaiting the next inventory sync.',kind:'pending'}];
-    const rows=item.display.saved_properties.slice().sort((a,b)=>(catalog.stats[b.id]?.order||0)-(catalog.stats[a.id]?.order||0)),used=new Set(),result=[];
+    const description=(catalog.bases[item.code]?.description||[]).map(p=>({text:p.text,kind:p.kind==='recipe-note'?'recipe-note':'magic'}));
+    if(!item.display?.saved_properties)return description.length?description:[{text:'Properties awaiting the next inventory sync.',kind:'pending'}];
+    const rows=item.display.saved_properties.slice().sort((a,b)=>(catalog.stats[b.id]?.order||0)-(catalog.stats[a.id]?.order||0)),used=new Set(),result=description.slice();
     for(const p of rows){if(used.has(p))continue;const d=catalog.stats[p.id];if(!visible(d))continue;
       // Elemental ranges and poison rates are encoded as multiple save stats.
       // Poison damage is fixed point (1/256 per frame), at 25 frames/second.

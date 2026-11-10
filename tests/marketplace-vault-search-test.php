@@ -17,6 +17,13 @@ $index=array_key_first($definition);check($index!==null,'Catalog fixture missing
 $targets=array_slice($all,120,60);
 foreach($targets as $item)$m->run('UPDATE items SET quality=7,item_index=? WHERE id=?',[(int)$index,$item]);
 $p=$m->publicEscrow($seller['id'],false);check(count($p['items'])===48&&$p['next_after']!==null,'Initial page');
+foreach(['name','name-desc','quality','quality-asc'] as $sort){
+    $seen=[];$after='';do{$p=$m->publicEscrow($seller['id'],false,$after,'',$sort);$seen=array_merge($seen,$p['items']);$after=$p['next_after'];}while($after!==null);
+    check(count($seen)===180&&count(array_unique(array_column($seen,'item_id')))===180,'Sorted pagination: '.$sort);
+    check((int)$seen[0]['item']['quality']===(in_array($sort,['name-desc','quality'],true)?7:2),'Sort across unseen pages: '.$sort);
+    check(!str_contains(json_encode($seen),'_sort_name'),'Internal sort metadata stays private');
+}
+try{$m->publicEscrow($seller['id'],false,'','','invalid');throw new RuntimeException('Invalid sort accepted');}catch(MarketError $e){check($e->status===422,'Invalid sort status');}
 foreach(['stone','STONE','jordan stone ring','the stone-of-jordan rings'] as $query){
     $p=$m->publicEscrow($seller['id'],false,'',$query);check(count($p['items'])===48,'Search must cross unseen pages: '.$query);
     $q=$m->publicEscrow($seller['id'],false,$p['next_after'],$query);check(count($q['items'])===12&&$q['next_after']===null,'Filtered pagination: '.$query);

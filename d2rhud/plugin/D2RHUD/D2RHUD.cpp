@@ -7532,6 +7532,7 @@ void D2RHUD::OnDraw() {
     Spectate::ClientTick(frame,commandSession);
     HudCamera::Tick(frame,showCameraMenu);
     HudChat::Tick(commandSession, clientStatus == 1, d2rHUDConfig.ChatSounds, d2rHUDConfig.ChatSoundPath, d2rHUDConfig.ChatNotificationVolume);
+    HudChatAppearance::Configure(d2rHUDConfig.ChatAppearance);
     PollLootFilterUpdate();
     CandyCornSave::DrawNotification();
     HUDControls::Tick();

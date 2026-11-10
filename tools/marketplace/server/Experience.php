@@ -15,7 +15,7 @@ trait MarketplaceExperience {
         ] as $name=>$columns)$this->db->exec("CREATE TABLE IF NOT EXISTS $name ($columns)$engine");
     }
     private function touchCompanion(string $owner,string $scope): void {
-        $now=time();$sql=$this->db->getAttribute(PDO::ATTR_DRIVER_NAME)==='mysql'?'INSERT INTO market_companion_seen VALUES (?,?,?) ON DUPLICATE KEY UPDATE seen=?':'INSERT INTO market_companion_seen VALUES (?,?,?) ON CONFLICT(owner,scope) DO UPDATE SET seen=?';$this->run($sql,[$owner,$scope,$now,$now]);
+        $now=time();$sql=$this->db->getAttribute(PDO::ATTR_DRIVER_NAME)==='mysql'?'INSERT INTO market_companion_seen VALUES (?,?,?) ON DUPLICATE KEY UPDATE seen=IF(seen<?,VALUES(seen),seen)':'INSERT INTO market_companion_seen VALUES (?,?,?) ON CONFLICT(owner,scope) DO UPDATE SET seen=excluded.seen WHERE seen<?';$this->run($sql,[$owner,$scope,$now,$now-20]);
     }
     private function companionSeen(string $owner,string $scope): int {return (int)$this->run('SELECT seen FROM market_companion_seen WHERE owner=? AND scope=?',[$owner,$scope])->fetchColumn();}
     public function notificationSettings(string $owner): array {

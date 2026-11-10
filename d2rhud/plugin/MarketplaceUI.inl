@@ -3,6 +3,7 @@
 #include "MarketplaceStore.h"
 #include "MarketplacePanel.h"
 #include "MarketplaceWorkspace.h"
+#include "MarketplaceLiveCustody.h"
 #include <future>
 #include "MarketplaceItemVisuals.h"
 #include "MarketplaceCodexNames.h"

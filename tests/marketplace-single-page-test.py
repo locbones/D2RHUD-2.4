@@ -270,6 +270,37 @@ def main():
                 assert inventory(agent)['gold'] == 100
                 assert next(r['quantity'] for r in snapshot(owner)['escrow']['balances'] if r['kind'] == 'gold') == 50
                 assert source.read_bytes() == original
+                # A settled, unchanged account needs one combined poll, with
+                # no second inventory upload or duplicate delivery lookup.
+                calls=[];original_transport=agent.transport
+                def budget_transport(mode,packet):
+                    if packet['type']=='web_poll':assert 'inventory' not in packet and len(json.dumps(packet))<2048
+                    calls.append(packet['type']);return original_transport(mode,packet)
+                agent.transport=budget_transport
+                try:agent.run()
+                finally:agent.transport=original_transport
+                assert len(calls)==1 and calls[0] in {'web_sync','web_poll'},calls
+                # A new watch-loop Agent reuses only its persisted fingerprint.
+                restarted=a.Agent(agent.config,original_transport);stable=agent.page('SC',11).read_bytes();calls=[]
+                def compact_transport(mode,packet):
+                    calls.append(packet['type']);return original_transport(mode,packet)
+                restarted.transport=compact_transport;restarted.run();assert calls==['web_poll'],calls
+                # A stale server snapshot asks for a full upload without ever
+                # treating the absent inventory as an empty inventory.
+                calls=[]
+                def stale_transport(mode,packet):
+                    calls.append(packet['type'])
+                    if packet['type']=='web_poll':return {'inventory_required':True}
+                    return original_transport(mode,packet)
+                restarted.transport=stale_transport;restarted.run();assert calls==['web_poll','web_sync'],calls
+                assert restarted.page('SC',11).read_bytes()==stable
+                calls=[]
+                def legacy_transport(mode,packet):
+                    calls.append(packet['type'])
+                    if packet['type']=='web_poll':raise ValueError('Marketplace 422: Invalid text.')
+                    return original_transport(mode,packet)
+                restarted.transport=legacy_transport;restarted.run();assert calls==['web_poll','web_sync'],calls
+                assert restarted.page('SC',11).read_bytes()==stable
                 print('Single market page: legacy route migration, priced-only ordinary items, unlisted unique/superior retention, agreed barter funding, six deposit/delivery interruption boundaries, exactly-once receipts, unchanged item/socket properties, gold retention, matched manual-gold deposits with full-balance sweep and six interruption/replay checks, invalid-proof refusal, fresh UUID currency bags, no deposit/withdraw loops, old delivery page untouched and source immutability passed.')
             finally:
                 server.terminate()

@@ -76,3 +76,22 @@ assert.match(t.socketContents({display:{socketed_items:[{code:'gpr',quality:2,di
 console.log('Sockets: occupied vs total capacity, empty slots, rune/gem/jewel art, saved jewel properties, hidden stats, unidentified masking and escaped names passed.');
 
 assert.match(html,/socket-hole socket-vacant/);assert(!/class="[^"]*\bempty\b/.test(t.socketOverlay(socketed,art)));
+
+const crystals=JSON.parse(fs.readFileSync('tools/marketplace/assets/rmd-crystals.json','utf8'));
+for(const crystal of crystals.items){
+  const item={code:crystal.code,quality:2,identified:true,display:{saved_properties:[]}};
+  assert.deepEqual(Array.from(t.lines(item),p=>p.text),crystal.description.map(p=>p.text));
+  assert.deepEqual(Array.from(t.lines({code:crystal.code}),p=>p.text),crystal.description.map(p=>p.text));
+  assert(!t.properties(item).includes('%%'));
+  assert(!t.properties({...item,identified:false}).includes('Blacksmith'));
+}
+assert.match(t.properties({code:'Z60'}),/\+3 Strength/);
+assert.match(t.properties({code:'Z60'}),/property-recipe-note.*For Blacksmiths:/);
+assert.match(t.properties({code:'Z60'}),/\+2 Strength/);
+assert.match(t.properties({code:'z22'}),/\+30 Level Requirement/);
+const unmodified=structuredClone(catalog);delete unmodified.bases.Z60.description;
+assert(!ctx.window.MarketTooltip.create(unmodified).properties({code:'Z60'}).includes('Strength'));
+const hostile=structuredClone(catalog);hostile.bases.Z60.description=[{text:'<img src=x onerror=alert(1)>',kind:'" onclick="bad'}];
+assert(!ctx.window.MarketTooltip.create(hostile).properties({code:'Z60'}).includes('<img'));
+assert(!ctx.window.MarketTooltip.create(hostile).properties({code:'Z60'}).includes('onclick='));
+console.log('Crystals: all 68 Lua descriptions, Blacksmith effects, usage names, missing saved-property fallback, unidentified masking, mod-catalog isolation and HTML escaping passed.');

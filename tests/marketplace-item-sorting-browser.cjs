@@ -1,0 +1,60 @@
+// Exercise real UI and PHP responses in the disposable Vault-search fixture.
+const {chromium}=require('../build-marketplace/browser-check/node_modules/playwright');
+const fs=require('node:fs'),assert=require('node:assert/strict');
+(async()=>{
+ const fixture=JSON.parse(fs.readFileSync(process.env.VAULT_SEARCH_FIXTURE,'utf8'));
+ const browser=await chromium.launch({channel:'msedge',headless:true});
+ try{
+  const page=await browser.newPage({viewport:{width:1440,height:1000}}),errors=[];
+  page.on('pageerror',e=>errors.push(e.message));const origin=process.env.VAULT_SEARCH_ORIGIN;
+  await page.goto(origin+'/#browse');await page.locator('#sort-filter').waitFor();
+  const collator=new Intl.Collator(undefined,{sensitivity:'base',numeric:true});
+  const names=()=>page.locator('.tile-name').allTextContents();
+  const sorted=async(desc=false)=>{const rows=await names();assert(rows.length>1);assert.deepEqual(rows,[...rows].sort((a,b)=>collator.compare(a,b)*(desc?-1:1)));return rows;};
+  await page.locator('#sort-filter').selectOption('name');const az=await sorted();
+  await page.locator('#sort-filter').selectOption('name-desc');const za=await sorted(true);assert.deepEqual(za,[...az].reverse());
+  await page.reload();await page.locator('#sort-filter').waitFor();assert.equal(await page.locator('#sort-filter').inputValue(),'name-desc');await sorted(true);
+  await page.getByRole('button',{name:'Refresh',exact:true}).click();await sorted(true);
+  await page.goto(origin+'/#escrow/'+fixture.seller.id);await page.locator('#item-sort').waitFor();
+  await Promise.all([page.waitForResponse(r=>r.url().includes('action=player-escrow')&&r.url().includes('sort=name-desc')),page.locator('#item-sort').selectOption('name-desc')]);
+  await page.waitForFunction(()=>document.querySelector('#vault-search-results')?.getAttribute('aria-busy')==='false');
+  const first=await sorted(true);assert(first.some(name=>name.includes('Stone of Jordan')),'Sort includes matches beyond the first server page');
+  await page.locator('[data-trading=more-escrow]').click();
+  await page.waitForFunction(()=>document.querySelectorAll('.public-escrow-card').length===96);await sorted(true);
+  await page.locator('#item-sort').selectOption('quality-asc');
+  await page.waitForFunction(()=>document.querySelectorAll('.public-escrow-card').length===48);
+  assert.equal(await page.locator('.tile-name').first().getAttribute('class'),'tile-name q2');
+  await page.goto(origin+'/#browse');await page.locator('#listing-search').waitFor();
+  await page.getByRole('button',{name:'Link player',exact:true}).first().click();
+  await page.locator('#code-form input').fill(fixture.seller_code);await page.locator('#code-form button[type=submit]').click();
+  await page.waitForFunction(()=>!document.querySelector('#modal').open);
+  await page.goto(origin+'/#vault');await page.locator('#item-sort').waitFor();
+  await page.locator('#item-sort').selectOption('name-desc');await sorted(true);
+  await page.getByRole('button',{name:'List view',exact:true}).click();
+  assert.equal(await page.locator('#item-sort').inputValue(),'name-desc');
+  await page.setViewportSize({width:390,height:844});
+  assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'Vault controls fit mobile');
+  await page.screenshot({path:'build-marketplace/item-sorting-mobile.png',fullPage:true});
+  await page.reload();await page.locator('#item-sort').waitFor();assert.equal(await page.locator('#item-sort').inputValue(),'name-desc');
+  await page.locator('.item-image').first().click();
+  await page.locator('#item-tooltip .tooltip-record summary').click();
+  const historyLink=page.locator('#item-tooltip .item-history-link'),historyHash=await historyLink.getAttribute('href');
+  assert.match(historyHash,/^#history\/[a-f0-9]{32}$/);const historyId=historyHash.split('/')[1];
+  await historyLink.click();await page.getByRole('heading',{name:'Item history',exact:true}).waitFor();
+  await page.getByText('No completed sales recorded yet.',{exact:false}).waitFor();
+  assert((await page.locator('.history-identifier').textContent()).includes(historyId));
+  const historyRequests=[];
+  await page.route('**/web.php?**',async route=>{
+    const url=new URL(route.request().url());if(url.searchParams.get('action')!=='history')return route.continue();
+    historyRequests.push(url.searchParams.get('item_id'));const older=url.searchParams.has('before');
+    return route.fulfill({contentType:'application/json',body:JSON.stringify({rows:[{seq:older?3:5,at:1794100000,price:[{kind:'free',quantity:1,label:'Free'}],seller_name:older?'Older seller':'Recent seller',buyer_name:'Recipient'}],next_before:older?null:5})});
+  });
+  await page.reload();await page.getByText('Recent seller',{exact:true}).waitFor();
+  await page.getByRole('button',{name:'Older sales',exact:true}).click();
+  await page.getByText('Older seller',{exact:true}).waitFor();assert.equal(await page.locator('.history-row').count(),2);
+  assert(historyRequests.length===2&&historyRequests.every(id=>id===historyId),'History paging stays on the exact ledger ID');
+  assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'History fits mobile');
+  assert.deepEqual(errors,[]);console.log('PASS sorting browser: Browse A–Z/Z–A, refresh and storage, full public Vault ordering across pages, quality order, own Vault, list view and mobile width.');
+  console.log('PASS history shortcut: tooltip magnifier, exact ledger route, empty state, reload, older sales and mobile width.');
+ }finally{await browser.close();}
+})().catch(e=>{console.error(e);process.exitCode=1;});

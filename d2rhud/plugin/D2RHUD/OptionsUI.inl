@@ -1,9 +1,17 @@
 void ShowD2RHUDMenu()
 {
-    if (!showD2RHUDMenu) return;
-
+    static bool chatSettingsPending=false;
     static std::string saveStatusMessage = "";
-    static ImVec4 saveStatusColor = ImVec4(0, 1, 0, 1); // default green
+    static ImVec4 saveStatusColor = ImVec4(0, 1, 0, 1);
+    if (!showD2RHUDMenu) {
+        if(chatSettingsPending){
+            const bool saved=SaveFullGrailConfig(configFilePath,false);
+            chatSettingsPending=false;
+            saveStatusMessage=saved?"Settings saved":"Could not save settings. Try again.";
+            saveStatusColor=saved?QuestJournalSkin::Gold:ImVec4(.9f,.35f,.25f,1);
+        }
+        return;
+    }
     float menuScale = GetMenuScaleFactor();
     ImVec2 windowSize = ImVec2(850.0f * menuScale, 520.0f * menuScale);
     HudMenu::Prepare(windowSize);
@@ -60,6 +68,8 @@ void ShowD2RHUDMenu()
             d2rHUDConfig.HPRolloverMods,d2rHUDConfig.HPRolloverDifficulty,d2rHUDConfig.HPRolloverPercent,
             d2rHUDConfig.SurvivorArena,d2rHUDConfig.ActVI,d2rHUDConfig.ExtendedCubeConditions,d2rHUDConfig.MultipleUseitemOutputs,d2rHUDConfig.MultipleUseitemInputs,d2rHUDConfig.BulkCubeOutputs,d2rHUDConfig.ExtendedCubeOutputs);};
         const auto before=values();
+        const auto chatBefore=d2rHUDConfig.ChatAppearance;
+        const int volumeBefore=d2rHUDConfig.ChatNotificationVolume;
         auto applyAndSave=[&](){
             Inspect::SetEnabled(d2rHUDConfig.Inspect);
             DynamicAutomap::Configure(d2rHUDConfig.DynamicAutomap,d2rHUDConfig.DynamicAutomapInterval);
@@ -438,6 +448,22 @@ void ShowD2RHUDMenu()
                 "Applies immediately. The TCP/IP host controls this option. BIN releases need the exported cubemain source in data/D2RHUD/table-metadata.json.", nullptr))
                 CubeVisual::SetExtendedConditions(d2rHUDConfig.ExtendedCubeConditions);
         }
+        if(optionFilter.Visible(HudOptions::Category::Sound,"Chat appearance","chat messages text size opacity transparency background height trade history")) {
+            drawCheckbox("Customize chat",&d2rHUDConfig.ChatAppearance.enabled,"Chat appearance",
+                "Adjusts native in-game messages and chat history. Text and linked items scale together. Background opacity also changes the typing bar. The live area height limits how much gameplay recent messages cover.",
+                "Changes preview immediately. Turn this off to restore the game's layout.",nullptr);
+            if(d2rHUDConfig.ChatAppearance.enabled){
+                drawLabeledInput("Chat size",[&](){ImGui::SliderInt("##chat-size",&d2rHUDConfig.ChatAppearance.size,60,150,"%d%%");},
+                    "Chat size","Scales native chat messages and history, including linked items.","Applies immediately. The input text keeps its normal size.",false,35.f,nullptr);
+                drawLabeledInput("Background opacity",[&](){ImGui::SliderInt("##chat-opacity",&d2rHUDConfig.ChatAppearance.background,0,100,"%d%%");},
+                    "Background opacity","Adjusts backgrounds behind recent messages, chat history and the typing bar. 0% is transparent; 100% keeps your mod's original background.","Normal message fading and item-link colors are preserved.",false,35.f,nullptr);
+                drawLabeledInput("Live area height",[&](){ImGui::SliderInt("##chat-height",&d2rHUDConfig.ChatAppearance.height,25,100,"%d%%");},
+                    "Live area height","Reduces the screen space used by recent messages while keeping the bottom edge in place. Older messages remain in the normal chat history.","History keeps its full scrolling area.",false,35.f,nullptr);
+                HudText::TextWrapped("%s",HudChatAppearance::Status());
+            }
+            if(ThemeButton("Restore default chat"))d2rHUDConfig.ChatAppearance={};
+            ImGui::Separator();
+        }
         if (optionFilter.Visible(HudOptions::Category::Sound,"Chat Sounds","Chat Sound notifications audio sound path volume marketplace trade")) {
         drawCheckbox("Chat Sounds", &d2rHUDConfig.ChatSounds, "Chat Sounds", "- Plays a notification sound when other players send chat\n- Does not play for your own messages\n- Controlled by D2RHUD options (not chat panel widget)\n\n", "Toggle this to enable or disable chat notification sounds", nullptr);
 
@@ -593,7 +619,9 @@ void ShowD2RHUDMenu()
 
         }
         if(!optionFilter.matches)HudText::TextWrapped("No matching options. Try another search or clear the search field.");
-        if(before!=values())applyAndSave();
+        if(chatBefore!=d2rHUDConfig.ChatAppearance||volumeBefore!=d2rHUDConfig.ChatNotificationVolume)chatSettingsPending=true;
+        // Preview each drag in memory, then write once after release (or close).
+        if(before!=values()||(chatSettingsPending&&!ImGui::IsMouseDown(ImGuiMouseButton_Left))){applyAndSave();chatSettingsPending=false;}
 
         static std::string lastDescriptionTitle,lastDescriptionText,lastDescriptionNote;
         const bool descriptionChanged=descriptionTitle!=lastDescriptionTitle || descriptionText!=lastDescriptionText || descriptionNote!=lastDescriptionNote;

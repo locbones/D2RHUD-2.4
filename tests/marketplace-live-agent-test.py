@@ -188,13 +188,15 @@ def main():
             agent.refresh_ready(refreshed)
             result = a.io.document(state / 'live-refresh-result.json')
             assert result == dict(schema=1, id=request['id'], session=refreshed['session'], ready=True)
-            # Neither time nor a new native grant re-arms the same delivery.
+            # A reload ACK suppresses repeated polling briefly, not forever:
+            # an undelivered queue may need another verified native handoff.
+            a.io.save(path, dict(viewed, session='returned-session', edit_revision=999))
+            for _ in range(20): assert not agent.request_refresh('SC', 2, reason)
             seen_path = state / 'refresh-seen.json'
             seen = a.io.document(seen_path)
             for value in seen.values(): value['at'] = 0
             a.io.save(seen_path, seen)
-            a.io.save(path, dict(viewed, session='returned-session', edit_revision=999))
-            for _ in range(20): assert not agent.request_refresh('SC', 2, reason)
+            assert agent.request_refresh('SC', 2, reason)
             assert agent.request_refresh('SC', 2, 'withdraw:' + 'd' * 32)
             a.io.save(path, window)
             a.game_processes = lambda: {child.pid, child.pid+1}

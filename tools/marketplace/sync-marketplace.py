@@ -10,6 +10,7 @@ import urllib.parse
 import urllib.request
 import time
 import uuid
+import hashlib
 
 _http_spec = importlib.util.spec_from_file_location('sync_http', Path(__file__).with_name('marketplace-http.py'))
 _http = importlib.util.module_from_spec(_http_spec)
@@ -90,7 +91,7 @@ def atomic(path, value):
         temporary.unlink(missing_ok=True)
 
 
-def sync(config, folder, hardcore=False, allow_local=False):
+def sync(config, folder, hardcore=False, allow_local=False, refresh_feed=True):
     endpoint = config["endpoint"]
     url = urllib.parse.urlsplit(endpoint)
     if url.username or url.password or url.query or url.fragment:
@@ -123,7 +124,8 @@ def sync(config, folder, hardcore=False, allow_local=False):
         data = None if command is None else _http.encode(command, 8 * 1024 * 1024 if action == "publish" else 32768)
         query = urllib.parse.urlencode({"action": action, "hardcore": int(hardcore), "mod": mod, "version": "2.4", **({"torch_class": 1} if action=="sync" and torch_class else {}), **(extra or {})})
         req = urllib.request.Request(endpoint + "?" + query, data=data, headers={"Authorization": "Bearer " + (token if bearer is None else bearer), "Content-Type": "application/json"})
-        return _http.read_json(opener, req, f'{action} ({mode})')
+        network_root = Path(config['custody_status']).parent if config.get('custody_status') else config.get('state_directory')
+        return _http.read_json(opener, req, f'{action} ({mode})', state_directory=network_root)
 
     def validate(snapshot, expected_player=None):
         if snapshot.get("schema") != 1 or snapshot.get("game_mode") != "2.4" or snapshot.get("mod") != mod or snapshot.get("hardcore") is not hardcore:
@@ -135,12 +137,28 @@ def sync(config, folder, hardcore=False, allow_local=False):
                 raise ValueError("Unsupported service snapshot")
         return snapshot
 
-    snapshot = validate(request("sync"))
+    cache_path = folder / f"MarketplaceActivity_2.4_{mode}.json"
+    state_path = folder / f"MarketplaceSyncState_2.4_{mode}.json"
+    state = {"endpoint": endpoint, "player_id": config["player_id"], "results": {}}
+    if state_path.exists():
+        state = json.loads(state_path.read_text(encoding="utf-8-sig"))
+        if state["endpoint"] != endpoint or state["player_id"] != config["player_id"]:
+            raise ValueError("Sync state belongs to another service/account")
+    snapshot = None
+    if not refresh_feed and cache_path.exists():
+        try:
+            cached = validate(json.loads(cache_path.read_text(encoding='utf-8-sig')))
+            if 0 <= time.time() - cached.get('generated_at', 0) < 30:
+                snapshot = cached
+        except (OSError, ValueError, KeyError):
+            pass
+    if snapshot is None:
+        snapshot = validate(request("sync"))
     control = snapshot.get('market_control', {})
     reset = snapshot.get('market_reset') or {}
     generation = control.get('generation', 0)
     if generation and state.get('generation') != generation:
-        state = {'results': {}, 'generation': generation}
+        state = {'endpoint': endpoint, 'player_id': config['player_id'], 'results': {}, 'generation': generation}
     if control.get('phase') == 'draining' or (reset and not reset.get('acknowledged')):
         message = ('Marketplace reset: returning held items and funds.' if control.get('phase') == 'draining'
                    else 'Marketplace reset: waiting for the updated save companion to clear old trade drafts.')
@@ -173,9 +191,15 @@ def sync(config, folder, hardcore=False, allow_local=False):
             for item in publication["items"]:
                 if not any(d["tab"] == item["tab"] and d["item_hex"] == item["item_hex"] and d["price"] == item["price"] for d in inventory["drafts"]):
                     raise ValueError("Refresh the marketplace: published asking prices changed")
-            remote = validate(request("sync", bearer=bearer), player_id)
+            remote = validate(request("sync", bearer=bearer), player_id) if bearer else snapshot
+            fingerprint = hashlib.sha256(raw).hexdigest()
+            prior = state.get('publications', {}).get(inventory_key or 'main', {})
+            if prior.get('hash') == fingerprint and remote.get('publication', {}).get('id') == publication['id']:
+                return dict(prior.get('result', {}), unchanged=True)
             publication["expected_revision"] = remote.get("publication", {}).get("revision", 0)
             result = request("publish", publication, bearer=bearer)
+            state.setdefault('publications', {})[inventory_key or 'main'] = dict(hash=fingerprint, result=result)
+            atomic(state_path, state)
             if result.get('blocked_identities'):
                 publication_error.append('Duplicate or previously transferred item identity refused. No restored copy was hosted.')
             if result.get('unverified_identities'):
@@ -202,14 +226,8 @@ def sync(config, folder, hardcore=False, allow_local=False):
         if test.get("role") != "tester" or len(test.get("token", "")) != 64:
             raise ValueError("Invalid development trader pairing")
         test_published = publish_inventory(folder / f"MarketplaceTestPublish_2.4_{mode}.json", "simulation", test["token"], test["id"])
-    snapshot = validate(request("sync"))
-    cache_path = folder / f"MarketplaceActivity_2.4_{mode}.json"
-    state_path = folder / f"MarketplaceSyncState_2.4_{mode}.json"
-    state = {"endpoint": endpoint, "player_id": config["player_id"], "results": {}}
-    if state_path.exists():
-        state = json.loads(state_path.read_text(encoding="utf-8-sig"))
-        if state["endpoint"] != endpoint or state["player_id"] != config["player_id"]:
-            raise ValueError("Sync state belongs to another service/account")
+    if (published is not None and not published.get('unchanged')) or (test_published is not None and not test_published.get('unchanged')):
+        snapshot = validate(request("sync"))
     settings_path = folder / f"Marketplace_2.4_{mode}.json"
     if settings_path.exists():
         preferences = json.loads(settings_path.read_text(encoding="utf-8-sig"))
@@ -251,11 +269,13 @@ def sync(config, folder, hardcore=False, allow_local=False):
                 raise ValueError('Unsupported chat command')
         chat_commands = chat['commands']
         commands = commands + chat_commands
+    changed_commands = False
     if commands:
         for command in commands:
             command_id = command["id"]
             if command_id in state["results"]:
                 continue
+            changed_commands = True
             try:
                 if command.get("type") == "offer_page":
                     for old in commands:
@@ -272,7 +292,8 @@ def sync(config, folder, hardcore=False, allow_local=False):
                     message = "Command refused"
                 state["results"][command_id] = {"error": str(message)[:512], "status": error.code}
             atomic(state_path, state)  # A crash/retry reuses the exact idempotency key.
-        snapshot = validate(request("sync"))
+        if changed_commands:
+            snapshot = validate(request("sync"))
     # Durable incoming messages are separate from trade acceptance and the save
     # journal. Stop fetching if the local unprinted buffer fills while offline.
     seen = 0
@@ -335,6 +356,11 @@ def sync(config, folder, hardcore=False, allow_local=False):
         if isinstance(deposit_warning, str):
             publication_error.append(deposit_warning[:512])
     snapshot["publication_error"] = "; ".join(publication_error)[:512]
+    custody_stamp = hashlib.sha256(json.dumps([snapshot.get('escrow'),
+        [(o.get('id'),o.get('revision'),o.get('status')) for o in snapshot.get('offers',[])],
+        snapshot.get('market_reset'),snapshot.get('market_control')],sort_keys=True).encode()).hexdigest()
+    custody_changed = state.get('custody_stamp') != custody_stamp or changed_commands or published is not None and not published.get('unchanged')
+    state['custody_stamp'] = custody_stamp
     atomic(cache_path, snapshot)
     feed = {k: snapshot[k] for k in ("schema", "game_mode", "mod", "hardcore", "expires_at", "listings")}
     if "social" in snapshot:
@@ -344,6 +370,7 @@ def sync(config, folder, hardcore=False, allow_local=False):
     atomic(folder / f"MarketplaceFeed_2.4_{mode}.json", feed)
     atomic(state_path, state)
     result = {"offers": len(snapshot["offers"]), "recorded_sales": len(snapshot["history"]), "listings": len(snapshot["listings"])}
+    result['custody_changed'] = bool(custody_changed)
     if published is not None:
         result["published"] = published["published"]
     if test_published is not None:
@@ -364,15 +391,20 @@ if __name__ == "__main__":
     if not 5 <= args.interval <= 300:
         parser.error("Use an interval from 5 to 300 seconds")
     try:
+        last_feed, last_input_stamp = 0, None
         while True:
             config = {}
+            before = watch_stamp(config, args.save_folder, args.hardcore)
             try:
                 config = json.loads(args.config.read_text(encoding="utf-8-sig"))
                 if args.watch and config.get('managed_runtime') and Path(config['managed_runtime']).resolve() != Path(__file__).resolve().parent:
                     break
                 before = watch_stamp(config, args.save_folder, args.hardcore)
-                result = sync(config, args.save_folder, args.hardcore)
-                wake_custody(config.get('player_id'))
+                refresh_feed = before != last_input_stamp or time.monotonic() - last_feed >= 20
+                result = sync(config, args.save_folder, args.hardcore, refresh_feed=refresh_feed)
+                if refresh_feed: last_feed = time.monotonic()
+                last_input_stamp = watch_stamp(config, args.save_folder, args.hardcore)
+                if result.get('custody_changed'): wake_custody(config.get('player_id'))
                 print(json.dumps(result), flush=True)
             except (ValueError, OSError) as error:
                 if not args.watch:
@@ -382,7 +414,7 @@ if __name__ == "__main__":
                 break
             if not config:
                 before = watch_stamp(config, args.save_folder, args.hardcore)
-            interval = args.interval
+            interval = max(30, args.interval)
             try:
                 presence = json.loads((args.save_folder / 'MarketplaceChatPresence_2.4.json').read_text(encoding='utf-8-sig'))
                 if presence.get('owner') == config.get('player_id') and 0 <= time.time() - presence.get('at', 0) < 15:

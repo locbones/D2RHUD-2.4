@@ -7,12 +7,12 @@
 
 namespace HudOptions {
 enum class Category { Display,Gameplay,Items,Sound,Advanced,Workshop };
-inline constexpr const char* Categories[]{"Display","Gameplay","Items","Sound","Advanced","Workshop"};
+inline constexpr const char* Categories[]{"Display","Gameplay","Items","Chat","Advanced","Workshop"};
 inline constexpr const char* CategoryHelp[]{
     "Display preferences and information shown during play.",
     "Combat rules, summons and character behavior.",
     "Item appearance, picking up items, stack quantities and drops.",
-    "Chat notifications and their sounds.",
+    "Chat size, message backgrounds, visible area and notification sounds.",
     "Compatibility settings and combat diagnostics.",
     "Unfinished features for testing and experimentation."
 };

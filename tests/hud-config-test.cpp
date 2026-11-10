@@ -85,6 +85,12 @@ void Preferences() {
     Check(config.ChatNotificationVolume==30,"notification sounds default to a quieter 30 percent");
     Load(config,{{"ChatNotificationVolume",7}},false);Json audio;Save(config,audio);Config audioRestored;Load(audioRestored,audio,false);
     Check(audioRestored.ChatNotificationVolume==7,"notification gain persists independently of game/system volume");
+    Check(!config.ChatAppearance.enabled,"native chat layout remains unchanged by default");
+    Load(config,{{"ChatAppearance",{{"Enabled",true},{"Size",80},{"BackgroundOpacity",25},{"LiveAreaHeight",50},{"future",9}}}},false);
+    Json chat={{"ChatAppearance",{{"future",9}}}};Save(config,chat);Config restoredChat;Load(restoredChat,chat,false);
+    Check(restoredChat.ChatAppearance==config.ChatAppearance&&chat["ChatAppearance"]["future"]==9,"chat appearance round-trips without losing future fields");
+    Load(restoredChat,{{"ChatAppearance",{{"Enabled","bad"},{"Size",9999},{"BackgroundOpacity",-10},{"LiveAreaHeight",1}}}},false);
+    Check(restoredChat.ChatAppearance.enabled&&restoredChat.ChatAppearance.size==150&&restoredChat.ChatAppearance.background==0&&restoredChat.ChatAppearance.height==25,"malformed chat fields preserve defaults and numeric limits clamp");
     Load(audioRestored,{{"ChatNotificationVolume",-50}},false);Check(audioRestored.ChatNotificationVolume==0,"negative notification volume clamps to mute");
     Load(audioRestored,{{"ChatNotificationVolume",500}},false);Check(audioRestored.ChatNotificationVolume==100,"notification volume cannot amplify beyond full scale");
     Check(config.MultipleAurasPerItem,"multiple item auras default on");

@@ -1,5 +1,6 @@
 #pragma once
 #include "HudConfigStore.h"
+#include "ChatAppearance.h"
 #include <array>
 #include <atomic>
 #include <memory>
@@ -59,6 +60,7 @@ struct Config
     bool ExtendedItemcodes = true;
     bool FloatingDamage = true;
     bool ChatSounds = true;
+    HudChatAppearance::Settings ChatAppearance;
     int ChatNotificationVolume = 30;
     std::string ChatSoundPath;
     std::vector<std::string> DLLsToLoad = { "D2RHUD.dll" };

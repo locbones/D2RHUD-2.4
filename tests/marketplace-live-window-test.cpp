@@ -76,6 +76,11 @@ int wmain(int argc,wchar_t** argv){
     Write(state/L"live-capability.json",{{"schema",1},{"owner","player"},{"catalog","catalog"}});
     Write(saves/L"Marketplace_2.4_SC.json",{{"mod","RMD-MP"},{"game_mode","2.4"},{"hardcore",false},{"page",11},{"withdraw_page",2}});
     Window bridge;assert(bridge.Configure(enrollment,saves,17,false,11));
+    assert(bridge.RequestSync(10000));const auto manual=Read(state/L"sync-request.json");
+    assert(manual.at("mode")=="SC"&&manual.at("id").get<std::string>().size()==32);
+    assert(bridge.RequestSync(10001)&&Read(state/L"sync-request.json")==manual);
+    assert(bridge.RequestSync(16000)&&Read(state/L"sync-request.json").at("id")!=manual.at("id"));
+    assert(!std::filesystem::exists(state/L"pending.json")); // Wake is never write authority.
     auto writer=[&](){return CreateFileW((state/L"live.lock").c_str(),GENERIC_READ|GENERIC_WRITE,0,nullptr,OPEN_ALWAYS,FILE_ATTRIBUTE_NORMAL,nullptr);};
     auto handle=writer();assert(handle==INVALID_HANDLE_VALUE);
     assert(bridge.Close(11,true)==0&&!std::filesystem::exists(state/L"live-window.json"));

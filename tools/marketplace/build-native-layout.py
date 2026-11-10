@@ -367,9 +367,11 @@ def polish(workspace):
     move('MarketListingsPanelInset', height=994)
     move('MarketFooterDivider', y=1474)
     move('MarketRefreshButton', y=1484)
-    move('MarketStatusBackground', x=470, y=1484, width=1670, height=68)
+    nodes['MarketAnchor']['children'].append(button('MarketSyncButton', 'Sync now', 'MarketSync', 1774, 1484, True))
+    move('MarketStatusBackground', x=470, y=1484, width=1260, height=68)
     for name in ['MarketStatus', 'MarketEditNotice']:
         move(name, y=1488, height=58)
+        move(name, width=1240)
         nodes[name]['fields']['style']['pointSize'] = 20
     for name in ['MarketPricePrevButton', 'MarketPriceNextButton', 'MarketSavePriceButton', 'MarketRemovePriceButton']:
         move(name, y=1390)
@@ -494,7 +496,7 @@ def build():
     filters = [label("MarketSearchTitle", "Search", 80, 350, 160, 58),
         input_box("MarketSearch", "Search items, sellers or payment", 250, 345, 1900),
         dropdown("MarketQuality", ["All qualities", "Unique", "Set", "Magic", "Rare", "Runes"], 80, 425),
-        dropdown("MarketSort", ["Name", "Quality", "Seller / Tab", "Payment types"], 470, 425),
+        dropdown("MarketSort", ["Name: A-Z", "Quality: high-low", "Seller / Tab: A-Z", "Payment types", "Name: Z-A", "Quality: low-high", "Seller / Tab: Z-A"], 470, 425),
         group("MarketAffordFilter", [button("MarketAffordable", "Show things I can afford", "MarketAffordable", 860, 425)]),
         group("MarketOwnFilters", [dropdown("MarketTab", ["All tabs"] + [f"Tab {n}" for n in range(1, 8)], 860, 425), button("MarketPriced", "Priced only: Off", "MarketPriced", 1250, 425, True), button("MarketWalletButton", "Vault", "MarketWallet", 1668, 425, True)])]
     content = focused_views(filters)

@@ -28,7 +28,8 @@ main{min-height:240px;padding-bottom:28px}
 .collection-toolbar .result-count{margin:0}
 .inventory-toolbar .subnav{margin:0;gap:5px}
 .inventory-toolbar .subnav button{padding:7px 12px}
-.display-controls{display:flex;align-items:center;gap:12px;margin-left:auto}
+.display-controls{display:flex;align-items:center;gap:12px;margin-left:auto;flex-wrap:wrap}
+#item-sort{width:160px;max-width:100%}
 .view-switch{display:flex;gap:1px;padding:2px;background:#0b0807;border:1px solid #493124}
 .view-switch button{background:transparent;border-color:transparent;color:var(--muted);font-size:11px;padding:5px 9px;gap:6px;min-height:31px}
 .view-switch button.active{background:#382318;border-color:#795032;color:#edcc99}
@@ -185,6 +186,7 @@ main{min-height:240px;padding-bottom:28px}
 .native-item-facts p{margin:1px 0}.modified-value{color:#9292ff}.ethereal-property{color:#9292ff}
 .item-tooltip .properties{font-size:17px;line-height:1.45;color:#9292ff;border-top:1px dashed #998649;padding-top:12px;margin-top:12px}
 .item-tooltip .properties:empty{display:none}.item-tooltip .properties p{margin:2px 0;overflow-wrap:anywhere}.item-tooltip .properties .property-set{color:#00d800}.property-set:before{content:"Set bonus: "}.item-tooltip .properties .property-unidentified{color:#f45c5c}.item-tooltip .properties .property-pending{font:11px/1.7 var(--sans);letter-spacing:0;color:#9d9485}
+.item-tooltip .properties .property-recipe-note{color:#cb83ff;margin-top:13px;margin-bottom:7px}
 .tooltip-sockets{font-size:13px;color:#c7b377}.tooltip-record{margin-top:13px;font:10px/1.7 var(--sans);letter-spacing:0;color:#8e8675;border-top:1px solid #28251c;padding-top:8px}.tooltip-record summary{cursor:pointer;width:max-content;margin:auto;color:#ad9b76;padding:1px 10px}.tooltip-record[open] summary{color:#d3bf91}.tooltip-record .tooltip-identity{margin-top:6px}
 .tooltip-dismiss{font-family:var(--sans);letter-spacing:0;color:#827764}.item-tooltip .tooltip-close{font-family:var(--sans);background:#14120d}
 @media(max-width:540px){.item-tooltip{padding:16px 15px 10px}.native-item-name,.native-item-facts,.item-tooltip .properties{font-size:15px;letter-spacing:.4px}}
@@ -214,3 +216,9 @@ main{min-height:240px;padding-bottom:28px}
 .wallet-grid .balance-card strong{font-size:clamp(20px,2.2vw,28px);font-variant-numeric:tabular-nums;line-height:1.3;overflow-wrap:anywhere}
 .wallet-grid .balance-card .balance-actions{grid-column:1/-1;display:flex;flex-direction:row;flex-wrap:wrap;gap:10px;padding-top:14px;border-top:1px solid var(--line)}
 .wallet-grid .balance-actions button{flex:1;min-width:100px;justify-content:center}
+
+/* Direct access to the exact item ledger from every public item tooltip. */
+.item-history-link{display:inline-flex;align-items:center;justify-content:center;vertical-align:middle;width:28px;height:28px;margin-left:5px;border:1px solid #725132;color:#dfba77;border-radius:3px}.item-history-link svg{width:14px;height:14px}.item-history-link:hover,.item-history-link:focus-visible{background:#352415;color:#ffe0a3;outline:1px solid #bd904f;outline-offset:2px}.item-history-page{padding:20px}.history-identifier{color:var(--muted);font-size:11px;overflow-wrap:anywhere}.history-identifier span{color:#dfc096;font-variant-numeric:tabular-nums}
+.stash-sync-control{display:flex;align-items:center;justify-content:space-between;gap:1rem;margin:.6rem 0 1rem;padding:.65rem .85rem;border:1px solid #554128;background:#15110c}
+.stash-sync-control>span{display:flex;align-items:center;flex-wrap:wrap;gap:.5rem;color:#d9c08b;font-size:.85rem}
+.stash-sync-control small{color:#ac9a7a}.stash-sync-control button{flex-shrink:0}

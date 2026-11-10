@@ -31,9 +31,9 @@ inline std::vector<int> MenuRows(State& state,const LootFilterConfig::Builder::C
         rows.push_back(i);
     }
     std::stable_sort(rows.begin(),rows.end(),[&](int a,int b){
-        if(state.sort==1&&item(a).quality!=item(b).quality)return item(a).quality>item(b).quality;
-        if(state.sort==2){if(own&&item(a).tab!=item(b).tab)return item(a).tab<item(b).tab;if(!own&&state.snapshot.feed.listings[a].seller!=state.snapshot.feed.listings[b].seller)return state.snapshot.feed.listings[a].seller<state.snapshot.feed.listings[b].seller;}
-        if(state.sort==3&&price(a).size()!=price(b).size())return price(a).size()<price(b).size();return HudOptions::Lower(Name(item(a),catalog))<HudOptions::Lower(Name(item(b),catalog));
+        if((state.sort==1||state.sort==5)&&item(a).quality!=item(b).quality)return state.sort==5?item(a).quality<item(b).quality:item(a).quality>item(b).quality;
+        if(state.sort==2||state.sort==6){if(own&&item(a).tab!=item(b).tab)return state.sort==6?item(a).tab>item(b).tab:item(a).tab<item(b).tab;if(!own){const auto sa=HudOptions::Lower(state.snapshot.feed.listings[a].seller),sb=HudOptions::Lower(state.snapshot.feed.listings[b].seller);if(sa!=sb)return state.sort==6?sa>sb:sa<sb;}}
+        if(state.sort==3&&price(a).size()!=price(b).size())return price(a).size()<price(b).size();const auto na=HudOptions::Lower(Name(item(a),catalog)),nb=HudOptions::Lower(Name(item(b),catalog));return state.sort==4?na>nb:na<nb;
     });return rows;
 }
 inline std::vector<Requirement> MenuPayments(const State& state,const LootFilterConfig::Builder::Catalog& catalog){
@@ -85,7 +85,7 @@ inline void NativeMenu(State& state,const Panel::Frame& view,const LootFilterCon
         if(name=="MarketPaymentKind"&&state.editing&&state.adding&&value.selection>=0&&value.selection<3&&state.paymentKind!=value.selection){
             state.paymentKind=value.selection;state.query.clear();state.paymentOffset=0;++state.paymentRevision;}
         int* target=nullptr;int count=0;
-        if(name=="MarketFavorites"){target=&state.favoriteFilter;count=3;}if(name=="MarketQuality"){target=&state.quality;count=6;}if(name=="MarketSearchScope"){target=&state.searchScope;count=3;}if(name=="MarketSort"){target=&state.sort;count=4;}if(name=="MarketTab"){target=&state.tabFilter;count=8;}
+        if(name=="MarketFavorites"){target=&state.favoriteFilter;count=3;}if(name=="MarketQuality"){target=&state.quality;count=6;}if(name=="MarketSearchScope"){target=&state.searchScope;count=3;}if(name=="MarketSort"){target=&state.sort;count=7;}if(name=="MarketTab"){target=&state.tabFilter;count=8;}
         if(target&&value.selection>=0&&value.selection<count&&*target!=value.selection){*target=value.selection;state.listOffset=0;}
     }}
     if(state.open){
@@ -120,6 +120,7 @@ inline void NativeMenu(State& state,const Panel::Frame& view,const LootFilterCon
         if(SocialCommand(state,command))continue;
         if(ActivityCommand(state,command))continue;
         if(is("MarketRefresh")){try{Load(state,modName);SetupChoices(state);Refresh(state);state.listOffset=0;}catch(const std::exception& e){Notice(state,e.what());}continue;}
+        if(is("MarketSync")){Notice(state,LiveCustody::window.RequestSync(GetTickCount64())?"Sync requested. Leave the stash idle with an empty cursor; pending deliveries will retry safely.":"Save sync is unavailable. Keep Pandemonium running and open the stash to reconnect.");continue;}
         if(is("MarketReload")){try{Load(state,modName);SetupChoices(state);Refresh(state);Notice(state,"Changes discarded.");}catch(const std::exception& e){Notice(state,e.what());}continue;}
         if(is("MarketEnabled"))state.enabledChoice=!state.enabledChoice;
         if(is("MarketAuto"))state.autoChoice=!state.autoChoice;
@@ -132,7 +133,7 @@ inline void NativeMenu(State& state,const Panel::Frame& view,const LootFilterCon
             if(deposit!=before.page)state.settings.drafts.clear();
             try{Save(state,modName);SetupChoices(state);if(deposit!=before.page||before.simulation.enabled)Refresh(state);RefreshListings(state);Notice(state,"Saved.");}catch(const std::exception& e){state.settings=before;Notice(state,e.what());}continue;
         }
-        if(is("MarketSort")){state.sort=(state.sort+1)%4;++state.filterRevision;state.listOffset=0;}
+        if(is("MarketSort")){state.sort=(state.sort+1)%7;++state.filterRevision;state.listOffset=0;}
         if(is("MarketQuality")){state.quality=(state.quality+1)%6;++state.filterRevision;state.listOffset=0;}
         if(is("MarketTab")){state.tabFilter=(state.tabFilter+1)%8;++state.filterRevision;state.listOffset=0;}
         if(is("MarketPriced")){state.pricedOnly=!state.pricedOnly;state.listOffset=0;}
@@ -201,6 +202,7 @@ inline void NativeMenu(State& state,const Panel::Frame& view,const LootFilterCon
     show("MarketVaultNavigation",vaultNavigation);
 
     show("MarketFooterDivider",!setup);show("MarketStatusBackground",!setup);show("MarketRefreshButton",!setup);
+    show("MarketSyncButton",!setup&&!state.editing);
     show("MarketActivityFilter",agreements);
     const auto now=GetTickCount64();std::string status=now<state.statusUntil?state.status:state.snapshot.feedError;
     if(status.empty())status=state.snapshot.depositError;if(status.empty()&&state.settings.simulation.enabled)status=state.snapshot.sellerError;if(status.empty())status=state.publishError;if(status.empty())status=state.snapshot.activity.error;if(!state.tableError.empty())status=state.tableError;
