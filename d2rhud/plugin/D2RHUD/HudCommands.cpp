@@ -1,6 +1,8 @@
 ﻿#include "../../RuntimeTelemetry.h"
 #include "HudCommands.h"
 #include "CommandSession.h"
+#include "HotkeyNames.h"
+#include "../KeyMappings.h"
 #include "../../Pattern.h"
 #include "../../d2/D2Ptrs.h"
 #include "../../ProcessLifetime.h"
@@ -34,11 +36,19 @@ void Synchronize(Runtime& state,const Context& context,uint64_t now){
 }
 void Execute(const std::string& command,HWND window){
     std::string token=TrimToken(command);
-    if(token.size()>=2 && token.front()=='[' && token.back()==']')
+    const bool bracketed=token.size()>=2 && token.front()=='[' && token.back()==']';
+    if(bracketed)
         token=TrimToken(token.substr(1,token.size()-2));
-    std::transform(token.begin(),token.end(),token.begin(),[](unsigned char c){return char(std::tolower(c));});
-    if(token=="tab" || token=="alt"){
-        PostKeyTap(window,token=="tab"?VK_TAB:VK_MENU,token=="alt");return;
+    else
+        std::transform(token.begin(),token.end(),token.begin(),[](unsigned char c){return char(std::tolower(c));});
+    // The original bare Tab and Alt shortcuts also appear in existing configs.
+    if(bracketed || token=="tab" || token=="alt"){
+        const auto key=HudHotkeys::VirtualKey(std::move(token),keyMap);
+        if((key==VK_CANCEL || key>=VK_BACK) && (key<VK_GAMEPAD_A || key>VK_GAMEPAD_RIGHT_THUMBSTICK_LEFT)){
+            const bool alt=key==VK_MENU || key==VK_LMENU || key==VK_RMENU;
+            PostKeyTap(window,key,alt);
+            return;
+        }
     }
     if(command.find('/')!=std::string::npos){
         if(CLIENT_playerCommand)CLIENT_playerCommand(command,command);
@@ -130,7 +140,11 @@ void Shutdown(){
 }
 void PostKeyTap(HWND window,WORD key,bool systemKey){
     if(!window)return;
-    const LPARAM down=1|(LPARAM(MapVirtualKeyW(key,MAPVK_VK_TO_VSC))<<16);
+    const auto scan=MapVirtualKeyW(key,MAPVK_VK_TO_VSC_EX);
+    // Some layouts return the shared keypad scan code for a navigation key.
+    const bool navigation=(key>=VK_PRIOR && key<=VK_DOWN) || key==VK_INSERT || key==VK_DELETE;
+    const bool extended=(scan>>8)==0xe0 || navigation || key==VK_RCONTROL || key==VK_RMENU || key==VK_DIVIDE;
+    const LPARAM down=1|(LPARAM(scan&0xff)<<16)|(LPARAM(extended)<<24);
     const LPARAM up=down|(LPARAM(1)<<30)|(LPARAM(1)<<31);
     PostMessageW(window,systemKey?WM_SYSKEYDOWN:WM_KEYDOWN,key,down);
     PostMessageW(window,systemKey?WM_SYSKEYUP:WM_KEYUP,key,up);

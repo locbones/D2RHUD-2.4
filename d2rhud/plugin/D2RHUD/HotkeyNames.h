@@ -3,7 +3,9 @@
 #include <algorithm>
 #include <cctype>
 #include <string>
+#include <string_view>
 #include <unordered_map>
+#include <utility>
 
 namespace HudHotkeys {
 inline short VirtualKey(std::string token, const std::unordered_map<std::string, short>& names) {
@@ -15,6 +17,16 @@ inline short VirtualKey(std::string token, const std::unordered_map<std::string,
         return VK_SHIFT;
     if (token == "ALT" || token == "MENU" || token == "VK_ALT" || token == "VK_MENU")
         return VK_MENU;
+    static constexpr std::pair<std::string_view, short> aliases[] = {
+        {"ESC", VK_ESCAPE}, {"ENTER", VK_RETURN}, {"BACKSPACE", VK_BACK},
+        {"SPACEBAR", VK_SPACE}, {"CAPSLOCK", VK_CAPITAL}, {"SCROLLLOCK", VK_SCROLL},
+        {"PAGEUP", VK_PRIOR}, {"PAGE UP", VK_PRIOR},
+        {"PAGEDOWN", VK_NEXT}, {"PAGE DOWN", VK_NEXT},
+        {"PRINTSCREEN", VK_SNAPSHOT}, {"PRINT SCREEN", VK_SNAPSHOT},
+        {"COMMA", VK_OEM_COMMA}, {"PERIOD", VK_OEM_PERIOD},
+    };
+    for (const auto& [name, key] : aliases)
+        if (token == name) return key;
     // Human-readable defaults and editor-produced VK_* names are equivalent.
     if (token.size() == 1 && ((token[0] >= 'A' && token[0] <= 'Z') || (token[0] >= '0' && token[0] <= '9')))
         return short(token[0]);

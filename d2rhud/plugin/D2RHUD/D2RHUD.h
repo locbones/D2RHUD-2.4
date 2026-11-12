@@ -24,7 +24,7 @@ struct MonsterStatsDisplaySettings {
 class D2RHUD : public Plugin {
 public:
 	void OnDraw() override;
-	bool OnKeyPressed(short key) override;
+	bool OnKeyPressed(short key, bool repeated = false) override;
     bool TryCloseMenuOnEscape() override;
     static bool IsAnyMenuOpen();
     

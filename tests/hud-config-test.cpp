@@ -155,6 +155,8 @@ void Preferences() {
     Check(bindings.commands.size() == 6 && bindings.commands[0].key.empty() && bindings.commands[1].key == "F2", "invalid command slots do not shift valid entries");
     Check(!bindings.hotkeys.contains("Open Marketplace"),"marketplace shortcut starts unbound on existing configs");
     bindings.hotkeys["Open Marketplace"]={"VK_CONTROL + VK_M",""};
+    Check(!bindings.hotkeys.contains("Restart Game"),"restart shortcut starts unbound on existing configs");
+    bindings.hotkeys["Restart Game"]={"VK_CONTROL + VK_R",""};
     bindings.hotkeys["Transmute"].first.clear();
     bindings.commands[1].command = "say \"hello\"\n\x01";
     SaveBindings(bindings, keyDocument);
@@ -166,6 +168,7 @@ void Preferences() {
     Check(reloaded.hotkeys.at("Transmute").first.empty() && reloaded.commands[1].command == bindings.commands[1].command, "bindings round-trip correctly");
 
     Check(reloaded.hotkeys.at("Open Marketplace").first=="VK_CONTROL + VK_M","marketplace modifier chord survives save/reload");
+    Check(reloaded.hotkeys.at("Restart Game").first=="VK_CONTROL + VK_R","restart modifier chord survives save/reload");
 
     BindingState live;
     live.Publish(bindings);

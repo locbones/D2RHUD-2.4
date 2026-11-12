@@ -1101,6 +1101,10 @@ static void QueueSaveAndExit(uint64_t context) {
     exit();
 }
 
+static void QueueGameRestart(uint64_t context) {
+    if (mainMenuClickHandlerOrig && !exitQueued && RestartGame::Request()) QueueSaveAndExit(context);
+}
+
 void __fastcall GameMenuOnClickHandlerHook(uint64_t a1, Widget* pWidget) {
 
     if (!pWidget) {
@@ -1108,7 +1112,7 @@ void __fastcall GameMenuOnClickHandlerHook(uint64_t a1, Widget* pWidget) {
     }
 
     if (pWidget->hash == RestartGame::MessageHash) {
-        if (!exitQueued && RestartGame::Request()) QueueSaveAndExit(a1);
+        QueueGameRestart(a1);
         return;
     }
     if (pWidget->hash == SaveAndExitButtonHash) {
@@ -5425,6 +5429,7 @@ void ShowHotkeyMenu()
             "Identify Items",
             "Transmute",
             "Force Save",
+            "Restart Game",
             "Open Cube Panel",
             "Open Quest Journal",
             "Open Marketplace",
@@ -5460,6 +5465,8 @@ void ShowHotkeyMenu()
             ImGui::AlignTextToFramePadding();
             HudText::Text("%s:", name.c_str());
             if(name=="Open Marketplace"&&ImGui::IsItemHovered())ImGui::SetTooltip("Open the marketplace directly from gameplay. Escape returns to your previous panels.");
+            if (name == "Restart Game" && ImGui::IsItemHovered())
+                ImGui::SetTooltip("Save and restart the current offline game with the same character and difficulty.");
             ImGui::SameLine();
 
             // --- Capture multi-key input if this hotkey is active ---
@@ -5682,7 +5689,7 @@ void ShowHotkeyMenu()
             ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(2, 130, 199, 255));
             HudText::Text("Startup Commands");
             ImGui::PopStyleColor();
-            HudText::TextWrapped("Comma-separated. Use [Tab] or [Alt] for a key tap. Changes apply when you click away; if already in-game, commands run again after ~3s.");
+            HudText::TextWrapped("Separate commands and key taps with commas. Use brackets for keys like [F1], [A], or [Tab]. Changes save when you click away. In-game, the list runs again after about 3 seconds.");
 
             static char startupBuf[512] = { 0 };
             static bool startupBufInitialized = false;
@@ -7697,7 +7704,7 @@ void D2RHUD::OnDraw() {
 
 #pragma region Hotkey Handler
 
-bool D2RHUD::OnKeyPressed(short key)
+bool D2RHUD::OnKeyPressed(short key, bool repeated)
 {
     if(Marketplace::Panel::NativeActive())return false; // Native search/quantity controls own keyboard focus.
     const auto bindings = RuntimeBindings().Read();
@@ -7725,7 +7732,7 @@ bool D2RHUD::OnKeyPressed(short key)
         };
 
     auto IsBindingPressed = [&](const std::string& binding,
-        const std::unordered_set<short>& pressed) -> BindingMatch
+        const std::unordered_set<short>& pressed, bool requireTrigger) -> BindingMatch
         {
             BindingMatch result{ false, 0 };
             if (binding.empty()) return result;
@@ -7748,6 +7755,8 @@ bool D2RHUD::OnKeyPressed(short key)
                 start = end + 1;
             }
 
+            if (requireTrigger && std::find(keys.begin(), keys.end(), key) == keys.end())
+                return result;
             for (short vk : keys)
                 if (!pressed.contains(vk))
                     return result;
@@ -7761,11 +7770,11 @@ bool D2RHUD::OnKeyPressed(short key)
 
     auto CheckAndAddMatch =
         [&](const std::string& binding, int modifierExtra,
-            std::function<void()> action, bool ignoreClientStatus = false)
+            std::function<void()> action, bool ignoreClientStatus = false, bool requireTrigger = false)
         {
             if (binding.empty()) return;
 
-            auto match = IsBindingPressed(binding, pressedKeys);
+            auto match = IsBindingPressed(binding, pressedKeys, requireTrigger);
             if (match.matched && (ignoreClientStatus || GetClientStatus() == 1))
             {
                 matches.push_back({ match.modifierCount + modifierExtra, action });
@@ -7786,6 +7795,13 @@ bool D2RHUD::OnKeyPressed(short key)
 
     if (auto kb = FindKeybind("Force Save"))
         CheckAndAddMatch(kb->first, 0, []() { ExecuteDebugCheatFunc("save 1"); });
+
+    if (!repeated && !IsAnyMenuOpen() && !ImGui::GetIO().WantTextInput && !Spectate::BlocksGameInput())
+        if (auto kb = FindKeybind("Restart Game"); kb && !kb->first.empty()) {
+            uint8_t chatOpen = 0;
+            if (Marketplace::NativePanel::Read(reinterpret_cast<void*>(Pattern::Address(0x1d53fb8 + 5)), chatOpen) && !chatOpen)
+                CheckAndAddMatch(kb->first, 0, []() { QueueGameRestart(0); }, false, true);
+        }
 
     if (auto kb = FindKeybind("Reset Stats"))
         CheckAndAddMatch(kb->first, 0, []() { ExecuteDebugCheatFunc("resetstats 1"); });

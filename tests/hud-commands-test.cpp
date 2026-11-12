@@ -14,7 +14,8 @@ std::atomic<unsigned> registrations=0,posts=0,contextReads=0;
 bool registerWorks=false,postWorks=true,delayRegistration=false;
 struct Execution {std::string command;DWORD thread;};
 std::vector<Execution> executed;
-std::vector<UINT> keys;
+struct KeyMessage { HWND window; UINT message; WPARAM key; LPARAM flags; };
+std::vector<KeyMessage> keys;
 unsigned checks=0;
 void Check(bool condition,const char* message){++checks;if(!condition)throw std::runtime_error(message);}
 uint8_t* Memory(){static auto memory=static_cast<uint8_t*>(VirtualAlloc(nullptr,0x2000000,MEM_RESERVE|MEM_COMMIT,PAGE_READWRITE));return memory;}
@@ -59,12 +60,24 @@ void __fastcall Slash(std::string first,std::string second){
 }
 LRESULT CALLBACK WindowProc(HWND window,UINT message,WPARAM w,LPARAM l){
     if(HudCommands::HandleMessage(window,message,w,l))return 0;
-    if(message==WM_KEYDOWN || message==WM_KEYUP || message==WM_SYSKEYDOWN || message==WM_SYSKEYUP){keys.push_back(message);return 0;}
+    if(message==WM_KEYDOWN || message==WM_KEYUP || message==WM_SYSKEYDOWN || message==WM_SYSKEYUP){keys.push_back({window,message,w,l});return 0;}
     return DefWindowProcW(window,message,w,l);
 }
 void Pump(){MSG message;unsigned count=0;while(PeekMessageW(&message,nullptr,0,0,PM_REMOVE)){
     if(++count>1000)throw std::runtime_error("Unexpected message flood");TranslateMessage(&message);DispatchMessageW(&message);
 }}
+void CheckTap(HWND window,size_t offset,WORD key,bool system=false,bool extended=false){
+    Check(keys.size()>=offset+2,"Key tap has both transitions");
+    const auto& down=keys[offset];
+    const auto& up=keys[offset+1];
+    constexpr uint32_t released=(1u<<30)|(1u<<31);
+    const auto downFlags=static_cast<uint32_t>(down.flags);
+    const auto upFlags=static_cast<uint32_t>(up.flags);
+    Check(down.window==window && up.window==window && down.key==key && up.key==key,"Key tap targets the game window with the requested key");
+    Check(down.message==(system?WM_SYSKEYDOWN:WM_KEYDOWN) && up.message==(system?WM_SYSKEYUP:WM_KEYUP),"Key tap sends down followed by up");
+    Check(!(downFlags&released) && upFlags==(downFlags|released) && bool(downFlags&(1u<<24))==extended,
+          ("Incorrect key message flags for key "+std::to_string(key)+": "+std::to_string(downFlags)+", "+std::to_string(upFlags)).c_str());
+}
 void Sessions(){
     HudCommands::SessionTracker tracker;
     Check(tracker.Observe(false,99)==0,"Inactive state ignores stale server tokens");
@@ -155,12 +168,25 @@ void Commands(HWND window,HWND second){
     Queue("reentrant");Pump();Check(executed.back().command=="chained","Native callback can enqueue without deadlocking queue mutex");
     Queue("/native path");Pump();Check(executed.back().command=="slash:/native path","Slash command still uses native client command entry point");
     const auto nativeBeforeKeys=executed.size();Queue("[TaB]");Pump();Queue("[ALT]");Pump();
-    Check(keys==std::vector<UINT>{WM_KEYDOWN,WM_KEYUP,WM_SYSKEYDOWN,WM_SYSKEYUP} && executed.size()==nativeBeforeKeys,"Tab/Alt remain window-local key messages");
-    now=200000;NativeToken()=0;Tick(window);Configure({"[tab]","","","","",""});
+    Queue("tAb");Pump();Queue("alt");Pump();
+    Check(keys.size()==8 && executed.size()==nativeBeforeKeys,"Bracketed and bare Tab/Alt stay window-local");
+    CheckTap(window,0,VK_TAB);CheckTap(window,2,VK_MENU,true);
+    CheckTap(window,4,VK_TAB);CheckTap(window,6,VK_MENU,true);
+    Queue("A");Pump();Queue("[F25]");Pump();
+    Check(keys.size()==8 && executed.size()==nativeBeforeKeys+2 && executed[nativeBeforeKeys].command=="A" &&
+          executed.back().command=="[F25]","Only recognized bracketed keys become new key taps");
+    now=200000;NativeToken()=0;Tick(window);Configure({" [ F1 ] ","[a]","players 3","[VK_7]","[Page Up]","[Comma]"});
     const auto joinerKeys=keys.size();now=202999;Tick(window);Pump();
     Check(keys.size()==joinerKeys,"Joiner startup command keeps entry delay");
     now=203000;Tick(window);Pump();
-    Check(keys.size()==joinerKeys+2,"Startup command works for zero-token joiner");
+    Check(keys.size()==joinerKeys+2,"Function-key startup command works for zero-token joiner");
+    CheckTap(window,joinerKeys,VK_F1);
+    now=204000;Tick(window);Pump();CheckTap(window,joinerKeys+2,'A');
+    now=205000;Tick(window);Pump();Check(executed.back().command=="players 3" && keys.size()==joinerKeys+4,"Key taps and game commands run in the same startup sequence");
+    now=206000;Tick(window);Pump();CheckTap(window,joinerKeys+4,'7');
+    now=207000;Tick(window);Pump();CheckTap(window,joinerKeys+6,VK_PRIOR,false,true);
+    now=208000;Tick(window);Pump();CheckTap(window,joinerKeys+8,VK_OEM_COMMA);
+    Check(keys.size()==joinerKeys+10,"Each scheduled key is tapped once");
     Check(registrations==2,"Known registered message reused after sessions and reconfiguration");
     Configure({});contextReads=0;
     const auto shared=HudFrame::Capture();const auto capturedReads=contextReads.load();

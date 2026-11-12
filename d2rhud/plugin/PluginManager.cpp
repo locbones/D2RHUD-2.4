@@ -39,7 +39,7 @@ void PluginManager::WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     switch (msg) {
     case WM_KEYDOWN:
         for (auto& plugin : m_Plugins) {
-            if (plugin->OnKeyPressed(wParam)) {
+            if (plugin->OnKeyPressed(wParam, (lParam & (LPARAM(1) << 30)) != 0)) {
                 break;
             }
         }
