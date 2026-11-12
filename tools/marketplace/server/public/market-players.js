@@ -4,6 +4,9 @@ window.MarketPlayers={create(env){
   const classes=['Amazon','Sorceress','Necromancer','Paladin','Barbarian','Druid','Assassin'];
   const slots={1:'Head',2:'Amulet',3:'Armor',4:'Main hand',5:'Off hand',6:'Right ring',7:'Left ring',8:'Belt',9:'Boots',10:'Gloves'};
   let generation=0,search='',next=null,owner='',character='',side='player',weapon=1,peer='',alerts=[],cursor=0,unread=0,polling=false,view='direct',tradePeer='',tradeRows=[],tradeNext=null,tradeSignature='';
+  const playerSorts=[['name','Name A–Z'],['name-desc','Name Z–A'],['active','Recently active'],['newest','Recently linked']];
+  let playerSort='name';
+  const displayedPlayers=new Set();
   let directHistory=[],directBefore=null,updatesBefore=null;
   const drafts=new Map(),retry=new Map(),readIds=new Set();
   let inboxEpoch=0,readVersion=0,readTail=Promise.resolve();
@@ -40,9 +43,40 @@ window.MarketPlayers={create(env){
     return visible()?readMessages(alerts.filter(m=>m.kind==='trade'&&m.thread===id),visible):Promise.resolve();
   }
 
-  function directoryCards(rows){return rows.map(p=>`<a class="player-card" href="#player/${esc(p.id)}"><span class="player-seal" aria-hidden="true">${esc(p.name.slice(0,1))}</span><span><strong>${playerName(p.name,p.player_id)}</strong><small>${p.characters?`${p.characters} character${p.characters===1?'':'s'}`:'Character sync pending'}</small></span>${icon('arrow')}</a>`).join('');}
-  async function directory(append=false){const token=++generation;if(!append){main.innerHTML=heading('Players','Inspect equipment, find a trader, start a conversation.')+`<form id="players-search-form" class="people-search"><label class="search-box">${icon('search')}<span class="sr-only">Find a player</span><input type="search" name="q" value="${esc(search)}" placeholder="Find a player by name or ID…"></label><button class="secondary" type="submit">Search</button></form><div class="player-directory" id="player-directory" aria-live="polite"><p class="muted">Loading players…</p></div><div id="player-directory-more"></div>`;}
-    try{const r=await get('players',{q:search,...(append&&next?{after:next}:{})});if(token!==generation||!location.hash.startsWith('#players'))return;const list=main.querySelector('#player-directory');if(append)list.insertAdjacentHTML('beforeend',directoryCards(r.players));else list.innerHTML=r.players.length?directoryCards(r.players):empty('No players found','Try another name. Players appear after linking their code.');next=r.next_after;main.querySelector('#player-directory-more').innerHTML=next?'<button class="secondary small" data-people="more-players">More players</button>':'';}catch(e){if(token===generation)fail(e);}}
+  function directoryCards(rows){
+    return rows.map(p=>`<a class="player-card" href="#player/${esc(p.id)}"><span class="player-seal" aria-hidden="true">${esc(p.name.slice(0,1))}</span><span><strong>${playerName(p.name,p.player_id)}</strong><small>${p.characters?`${p.characters} character${p.characters===1?'':'s'}`:'Character sync pending'}</small>${playerSort==='active'?`<small>${p.last_active?'Last synced '+esc(date(p.last_active)):'Sync activity unavailable'}</small>`:''}</span>${icon('arrow')}</a>`).join('');
+  }
+  async function directory(append=false){
+    const after=append?next:null;if(append&&!after)return;
+    const token=++generation;
+    if(!main.querySelector('#players-search-form')){
+      main.innerHTML=heading('Players','')+`<form id="players-search-form" class="people-search"><label class="search-box">${icon('search')}<span class="sr-only">Find a player</span><input type="search" name="q" maxlength="64" value="${esc(search)}" placeholder="Player name or ID"></label><button class="secondary" type="submit">Search</button><label class="player-sort"><span>Sort by</span><select id="players-sort" name="sort">${playerSorts.map(([value,label])=>`<option value="${value}" ${playerSort===value?'selected':''}>${label}</option>`).join('')}</select></label></form><div class="player-directory" id="player-directory" aria-live="polite"></div><div id="player-directory-more"></div>`;
+    }
+    const list=main.querySelector('#player-directory'),more=main.querySelector('#player-directory-more');
+    if(!append){displayedPlayers.clear();next=null;more.innerHTML='';list.innerHTML='<p class="muted">Loading players…</p>';}
+    else more.querySelector('button').disabled=true;
+    try{
+      const r=await get('players',{q:search,sort:playerSort,...(after?{after}:{})});
+      if(token!==generation||!list.isConnected)return;
+      const cards=r.players.filter(p=>!displayedPlayers.has(p.id));
+      for(const p of cards)displayedPlayers.add(p.id);
+      if(append)list.insertAdjacentHTML('beforeend',directoryCards(cards));
+      else list.innerHTML=cards.length?directoryCards(cards):empty('No players found','Try part of a player name or ID.');
+      next=r.next_after;
+      more.innerHTML=next?'<button class="secondary small" data-people="more-players">More players</button>':'';
+    }catch(error){
+      if(token!==generation||!list.isConnected)return;
+      if(append)more.querySelector('button').disabled=false;
+      else list.innerHTML=empty('Players unavailable','Search again to retry.');
+      fail(error);
+    }
+  }
+  function searchPlayers(form){
+    const data=new FormData(form);
+    search=String(data.get('q')||'').trim();
+    playerSort=String(data.get('sort')||'name');
+    return directory();
+  }
   function equipment(rows){return `<div class="equipment-board" aria-label="Equipped gear">${Object.entries(slots).map(([slot,label])=>{const body=(Number(slot)===4||Number(slot)===5)&&weapon===2?Number(slot)+7:Number(slot),item=rows.find(r=>r.body===body);return `<div class="equipment-slot slot-${slot} ${item?'occupied':''}">${item?itemImage(item):`<span class="empty-slot" aria-label="${label}: empty">${icon(Number(slot)===2||Number(slot)===6||Number(slot)===7?'grid':'box')}</span>`}<span class="slot-label">${label}</span></div>`;}).join('')}</div>`;}
   function inventory(rows){const carried=rows.filter(r=>r.location===0),belt=rows.filter(r=>r.location===2);const columns=Math.max(10,...carried.map(r=>r.x+r.grid_width)),lines=Math.max(8,...carried.map(r=>r.y+r.grid_height));return `<div class="inventory-scroll"><div class="character-inventory" data-columns="${columns}" data-rows="${lines}" aria-label="Carried inventory">${carried.map(r=>`<div class="inventory-item" data-x="${r.x}" data-y="${r.y}" data-width="${r.grid_width}" data-height="${r.grid_height}">${itemImage(r)}${r.quantity>1?`<span class="stack-amount">${esc(r.quantity)}</span>`:''}</div>`).join('')}</div></div>${belt.length?`<details class="character-belt"><summary>Belt · ${belt.length} potions</summary><div class="belt-items">${belt.map(r=>itemImage(r)).join('')}</div></details>`:''}`;}
   async function profile(player,selected){const token=++generation;owner=player;character=selected||'';side='player';weapon=1;main.innerHTML='<p class="muted">Loading player…</p>';try{let r=await get('player',{id:player,...(character?{character}:{})});if(token!==generation)return;if(!character&&r.characters.length){character=r.characters[0].character_key;r=await get('player',{id:player,character});if(token!==generation)return;}state.publicPlayer=r;renderProfile();}catch(e){if(token===generation)main.innerHTML=heading('Player unavailable',e.message);}}
@@ -84,9 +118,9 @@ window.MarketPlayers={create(env){
   async function sendTrade(form){const expected=tradePeer,input=form.querySelector('textarea'),message=input.value.trim();if(!message)return;const key='trade:'+expected,prior=retry.get(key),packet=prior?.message===message?prior:{id:guid(),type:'trade_reply',offer_id:expected,message};retry.set(key,packet);const button=form.querySelector('button'),status=form.querySelector('[role=status]');button.disabled=true;status.textContent='Sending…';try{await request('command',packet);retry.delete(key);if(tradePeer===expected&&input.value.trim()===message){input.value='';drafts.delete(key);}status.textContent='Sent';await updateTradeConversation();}catch(e){status.textContent=e.message;}finally{if(button.isConnected)button.disabled=false;}}
   async function send(form){const input=form.querySelector('textarea'),text=input.value.trim();if(!text)return;const button=form.querySelector('button'),expected=peer,prior=retry.get(peer),packet=prior?.message===text?prior:{id:guid(),type:'direct_message',to:peer,message:text};retry.set(peer,packet);button.disabled=true;const status=form.querySelector('#direct-send-status');status.textContent='Sending…';try{await request('command',packet);retry.delete(expected);if(peer===expected&&input.value.trim()===text){input.value='';drafts.delete(expected);}status.textContent='Sent';await updateConversation();}catch(e){status.textContent=e.message;throw e;}finally{if(button.isConnected)button.disabled=false;}}
   document.addEventListener('click',async e=>{const b=e.target.closest('[data-people]');if(!b||b.disabled)return;try{const action=b.dataset.people,id=b.dataset.id;if(action==='more-players')await directory(true);else if(action==='message-player'){view='direct';if(requireAccount())navigate('messages'+(id?'/'+id:''));}else if(action==='character-side'){side=id;renderProfile();}else if(action==='weapon-set'){weapon=Number(id);renderProfile();}else if(action==='message-view'){view=id;tradePeer='';navigate(view==='trade'?'messages/trade':'messages');}else if(action==='older-trades'){await renderAlerts(true);}else if(action==='older-direct'){await updateConversation(false,true);}else if(action==='older-updates'){await updateTradeConversation(true);}else if(action==='mark-read'){if(cursor){await recordRead({through:cursor});notice('Messages marked as read.');}}else if(action==='open-listing'||action==='open-trade'){const parts=(b.dataset.scope||'').split('|'),hc=b.dataset.mode==='1',changed=state.hc!==hc;state.hc=hc;sessionStorage.setItem('market-mode',hc?'1':'0');if(parts[1]&&state.mod!==parts[1])await env.selectScope(parts[1],parts[2]);else if(changed)await env.refresh(false);navigate((action==='open-listing'?'listing/':'thread/')+id);}}catch(e){fail(e);}});
-  document.addEventListener('change',e=>{if(e.target.id==='player-character')navigate('player/'+owner+'/'+e.target.value);});
+  document.addEventListener('change',e=>{if(e.target.id==='player-character')navigate('player/'+owner+'/'+e.target.value);else if(e.target.id==='players-sort')searchPlayers(e.target.form);});
   document.addEventListener('input',e=>{if(e.target.id==='direct-message-input')drafts.set(peer,e.target.value);if(e.target.id==='trade-chat-input')drafts.set('trade:'+tradePeer,e.target.value);});
-  document.addEventListener('submit',async e=>{if(!['players-search-form','direct-message-form','trade-chat-form'].includes(e.target.id))return;e.preventDefault();try{if(e.target.id==='players-search-form'){search=String(new FormData(e.target).get('q')||'').trim();next=null;await directory();}else if(e.target.id==='trade-chat-form')await sendTrade(e.target);else await send(e.target);}catch(error){fail(error);}});
+  document.addEventListener('submit',async e=>{if(!['players-search-form','direct-message-form','trade-chat-form'].includes(e.target.id))return;e.preventDefault();try{if(e.target.id==='players-search-form')await searchPlayers(e.target);else if(e.target.id==='trade-chat-form')await sendTrade(e.target);else await send(e.target);}catch(error){fail(error);}});
   let lastInboxPoll=0;
   setInterval(async()=>{const reading=location.hash.startsWith('#messages')||location.hash.startsWith('#thread/');if(document.hidden||!state.snapshot?.self||polling||!reading&&Date.now()-lastInboxPoll<20000)return;polling=true;lastInboxPoll=Date.now();try{await pollInbox();if(location.hash.startsWith('#messages/'))await updateConversation();if(location.hash.startsWith('#messages')&&view==='trade')await renderAlerts();if(location.hash.startsWith('#thread/'))await readThread(location.hash.split('/')[1]);}catch{/* Existing messages and draft stay usable while offline. */}finally{polling=false;}},5000);
   return {readThread,route(page,id,selected){++generation;document.body.classList.toggle('people-open',['players','player','messages'].includes(page));if(page==='players'){directory();return true;}if(page==='player'){profile(id,selected);return true;}if(page==='messages'){view=id==='trade'?'trade':'direct';tradePeer=view==='trade'?(selected||''):'';messages(view==='direct'?id:undefined);return true;}return false;},reset(){++inboxEpoch;++readVersion;alerts=[];cursor=0;unread=0;peer='';tradePeer='';tradeRows=[];tradeNext=null;tradeSignature='';directHistory=[];directBefore=null;updatesBefore=null;readIds.clear();drafts.clear();retry.clear();badge();}};

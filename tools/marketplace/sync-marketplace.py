@@ -5,7 +5,6 @@ import importlib.util
 import json
 import os
 from pathlib import Path
-import tempfile
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -25,7 +24,7 @@ _custody_spec.loader.exec_module(_custody_io)
 def presence_value(path, stamp, size):
     if size > 4096:
         return {}
-    return json.loads(path.read_text(encoding='utf-8-sig'))
+    return _custody_io.document(path, 4096)
 
 
 def active_presence(config, folder):
@@ -63,9 +62,9 @@ def watch_stamp(config, folder, hardcore=False):
         except OSError:
             pass
         try:
-            raw = (Path(config['custody_status']).parent / 'live-window.json').read_bytes()
-            if len(raw) <= 4096:
-                session = json.loads(raw).get('session')
+            window = _custody_io.document(Path(config['custody_status']).parent / 'live-window.json', 4096)
+            if isinstance(window, dict):
+                session = window.get('session')
         except (OSError, ValueError):
             pass
     return tuple(result) + (session, receipt, active_presence(config, folder))
@@ -107,19 +106,7 @@ def atomic(path, value):
     raw = (json.dumps(value, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
     if len(raw) > 16 * 1024 * 1024:
         raise ValueError("Marketplace cache is too large")
-    with tempfile.NamedTemporaryFile(dir=path.parent, delete=False) as stream:
-        temporary = Path(stream.name)
-        try:
-            stream.write(raw)
-            stream.flush()
-            os.fsync(stream.fileno())
-        except BaseException:
-            temporary.unlink(missing_ok=True)
-            raise
-    try:
-        os.replace(temporary, path)
-    finally:
-        temporary.unlink(missing_ok=True)
+    _custody_io.atomic(path, raw, sidecar=True)
 
 
 def sync(config, folder, hardcore=False, allow_local=False, refresh_feed=True, poll_inbox=True):
@@ -206,15 +193,13 @@ def sync(config, folder, hardcore=False, allow_local=False, refresh_feed=True, p
         if not path.exists():
             return None
         try:
-            raw = path.read_bytes()
-            if len(raw) > 8 * 1024 * 1024:
-                raise ValueError("Publication exceeds the service size limit")
+            raw = _custody_io.read_sidecar(path, 8 * 1024 * 1024)
             publication = json.loads(raw.decode("utf-8-sig"))
             if publication.get("schema") != 1 or publication.get("game_mode") != "2.4" or publication.get("mod") != mod or publication.get("hardcore") is not hardcore:
                 raise ValueError("Publication belongs to another game mode")
             if publication.get("captured_at", 0) < time.time() - 86400:
                 raise ValueError("Refresh the deposit page before publishing its expired snapshot")
-            settings = json.loads((folder / f"Marketplace_2.4_{mode}.json").read_text(encoding="utf-8-sig"))
+            settings = _custody_io.document(folder / f"Marketplace_2.4_{mode}.json")
             if any(settings.get(k) != publication.get(k) for k in ("schema", "game_mode", "mod", "hardcore")):
                 raise ValueError("Refresh the marketplace: publication no longer matches setup")
             inventory = settings[inventory_key] if inventory_key else settings
@@ -235,7 +220,7 @@ def sync(config, folder, hardcore=False, allow_local=False, refresh_feed=True, p
             if result.get('blocked_identities'):
                 publication_error.append('Duplicate or previously transferred item identity refused. No restored copy was hosted.')
             if result.get('unverified_identities'):
-                publication_error.append('Close the stash to save and verify item identities before hosting these listings.')
+                publication_error.append('Some listings need a fresh stash save to verify item identities.')
             return result
         except (ValueError, KeyError, TypeError, OSError) as error:
             if isinstance(error, urllib.error.HTTPError):
@@ -378,14 +363,19 @@ def sync(config, folder, hardcore=False, allow_local=False, refresh_feed=True, p
         atomic(folder / f'MarketplaceMessages_2.4_{mode}.json', dict(schema=1, game_mode='2.4', mod=mod, hardcore=hardcore,
             owner=config['player_id'], messages=messages, results={r['id']:state['results'][r['id']] for r in chat_commands if r['id'] in state['results']}))
     snapshot["command_results"] = state["results"]
-    if config.get("custody_status") and Path(config["custody_status"]).exists():
-        custody = json.loads(Path(config["custody_status"]).read_text(encoding="utf-8-sig"))
+    custody = {}
+    if config.get("custody_status"):
+        try:
+            custody = _custody_io.document(config["custody_status"])
+        except FileNotFoundError:
+            pass  # The first custody pass has not written its status yet.
+    if isinstance(custody, dict):
         if isinstance(custody.get('error'), str) and custody['error']:
             publication_error.append('Marketplace paused: ' + custody['error'][:480])
         warning = custody.get("delivery_warnings", {}).get(mode)
         if isinstance(warning, str):
             publication_error.append(warning[:512])
-        deposit_warning = custody.get('result', {}).get(mode)
+        deposit_warning = custody.get('rejected_deposits', {}).get(mode) or custody.get('result', {}).get(mode)
         if isinstance(deposit_warning, str):
             publication_error.append(deposit_warning[:512])
     snapshot["publication_error"] = "; ".join(publication_error)[:512]

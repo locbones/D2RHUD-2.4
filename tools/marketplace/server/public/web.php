@@ -64,7 +64,11 @@ try{
         }elseif($action==='unlink'){
             $_SESSION=[];session_destroy();setcookie(session_name(),'', ['expires'=>1,'path'=>'/','secure'=>!$local,'httponly'=>true,'samesite'=>'Strict']);$result=['signed_out'=>true];
         }elseif($action==='owner-command'){
-            $live->requireOwner($actor);if(in_array($data['type']??'',['campaign_create','campaign_close'],true)&&$environment!=='live')throw new MarketError(409,'Return to the live marketplace before publishing community gifts.');if(in_array($data['type']??'',['campaign_create','campaign_close'],true))$result=$live->selectMod($_GET['mod']??'RMD-MP',$_GET['version']??'2.4')->campaignOwnerCommand($actor,$data,$hc);else $result=$live->ownerCommand($actor,$data,marketOwnerDirectory(),fn()=>($data['type']??'')==='demo_generate'?MarketplaceDemo::generate($live,$actor,$data,marketOwnerDirectory()):MarketplaceDemo::clear($actor,$data,marketOwnerDirectory(),$live));
+            $live->requireOwner($actor);
+            if(in_array($data['type']??'',['campaign_create','campaign_close','campaign_republish','campaign_send'],true)){
+                if($environment!=='live')throw new MarketError(409,'Return to the live marketplace before managing community gifts.');
+                $result=$live->selectMod($_GET['mod']??'RMD-MP',$_GET['version']??'2.4')->campaignOwnerCommand($actor,$data,$hc);
+            }else $result=$live->ownerCommand($actor,$data,marketOwnerDirectory(),fn()=>($data['type']??'')==='demo_generate'?MarketplaceDemo::generate($live,$actor,$data,marketOwnerDirectory()):MarketplaceDemo::clear($actor,$data,marketOwnerDirectory(),$live));
         }else{
             if(!$actor)throw new MarketError(401,'Link your player to trade.');
             if($action==='command'){
@@ -79,7 +83,7 @@ try{
     }elseif($method==='GET'&&$action==='owner-impersonation-history'){
         $live->requireOwner($authenticated);$result=$live->impersonationHistory($authenticated,$_GET['id']??null);
     }elseif($method==='GET'&&$action==='owner-gifts'){
-        if(!$actor)throw new MarketError(401,'Link your owner player first.');$result=$m->ownerGiftCampaigns($actor,$hc,$_GET['id']??null);
+        if(!$actor)throw new MarketError(401,'Link your owner player first.');$result=$m->ownerGiftCampaigns($actor,$hc,$_GET['id']??null,$_GET['before']??null);
     }elseif($method==='GET'&&$action==='owner-status'){
         $live->requireOwner($actor);$result=$live->ownerStatus($actor);
         try{$gate=MarketplaceDemo::gate(marketOwnerDirectory(),LOCK_SH);$result['demo']=MarketplaceDemo::status(marketOwnerDirectory(),$actor,$live);}catch(Throwable $e){error_log('Marketplace demo status: '.$e->getMessage());$result['demo']=['available'=>false,'error'=>'The private demo is unavailable. Live owner tools are still available.'];}

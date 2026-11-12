@@ -79,4 +79,43 @@ check($m->command($reader,['id'=>Market::id(),'type'=>'message_read','through'=>
 check($m->command($reader,['id'=>Market::id(),'type'=>'message_read','messages'=>[$last]],false)['unread']===0);
 foreach($m->conversations($reader)['conversations'] as $conversation)check($conversation['unread_seq']===0);
 check(count($m->inbox($reader)['messages'])===5); // Reading never removes native chat delivery.
-echo "Players/messages: code-linked public directory, equipment/inventory/mercenary-only snapshots, stash exclusion, mode isolation, escaped-content preservation, private direct/trade threads, name lookup, read cursors, append-only trade replies and idempotency passed.\n";
+
+$partial=$m->user('Moon-Fang');$link($partial);
+$uid=$m->publicPlayerId($partial['id']);
+foreach(['mOOnfa','  fANG   mOo ','moon_f','moon.f','P '.ltrim(substr($uid,2),'0'),strtolower($uid),$partial['id']] as $query){
+    check(array_column($m->players(false,['q'=>$query])['players'],'id')===[$partial['id']]);
+}
+check(in_array($partial['id'],array_column($m->players(false,['q'=>strtolower(substr($uid,0,-1))])['players'],'id'),true));
+check($m->players(false,['q'=>'FANG%'])['players']===[]);
+check($m->players(false,['q'=>'private pla'])['players']===[]); // The unlinked player remains private.
+
+// Sort the whole search before paging, including rows tied on name and sync time.
+$sorted=[];$now=time();$scope=$m->scope(false);
+for($i=28;$i>=0;$i--){
+    $p=$m->user(sprintf('%s Sort %02d',$i%2===0?'Fixture':'fIXTURE',intdiv($i,2)));$link($p);
+    $last=$now-intdiv($i,2)*60;
+    $m->run('INSERT INTO market_companion_seen VALUES (?,?,?)',[$p['id'],$scope,$last]);
+    $m->run('UPDATE market_memberships SET linked=? WHERE owner=? AND `mod`=?',[$now-$i*60,$p['id'],'RMD-MP']);
+    $sorted[]=['id'=>$p['id'],'name'=>$p['name'],'active'=>$last,'newest'=>$now-$i*60];
+}
+foreach(['name','name-desc','active','newest'] as $sort){
+    $expect=$sorted;
+    usort($expect,static function(array $a,array $b)use($sort):int{
+        $order=match($sort){'name'=>strcasecmp($a['name'],$b['name']),'name-desc'=>strcasecmp($b['name'],$a['name']),default=>$b[$sort]<=>$a[$sort]};
+        return $order?:strcmp($a['id'],$b['id']);
+    });
+    $query=['q'=>'sort fIXt','sort'=>$sort];
+    $page=$m->players(false,$query);check(count($page['players'])===24&&is_string($page['next_after']));
+    $rest=$m->players(false,$query+['after'=>$page['next_after']]);
+    check($rest['next_after']===null&&array_column(array_merge($page['players'],$rest['players']),'id')===array_column($expect,'id'));
+    if($sort==='active'){
+        check($page['players'][0]['last_active']===$now);
+        $last=end($page['players'])['id'];
+        $m->run('UPDATE market_companion_seen SET seen=? WHERE owner=? AND scope=?',[$now+1,$last,$scope]);
+        check($m->players(false,$query+['after'=>$page['next_after']])['players']===$rest['players']);
+        check($m->players(true,['q'=>'Fixture Sort','sort'=>'active'])['players'][0]['last_active']===0);
+        refuses(fn()=>$m->players(false,['sort'=>'name','after'=>$page['next_after']]),422);
+    }
+}
+refuses(fn()=>$m->players(false,['sort'=>'unknown']),422);
+echo "Players/messages: partial name and ID search, stable directory sorting and pagination, scope isolation, private character and chat data, read cursors and idempotency passed.\n";

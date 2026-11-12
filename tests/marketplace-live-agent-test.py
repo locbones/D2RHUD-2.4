@@ -131,6 +131,25 @@ def main():
                 pass  # Closing/cancelling repair resumes the existing worker.
             with agent.save_access('SC', [11, 2]) as granted:
                 assert granted['session'] == window['session']
+            # The HUD may revoke its grant while a watcher reads the old
+            # snapshot. That read must never keep Windows from moving the file.
+            original_fdopen = os.fdopen
+            old_window = path.with_name('revoked-window.json')
+            def revoke_during_read(fd, *args, **kwargs):
+                os.fdopen = original_fdopen
+                path.rename(old_window)
+                return original_fdopen(fd, *args, **kwargs)
+            os.fdopen = revoke_during_read
+            try:
+                assert a.io.document(path)['session'] == window['session']
+            finally:
+                os.fdopen = original_fdopen
+            try:
+                with agent.save_access('SC', []):
+                    raise AssertionError('An absent native grant authorized save access')
+            except BlockingIOError as error:
+                assert 'safe stash window' in str(error) and 'No such file' not in str(error)
+            old_window.rename(path)
             # Stale HUD routes must never authorize access, even for sidecars.
             a.io.save(path, dict(window, deposit=1, delivery=1, parking=2, loaded=11))
             try:
@@ -139,12 +158,13 @@ def main():
             except BlockingIOError as error:
                 assert 'older market page settings' in str(error) and 'Start / repair' in str(error)
             a.io.save(path, window)
-            def refuses(mode='SC', pages=(11,)):
+            def refuses(mode='SC', pages=(11,), reason=None):
                 try:
                     with agent.save_access(mode, pages):
                         raise AssertionError('An invalid live window authorized access')
-                except BlockingIOError:
-                    pass
+                except BlockingIOError as error:
+                    if reason:
+                        assert error.reason == reason
             for patch in (dict(tick=0), dict(started=started+1), dict(owner='b'*32), dict(catalog='f'*64),
                           dict(loaded=11), dict(parking=2), dict(save_directory=str(root)), dict(phase='loaded')):
                 a.io.save(path, dict(window, **patch))
@@ -200,10 +220,10 @@ def main():
             assert agent.request_refresh('SC', 2, 'withdraw:' + 'd' * 32)
             a.io.save(path, window)
             a.game_processes = lambda: {child.pid, child.pid+1}
-            refuses()
+            refuses(reason='multiple_games')
             a.game_processes = lambda: {child.pid}
             handle = shared(state / 'live.lock')
-            refuses()
+            refuses(reason='parked_lock')
             close(handle)
             # A reopen during cloud authorization cannot race the local write.
             # Pending work survives and resumes through a fresh unloaded window.

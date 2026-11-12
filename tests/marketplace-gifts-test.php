@@ -133,7 +133,46 @@ refuses(fn()=>$m->campaignOwnerCommand($owner,array_replace($resourcePacket,['id
 refuses(fn()=>$m->campaignOwnerCommand($owner,array_replace($resourcePacket,['id'=>Market::id(),'balances'=>Market::freePrice()]),false),422);
 check(isset((new ReflectionMethod($m,'resetSelections'))->invoke($m)['market_gift_balances']));
 $resourceRace=$m->campaignOwnerCommand($owner,array_replace($resourcePacket,['id'=>Market::id(),'items'=>$ids,'expires'=>null]),false);
+// Frozen bundles can be reissued after closing, even when originals leave the picker.
+$m->campaignOwnerCommand($owner,['id'=>Market::id(),'type'=>'campaign_close','campaign_id'=>$resourceCampaign['campaign_id']],false);
+$m->run("UPDATE escrow_items SET state='delivered' WHERE item=?",[$ids[0]]);
+$sourceVault=$m->run('SELECT item,state,metadata FROM escrow_items WHERE owner=? ORDER BY item',[$owner['id']])->fetchAll();
+$repeat=['id'=>Market::id(),'type'=>'campaign_republish','campaign_id'=>$resourceCampaign['campaign_id'],'expires'=>time()+7200];
+refuses(fn()=>$m->campaignOwnerCommand($a,$repeat,false),403);
+refuses(fn()=>$m->campaignOwnerCommand($owner,$repeat,true),404);
+$again=$m->campaignOwnerCommand($owner,$repeat,false);
+check($again['campaign_id']!==$resourceCampaign['campaign_id']&&$again['balances']===$resourceBalances&&$again['expires']===$repeat['expires']);
+check($m->campaignOwnerCommand($owner,$repeat,false)===$again);
+$reclaimed=$m->command($a,['id'=>Market::id(),'type'=>'campaign_claim','campaign_id'=>$again['campaign_id']],false);
+check(!$reclaimed['already_claimed']&&$reclaimed['items']!==$received['items']&&$reclaimed['balances']===$resourceBalances);
+$send=['id'=>Market::id(),'type'=>'campaign_send','campaign_id'=>$resourceCampaign['campaign_id'],'to'=>$a['id'],'message'=>'A private thank-you.'];
+refuses(fn()=>$m->campaignOwnerCommand($a,$send,false),403);
+refuses(fn()=>$m->campaignOwnerCommand($owner,array_replace($send,['to'=>$outsider['id']]),false),422);
+refuses(fn()=>$m->campaignOwnerCommand($owner,array_replace($send,['to'=>$owner['id']]),false),422);
+$m->run("UPDATE escrow_balances SET quantity=9000000000000000 WHERE owner=? AND kind='gold'",[$a['id']]);
+$before=count($m->run('SELECT id FROM items WHERE owner=?',[$a['id']])->fetchAll());
+refuses(fn()=>$m->campaignOwnerCommand($owner,$send,false),409);
+check(count($m->run('SELECT id FROM items WHERE owner=?',[$a['id']])->fetchAll())===$before);
+check(!$m->run('SELECT id FROM market_gift_campaigns WHERE id=?',[$send['id']])->fetchColumn());
+$m->run("UPDATE escrow_balances SET quantity=0 WHERE owner=? AND kind='gold'",[$a['id']]);
+$sent=$m->campaignOwnerCommand($owner,$send,false);
+check($sent['status']==='sent'&&$sent['recipient']['id']===$a['id']&&$sent['balances']===$resourceBalances);
+check($m->campaignOwnerCommand($owner,$send,false)===$sent);
+refuses(fn()=>$m->campaignOwnerCommand($owner,array_replace($send,['message'=>'Changed']),false),409);
+check((int)$m->run("SELECT quantity FROM escrow_balances WHERE owner=? AND kind='gold'",[$a['id']])->fetchColumn()===1000000);
+$delivery=$m->ownerGiftCampaigns($owner,false,$sent['campaign_id'])['campaigns'][0];
+$personalItem=$delivery['recent_claims'][0]['items'][0];
+check($delivery['recipient']['id']===$a['id']&&$personalItem['delivery_requested']&&!in_array($personalItem['item_id'],array_merge($received['items'],$reclaimed['items']),true));
+check(!in_array($sent['campaign_id'],array_column($m->giftCampaigns(null,false),'id'),true));
+refuses(fn()=>$m->command($b,['id'=>Market::id(),'type'=>'campaign_claim','campaign_id'=>$sent['campaign_id']],false),404);
+check((int)$m->run("SELECT COUNT(*) FROM market_messages WHERE recipient=? AND body LIKE '[Gift received]%'",[$a['id']])->fetchColumn()===1);
+check((int)$m->run("SELECT COUNT(*) FROM market_messages WHERE recipient=? AND body LIKE '%A private thank-you.%'",[$b['id']])->fetchColumn()===0);
+check($m->run('SELECT item,state,metadata FROM escrow_items WHERE owner=? ORDER BY item',[$owner['id']])->fetchAll()===$sourceVault);
+check((int)$m->run('SELECT COUNT(*) FROM escrow_balances WHERE owner=?',[$owner['id']])->fetchColumn()===0);
+for($i=0;$i<25;$i++)$m->run('INSERT INTO market_gift_campaigns VALUES (?,?,?,?,?,?,?,?,?,?)',[Market::id(),$m->scope(false),$owner['id'],'Old gift','','',null,1,'closed','[]']);
+$newest=$m->ownerGiftCampaigns($owner,false);$older=$m->ownerGiftCampaigns($owner,false,null,$newest['next_before']);
+check(count($newest['campaigns'])===24&&count($older['campaigns'])>0&&!array_intersect(array_column($newest['campaigns'],'id'),array_column($older['campaigns'],'id')));
 // Every truncated template is rejected; no partially copied item is returned.
 $raw=$fixture['items'][0]['item_hex'];for($n=0;$n<strlen($raw);$n+=2){try{GiftItemFactory::copy(substr($raw,0,$n),$fixture['definition']);throw new LogicException('Truncated item accepted.');}catch(RuntimeException $e){if($e instanceof LogicException)throw $e;}}
 if(isset($argv[2]))file_put_contents($argv[2],json_encode($copies,JSON_THROW_ON_ERROR));
-echo "Gift campaigns: mixed item/gold/bag and currency-only gifts, atomic resource rollback, exact-once wallet credits/audit, old-HUD isolation, unpriced market-page and mixed Vault templates, unchanged physical originals, stale/foreign/priced/wrong-page refusal, native visibility after moving originals, owner-only controls, frozen unchanged templates, atomic complete bundles, one entitlement per account, replay/new-command idempotency, post-publication accounts, expiry/closure, scoped announcements, private claim messages, partial/replayed delivery receipts and fresh root identities passed.\n";
+echo "Gift campaigns: mixed bundles, frozen templates, fresh item identities, one claim per campaign, republishing, private sends, recipient/scope checks, archive pagination, unchanged sender holdings, atomic rollback and exact-once delivery passed.\n";

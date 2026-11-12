@@ -32,6 +32,12 @@ trait MarketplaceGiftCampaigns {
         if(!$raw)throw new MarketError(409,'Connect the current mod through Pandemonium before creating gifts. Its verified save definitions are required.');
         return json_decode($raw,true,512,JSON_THROW_ON_ERROR);
     }
+    private function verifiedGiftCopy(string $hex,int $quantity,array $definition): array {
+        try{$copy=GiftItemFactory::copy($hex,$definition);}
+        catch(RuntimeException $error){throw new MarketError(422,'This gift template cannot be copied with the current mod: '.$error->getMessage());}
+        if($copy['quantity']!==$quantity)throw new MarketError(422,'Gift stack metadata does not match its saved quantity.');
+        return $copy;
+    }
     private function campaignTemplate(string $owner,string $scope,string $id,array $definition):array {
         if(str_starts_with($id,'market:')){
             $key=self::digest(substr($id,7));$meta=null;
@@ -50,18 +56,47 @@ trait MarketplaceGiftCampaigns {
             $meta=json_decode($r['metadata'],true,512,JSON_THROW_ON_ERROR);$hex=$r['item_hex'];$source=$id;$item=$this->statsItem($id);
         }
         if(($meta['delivery_requested']??false)||!($meta['identified']??false))throw new MarketError(409,'Templates must be identified and must not be queued for delivery.');
-        try{$probe=GiftItemFactory::copy($hex,$definition);}catch(RuntimeException $e){throw new MarketError(422,'This gift template cannot be copied safely: '.$e->getMessage());}
-        if($probe['quantity']!==$meta['quantity'])throw new MarketError(422,'Gift stack metadata does not match its saved quantity.');
+        $this->verifiedGiftCopy($hex,$meta['quantity'],$definition);
         return ['source'=>$source,'market_key'=>$key??null,'hex'=>$hex,'metadata'=>$meta,'item'=>$item];
     }
-    public function ownerGiftCampaigns(array $actor,bool $hc,?string $id=null):array {
+    public function ownerGiftCampaigns(array $actor,bool $hc,?string $id=null,?string $before=null):array {
         $this->requireOwner($actor);$scope=$this->scope($hc);
-        $rows=$this->run('SELECT * FROM market_gift_campaigns WHERE scope=?'.($id!==null?' AND id=?':'').' ORDER BY created DESC,id DESC LIMIT 64',$id!==null?[$scope,self::ticketId($id)]:[$scope])->fetchAll();$out=[];
-        foreach($rows as $r){$g=$this->campaignView($r,$actor,false,true);$g['claim_message']=$r['claim_message'];$g['claims']=(int)$this->run('SELECT COUNT(*) FROM market_gift_claims WHERE campaign=?',[$r['id']])->fetchColumn();
+        $where='scope=?';$params=[$scope];
+        if($id!==null){$where.=' AND id=?';$params[]=self::ticketId($id);}
+        elseif($before!==null){
+            $before=self::ticketId($before);
+            $cursor=$this->run('SELECT created FROM market_gift_campaigns WHERE scope=? AND id=?',[$scope,$before])->fetchColumn();
+            if($cursor===false)throw new MarketError(404,'This gift history page is unavailable. Open the newest gifts.');
+            $where.=' AND (created < (?+0) OR (created = (?+0) AND id < ?))';array_push($params,$cursor,$cursor,$before);
+        }
+        $rows=$this->run('SELECT * FROM market_gift_campaigns WHERE '.$where.' ORDER BY created DESC,id DESC LIMIT 25',$params)->fetchAll();
+        $more=count($rows)>24;if($more)array_pop($rows);$out=[];
+        foreach($rows as $r){$g=$this->campaignView($r,$actor);$g['claim_message']=$r['claim_message'];$g['claims']=(int)$this->run('SELECT COUNT(*) FROM market_gift_claims WHERE campaign=?',[$r['id']])->fetchColumn();
+            if($r['status']==='sent')$g['recipient']=$this->auditPlayer($this->run('SELECT owner FROM market_gift_claims WHERE campaign=?',[$r['id']])->fetchColumn()?:null);
             if($id!==null){$g['recent_claims']=[];foreach($this->run('SELECT * FROM market_gift_claims WHERE campaign=? ORDER BY created DESC,id DESC LIMIT 100',[$id])->fetchAll() as $c){$assets=[];foreach(json_decode($c['grant_items'],true,512,JSON_THROW_ON_ERROR) as $item){$e=$this->run('SELECT state,metadata FROM escrow_items WHERE item=?',[$item])->fetch();$delivered=$this->run("SELECT delivered_at,delivery_receipt FROM market_trade_assets WHERE receipt=? AND item=?",[$c['id'],$item])->fetch();$assets[]=['item_id'=>$item,'item'=>$this->statsItem($item),'state'=>$e['state']??'unknown','delivery_requested'=>$e?(bool)(json_decode($e['metadata'],true)['delivery_requested']??false):false,'delivery'=>$delivered];}$g['recent_claims'][]=['id'=>$c['id'],'player'=>$this->auditPlayer($c['owner']),'at'=>(int)$c['created'],'items'=>$assets,'balances'=>$g['balances']];}}
             $out[]=$g;
         }
-        return ['campaigns'=>$out,'resource_options'=>$this->giftResourceOptions(),'mod'=>$this->mod,'game_mode'=>'2.4','hardcore'=>$hc];
+        return ['campaigns'=>$out,'next_before'=>$more?end($rows)['id']:null,'resource_options'=>$this->giftResourceOptions(),'mod'=>$this->mod,'game_mode'=>'2.4','hardcore'=>$hc];
+    }
+    private function saveGiftCampaign(string $id,string $owner,string $scope,array $data,array $templates,array $balances,?array $recipient=null): array {
+        $status=$recipient?'sent':'active';
+        if(!$recipient&&(int)$this->run("SELECT COUNT(*) FROM market_gift_campaigns WHERE scope=? AND status='active' AND (expires IS NULL OR expires>?)",[$scope,time()])->fetchColumn()>=8)
+            throw new MarketError(422,'Close an existing gift campaign before adding another.');
+        $title=trim(self::text($data['title']??null,80));if($title==='')throw new MarketError(422,'Give the gift a title.');
+        $message=($data['message']??'')!==''?self::message($data['message']):'';
+        $announcement=$recipient?'':(($data['announcement']??'')!==''?self::message($data['announcement']):'A new community gift is available. Claim it once from Marketplace → Gifts.');
+        if(strlen($announcement)>512)throw new MarketError(422,'Keep the announcement within 512 bytes.');
+        $expires=$recipient?null:($data['expires']??null);if($expires!==null)$expires=self::number($expires,time()+1,time()+5*365*86400);
+        $this->run('INSERT INTO market_gift_campaigns VALUES (?,?,?,?,?,?,?,?,?,?)',[$id,$scope,$owner,$title,$announcement,$message,$expires,time(),$status,self::json($templates)]);
+        if($balances)$this->run('INSERT INTO market_gift_balances VALUES (?,?)',[$id,self::json($balances)]);
+        $result=['campaign_id'=>$id,'status'=>$status,'items'=>count($templates),'balances'=>$balances,'expires'=>$expires];
+        if($recipient){
+            $receipt=self::id();
+            $this->grantCampaignGift($id,$receipt,$scope,$owner,$recipient['id'],$title,$message,$templates,$balances,true);
+            $result['recipient']=$this->auditPlayer($recipient['id']);
+            $result['receipt']=$receipt;
+        }
+        return $result;
     }
     public function campaignOwnerCommand(array $actor,array $data,bool $hc):array {
         return $this->controlledRequest($actor,'owner',$data,$hc,function()use($actor,$data,$hc){
@@ -71,34 +106,42 @@ trait MarketplaceGiftCampaigns {
             if($this->controlState()['phase']!=='live')throw new MarketError(409,'Finish the marketplace reset before changing gift campaigns.');
             $kind=$data['type']??'';
             if($kind==='campaign_create'){
-                if((int)$this->run("SELECT COUNT(*) FROM market_gift_campaigns WHERE scope=? AND status='active' AND (expires IS NULL OR expires>?)",[$scope,time()])->fetchColumn()>=8)throw new MarketError(422,'Close an existing gift campaign before adding another.');
-                $title=trim(self::text($data['title']??null,80));if($title==='')throw new MarketError(422,'Give the gift a title.');
-                $message=($data['message']??'')!==''?self::message($data['message']):'';
-                $announcement=($data['announcement']??'')!==''?self::message($data['announcement']):'A new community gift is available. Claim it once from Marketplace → Gifts.';
-                if(strlen($announcement)>512)throw new MarketError(422,'Keep the announcement within 512 bytes.');
-                $expires=$data['expires']??null;if($expires!==null)$expires=self::number($expires,time()+1,time()+5*365*86400);
                 $ids=$data['items']??[];if(!is_array($ids)||!array_is_list($ids)||count($ids)>16||count(array_filter($ids,'is_string'))!==count($ids)||count(array_unique($ids))!==count($ids))throw new MarketError(422,'Choose up to 16 different market-page or Vault item templates.');
                 $balances=$this->giftBalances($data['balances']??[]);if(!$ids&&!$balances)throw new MarketError(422,'Add at least one item, gold amount or bag currency to the gift.');
                 $definition=$ids?$this->giftDefinition():[];$templates=[];$bytes=0;
                 foreach($ids as $item){$t=$this->campaignTemplate($actor['id'],$scope,$item,$definition);$bytes+=strlen($t['hex'])/2;$templates[]=$t;}
                 if($bytes>131072)throw new MarketError(422,'This gift bundle exceeds the safe template size.');
-                $this->run('INSERT INTO market_gift_campaigns VALUES (?,?,?,?,?,?,?,?,?,?)',[$id,$scope,$actor['id'],$title,$announcement,$message,$expires,time(),'active',self::json($templates)]);
-                if($balances)$this->run('INSERT INTO market_gift_balances VALUES (?,?)',[$id,self::json($balances)]);
-                $result=['campaign_id'=>$id,'status'=>'active','items'=>count($templates),'balances'=>$balances,'expires'=>$expires];
+                $result=$this->saveGiftCampaign($id,$actor['id'],$scope,$data,$templates,$balances);
+            }elseif($kind==='campaign_republish'||$kind==='campaign_send'){
+                $source=self::ticketId($data['campaign_id']??null);
+                $prior=$this->run('SELECT title,announcement,claim_message,templates FROM market_gift_campaigns WHERE id=? AND scope=?',[$source,$scope])->fetch();
+                if(!$prior)throw new MarketError(404,'Gift campaign not found in this mod and mode.');
+                $recipient=$kind==='campaign_send'?$this->giftRecipient(self::text($data['to']??null,64),$actor['id']):null;
+                if($recipient&&!$this->run("SELECT owner FROM market_memberships WHERE owner=? AND `mod`=? AND game_mode='2.4' AND linked>0",[$recipient['id'],$this->mod])->fetchColumn())
+                    throw new MarketError(422,'Choose a player who has linked this mod.');
+                $templates=json_decode($prior['templates'],true,512,JSON_THROW_ON_ERROR);
+                $balances=$this->giftBalances($this->campaignBalances($source));
+                if(!$recipient&&$templates){
+                    $definition=$this->giftDefinition();
+                    foreach($templates as $template)$this->verifiedGiftCopy($template['hex'],$template['metadata']['quantity'],$definition);
+                }
+                $defaults=['title'=>$prior['title'],'announcement'=>$prior['announcement'],'message'=>$prior['claim_message']];
+                $result=$this->saveGiftCampaign($id,$actor['id'],$scope,$data+$defaults,$templates,$balances,$recipient);
+                $result['source_campaign']=$source;
             }elseif($kind==='campaign_close'){
-                $key=self::ticketId($data['campaign_id']??null);$r=$this->run('SELECT id FROM market_gift_campaigns WHERE id=? AND scope=?'.$this->lock(),[$key,$scope])->fetch();if(!$r)throw new MarketError(404,'Gift campaign not found in this mod and mode.');
+                $key=self::ticketId($data['campaign_id']??null);$r=$this->run("SELECT id FROM market_gift_campaigns WHERE id=? AND scope=? AND status<>'sent'".$this->lock(),[$key,$scope])->fetch();if(!$r)throw new MarketError(404,'Gift campaign not found in this mod and mode.');
                 $this->run("UPDATE market_gift_campaigns SET status='closed' WHERE id=?",[$key]);$result=['campaign_id'=>$key,'status'=>'closed'];
             }else throw new MarketError(422,'Unknown gift campaign control.');
             $this->run('INSERT INTO market_owner_actions VALUES (?,?,?,?,?,?)',[$id,$actor['id'],$kind,$hash,self::json($result),time()]);return $result;
         });
     }
-    private function campaignView(array $r,?array $actor,bool $native=false,bool $owner=false):array {
+    private function campaignView(array $r,?array $actor,bool $native=false):array {
         $claim=$actor?$this->run('SELECT id,created,grant_items FROM market_gift_claims WHERE campaign=? AND owner=?',[$r['id'],$actor['id']])->fetch():false;
         $items=[];foreach(json_decode($r['templates'],true,512,JSON_THROW_ON_ERROR) as $t){$item=$t['item'];if($native)$item['item_hex']=$t['hex'];$items[]=$item;}
         $active=$r['status']==='active'&&($r['expires']===null||(int)$r['expires']>time());
         $linked=$actor&&(bool)$this->run("SELECT owner FROM market_memberships WHERE owner=? AND `mod`=? AND game_mode='2.4' AND linked>0",[$actor['id'],$this->mod])->fetchColumn();
         $balances=$this->campaignBalances($r['id']);
-        return ['id'=>$r['id'],'title'=>$r['title'],'announcement'=>$r['announcement'],'owner'=>$this->auditPlayer($r['owner']),'items'=>$items,'balances'=>$balances,'created'=>(int)$r['created'],'expires'=>$r['expires']===null?null:(int)$r['expires'],'status'=>$active?'active':($r['status']==='closed'?'closed':'expired'),'claimed'=>(bool)$claim,'claimable'=>$active&&!$claim&&$linked,'claim'=>$claim?['id'=>$claim['id'],'at'=>(int)$claim['created'],'items'=>json_decode($claim['grant_items'],true),'balances'=>$balances,'message'=>$r['claim_message']]:null];
+        return ['id'=>$r['id'],'title'=>$r['title'],'announcement'=>$r['announcement'],'owner'=>$this->auditPlayer($r['owner']),'items'=>$items,'balances'=>$balances,'created'=>(int)$r['created'],'expires'=>$r['expires']===null?null:(int)$r['expires'],'status'=>!$active&&$r['status']==='active'?'expired':$r['status'],'claimed'=>(bool)$claim,'claimable'=>$active&&!$claim&&$linked,'claim'=>$claim?['id'=>$claim['id'],'at'=>(int)$claim['created'],'items'=>json_decode($claim['grant_items'],true),'balances'=>$balances,'message'=>$r['claim_message']]:null];
     }
     public function giftCampaigns(?array $actor,bool $hc,bool $native=false):array {
         $rows=$this->run("SELECT * FROM market_gift_campaigns WHERE scope=? AND status='active' AND (expires IS NULL OR expires>?) ORDER BY created DESC,id DESC LIMIT 8",[$this->scope($hc),time()])->fetchAll();
@@ -120,6 +163,40 @@ trait MarketplaceGiftCampaigns {
             });
         }
     }
+    private function grantCampaignGift(string $campaign,string $receipt,string $scope,string $sender,string $recipient,string $title,string $message,array $templates,array $balances,bool $direct=false): array {
+        $definition=$templates?$this->giftDefinition():[];$items=[];
+        $incompatible=$direct?'The recipient needs to update this mod before receiving this gift.':'Update this mod before claiming this gift.';
+        foreach($balances as $balance){
+            if(!$this->supportsBalance($recipient,$balance))throw new MarketError(409,$incompatible);
+        }
+        foreach($templates as $template){
+            $meta=$template['metadata'];
+            if(!$this->supportsItemMetadata($recipient,$meta['code'],$meta['display']??[]))throw new MarketError(409,$incompatible);
+            $copy=$this->verifiedGiftCopy($template['hex'],$meta['quantity'],$definition);
+            $item=self::id();
+            $meta=array_replace($meta,['ledger_id'=>$item,'item_hex'=>$copy['hex'],'saved_id'=>$copy['seed'],'item_uuid'=>$copy['uuid'],
+                'quantity_bit'=>$copy['quantity_bit'],'price'=>[],'delivery_requested'=>true,'gift_campaign'=>$campaign]);
+            $this->identityAdmission($recipient,$scope,$copy['hex']);
+            $this->run('INSERT INTO items VALUES (?,?,?,?,?,?,?,?,?,?)',[$item,$scope,$copy['seed'],$meta['code'],$meta['quality'],$meta['index'],$meta['ethereal'],$meta['sockets'],$recipient,$copy['hex']]);
+            $this->run('INSERT INTO escrow_items VALUES (?,?,?,?,?,?)',[$item,$recipient,$scope,'available',self::json($meta),$receipt]);
+            $this->recordIdentity($item,$scope,$copy['hex']);
+            $this->recordTradeAsset($receipt,$scope,'campaign',$sender,$recipient,$item,[],$template['source']??null);
+            $this->event($item,null,['id'=>$sender],$direct?'gifted':'campaign_claim',($direct?'Gift: ':'Community gift: ').$title,self::freePrice(),$sender,$recipient,$receipt.'|'.$item);
+            $items[]=$item;
+        }
+        foreach($balances as $balance){
+            $this->balance($recipient,$scope,$balance,$balance['quantity'],$direct?'gift_received':'campaign_claim',$receipt);
+            $this->recordTradeAsset($receipt,$scope,'campaign',$sender,$recipient,null,$balance);
+        }
+        $this->run('INSERT INTO market_gift_claims VALUES (?,?,?,?,?)',[$campaign,$recipient,$receipt,time(),self::json($items)]);
+        $body=($direct?'[Gift received] ':'[Gift claimed] ').$title;
+        if($items)$body.=' — '.count($items).' item(s) queued for your market page.';
+        if($balances)$body.=' Added to Vault: '.implode(' + ',array_map(fn($b)=>$b['quantity'].' × '.$b['label'],$balances)).'.';
+        if($message!=='')$body.=' '.$message;
+        $this->run('INSERT INTO market_messages (id,sender,recipient,scope,kind,thread,body,created) VALUES (?,?,?,?,?,?,?,?)',
+            [hash('md5','gift-claim|'.$campaign.'|'.$recipient),$sender,$recipient,$scope,'trade','',$body,time()]);
+        return $items;
+    }
     private function claimGiftCampaign(array $actor,array $data,bool $hc):array {
         $this->requireMod($actor['id']);if($this->browserActor($actor['id'])['role']!=='player')throw new MarketError(403,'Link a real player account to claim a gift.');
         if(!$this->run("SELECT owner FROM market_memberships WHERE owner=? AND `mod`=? AND game_mode='2.4' AND linked>0",[$actor['id'],$this->mod])->fetchColumn())throw new MarketError(403,'Link your player code for this mod before claiming gifts.');
@@ -132,23 +209,10 @@ trait MarketplaceGiftCampaigns {
             $balances=$this->campaignBalances($campaign);
             if($claimed)$result=['campaign_id'=>$campaign,'claim_id'=>$claimed['id'],'claimed'=>true,'already_claimed'=>true,'items'=>json_decode($claimed['grant_items'],true),'balances'=>$balances,'message'=>$r['claim_message']];
             else{
+                if($r['status']==='sent')throw new MarketError(404,'This gift is unavailable.');
                 if($r['status']!=='active'||$r['expires']!==null&&(int)$r['expires']<=time())throw new MarketError(409,'This gift has expired or claiming has ended.');
-                $templates=json_decode($r['templates'],true,512,JSON_THROW_ON_ERROR);$definition=$templates?$this->giftDefinition():[];$items=[];
-                foreach($balances as $b)if(!$this->supportsBalance($actor['id'],$b))throw new MarketError(409,'Update this mod before claiming these bag currencies. Your claim has not been used.');
-                foreach($templates as $t){
-                    $copy=GiftItemFactory::copy($t['hex'],$definition);$meta=$t['metadata'];unset($meta['ledger_id']);$meta['item_hex']=$copy['hex'];$meta['saved_id']=$copy['seed'];$meta['item_uuid']=$copy['uuid'];$meta['quantity_bit']=$copy['quantity_bit'];$meta['price']=[];$meta['delivery_requested']=true;$meta['gift_campaign']=$campaign;
-                    $item=self::id();$meta['ledger_id']=$item;
-                    $this->identityAdmission($actor['id'],$scope,$copy['hex']);
-                    $this->run('INSERT INTO items VALUES (?,?,?,?,?,?,?,?,?,?)',[$item,$scope,$copy['seed'],$meta['code'],$meta['quality'],$meta['index'],$meta['ethereal'],$meta['sockets'],$actor['id'],$copy['hex']]);
-                    $this->run('INSERT INTO escrow_items VALUES (?,?,?,?,?,?)',[$item,$actor['id'],$scope,'available',self::json($meta),$id]);
-                    if(!$this->supportsEscrowItem($actor['id'],$item))throw new MarketError(409,'Update this mod before claiming the gift. Your claim has not been used.');
-                    $this->recordIdentity($item,$scope,$copy['hex']);$this->recordTradeAsset($id,$scope,'campaign',$r['owner'],$actor['id'],$item,[],$t['source']);
-                    $this->event($item,null,['id'=>$r['owner']],'campaign_claim','Community gift: '.$r['title'],self::freePrice(),$r['owner'],$actor['id'],$id.'|'.$item);$items[]=$item;
-                }
-                foreach($balances as $b){$this->balance($actor['id'],$scope,$b,$b['quantity'],'campaign_claim',$id);$this->recordTradeAsset($id,$scope,'campaign',$r['owner'],$actor['id'],null,$b);}
-                $this->run('INSERT INTO market_gift_claims VALUES (?,?,?,?,?)',[$campaign,$actor['id'],$id,time(),self::json($items)]);
-                $body='[Gift claimed] '.$r['title'].' — '.count($items).' item(s) queued for your market page.'.($balances?' Added to Vault: '.implode(' + ',array_map(fn($b)=>$b['quantity'].' × '.$b['label'],$balances)).'.':'').($r['claim_message']!==''?' '.$r['claim_message']:'');
-                $this->run('INSERT INTO market_messages (id,sender,recipient,scope,kind,thread,body,created) VALUES (?,?,?,?,?,?,?,?)',[hash('md5','gift-claim|'.$campaign.'|'.$actor['id']),$r['owner'],$actor['id'],$scope,'trade','',$body,time()]);
+                $templates=json_decode($r['templates'],true,512,JSON_THROW_ON_ERROR);
+                $items=$this->grantCampaignGift($campaign,$id,$scope,$r['owner'],$actor['id'],$r['title'],$r['claim_message'],$templates,$balances);
                 $result=['campaign_id'=>$campaign,'claim_id'=>$id,'claimed'=>true,'already_claimed'=>false,'items'=>$items,'balances'=>$balances,'message'=>$r['claim_message']];
             }
             $this->run('INSERT INTO commands VALUES (?,?,?,?)',[$actor['id'],$id,$hash,self::json($result)]);return $result;

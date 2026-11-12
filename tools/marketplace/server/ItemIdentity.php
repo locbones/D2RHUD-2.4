@@ -87,7 +87,7 @@ trait MarketplaceIdentity {
     private function identityAdmission(string $owner,string $scope,string $hex,?string $ledger=null,?string $ticket=null,bool $discovery=false): ?string {
         $key=$this->identityKey($hex,$scope);if($key==='')return null;
         $reserved=$this->run('SELECT ticket FROM identity_reservations WHERE scope=? AND identity_key=?',[$scope,$key])->fetchColumn();
-        if($reserved!==false&&$reserved!==$ticket)throw new MarketError(409,'This item identity is reserved by another save transaction.');
+        if($reserved!==false&&$reserved!==$ticket)throw new MarketError(409,'This item identity is reserved by another save transaction.',['retryable'=>true]);
         $rows=$this->run("SELECT n.item,i.owner,e.state,EXISTS(SELECT 1 FROM events WHERE events.item=i.id AND events.kind='completed_sale') AS sold FROM item_identities n JOIN items i ON i.id=n.item LEFT JOIN escrow_items e ON e.item=i.id WHERE n.scope=? AND n.identity_key=?",[$scope,$key])->fetchAll();
         $custody=array_values(array_filter($rows,fn($r)=>$r['state']!==null||(int)$r['sold']===1));
         if(count($custody)>1){
@@ -112,9 +112,18 @@ trait MarketplaceIdentity {
         return null;
     }
     private function reserveIdentities(string $owner,string $scope,string $ticket,array $items): void {
-        $seen=[];foreach($items as $r){$key=$this->identityKey($r['item_hex'],$scope);if($key==='')continue;
-            if(isset($seen[$key]))throw new MarketError(409,'Two copies of the same persistent item identity were found. No save was changed.');$seen[$key]=true;
+        $indicesByKey=[];
+        foreach($items as $index=>$r){
+            $key=$this->identityKey($r['item_hex'],$scope);
+            if($key!=='')$indicesByKey[$key][]=$index;
+        }
+        $duplicates=[];
+        foreach($indicesByKey as $indices)if(count($indices)>1)array_push($duplicates,...$indices);
+        if($duplicates)throw new MarketError(409,'Two copies of the same persistent item identity were found. No save was changed.',['deposit_item_indices'=>$duplicates]);
+        $this->validateDepositItems($items,function(array $r)use($owner,$scope,$ticket){
             $this->identityAdmission($owner,$scope,$r['item_hex'],$r['ledger_id']??null,$ticket);
+        });
+        foreach(array_keys($indicesByKey) as $key){
             $this->run('INSERT INTO identity_reservations VALUES (?,?,?)',[$scope,$key,$ticket]);
         }
     }

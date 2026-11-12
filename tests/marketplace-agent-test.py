@@ -44,7 +44,11 @@ def transport(endpoint, token, mode, data, action="custody"):
             except json.JSONDecodeError:
                 raise AssertionError('Non-JSON API response: ' + repr(raw[:600])) from None
     except urllib.error.HTTPError as error:
-        raise ValueError(f"Marketplace {error.code}: {json.load(error)['error']}") from None
+        body = json.load(error)
+        message = f"Marketplace {error.code}: {body['error']}"
+        if action == 'custody' and 'deposit_item_indices' in body:
+            raise a.DepositItemsRefused(message, body['deposit_item_indices']) from None
+        raise ValueError(message) from None
 
 
 def main():

@@ -51,7 +51,7 @@ try {
     }else throw new MarketError(404,'Endpoint not found.');
     echo json_encode($result,JSON_THROW_ON_ERROR|JSON_UNESCAPED_UNICODE);
 }catch(MarketReadBusy $e){marketReadBusyResponse($e);}
-catch(MarketError $e){http_response_code($e->status);if($e->status===503)header('Retry-After: 15');echo json_encode(['error'=>$e->getMessage()]);}
+catch(MarketError $e){http_response_code($e->status);if($e->status===503)header('Retry-After: 15');echo json_encode(['error'=>$e->getMessage()]+$e->details);}
 catch(JsonException $e){http_response_code(422);echo json_encode(['error'=>'Malformed JSON.']);}
 catch(Throwable $e){http_response_code(500);error_log('D2 marketplace: '.$e->getMessage());echo json_encode(['error'=>'The marketplace service is unavailable.']);}
 finally{if(isset($readSlot))fclose($readSlot);}

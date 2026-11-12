@@ -44,6 +44,7 @@ def web_features(config):
 
 
 _RUNTIME_VERSION = None
+_RUNTIME_BUILD = Path(__file__).resolve().parent.name
 
 def companion_version():
     global _RUNTIME_VERSION
@@ -196,8 +197,21 @@ class DepositRejected(ValueError):
     """The server refused admission, with no ticket and no native save write."""
 
 
+class DepositItemsRefused(ValueError):
+    """Item-level server response. Recovery still has to confirm it is safe to retry."""
+    def __init__(self, message, indices):
+        super().__init__(message)
+        self.indices = indices
+
+
 class RepairInProgress(BlockingIOError):
     """A launcher repair owns the scheduling gate; this is not a sync failure."""
+
+
+class StashHandoffWait(BlockingIOError):
+    def __init__(self, reason, message):
+        super().__init__(message)
+        self.reason = reason
 
 
 class Agent:
@@ -229,6 +243,7 @@ class Agent:
         self.fault = fault or (lambda stage: None)
         self.timings = []
         self.local_ready_tick = None
+        self.deposit_blocks = {}
         self.verify()
         try:
             status = io.document(self.root / 'status.json')
@@ -259,6 +274,12 @@ class Agent:
         result = dict(state=state or previous.get('state', 'checking'), page=self.settings(mode)['withdraw_page'],
                       pending=len(self.delivery_items.get(mode, [])) + len(self.wallet_withdrawals.get(mode, [])),
                       request_id=self.sync_requests.get(mode, previous.get('request_id', '')))
+        if state is None and result['state'] == 'waiting_for_stash' and previous.get('handoff'):
+            result['handoff'] = previous['handoff']
+        elif state is not None:
+            previous.pop('handoff', None)
+        if re.fullmatch('[a-f0-9]{20}', _RUNTIME_BUILD):
+            result['runtime_build'] = _RUNTIME_BUILD
         self.sync_progress[mode] = dict(previous, **result)
         return result
 
@@ -287,35 +308,47 @@ class Agent:
                     raise ValueError("The guarded launcher or legacy HUD changed; revalidate custody with Start / repair before writing saves")
 
     def live_window(self, mode=None, pages=None):
-        window = io.document(self.root / 'live-window.json')
+        try:
+            window = io.document(self.root / 'live-window.json', 4096)
+        except FileNotFoundError:
+            raise StashHandoffWait('no_window', 'Waiting for the game to publish a safe stash window') from None
+        if not isinstance(window, dict):
+            raise ValueError('Invalid native stash handoff status')
         legacy = window.get('schema') == 1 and window.get('phase') == 'parked'
         per_page = window.get('schema') == 2 and window.get('phase') == 'unloaded'
         if (not (legacy or per_page) or
                 window.get('owner') != self.config['owner'] or window.get('catalog') != self.config['catalog'] or
                 not isinstance(window.get('session'), str) or not re.fullmatch('[A-Za-z0-9-]{1,128}', window['session']) or
                 type(window.get('hardcore')) is not bool or type(window.get('pid')) is not int or
-                type(window.get('started')) is not int or type(window.get('tick')) is not int or
-                not window.get('player') or not 0 <= ticks() - window['tick'] <= 5000):
-            raise BlockingIOError('Live stash handoff is unavailable or expired')
+                type(window.get('started')) is not int or type(window.get('tick')) is not int or not window.get('player')):
+            raise StashHandoffWait('window_identity', 'The stash handoff does not match the linked profile')
+        if not 0 <= ticks() - window['tick'] <= 5000:
+            raise StashHandoffWait('window_expired', 'Waiting for a fresh stash handoff from the game')
+        processes = game_processes()
+        if len(processes) > 1:
+            raise StashHandoffWait('multiple_games', 'Waiting for one Diablo II game process before syncing the stash')
+        if processes != {window['pid']}:
+            raise StashHandoffWait('game_session', 'Waiting for the current game session to publish a stash handoff')
         image, started = live_process(window['pid'])
-        if (started != window['started'] or game_processes() != {window['pid']} or
+        if (started != window['started'] or
                 image.parent != Path(self.config['game_directory']).resolve() or
-                image.name.lower() not in {'d2r.exe', 'd2r_debug.exe', 'd2r_debug_noerrors.exe'} or
-                Path(window.get('save_directory', '')).resolve() != self.folder):
-            raise BlockingIOError('Live stash handoff belongs to another game session')
+                image.name.lower() not in {'d2r.exe', 'd2r_debug.exe', 'd2r_debug_noerrors.exe'}):
+            raise StashHandoffWait('game_session', 'Live stash handoff belongs to another game session')
+        if Path(window.get('save_directory', '')).resolve() != self.folder:
+            raise StashHandoffWait('save_route', 'Live stash handoff points to a different save folder')
         active_mode = 'HC' if window['hardcore'] else 'SC'
         if mode is not None and mode != active_mode:
-            raise BlockingIOError('Live stash handoff belongs to another character mode')
+            raise StashHandoffWait('game_mode', 'Live stash handoff belongs to another character mode')
         settings = self.settings(active_mode)
         allowed = {settings['page'], settings['withdraw_page']}
         if window.get('deposit') != settings['page'] or window.get('delivery') != settings['withdraw_page']:
-            raise BlockingIOError('The stash is using older market page settings. Close and reopen the stash; if this persists, leave the game and use Pandemonium Start / repair')
+            raise StashHandoffWait('page_settings', 'The stash is using older market page settings. Close and reopen the stash; if this persists, leave the game and use Pandemonium Start / repair')
         if (type(window.get('loaded')) is not int or not 1 <= window['loaded'] <= 64 or
                 legacy and window['loaded'] in allowed or
                 type(window.get('parking')) is not int or not 1 <= window['parking'] <= 64 or window['parking'] in allowed or
                 not set(allowed if pages is None else pages) <= allowed or
                 window['loaded'] in (allowed if pages is None else pages)):
-            raise BlockingIOError('The trade pages are not safely unloaded')
+            raise StashHandoffWait('page_loaded', 'The trade pages are not safely unloaded')
         return window
 
     @contextmanager
@@ -337,9 +370,19 @@ class Agent:
                 stack.close()
                 try:
                     stack.enter_context(lease(self.root / 'live.lock'))
-                    window = self.live_window(mode, pages)
-                except (OSError, ValueError, KeyError) as error:
-                    raise BlockingIOError('Marketplace waits for the stash trade pages to unload: ' + str(error)) from None
+                except OSError as error:
+                    if not io.is_contention(error):
+                        raise
+                    # A read-only check distinguishes a parked HUD that still
+                    # holds the lock from a normal switch. Neither grants access.
+                    try:
+                        observed = self.live_window(mode, [])
+                    except (OSError, ValueError, KeyError):
+                        observed = None
+                    if observed and observed['loaded'] not in {observed['deposit'], observed['delivery']} and not observed.get('refresh_id'):
+                        raise StashHandoffWait('parked_lock', 'The game parked the market page but still holds its stash lock') from None
+                    raise StashHandoffWait('native_lock', 'Waiting for the game to release its stash lock') from None
+                window = self.live_window(mode, pages)
             yield window
 
     def save_sidecar(self, path, value, expected):
@@ -362,7 +405,11 @@ class Agent:
                 if not window or window.get('refresh_supported') != 2 or window.get('loaded') != page or window.get('refresh_id') or window.get('deposit' if listing else 'delivery') != page:
                     return False
                 if listing and window.get('listing_deposit_refresh') != 1:
-                    return False
+                    # Older HUDs can safely park the same page using their
+                    # delivery handshake when market and delivery share it.
+                    if window.get('delivery') != page:
+                        return False
+                    kind = 'delivery'
                 key = f"{window['started']}:{page}:{reason}"
                 trigger = reason
                 seen_path = self.root / 'refresh-seen.json'
@@ -458,10 +505,17 @@ class Agent:
             return _http.read_json(urllib.request.build_opener(NoRedirect), req, f'custody/{operation} ({mode})', state_directory=self.root)
         except urllib.error.HTTPError as error:
             try:
-                message = json.loads(error.read(4096)).get("error", "Custody request failed")
+                body = json.loads(error.read(4096))
             except (ValueError, TypeError):
-                message = "Custody request failed"
-            raise ValueError(f"Marketplace {error.code}: {message}") from None
+                body = {}
+            if not isinstance(body, dict):
+                body = {}
+            message = f"Marketplace {error.code}: {body.get('error', 'Custody request failed')}"
+            indices = body.get('deposit_item_indices')
+            if (data.get('type') == 'deposit_prepare' and error.code in (409, 422) and isinstance(indices, list)
+                    and indices and all(type(i) is int and 0 <= i < len(data['items']) for i in indices)):
+                raise DepositItemsRefused(message, indices) from None
+            raise ValueError(message) from None
 
     def publish_browser_link(self):
         """Write only a short-lived link code, never player/agent credentials.
@@ -684,7 +738,7 @@ class Agent:
                 try:
                     self.request(mode, dict(id=identity, type='status'))
                 except ValueError as status_error:
-                    if not str(status_error).startswith('Marketplace 404:'):
+                    if str(status_error) != 'Marketplace 404: Custody transaction not found.':
                         raise
                     record['phase'] = 'rejected'
                     record['error'] = str(error)
@@ -700,7 +754,7 @@ class Agent:
                 try:
                     self.request(mode, dict(id=identity, type='status'))
                 except ValueError as status_error:
-                    if not str(status_error).startswith('Marketplace 404:'):
+                    if str(status_error) != 'Marketplace 404: Custody transaction not found.':
                         raise
                     if any(io.digest(io.read(self.page(mode, image['page']))) != image['before'] for image in record['images']):
                         raise ValueError('Rejected deposit save image changed; trading needs reconciliation') from error
@@ -708,6 +762,9 @@ class Agent:
                     record['error'] = str(error)
                     self.persist(record)
                     self.pending.unlink()
+                    if isinstance(error, DepositItemsRefused) and 'funding_offer' not in record['request']:
+                        self.remember_deposit_blocks(mode, record['request']['items'], error)
+                        return None
                     raise DepositRejected(str(error)) from None
             raise
         self.fault("prepared_remote")
@@ -1026,7 +1083,40 @@ class Agent:
             raise ValueError('Carried gold and market gold do not match the deposit')
         return {k: value[k] for k in keys}
 
+    def deposit_key(self, mode, page, item):
+        hex_value = item['item_hex']
+        if len(hex_value) >= 14:
+            hex_value = positionless(hex_value)
+        return self.config['owner'], self.folder, mode, page, io.digest(hex_value.encode())
+
+    def remember_deposit_blocks(self, mode, items, error):
+        for index in error.indices:
+            item = items[index]
+            key = self.deposit_key(mode, item['page'], item)
+            if key not in self.deposit_blocks and len(self.deposit_blocks) >= 512:
+                self.deposit_blocks.pop(next(iter(self.deposit_blocks)))
+            self.deposit_blocks[key] = (time.monotonic() + 300, str(error))
+
+    def deposit_warning(self, mode, settings):
+        if not settings['enabled'] or not self.deposit_blocks:
+            return ''
+        blocked = [self.deposit_blocks[key][1] for draft in settings['drafts'] if draft.get('price')
+                   and (key := self.deposit_key(mode, settings['page'], draft)) in self.deposit_blocks]
+        if not blocked:
+            return ''
+        count = len(blocked)
+        return f'{count} priced {"item" if count == 1 else "items"} stayed in your stash. {blocked[0]}'
+
     def deposit(self, mode, *, gold_only=False, release_retained_gold=False, listed_only=False):
+        # Replan from the authoritative page after each confirmed refusal.
+        # The retry budget bounds HTTP and helper work per handoff.
+        for _ in range(3):
+            result = self.deposit_batch(mode, gold_only=gold_only, release_retained_gold=release_retained_gold, listed_only=listed_only)
+            if result is not None:
+                return result
+        return False
+
+    def deposit_batch(self, mode, *, gold_only, release_retained_gold, listed_only):
         settings = self.settings(mode)
         if not settings["enabled"]:
             return False
@@ -1049,10 +1139,17 @@ class Agent:
             with self.save_access(mode, [page]):
                 io.save(self.root / 'lineage.json', state)
         retained_keys = {positionless(h) for h in retained_bags}
+        now = time.monotonic()
         for row in ([] if gold_only else inventory["items"]):
             draft = next((d for d in settings["drafts"] if d["tab"] == row["tab"] and d["item_hex"] == row["item_hex"]), None)
             price = draft.get("price") if draft else None
             if len(items) < 64 and price:
+                if self.deposit_blocks:
+                    key = self.deposit_key(mode, page, row)
+                    block = self.deposit_blocks.get(key)
+                    if block and block[0] > now:
+                        continue
+                    self.deposit_blocks.pop(key, None)
                 item = self.web_item(row, page)
                 if price:
                     item["price"] = price
@@ -1089,8 +1186,7 @@ class Agent:
             raise ValueError("Deposit page changed before planning")
         request = dict(id=uuid.uuid4().hex, type="deposit_prepare", items=items, balances=balances,
                        pages=[dict(page=page, before=io.digest(before), after=io.digest(after))])
-        self.start(mode, request, [(page, before, after)])
-        return True
+        return True if self.start(mode, request, [(page, before, after)]) is not None else None
 
     def fund_agreed_trade(self, mode):
         settings = self.settings(mode)
@@ -1258,6 +1354,20 @@ class Agent:
         except (OSError, ValueError, KeyError):
             return False
 
+    def legacy_listing_refresh(self, window):
+        if window.get('refresh_kind') != 'delivery' or window.get('listing_deposit_refresh') == 1:
+            return False
+        try:
+            request = io.document(self.root / 'live-refresh-request.json', 4096)
+            # Parking creates a fresh native grant session. The HUD already
+            # validated the request's old session before acknowledging its ID.
+            return (request.get('kind') == 'delivery' and request.get('id') == window['refresh_id']
+                    and request.get('page') == window['deposit'] == window['delivery']
+                    and all(request.get(k) == window[k] for k in ('owner', 'catalog', 'pid', 'started', 'player', 'hardcore'))
+                    and re.fullmatch('listing:[a-f0-9]{32}', str(request.get('trigger', ''))) is not None)
+        except (OSError, ValueError, KeyError):
+            return False
+
     def deliver_parked_page(self, window, warnings, rejected):
         """Only queued deliveries while native UI is waiting for this handoff.
 
@@ -1302,6 +1412,9 @@ class Agent:
             if self.deposit(mode, listed_only=True):
                 count = 1
             rejected.pop(mode, None)
+            warning = self.deposit_warning(mode, self.settings(mode))
+            if warning:
+                rejected[mode] = warning
         except (OSError, ValueError) as error:
             if self.pending.exists():
                 raise
@@ -1322,10 +1435,15 @@ class Agent:
                 try:
                     gate.enter_context(lease(self.root / 'repair.lock'))
                 except OSError as error:
-                    if isinstance(error, BlockingIOError) or getattr(error, 'winerror', None) in (32, 33):
+                    if io.is_contention(error):
                         raise RepairInProgress('Marketplace repair is in progress; background sync will resume automatically') from None
                     raise
-                guard.enter_context(lease(self.root / 'guard.lock'))
+                try:
+                    guard.enter_context(lease(self.root / 'guard.lock'))
+                except OSError as error:
+                    if io.is_contention(error):
+                        raise RepairInProgress('Another local marketplace operation is finishing') from None
+                    raise
             yield
 
     def run(self, preflight=False):
@@ -1342,15 +1460,17 @@ class Agent:
             try:
                 with self.save_access(pages=[]) as window:
                     live_mode = ("HC" if window["hardcore"] else "SC") if window else None
-            except BlockingIOError:
+            except BlockingIOError as error:
                 # Queue discovery and progress do not require save access.
                 for mode in ('SC', 'HC'):
                     if (self.folder / f'Marketplace_2.4_{mode}.json').exists():
                         self.sync_report(mode, 'waiting_for_stash')
+                        self.sync_progress[mode]['handoff'] = getattr(error, 'reason', 'page_busy')
                         self.delivery_queue(mode)
                 path = self.root / 'status.json'
                 old = io.document(path) if path.exists() else {}
-                io.save(path, dict(old, stash_sync=self.sync_progress))
+                if old.get('stash_sync') != self.sync_progress:
+                    io.save(path, dict(old, stash_sync=self.sync_progress))
                 raise
             results = {}
             status_path = self.root / "status.json"
@@ -1359,7 +1479,7 @@ class Agent:
             if not preflight and window and re.fullmatch('[0-9a-f]{32}', str(window.get('refresh_id', ''))):
                 if window.get('refresh_kind') == 'gold_deposit':
                     return self.deposit_parked_gold(window, warnings, rejected)
-                if window.get('refresh_kind') == 'listing_deposit':
+                if window.get('refresh_kind') == 'listing_deposit' or self.legacy_listing_refresh(window):
                     return self.deposit_parked_listings(window, warnings, rejected)
                 return self.deliver_parked_page(window, warnings, rejected)
             if not preflight and window and self.refresh_active():
@@ -1389,9 +1509,10 @@ class Agent:
                     warnings[mode] = 'Delivery queued. Leave the stash idle with an empty cursor to sync automatically.'
                     results[mode] = 0
                     continue
-                if not preflight and window and window.get('listing_deposit_refresh') == 1:
+                if not preflight and window and window.get('refresh_supported') == 2:
                     settings = self.settings(mode)
-                    drafts = [d for d in settings['drafts'] if d.get('price')]
+                    drafts = [d for d in settings['drafts'] if d.get('price') and
+                              (not self.deposit_blocks or self.deposit_key(mode, settings['page'], d) not in self.deposit_blocks)]
                     if settings['enabled'] and drafts and window.get('loaded') == settings['page']:
                         signature = io.digest(json.dumps(drafts, sort_keys=True).encode())[:32]
                         if self.request_refresh(mode, settings['page'], 'listing:' + signature):
@@ -1421,6 +1542,9 @@ class Agent:
                             raise
                         results[mode] = str(error)
                         rejected[mode] = str(error)
+                    warning = self.deposit_warning(mode, self.settings(mode))
+                    if warning:
+                        rejected.setdefault(mode, warning)
                     synced = False
                     try:
                         synced = self.web_sync(mode)
@@ -1495,7 +1619,7 @@ def release_live_attempt(config, message=''):
         pass
 
 
-def report_waiting(config):
+def report_waiting(config, reason=None):
     # A missing/contended native grant is an ordinary startup transition, not a
     # reason to relaunch. Preserve real pending recovery errors and receipts.
     root = Path(config['state_directory'])
@@ -1503,8 +1627,11 @@ def report_waiting(config):
         return
     path = root / 'status.json'
     status = io.document(path) if path.exists() else {}
-    status.update(at=int(time.time()), phase='waiting_for_stash', pending=False, error='',
-                  message='Connecting to the game. Open the stash once; syncing then continues automatically.')
+    next_status = dict(phase='waiting_for_stash', pending=False, error='',
+                       message=str(reason or 'Waiting for the game to publish a safe stash window')[:512])
+    if all(status.get(key) == value for key, value in next_status.items()):
+        return
+    status.update(next_status, at=int(time.time()))
     io.save(path, status)
 
 
@@ -1547,6 +1674,7 @@ def main():
     last_link = 0
     last_profiles = 0
     optional = None
+    deposit_blocks = {}
     next_run, previous_stamp = 0, None
     while True:
         agent = None
@@ -1570,6 +1698,7 @@ def main():
             if (Path(config['state_directory']) / 'pending.json').exists(): delay = 2
             next_run = time.monotonic() + delay * _http.random.uniform(1, 1.2)
             agent = Agent(config)
+            agent.deposit_blocks = deposit_blocks
             if args.watch:
                 agent.bootstrap()
             delivery_request = agent.root / 'delivery-request.json'
@@ -1583,6 +1712,7 @@ def main():
             if not args.watch:
                 raise SystemExit(str(error)) from None
             # Do not replace a real transfer receipt/error with a normal pause.
+            delay, next_run = 3, 0
         except _http.LocalRequestPending as error:
             if not args.watch:
                 raise SystemExit(str(error)) from None
@@ -1594,7 +1724,7 @@ def main():
             if not args.watch:
                 raise SystemExit(str(error)) from None
             if config:
-                try: report_waiting(config)
+                try: report_waiting(config, error)
                 except (OSError, ValueError, KeyError): pass
         except (OSError, ValueError, KeyError) as error:
             if isinstance(error, io.BackupSaveDirectory):

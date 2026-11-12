@@ -127,6 +127,10 @@ trait MarketplaceBrowser {
             $state=$report['state']??'';
             if(!in_array($state,['checking','ready','waiting_for_game','waiting_for_stash','waiting_for_idle','reloading','recovering','no_space','retrying'],true))throw new MarketError(422,'Invalid stash sync progress.');
             $clean=['state'=>$state,'page'=>self::number($report['page']??1,1,64),'pending'=>self::number($report['pending']??0,0,128),'request_id'=>($report['request_id']??'')===''?'':self::ticketId($report['request_id'])];
+            $handoff=$report['handoff']??null;
+            if($state==='waiting_for_stash'&&in_array($handoff,['no_window','window_identity','window_expired','multiple_games','game_session','save_route','game_mode','page_settings','page_loaded','native_lock','parked_lock','page_busy'],true))$clean['handoff']=$handoff;
+            $build=$report['runtime_build']??null;
+            if(is_string($build)&&preg_match('/^[a-f0-9]{20}$/D',$build))$clean['runtime_build']=$build;
             $encoded=self::json($clean);
             if(!$row){$this->run(($this->db->getAttribute(PDO::ATTR_DRIVER_NAME)==='mysql'?'INSERT IGNORE':'INSERT OR IGNORE').' INTO market_delivery_sync VALUES (?,?,?,?,?,?)',[$owner,$scope,'',0,$encoded,time()]);}
             elseif($row['report']!==$encoded||(int)$row['updated']<time()-20)$this->run('UPDATE market_delivery_sync SET report=?,updated=? WHERE owner=? AND scope=?',[$encoded,time(),$owner,$scope]);

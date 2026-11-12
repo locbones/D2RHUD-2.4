@@ -208,7 +208,14 @@ public:
         if(!ready){CloseHandle(access);access=INVALID_HANDLE_VALUE;}
         return ready;
     }
-    void FinishRefresh(){std::lock_guard lock(mutex);refreshPage=0;refreshId.clear();refreshKind.clear();goldDeposit=nullptr;}
+    void FinishRefresh(){
+        std::lock_guard lock(mutex);
+        refreshPage=0;refreshId.clear();refreshKind.clear();goldDeposit=nullptr;
+        // RefreshReady holds the lease for a return to the market page. If
+        // the stash closed first, the parked page stays loaded and the grant
+        // must remain available to the companion.
+        if(parked&&access!=INVALID_HANDLE_VALUE){CloseHandle(access);access=INVALID_HANDLE_VALUE;}
+    }
     bool Protected(unsigned page){std::lock_guard lock(mutex);return enabled&&(page==deposit||page==delivery);}
     std::optional<std::filesystem::path> PageFile(unsigned page){std::lock_guard lock(mutex);if(!enabled||(page!=deposit&&page!=delivery))return {};return folder/(std::wstring(L"Stash_")+(hardcore?L"HC":L"SC")+L"_Page"+std::to_wstring(page)+L".d2i");}
     void Error(const std::string& value){std::lock_guard lock(mutex);status=value;}
@@ -245,10 +252,16 @@ public:
         Revoke();loaded=page;status.clear();return true;
     }
     unsigned Restore(bool reopening=false){std::lock_guard lock(mutex);return enabled&&(reopening||!passive)?restore:0;}
-    void Tick(bool inGame){
+    void Tick(bool inGame,uint32_t livePlayer=0,bool liveHardcore=false){
         std::lock_guard lock(mutex);if(!enabled)return;
-        if(!inGame){if(Shared()){Revoke();enabled=false;refreshPage=0;refreshId.clear();refreshKind.clear();goldDeposit=nullptr;}return;}
-        const auto now=GetTickCount64();if(parked&&now>=published&&now-published>=1000)Publish(now);
+        if(!inGame||(livePlayer&&(livePlayer!=player||liveHardcore!=hardcore))){
+            if(Shared()){Revoke();enabled=false;refreshPage=0;refreshId.clear();refreshKind.clear();goldDeposit=nullptr;}return;
+        }
+        const auto now=GetTickCount64();
+        if(parked&&now>=published&&now-published>=1000){
+            const bool expired=now-published>=5000;
+            if(Publish(now)&&expired)Wake();
+        }
         if(now>=syncPoll){
             syncPoll=now+2000;syncHint.clear();
             try{const auto report=Read(root/L"status.json");const auto at=report.value("at",int64_t(0));

@@ -8,6 +8,8 @@
 .community-gift h2,.community-gift header p,#gift-announcement strong,#gift-announcement p,.gift-owner-campaigns strong{overflow-wrap:anywhere}.community-gift header>div,#gift-announcement>div,.gift-owner-campaigns>a>div{min-width:0}
 
 .gift-template-source{max-width:300px;margin:18px 0 12px}.gift-template[hidden]{display:none}
+.gift-history-actions{display:flex;gap:10px;flex-wrap:wrap}.gift-history-pages:not(:empty){padding-top:16px}
+#gift-reuse-form>.gift-player-results{margin:12px 0}#gift-reuse-selected:empty{display:none}
 
 .gift-template>input[type="checkbox"]{width:16px;height:16px;min-width:16px;flex:0 0 16px;margin:0;padding:0;accent-color:#c4a366}.gift-template>span{flex:1;min-width:0}
 

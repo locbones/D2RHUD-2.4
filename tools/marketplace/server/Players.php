@@ -18,12 +18,64 @@ trait MarketplacePlayers {
     }
     public function players(bool $hc,array $query=[]): array {
         $search=trim(self::text(($query['q']??'')===''?' ':$query['q'],64));
-        $after=isset($query['after'])?self::text($query['after'],64):'';
-        $like='%'.str_replace(['!','%','_'],['!!','!%','!_'],strtolower($search)).'%';
-        $rows=$this->run("SELECT a.id,a.name,p.linked,(SELECT COUNT(*) FROM market_characters c WHERE c.owner=a.id AND c.scope=?) AS characters,(SELECT MAX(updated) FROM market_characters c WHERE c.owner=a.id AND c.scope=?) AS updated FROM actors a JOIN market_memberships p ON p.owner=a.id AND p.`mod`=? AND p.game_mode='2.4' AND p.linked>0 WHERE a.role IN ('player','tester') AND a.id>? AND (LOWER(a.name) LIKE ? ESCAPE '!' OR a.id LIKE ? ESCAPE '!' OR a.id IN (SELECT owner FROM market_player_ids WHERE number=?)) ORDER BY a.id LIMIT 25",[$this->scope($hc),$this->scope($hc),$this->mod,$after,$like,$like,preg_match('/^P-([0-9]+)$/iD',$search,$match)?$match[1]:0])->fetchAll();
+        $sort=$query['sort']??'id';
+        [$key,$direction]=match($sort){
+            'id'=>['id','ASC'],
+            'name'=>['name_key','ASC'],
+            'name-desc'=>['name_key','DESC'],
+            'active'=>['last_active','DESC'],
+            'newest'=>['linked','DESC'],
+            default=>throw new MarketError(422,'Choose a valid player sort order.'),
+        };
+        $scope=$this->scope($hc);
+        $mysql=$this->db->getAttribute(PDO::ATTR_DRIVER_NAME)==='mysql';
+        $maximum=$mysql?'GREATEST':'MAX';
+        $uid=$mysql?"CONCAT('p',LPAD(CAST(n.number AS CHAR),GREATEST(6,CHAR_LENGTH(CAST(n.number AS CHAR))),'0'))":"'p'||printf('%06d',n.number)";
+        $name="REPLACE(REPLACE(REPLACE(REPLACE(LOWER(a.name),' ',''),'-',''),'_',''),'.','')";
+        $where=["a.role IN ('player','tester')"];
+        $params=[$scope,$scope,$this->mod,$scope];
+        $search=preg_replace('/\bp[\s._-]+(?=[0-9])/i','p',$search);
+        foreach(array_unique(preg_split('/\s+/u',strtolower($search),-1,PREG_SPLIT_NO_EMPTY)) as $word){
+            $compact=str_replace(['-','_','.'],'',$word);
+            $like='%'.str_replace(['!','%','_'],['!!','!%','!_'],$compact===''?$word:$compact).'%';
+            $nameMatch=$compact===''?'LOWER(a.name)':$name;
+            $matches="$nameMatch LIKE ? ESCAPE '!'";$params[]=$like;
+            if(preg_match('/^[a-f0-9]{6,}$/D',$compact)){$matches.=" OR LOWER(a.id) LIKE ? ESCAPE '!'";$params[]=$like;}
+            if(preg_match('/^p?[0-9]+$/D',$compact)){$matches.=" OR (n.number IS NOT NULL AND ($uid) LIKE ? ESCAPE '!')";$params[]=$like;}
+            if(preg_match('/^p([0-9]{1,18})$/D',$compact,$idMatch)){$matches.=' OR n.number=(?+0)';$params[]=$idMatch[1];}
+            $where[]='('.$matches.')';
+        }
+        $directory="SELECT a.id,a.name,LOWER(a.name) AS name_key,p.linked,n.number AS player_number,
+            (SELECT COUNT(*) FROM market_characters c WHERE c.owner=a.id AND c.scope=?) AS characters,
+            (SELECT MAX(c.updated) FROM market_characters c WHERE c.owner=a.id AND c.scope=?) AS updated,
+            COALESCE(s.seen,0) AS companion_seen
+            FROM actors a JOIN market_memberships p ON p.owner=a.id AND p.`mod`=? AND p.game_mode='2.4' AND p.linked>0
+            LEFT JOIN market_companion_seen s ON s.owner=a.id AND s.scope=?
+            LEFT JOIN market_player_ids n ON n.owner=a.id WHERE ".implode(' AND ',$where);
+        $sql="SELECT * FROM (SELECT directory.*,$maximum(companion_seen,COALESCE(updated,0)) AS last_active FROM ($directory) directory) sortable";
+        if(isset($query['after'])){
+            $after=self::text($query['after'],512);
+            if($sort==='id'){$sql.=' WHERE id>?';$params[]=self::text($after,64);}
+            else{
+                $cursor=json_decode(base64_decode($after,true)?:'null',true);
+                $numeric=$key!=='name_key';
+                if(!is_array($cursor)||($cursor['sort']??null)!==$sort||!is_string($cursor['id']??null)||
+                    ($numeric?!is_int($cursor['value']??null):!is_string($cursor['value']??null)))throw new MarketError(422,'Refresh the Players page to restart this search.');
+                $operator=$direction==='ASC'?'>':'<';$value=$numeric?'(?+0)':'?';
+                $sql.=" WHERE ($key $operator $value OR ($key=$value AND id>?))";
+                array_push($params,$cursor['value'],$cursor['value'],self::text($cursor['id'],64));
+            }
+        }
+        $rows=$this->run($sql." ORDER BY $key $direction".($key==='id'?'':',id ASC').' LIMIT 25',$params)->fetchAll();
         $more=count($rows)>24;if($more)array_pop($rows);
-        foreach($rows as &$r){$r['player_id']=$this->publicPlayerId($r['id']);$r['characters']=(int)$r['characters'];$r['updated']=(int)$r['updated'];$r['linked']=(int)$r['linked'];}unset($r);
-        return ['players'=>$rows,'next_after'=>$more?end($rows)['id']:null];
+        $next=null;
+        if($more){$last=end($rows);$next=$sort==='id'?$last['id']:base64_encode(self::json(['sort'=>$sort,'id'=>$last['id'],'value'=>$key==='name_key'?$last[$key]:(int)$last[$key]]));}
+        foreach($rows as &$r){
+            $r['player_id']=$r['player_number']===null?$this->publicPlayerId($r['id']):'P-'.str_pad((string)$r['player_number'],6,'0',STR_PAD_LEFT);
+            foreach(['characters','updated','linked','last_active'] as $field)$r[$field]=(int)$r[$field];
+            unset($r['name_key'],$r['companion_seen'],$r['player_number']);
+        }unset($r);
+        return ['players'=>$rows,'next_after'=>$next];
     }
     public function playerProfile(string $owner,bool $hc,?string $character=null): array {
         $owner=self::text($owner,64);$actor=$this->run("SELECT a.id,a.name,p.linked FROM actors a JOIN market_memberships p ON p.owner=a.id AND p.`mod`=? AND p.game_mode='2.4' AND p.linked>0 WHERE a.id=? AND a.role IN ('player','tester')",[$this->mod,$owner])->fetch();
