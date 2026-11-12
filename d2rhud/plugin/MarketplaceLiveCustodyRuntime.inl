@@ -234,7 +234,7 @@ static void MarketplaceLivePaint(void* panel) try {
         bool modal=false;
         for(const auto name:{"DropGoldModal","StackSplitModal","QuantityModal"})if(auto popup=WidgetFindChild(*gpPanelManager,name))modal|=Marketplace::NativePanel::Field<uint8_t>(popup,0x50)!=0;
         const auto tab=Marketplace::NativePanel::Tab(panel);
-        // Reload only for a queued delivery or a matched carried-to-stash gold deposit.
+        // Reload only for queued marketplace work or a matched gold deposit.
         if(!modal&&tab>=0&&WidgetFindChild(panel,"MarketplaceSyncMask")){
             if(goldDeposit&&now>=gMarketGoldRequestPoll){gMarketGoldRequestPoll=now+500;const auto proof=gMarketGoldDeposit.Pending();
                 if(proof&&Marketplace::LiveCustody::window.RequestGoldDeposit(gSelectedPage+1,unsigned(tab),proof->carriedBefore,proof->carriedAfter,proof->stashBefore,proof->stashAfter,now))gMarketGoldDeposit.Taken();

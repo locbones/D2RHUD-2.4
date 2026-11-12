@@ -123,7 +123,7 @@ inline void PresentActivity(State& state,Panel::NativeView& result){
     if(conversation&&!history&&!state.editing){const auto& t=Threads(state)[state.marketSelection];
         const auto self=state.snapshot.activity.self.empty()?"local-player":state.snapshot.activity.self;const bool mine=t.proposer==self;
         const bool pending=PendingCommand(state,t.id);
-        text("MarketThreadState",pending?"Sending your response...":t.status=="pending"?(mine?"Waiting for their reply":"Your turn to respond"):ActivityKind(t.status));
+        text("MarketThreadState",pending?"Sending your response...":t.status=="pending"?(mine?"Waiting for their reply":"Your turn to respond"):t.settlementLabel.empty()?ActivityKind(t.status):t.settlementLabel);
         text("MarketThreadTerms",t.price.empty()?"No payment set":CompactActivity(ActivityNumber(t.price[0].quantity)+" x "+(t.price[0].kind=="gold"?"Gold":TradeRequirementName(t.price[0])),50,1)+(t.price.size()>1?" + "+std::to_string(t.price.size()-1)+" more":""));
         const auto& payment=t.price.empty()?Requirement{}:t.price[0];
         const auto art=payment.kind=="gold"?ItemVisuals::Visual{"items/custom/gold_m",1,1}:state.visuals.Resolve(payment.code,payment.quality,payment.index);

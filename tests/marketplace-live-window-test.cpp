@@ -182,6 +182,16 @@ int wmain(int argc,wchar_t** argv){
     auto goldWindow=Read(state/L"live-window.json");assert(goldWindow["refresh_kind"]=="gold_deposit"&&goldWindow["gold_deposit"]["carried_before"]==1000);
     Write(state/L"live-refresh-result.json",{{"id",goldWindow["refresh_id"]},{"session",goldWindow["session"]},{"ready",true}});
     assert(bridge.RefreshReady(goldNow+1));assert(bridge.Permit(11));bridge.FinishRefresh();assert(bridge.OpenGrant(11,true));
+    const auto listingNow=goldNow+1000;const auto listingWindow=Read(state/L"live-window.json");
+    assert(listingWindow["listing_deposit_refresh"]==1);
+    request["kind"]="listing_deposit";request["id"]=std::string(32,'f');request["page"]=11;
+    request["session"]=listingWindow["session"];request["tick"]=listingNow;
+    Write(state/L"live-refresh-request.json",request);
+    assert(bridge.BeginRefresh(11,4,listingNow)==1&&bridge.RefreshTab()==4);
+    assert(!bridge.RefreshReady(listingNow+1));assert(bridge.Permit(1));assert(bridge.OpenGrant(1,true));
+    const auto parked=Read(state/L"live-window.json");assert(parked["refresh_kind"]=="listing_deposit");
+    Write(state/L"live-refresh-result.json",{{"id",parked["refresh_id"]},{"session",parked["session"]},{"ready",true}});
+    assert(bridge.RefreshReady(listingNow+1));assert(bridge.Permit(11));bridge.FinishRefresh();assert(bridge.OpenGrant(11,true));
     settings["enabled"]=false;Write(saves/L"Marketplace_2.4_SC.json",settings);
     assert(!bridge.RequestGoldDeposit(11,1,1000,900,100,200,goldNow+1));
     // Reproduce a closed stash still granting the old route after Setup (or

@@ -5,10 +5,12 @@ security headers as the PHP fallback. Keep any host-specific rules when
 deploying `public/.htaccess`. Browse startup uses one `web.php?action=bootstrap`
 request and loads the RMD-MP item catalog directly as a cacheable asset.
 
-Snapshot, history and stats reads share two non-blocking slots
-(`ReadBudget.php`). The lock files live beside the private server config and
-that directory must be writable by PHP. A full read budget returns 503 with
-`Retry-After`; trade, delivery, and recovery endpoints do not use that budget.
+Snapshot, history and stats reads use two non-blocking slots
+(`ReadBudget.php`); one is reserved for the website's listing views. The lock
+files live beside the private server config, where PHP needs write access. A
+busy read returns 503 with a short `Retry-After` and `X-Market-Read-Busy`. The
+website retries that read once without delaying trade actions. Trade,
+delivery, and recovery endpoints do not use that budget.
 Unchanged companion inventory polls do not hold the market's trade lock.
 When troubleshooting, distinguish application backpressure from Apache
 `can't apply process slot` errors: the latter occur before PHP can run.

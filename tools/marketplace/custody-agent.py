@@ -204,7 +204,7 @@ class Agent:
     def __init__(self, config, transport=None, fault=None):
         self.config = config
         self.root = Path(config["state_directory"]).resolve()
-        self.folder = Path(config["save_directory"]).resolve()
+        self.folder = io.active_save_directory(config["save_directory"])
         self.data = Path(config["mod_data"]).resolve()
         self.mod = io.mod_name(self.data)
         if config.get('mod', self.mod) != self.mod or config.get('game_mode', '2.4') != '2.4':
@@ -352,13 +352,16 @@ class Agent:
 
     def request_refresh(self, mode, page, reason):
         """Ask the native client to save/park a viewed page; never relax its lease."""
-        # Only actual queued escrow deliveries may request a visible reload.
         prefix, separator, identities = reason.partition(':')
-        if prefix not in {'items', 'withdraw'} or not separator or not identities or any(not re.fullmatch('[0-9a-f]{32}', identity) for identity in identities.split(',')):
+        if prefix not in {'items', 'withdraw', 'listing'} or not separator or not identities or any(not re.fullmatch('[0-9a-f]{32}', identity) for identity in identities.split(',')):
             return False
+        listing = prefix == 'listing'
+        kind = 'listing_deposit' if listing else 'delivery'
         try:
             with self.save_access(mode, []) as window:
-                if not window or window.get('refresh_supported') != 2 or window.get('loaded') != page or window.get('refresh_id') or window.get('delivery') != page:
+                if not window or window.get('refresh_supported') != 2 or window.get('loaded') != page or window.get('refresh_id') or window.get('deposit' if listing else 'delivery') != page:
+                    return False
+                if listing and window.get('listing_deposit_refresh') != 1:
                     return False
                 key = f"{window['started']}:{page}:{reason}"
                 trigger = reason
@@ -369,8 +372,9 @@ class Agent:
                 # capacity failures may release the page without moving goods.
                 # Retry an outstanding queue, but never continuously flicker it.
                 at = previous.get('at', 0)
-                elapsed = time.time() - at if type(at) in (int, float) else 30
-                if mode not in self.manual_sync and previous.get('trigger') == trigger and 0 <= elapsed < 30:
+                cooldown = 120 if listing else 30
+                elapsed = time.time() - at if type(at) in (int, float) else cooldown
+                if mode not in self.manual_sync and previous.get('trigger') == trigger and 0 <= elapsed < cooldown:
                     return False
                 path = self.root / 'live-refresh-request.json'
                 if path.exists():
@@ -384,7 +388,13 @@ class Agent:
                     if not acknowledged and old.get('session') == window['session'] and old.get('page') == page and old.get('trigger') == trigger and 0 <= ticks() - old.get('tick', 0) < 12000:
                         return True
                 request = {k: window[k] for k in ('owner', 'catalog', 'pid', 'started', 'player', 'hardcore', 'session')}
-                request.update(schema=1, kind="delivery", id=uuid.uuid4().hex, page=page, tick=ticks(), key=key, trigger=trigger)
+                request.update(schema=1, kind=kind, id=uuid.uuid4().hex, page=page, tick=ticks(), key=key, trigger=trigger)
+                if listing:
+                    # Throttle unchanged drafts even if the client timed out or
+                    # a connection failed before the handoff was acknowledged.
+                    seen = dict(list(seen.items())[-63:])
+                    seen[key] = dict(trigger=trigger, at=time.time())
+                    io.save(seen_path, seen)
                 io.save(path, request)
                 return True
         except (OSError, ValueError, KeyError):
@@ -765,7 +775,7 @@ class Agent:
             self.persist(record)
             io.save(self.pending, dict(id=identity, mode=mode,
                 pages=[image["page"] for image in record["images"]], reload_safe=True))
-            if ticket['kind'] == 'claim':
+            if ticket['kind'] == 'claim' or applied_window and applied_window.get('refresh_kind') == 'listing_deposit':
                 self.refresh_ready(applied_window)
             self.fault("locally_applied")
         self.request(mode, dict(id=identity, type="commit", pages=record["images"]))
@@ -779,7 +789,8 @@ class Agent:
         # Re-applying finish is harmless, including after a lost remote acknowledgement.
         state_path = self.root / "lineage.json"
         state = io.document(state_path) if state_path.exists() else dict(delivered={}, consumed={}, receipts=[])
-        if record["id"] not in state["receipts"]:
+        receipts = state.setdefault('receipts', [])
+        if record["id"] not in receipts:
             old = self.settings(record['mode'])
             identities = {positionless(r['item_hex']) for r in record['request'].get('items', [])}
             identities.update(positionless(r['item_hex']) for r in record.get('delivered', []))
@@ -804,7 +815,7 @@ class Agent:
                 state["delivered"][item["item"]] = dict(mode=record["mode"], item_hex=item["item_hex"])
             for item in record["request"].get("items", []):
                 state["delivered"].pop(item.get("ledger_id"), None)
-            state["receipts"].append(record["id"])
+            receipts.append(record["id"])
             io.save(state_path, state)
         markers = [v['item_hex'] for field in ('delivered', 'currency_bags') for v in state.get(field, {}).values() if v.get('mode') == record['mode']]
         path = self.folder / f"MarketplaceReceipts_2.4_{record['mode']}.json"
@@ -1015,7 +1026,7 @@ class Agent:
             raise ValueError('Carried gold and market gold do not match the deposit')
         return {k: value[k] for k in keys}
 
-    def deposit(self, mode, *, gold_only=False, release_retained_gold=False):
+    def deposit(self, mode, *, gold_only=False, release_retained_gold=False, listed_only=False):
         settings = self.settings(mode)
         if not settings["enabled"]:
             return False
@@ -1054,7 +1065,7 @@ class Agent:
                     item["ledger_id"] = lineage[0]
                 items.append(item)
                 selectors.append({k: row[k] for k in ("tab", "ordinal", "item_hex")})
-            elif not price and row["code"] == "Z01" and row["quality"] == 2:
+            elif not listed_only and not price and row["code"] == "Z01" and row["quality"] == 2:
                 # A currency parcel just delivered here stays available to take or cube.
                 if positionless(row['item_hex']) in retained_keys:
                     continue
@@ -1067,7 +1078,7 @@ class Agent:
             state['retained_gold'][mode] = dict(page=page, quantity=floor)
             with self.save_access(mode, [page]):
                 io.save(self.root / 'lineage.json', state)
-        if inventory['gold'] > floor:
+        if not listed_only and inventory['gold'] > floor:
             balances.append(dict(kind="gold", code="gld", label="Gold", quality=2, index=-1, ethereal=-1, quantity=min(inventory['gold'] - floor, 2000000000)))
         if not items and not balances:
             return False
@@ -1238,7 +1249,7 @@ class Agent:
             if re.fullmatch('[0-9a-f]{32}', str(window.get('refresh_id', ''))):
                 return True
             request = io.document(self.root / 'live-refresh-request.json')
-            return (request.get('kind') in {'delivery', 'gold_deposit'} and request.get('session') == window['session']
+            return (request.get('kind') in {'delivery', 'gold_deposit', 'listing_deposit'} and request.get('session') == window['session']
                     and re.fullmatch('[0-9a-f]{32}', str(request.get('id', ''))) is not None
                     and request.get('owner') == window['owner'] and request.get('started') == window['started']
                     and request.get('pid') == window['pid'] and request.get('catalog') == window['catalog']
@@ -1283,6 +1294,22 @@ class Agent:
             at=int(time.time()), milliseconds=round((time.monotonic() - began) * 1000, 1),
             local_ready_tick=self.local_ready_tick, requests=self.timings))
         return {mode: 0}
+
+    def deposit_parked_listings(self, window, warnings, rejected):
+        mode = 'HC' if window['hardcore'] else 'SC'
+        count = 0
+        try:
+            if self.deposit(mode, listed_only=True):
+                count = 1
+            rejected.pop(mode, None)
+        except (OSError, ValueError) as error:
+            if self.pending.exists():
+                raise
+            rejected[mode] = str(error)
+        self.live_result(window, rejected.get(mode))
+        io.save(self.root / 'status.json', dict(at=int(time.time()), pending=self.pending.exists(), result={mode: rejected.get(mode, count)},
+            deliveries={}, delivery_warnings=warnings, rejected_deposits=rejected, stash_sync=self.sync_progress, web_sync_cache=self._web_sync_cache))
+        return {mode: count}
 
     @contextmanager
     def guard_access(self):
@@ -1332,6 +1359,8 @@ class Agent:
             if not preflight and window and re.fullmatch('[0-9a-f]{32}', str(window.get('refresh_id', ''))):
                 if window.get('refresh_kind') == 'gold_deposit':
                     return self.deposit_parked_gold(window, warnings, rejected)
+                if window.get('refresh_kind') == 'listing_deposit':
+                    return self.deposit_parked_listings(window, warnings, rejected)
                 return self.deliver_parked_page(window, warnings, rejected)
             if not preflight and window and self.refresh_active():
                 # A verified request is waiting for the native parking ACK.
@@ -1360,6 +1389,14 @@ class Agent:
                     warnings[mode] = 'Delivery queued. Leave the stash idle with an empty cursor to sync automatically.'
                     results[mode] = 0
                     continue
+                if not preflight and window and window.get('listing_deposit_refresh') == 1:
+                    settings = self.settings(mode)
+                    drafts = [d for d in settings['drafts'] if d.get('price')]
+                    if settings['enabled'] and drafts and window.get('loaded') == settings['page']:
+                        signature = io.digest(json.dumps(drafts, sort_keys=True).encode())[:32]
+                        if self.request_refresh(mode, settings['page'], 'listing:' + signature):
+                            results[mode] = 'Priced items will move to Vault when the stash is idle.'
+                            continue
                 if preflight:
                     try:
                         results[mode] = self.collect_deliveries(mode, self.delivery_items.get(mode, []))
@@ -1437,8 +1474,14 @@ def report_failure(config, error):
     status = io.document(status_path) if status_path.exists() else {}
     message = str(error)[:512]
     status.pop('message', None)  # A previous startup wait is not the current failure.
-    status.update(at=int(time.time()), phase='retrying', error=message, pending=(root / 'pending.json').exists())
+    status.update(at=int(time.time()), phase='wrong_save_folder' if isinstance(error, io.BackupSaveDirectory) else 'retrying',
+                  error=message, pending=(root / 'pending.json').exists())
     io.save(status_path, status)
+    release_live_attempt(config, message)
+
+
+def release_live_attempt(config, message=''):
+    root = Path(config['state_directory'])
     try:
         window = io.document(root / 'live-window.json')
         if (window.get('owner') == config.get('owner') and window.get('catalog') == config.get('catalog')
@@ -1447,7 +1490,7 @@ def report_failure(config, error):
             if re.fullmatch('[0-9a-f]{32}', str(identity)):
                 io.save(root / 'live-refresh-result.json', dict(schema=1, id=identity, session=window['session'], ready=True))
             io.save(root / 'live-result.json', dict(schema=1, session=window['session'], at=int(time.time()),
-                terminal=True, pending=status['pending'], error=message))
+                terminal=True, pending=(root / 'pending.json').exists(), error=message))
     except (OSError, ValueError):
         pass
 
@@ -1540,6 +1583,13 @@ def main():
             if not args.watch:
                 raise SystemExit(str(error)) from None
             # Do not replace a real transfer receipt/error with a normal pause.
+        except _http.LocalRequestPending as error:
+            if not args.watch:
+                raise SystemExit(str(error)) from None
+            delay, next_run = 3, 0
+            if config:
+                try: release_live_attempt(config)
+                except (OSError, ValueError, KeyError): pass
         except BlockingIOError as error:
             if not args.watch:
                 raise SystemExit(str(error)) from None
@@ -1547,6 +1597,8 @@ def main():
                 try: report_waiting(config)
                 except (OSError, ValueError, KeyError): pass
         except (OSError, ValueError, KeyError) as error:
+            if isinstance(error, io.BackupSaveDirectory):
+                delay = 120
             if args.watch and config:
                 try:
                     report_failure(config, error)
@@ -1574,6 +1626,8 @@ def main():
                                     publisher.delivery_queue(mode)
                         if link and not publisher.refresh_active(): publisher.publish_browser_link()
                         if profiles and not publisher.refresh_active(): publisher.publish_characters()
+                    except _http.LocalRequestPending:
+                        pass  # Yield to the primary local worker without an error.
                     except (OSError, ValueError, KeyError) as error:
                         print('Optional marketplace sync: ' + str(error), flush=True)
                 optional = threading.Thread(target=publish_optional, daemon=True)

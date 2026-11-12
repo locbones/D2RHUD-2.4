@@ -85,9 +85,19 @@ def wake_custody(owner):
         kernel.CloseHandle(event)
 
 
-def wait_for_producer(config, folder, hardcore, before, seconds):
+def config_stamp(path):
+    try:
+        stat = path.stat()
+        return stat.st_mtime_ns, stat.st_size
+    except OSError:
+        return None
+
+
+def wait_for_producer(config, folder, hardcore, before, seconds, config_path=None, config_before=None):
     deadline = time.monotonic() + seconds
     while time.monotonic() < deadline:
+        if config_path is not None and config_stamp(config_path) != config_before:
+            return
         if watch_stamp(config, folder, hardcore) != before:
             return
         time.sleep(min(.25, max(0, deadline - time.monotonic())))
@@ -113,6 +123,7 @@ def atomic(path, value):
 
 
 def sync(config, folder, hardcore=False, allow_local=False, refresh_feed=True, poll_inbox=True):
+    folder = _custody_io.active_save_directory(folder)
     endpoint = config["endpoint"]
     url = urllib.parse.urlsplit(endpoint)
     if url.username or url.password or url.query or url.fragment:
@@ -416,11 +427,15 @@ if __name__ == "__main__":
         last_feed, last_input_stamp = 0, None
         while True:
             config = {}
+            retry_soon = False
             before = watch_stamp(config, args.save_folder, args.hardcore)
+            config_before = config_stamp(args.config)
             try:
                 config = json.loads(args.config.read_text(encoding="utf-8-sig"))
                 if args.watch and config.get('managed_runtime') and Path(config['managed_runtime']).resolve() != Path(__file__).resolve().parent:
                     break
+                if args.watch and config.get('save_directory') and Path(config['save_directory']).resolve() != args.save_folder.resolve():
+                    break  # The supervisor restarts us with the current live route.
                 before = watch_stamp(config, args.save_folder, args.hardcore)
                 refresh_feed = before != last_input_stamp or time.monotonic() - last_feed >= 20
                 result = sync(config, args.save_folder, args.hardcore, refresh_feed=refresh_feed, poll_inbox=before[-1])
@@ -428,6 +443,10 @@ if __name__ == "__main__":
                 last_input_stamp = watch_stamp(config, args.save_folder, args.hardcore)
                 if result.get('custody_changed'): wake_custody(config.get('player_id'))
                 print(json.dumps(result), flush=True)
+            except (_http.LocalRequestPending, _http.ReadDeferred):
+                if not args.watch:
+                    raise
+                retry_soon = True
             except (ValueError, OSError) as error:
                 if not args.watch:
                     raise
@@ -439,6 +458,8 @@ if __name__ == "__main__":
             # The custody worker still checks delivery queues while the game
             # is closed. Only the HUD's feed/chat worker needs this slower cadence.
             interval = (5 if before[-1] else max(120, args.interval)) * _http.random.uniform(1, 1.2)
-            wait_for_producer(config, args.save_folder, args.hardcore, before, interval)
+            if retry_soon:
+                interval = min(interval, 5 * _http.random.uniform(1, 1.2))
+            wait_for_producer(config, args.save_folder, args.hardcore, before, interval, args.config, config_before)
     except KeyboardInterrupt:
         pass

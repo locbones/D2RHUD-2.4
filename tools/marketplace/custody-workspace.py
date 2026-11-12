@@ -20,6 +20,17 @@ MARKER = "custody-simulation.json"
 HUD_FEATURES = {name: 1 for name in ('open_offers', 'torch_class', 'listing_comments', 'gift_resources')}
 _HUD_CONTRACTS = {}
 
+class BackupSaveDirectory(ValueError):
+    pass
+
+
+def active_save_directory(path):
+    folder = Path(path)
+    resolved = folder.resolve()
+    if any(part.casefold() == 'backups' for route in (folder, resolved) for part in route.parts):
+        raise BackupSaveDirectory('Marketplace is linked to a backup folder. Open Pandemonium with the live save folder selected so it can reconnect after the game closes.')
+    return resolved
+
 
 def hud_contract(path):
     """Read a bounded, exported data declaration; never load/execute the DLL.

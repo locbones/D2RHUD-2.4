@@ -61,4 +61,25 @@ refuses(fn()=>$m->command($seller,['id'=>Market::id(),'type'=>'withdraw_physical
 $w=$m->command($seller,['id'=>Market::id(),'type'=>'withdraw_physical','page'=>35,'tab'=>7,'item_hex'=>$sorted],false);
 check($w['item_id']===$physicalLedger&&$w['withdrawn'],'Sorting made physical withdrawal lose its item');
 check($m->run('SELECT status FROM web_intents WHERE id=?',[$intent])->fetchColumn()==='failed','Moved item retained an old queued price');
+
+// An agreement on the exact priced stash item survives its first Vault deposit.
+$buyer=$m->user('Funded buyer');$seller=$m->user('Agreed seller');
+$sellerAgent=$m->authAgent($m->pairAgent($seller['id'],$catalog)['token']);
+$agreedHex=bits($saved,79,32,345678901);$publish($agreedHex);
+$listed=$m->run('SELECT l.id,l.revision,l.item FROM listings l WHERE seller=?',[$seller['id']])->fetch();
+$offer=Market::id();
+$m->command($buyer,['id'=>$offer,'type'=>'propose','listing_id'=>$listed['id'],'listing_revision'=>(int)$listed['revision'],'price'=>$price],false);
+$accepted=$m->command($seller,['id'=>Market::id(),'type'=>'accept','offer_id'=>$offer,'expected_revision'=>1],false);
+check($accepted['status']==='accepted','Discovery offer should wait for seller custody');
+$progress=$m->privateConversation($buyer,false,$offer)['settlement_progress'];
+check($progress['code']==='seller_deposit','The trade wrongly reports buyer funds before seller deposits');
+$m->run('INSERT INTO escrow_balances VALUES (?,?,?,?,?)',[$buyer['id'],$scope,'gold','',123]);
+$agreedItem=array_replace($packet,['item_hex'=>$agreedHex]);$agreedTicket=Market::id();
+foreach(['deposit_prepare','write_authorize','commit','commit'] as $type){
+ $m->custody($sellerAgent,['id'=>$agreedTicket,'type'=>$type,'catalog'=>$catalog,'items'=>[$agreedItem],'pages'=>$proof],false);
+}
+check($m->privateConversation($buyer,false,$offer)['status']==='completed','The seller’s deposit did not settle the existing offer');
+check($m->run('SELECT owner FROM escrow_items WHERE item=?',[$listed['item']])->fetchColumn()===$buyer['id'],'The original item did not reach the buyer’s Vault');
+check((int)$m->run('SELECT quantity FROM escrow_balances WHERE owner=? AND scope=?',[$seller['id'],$scope])->fetchColumn()===123,'Payment was not credited exactly once');
+check((int)$m->run('SELECT COUNT(*) FROM settlements WHERE offer=?',[$offer])->fetchColumn()===1,'Deposit retry duplicated settlement');
 echo "Publication custody: native/save flag and all position fields, stable ledger across pages/tabs, authoritative saved bytes, historical position cleanup, pre-write ownership/property rejection, protected commit and exactly-once retry passed.\n";

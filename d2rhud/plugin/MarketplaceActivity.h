@@ -13,6 +13,7 @@ inline std::vector<uint8_t> Unhex(const std::string& value){
 struct OfferEvent {int64_t at=0;std::string kind,actor,message;std::vector<Requirement> price;};
 struct CounterThread {
     std::string id,listing,itemId,itemHex,buyer,seller,proposer,buyerName,sellerName,status="draft";
+    std::string settlementLabel;
     int revision=0,listingRevision=0;uint32_t seed=0;
     bool simulated=false,local=false,development=false;
     std::vector<Requirement> price;std::vector<OfferEvent> events;
@@ -40,6 +41,8 @@ inline CounterThread ReadThread(const Json& row,bool local){
     t.buyer=ActivityText(row,"buyer");t.seller=ActivityText(row,"seller");t.proposer=ActivityText(row,"proposer");t.buyerName=ActivityText(row,"buyer_name");t.sellerName=ActivityText(row,"seller_name");t.status=ActivityText(row,"status",32);
     if(t.buyer==t.seller||(t.proposer!=t.buyer&&t.proposer!=t.seller))throw std::runtime_error("Invalid conversation parties.");
     static const std::set<std::string> states{"draft","queued","pending","accepted","completed","rejected","withdrawn","superseded"};if(!states.contains(t.status))throw std::runtime_error("Invalid conversation state.");
+    if(t.status=="accepted"&&row.contains("settlement_progress")&&row["settlement_progress"].is_object()&&row["settlement_progress"].contains("label"))
+        t.settlementLabel=ActivityText(row["settlement_progress"],"label",96);
     t.revision=Integer(row.at("revision"),0,INT32_MAX);t.listingRevision=Integer(row.at("listing_revision"),0,INT32_MAX);t.seed=ActivitySeed(row.at("seed"));t.simulated=row.value("simulated",false);t.development=row.value("development",false);t.price=ReadPrice(row.at("price"));
     const auto& events=row.at("events");if(!events.is_array()||events.size()>512)throw std::runtime_error("Conversation log is too large.");
     for(const auto& e:events){OfferEvent event;event.at=Integer(e.at("at"),1,INT32_MAX);event.kind=ActivityText(e,"kind",32);event.actor=ActivityText(e,"actor_name");event.message=ActivityText(e,"message",2048,true);

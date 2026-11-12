@@ -1,5 +1,6 @@
 """Bounded JSON transport for the private companion. No save access or retries."""
 import base64
+import errno
 import json
 import re
 import socket
@@ -12,6 +13,13 @@ import tempfile
 from pathlib import Path
 from contextlib import contextmanager
 from email.utils import parsedate_to_datetime
+
+class LocalRequestPending(RuntimeError):
+    """Another worker on this PC holds the network lease."""
+
+
+class ReadDeferred(RuntimeError):
+    """The server deferred an optional read, not the transaction lane."""
 
 
 @contextmanager
@@ -38,9 +46,11 @@ def network_gate(directory):
                     import fcntl
                     fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
                 break
-            except OSError:
+            except OSError as error:
+                if error.errno not in {errno.EACCES, errno.EAGAIN, errno.EDEADLK, errno.EWOULDBLOCK}:
+                    raise
                 if time.monotonic() >= deadline:
-                    raise ConnectionError('Marketplace connection is busy; queued work will retry automatically.') from None
+                    raise LocalRequestPending('Waiting for another marketplace request on this PC; queued work will retry.') from None
                 time.sleep(.025)
         try:
             yield root / 'network-state.json'
@@ -118,6 +128,10 @@ def read_json(opener, request, operation, limit=16 * 1024 * 1024, timeout=30, st
             result = _read_json(opener, request, operation, limit, timeout)
         except urllib.error.HTTPError as error:
             content_type = (error.headers.get('Content-Type', '') if error.headers else '').lower()
+            if (error.code == 503 and request is not None and request.get_method() == 'GET' and
+                    content_type.startswith('application/json') and error.headers.get('X-Market-Read-Busy') == '1'):
+                error.close()
+                raise ReadDeferred('Listing refresh deferred by the server; trade and delivery sync can continue.') from None
             if error.code == 403 and not content_type.startswith('application/json'):
                 cooldown(path, previous, error)
                 raise ConnectionError('Marketplace hosting temporarily refused the connection; retrying automatically.') from None

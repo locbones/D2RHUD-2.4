@@ -53,6 +53,20 @@ def main():
     except ValueError: pass
     with tempfile.TemporaryDirectory(prefix='market-wire-') as temp:
         root=Path(temp)
+        with wire.network_gate(root):
+            try: wire.read_json(Opener(b'{}'),None,'request',state_directory=root);raise AssertionError('Local requests overlapped')
+            except wire.LocalRequestPending as error: assert 'on this PC' in str(error)
+        assert not wire.in_cooldown(root)
+        read=urllib.request.Request('https://fixture')
+        deferred=urllib.error.HTTPError('https://fixture',503,'read busy',
+            {'Content-Type':'application/json','X-Market-Read-Busy':'1'},io.BytesIO(b'{}'))
+        try: wire.read_json(Opener(deferred),read,'sync',state_directory=root);raise AssertionError('Deferred read succeeded')
+        except wire.ReadDeferred: pass
+        assert not wire.in_cooldown(root)
+        assert wire.read_json(Opener(b'{"ok":true}'),None,'custody',state_directory=root)=={'ok':True}
+        backup=root/'Backups'/'player';backup.mkdir(parents=True)
+        try: agent.Agent({'state_directory':str(root),'save_directory':str(backup)});raise AssertionError('Custody opened a backup')
+        except agent.io.BackupSaveDirectory: pass
         sentinel=root/'stash.d2i';sentinel.write_bytes(b'untouched game save')
         pending=root/'pending.json';pending.write_bytes(b'{"id":"preserve receipt"}')
         agent.io.save(root/'status.json',{'message':'Connecting to the game. Open the stash once.', 'result':{'SC':0}})

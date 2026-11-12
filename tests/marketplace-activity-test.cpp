@@ -12,6 +12,9 @@ int main(){
     Json doc={{"schema",1},{"game_mode","2.4"},{"mod","RMD-MP"},{"hardcore",false},{"expires_at",now+3600},{"self",{{"id","buyer"},{"name","Buyer"}}},{"history",Json::array({sale})},{"offers",Json::array({ThreadJson(thread)})}};
     auto activity=ReadActivity(doc,"RMD-MP",false,now);assert(activity.threads.size()==1&&activity.sales.size()==1);
     assert(ItemSales(activity,item,false).size()==1&&ItemSales(activity,item,true).size()==1&&ChartCurrency(price[0],0)&&!ChartCurrency(price[0],1));
+    auto waiting=doc;waiting["offers"][0]["status"]="accepted";
+    waiting["offers"][0]["settlement_progress"]={{"code","seller_deposit"},{"label","Waiting for seller's Vault deposit"}};
+    assert(ReadActivity(waiting,"RMD-MP",false,now).threads[0].settlementLabel=="Waiting for seller's Vault deposit");
     auto changed=doc;changed["history"][0]["kind"]="accept";Refuses([&]{ReadActivity(changed,"RMD-MP",false,now);});
     changed=doc;changed["history"].push_back(sale);Refuses([&]{ReadActivity(changed,"RMD-MP",false,now);});
     changed=doc;changed["self"]["id"]="unrelated";Refuses([&]{ReadActivity(changed,"RMD-MP",false,now);});

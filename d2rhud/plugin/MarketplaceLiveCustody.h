@@ -91,7 +91,7 @@ class Window {
             Write(root/L"live-window.json",{{"schema",passive?2:1},{"session",epoch},{"phase",passive?"unloaded":"parked"},{"pid",GetCurrentProcessId()},
                 {"started",Started()},{"tick",now},{"owner",owner},{"catalog",catalog},{"player",player},{"hardcore",hardcore},
                 {"deposit",deposit},{"delivery",delivery},{"parking",parking},{"loaded",loaded},{"save_directory",folder.string()},
-                {"refresh_supported",2},{"refresh_id",refreshId},{"refresh_kind",refreshKind},{"gold_deposit",goldDeposit}},false);
+                {"refresh_supported",2},{"listing_deposit_refresh",1},{"refresh_id",refreshId},{"refresh_kind",refreshKind},{"gold_deposit",goldDeposit}},false);
             published=now;return true;
         }catch(const std::exception& e){status=e.what();return false;}
     }
@@ -180,11 +180,11 @@ public:
         refreshPoll=now+500;
         try{const auto r=Read(root/L"live-refresh-request.json");const auto id=r.at("id").get<std::string>();
             const auto tick=r.at("tick").get<uint64_t>();const auto kind=r.value("kind",std::string());
-            if(r.value("schema",0)!=1||(kind!="delivery"&&kind!="gold_deposit")||id.size()!=32||id.find_first_not_of("0123456789abcdef")!=std::string::npos||id==lastRefreshId||
+            if(r.value("schema",0)!=1||(kind!="delivery"&&kind!="gold_deposit"&&kind!="listing_deposit")||id.size()!=32||id.find_first_not_of("0123456789abcdef")!=std::string::npos||id==lastRefreshId||
                 r.at("owner")!=owner||r.at("catalog")!=catalog||r.at("pid")!=GetCurrentProcessId()||r.at("started")!=Started()||
                 r.at("player")!=player||r.at("hardcore")!=hardcore||r.at("page")!=page||r.at("session")!=epoch||
                 (page!=deposit&&page!=delivery)||now<tick||now-tick>15000)return 0;
-            if((kind=="delivery"&&page!=delivery)||(kind=="gold_deposit"&&page!=deposit))return 0;
+            if(page!=(kind=="delivery"?delivery:deposit))return 0;
             Json proof;
             if(kind=="gold_deposit"){
                 proof=r.at("gold_deposit");

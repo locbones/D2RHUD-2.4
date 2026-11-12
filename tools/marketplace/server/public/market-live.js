@@ -1,8 +1,9 @@
 "use strict";
-// Background readers and user actions share a cooldown, including across tabs.
+// Transport failures share a cooldown across tabs. An intentionally deferred
+// listing read can retry briefly without postponing user actions.
 // Never automatically replay a mutation after an ambiguous network failure.
 (() => {
-  let failures=0,epoch=0;const pending=new Map(),key='market-network-retry';
+  let failures=0,epoch=0;const pending=new Map(),key='market-network-retry-v2';
   function retryAt(){try{const value=Number(localStorage.getItem(key)||0);return value<=Date.now()+360000?value:0;}catch{return 0;}}
   function defer(response){
     failures=Math.min(8,failures+1);++epoch;
@@ -22,14 +23,22 @@
     if(identity&&pending.has(identity))return (await pending.get(identity)).clone();
     const version=epoch,startedRetry=retryAt();
     const task=(async()=>{
-      const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),20000);
-      let response;
-      try{response=await fetch(url,{...options,signal:controller.signal});}
-      catch{defer();throw new Error('The marketplace could not connect. It will retry automatically.');}
-      finally{clearTimeout(timer);}
-      if([408,429,500,502,503,504].includes(response.status)||(response.status===403&&!response.headers.get('Content-Type')?.toLowerCase().startsWith('application/json')))defer(response);
-      else if(version===epoch&&retryAt()<=startedRetry&&(failures||until||startedRetry)){failures=0;until=0;try{localStorage.removeItem(key);}catch{}}
-      return response;
+      for(let attempt=0;;attempt++){
+        const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),20000);
+        let response;
+        try{response=await fetch(url,{...options,signal:controller.signal});}
+        catch{defer();throw new Error('The marketplace could not connect. It will retry automatically.');}
+        finally{clearTimeout(timer);}
+        if(identity&&response.status===503&&response.headers.get('X-Market-Read-Busy')==='1'){
+          if(attempt>0)return response;
+          await new Promise(resolve=>setTimeout(resolve,2000+Math.random()*750));
+          if(Math.max(until,retryAt())>Date.now())return response;
+          continue;
+        }
+        if([408,429,500,502,503,504].includes(response.status)||(response.status===403&&!response.headers.get('Content-Type')?.toLowerCase().startsWith('application/json')))defer(response);
+        else if(version===epoch&&retryAt()<=startedRetry&&(failures||until||startedRetry)){failures=0;until=0;try{localStorage.removeItem(key);}catch{}}
+        return response;
+      }
     })();
     if(identity)pending.set(identity,task);
     try{return (await task).clone();}finally{if(identity&&pending.get(identity)===task)pending.delete(identity);}

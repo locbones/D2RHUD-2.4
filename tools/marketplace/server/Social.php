@@ -133,8 +133,9 @@ trait MarketplaceSocial {
         unset($row['item_hex']);return $row;
     }
     private function conversationSnapshot(array $offer,array $names): array {
-        $item=$this->run('SELECT i.seed,i.code,i.item_hex,l.item FROM listings l JOIN items i ON i.id=l.item WHERE l.id=?',[$offer['listing']])->fetch();
-        $o=array_merge($offer,$item);unset($o['seq'],$o['alias']);$o['price']=json_decode($o['price'],true,512,JSON_THROW_ON_ERROR);
+        $item=$this->run('SELECT i.seed,i.code,i.item_hex,i.scope,l.item FROM listings l JOIN items i ON i.id=l.item WHERE l.id=?',[$offer['listing']])->fetch();
+        $o=array_merge($offer,$item);unset($o['seq'],$o['alias'],$o['scope']);$o['price']=json_decode($o['price'],true,512,JSON_THROW_ON_ERROR);
+        if($o['status']==='accepted')$o['settlement_progress']=$this->settlementProgress($o,$item['scope'],$o['price']);
         $o['events']=$this->run('SELECT id,at,actor,kind,message,price FROM events WHERE offer=? AND kind<>\'bundle_sale\' ORDER BY seq LIMIT 512',[$o['id']])->fetchAll();
         foreach($o['events'] as &$e){$e['at']=(int)$e['at'];$e['actor_name']=$names[$e['actor']]??$e['actor'];$e['price']=json_decode($e['price'],true,512,JSON_THROW_ON_ERROR);}unset($e);
         foreach(['revision','listing_revision','created','seed'] as $key)$o[$key]=(int)$o[$key];$o['seller_name']=$names[$o['seller']]??'Player';$o['buyer_name']=$names[$o['buyer']]??'Player';return $o;

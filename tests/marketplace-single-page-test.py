@@ -89,6 +89,43 @@ def main():
                 def inventory(agent):
                     return agent.inventory(agent.page('SC', 11))
 
+                community('parked-listing-deposit')
+                seller, sa = profile('Seller parked', [ring, cap], gold=25, priced=('rin', price))
+                buyer, ba = profile('Buyer parked', gold=600)
+                sa.migrate_market_page('SC')
+                sa.web_sync('SC')
+                publish = a.io.document(sa.folder / 'MarketplacePublish_2.4_SC.json')
+                fixture.transport(endpoint, seller['token'], 'SC', dict(publish, expected_revision=0), 'publish')
+                listing = next(row for row in snapshot(buyer)['listings'] if row['seller_id'] == seller['id'])
+                offer = command(buyer, type='propose', listing_id=listing['id'], listing_revision=int(listing['revision']), price=price)
+                command(seller, type='accept', offer_id=offer['offer_id'], expected_revision=1)
+                ba.run()
+                before = sa.page('SC', 11).read_bytes()
+                window = dict(schema=2, session='parked-fixture', deposit=11, delivery=11, loaded=11,
+                              refresh_supported=2, listing_deposit_refresh=1, refresh_id='', owner=seller['id'],
+                              catalog=sa.config['catalog'], pid=10, started=1, player=17, hardcore=False)
+
+                @contextmanager
+                def safe_page(mode=None, pages=None):
+                    if 11 in ([11] if pages is None else pages) and window['loaded'] == 11:
+                        raise BlockingIOError('Fixture market page is still loaded')
+                    yield window
+
+                sa.save_access = safe_page
+                sa.live_window = lambda *args, **kwargs: window
+                assert sa.run()['SC'] == 'Priced items will move to Vault when the stash is idle.'
+                assert sa.page('SC', 11).read_bytes() == before
+                request = a.io.document(sa.root / 'live-refresh-request.json')
+                assert request['kind'] == 'listing_deposit'
+                window.update(loaded=1, refresh_kind=request['kind'], refresh_id=request['id'])
+                assert sa.run()['SC'] == 1
+                assert a.io.document(sa.root / 'live-refresh-result.json')['ready']
+                saved = inventory(sa)
+                assert [item['code'] for item in saved['items']] == ['cap'] and saved['gold'] == 25
+                assert sa.settings('SC')['drafts'] == []
+                traded = next(row for row in snapshot(buyer)['offers'] if row['id'] == offer['offer_id'])
+                assert traded['status'] == 'completed' and traded['item'] == listing['item_id']
+
                 # Each interruption uses its own community and durable transfer journal.
                 for point in ('intent', 'prepared_remote', 'authorized_remote', 'page_written', 'locally_applied', 'committed_remote'):
                     community(point)

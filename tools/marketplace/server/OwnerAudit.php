@@ -26,7 +26,8 @@ trait MarketplaceOwnerAudit {
             UNION ALL SELECT e.id,'completed',e.at,e.seller,e.buyer,e.item,i.scope,e.price,e.receipt,e.at,'legacy' FROM events e JOIN items i ON i.id=e.item WHERE e.kind='completed_sale' AND e.offer IS NULL";
     }
     private function auditTradeRow(array $row): array {
-        return ['id'=>$row['id'],'record_type'=>$row['record_type'],'status'=>$row['status'],'created'=>(int)$row['created'],'seller'=>$this->auditPlayer($row['seller']),'buyer'=>$this->auditPlayer($row['buyer']),'item'=>$this->statsItem($row['item']),'price'=>json_decode($row['price'],true,512,JSON_THROW_ON_ERROR),'settlement'=>$row['receipt']?['id'=>$row['receipt'],'at'=>(int)$row['settled_at']]:null];
+        $price=json_decode($row['price'],true,512,JSON_THROW_ON_ERROR);
+        return ['id'=>$row['id'],'record_type'=>$row['record_type'],'status'=>$row['status'],'created'=>(int)$row['created'],'seller'=>$this->auditPlayer($row['seller']),'buyer'=>$this->auditPlayer($row['buyer']),'item'=>$this->statsItem($row['item']),'price'=>$price,'settlement_progress'=>$this->settlementProgress($row,$row['scope'],$price),'settlement'=>$row['receipt']?['id'=>$row['receipt'],'at'=>(int)$row['settled_at']]:null];
     }
     public function ownerTrades(array $actor,bool $hc,array $query=[]): array {
         $this->requireOwner($actor);

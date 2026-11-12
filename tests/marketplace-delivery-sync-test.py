@@ -32,5 +32,14 @@ with tempfile.TemporaryDirectory(prefix='delivery-retry-') as tmp:
         window['refresh_id']=gold['id'];(root/'live-refresh-result.json').unlink();agent.refresh_ready(window);window['refresh_id']=''
         window['loaded']=2;assert not agent.request_refresh('SC',11,reason),'Reloaded a page that is not viewed'
         assert not agent.request_refresh('SC',2,'force:anything'),'Arbitrary refresh bypass accepted'
+        window.update(loaded=11, deposit=11)
+        listing='listing:'+'c'*32
+        assert not agent.request_refresh('SC',11,listing),'An older HUD received an unsupported listing refresh'
+        window['listing_deposit_refresh']=1
+        assert agent.request_refresh('SC',11,listing)
+        assert a.io.document(root/'live-refresh-request.json')['kind']=='listing_deposit'
+        agent.manual_sync.clear();clock[0]+=31
+        assert not agent.request_refresh('SC',11,listing),'An unchanged draft repeatedly parks the stash'
+        assert agent.request_refresh('SC',11,'listing:'+'d'*32),'A newly priced item did not wake the stash'
     assert sentinel.read_bytes()==b'unchanged' and (root/'pending.json').read_text()=='{"id":"durable-receipt"}'
 print('PASS delivery retry: bounded automatic retry after ACK, fresh manual retry, active handoff reuse, native gold ACK, loaded-page checks and untouched save/receipt.')

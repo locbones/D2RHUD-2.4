@@ -3,6 +3,8 @@ import importlib.util
 from pathlib import Path
 import json
 import tempfile
+import subprocess
+import sys
 import threading
 import time
 
@@ -34,6 +36,30 @@ with tempfile.TemporaryDirectory(prefix='market-sync-wake-') as temporary:
     assert s.watch_stamp(config, folder) == active  # Refreshing presence is not an extra network wake.
     presence.write_text(json.dumps({'owner':'fixture','at':int(time.time())-16}),encoding='utf-8')
     assert s.watch_stamp(config, folder) == idle
+    backup = folder / 'Backups'
+    backup.mkdir()
+    try:
+        s.sync({}, backup)
+        raise AssertionError('Sync opened a backup')
+    except s._custody_io.BackupSaveDirectory:
+        pass
+    config_path = folder / 'sync-config.json'
+    config_path.write_text(json.dumps({'save_directory': str(backup)}), encoding='utf-8')
+    config_before = s.config_stamp(config_path)
+
+    def rebind():
+        time.sleep(.1)
+        config_path.write_text(json.dumps({'save_directory': str(folder)}), encoding='utf-8')
+
+    producer = threading.Thread(target=rebind)
+    producer.start()
+    started = time.monotonic()
+    s.wait_for_producer(config, folder, False, idle, 15, config_path, config_before)
+    producer.join()
+    assert time.monotonic() - started < 1
+    # Existing watched worker must stop rather than keep using its startup path.
+    subprocess.run([sys.executable, str(repo / 'tools/marketplace/sync-marketplace.py'),
+        str(config_path), str(backup), '--watch'], check=True, timeout=4)
     (folder / 'live-window.json').write_text(json.dumps({'session': 'one', 'tick': 1}), encoding='utf-8')
     epoch = s.watch_stamp(config, folder)
     (folder / 'live-window.json').write_text(json.dumps({'session': 'one', 'tick': 2}), encoding='utf-8')

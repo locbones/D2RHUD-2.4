@@ -187,11 +187,12 @@ trait MarketplaceEscrow {
                     if($old['status']==='committed')return $this->ticket($old);
                     if($old['status']!=='writing')throw new MarketError(409,'Authorize the durable save plan before committing.');
                     if(($data['pages']??null)!==$proof)throw new MarketError(409,'Committed save fingerprints do not match the authorized write.');
-                    if($old['kind']==='deposit')$this->activateDeposit($owner,$scope,$id,$packet);
+                    $newListings=[];
+                    if($old['kind']==='deposit')$newListings=$this->activateDeposit($owner,$scope,$id,$packet);
                     else $this->completeClaim($owner,$scope,$id,$packet);
                     $this->run("UPDATE custody_tickets SET status='committed' WHERE id=?",[$id]);
                     $this->run('DELETE FROM identity_reservations WHERE ticket=?',[$id]);
-                    $this->settleReady($hc,null,$owner);
+                    $this->settleReady($hc,null,$owner,$newListings);
                 }else throw new MarketError(422,'Unknown custody operation.');
             }
             return $this->ticket($this->run('SELECT * FROM custody_tickets WHERE id=?',[$id])->fetch());
@@ -216,8 +217,9 @@ trait MarketplaceEscrow {
         if(!isset($r['ledger_id'])&&$this->run('SELECT item FROM escrow_items WHERE item=?',[$p['item']])->fetch())throw new MarketError(409,'This item already entered Vault. Reconcile the local save.');
         return $p;
     }
-    private function activateDeposit(string $owner,string $scope,string $receipt,array $packet): void {
+    private function activateDeposit(string $owner,string $scope,string $receipt,array $packet): array {
         $actor=['id'=>$owner];
+        $listed=[];
         foreach($packet['items'] as $r){
             $key=hash('sha256',$r['page'].'|'.$r['tab'].'|'.$r['item_hex']);
             $insert=$this->db->getAttribute(PDO::ATTR_DRIVER_NAME)==='mysql'?'INSERT IGNORE':'INSERT OR IGNORE';
@@ -229,11 +231,17 @@ trait MarketplaceEscrow {
                 if(!$returning||$returning['owner']!==$owner||$returning['scope']!==$scope||$returning['state']!=='delivered'||self::positionless($returning['item_hex'])!==self::positionless($r['item_hex']))throw new MarketError(409,'Delivered item lineage no longer matches this owner and exact item.');
             }
             $item=$lineage??($p?$p['item']:self::id());
+            $preserved=null;
             if($p){
                 // Moving an item can leave older discovery positions pointing
                 // at the same ledger. Retire all of them, preserving history.
-                foreach($this->run('SELECT listing FROM published_items WHERE owner=? AND scope=? AND item=?',[$owner,$scope,$item])->fetchAll() as $prior){
-                    $this->invalidateOffers($prior['listing'],$actor,'This item entered custody. Review and submit a funded offer.');
+                foreach($this->run('SELECT l.id AS listing,l.status,l.price FROM published_items p JOIN listings l ON l.id=p.listing WHERE p.owner=? AND p.scope=? AND p.item=? ORDER BY (l.status=\'agreed\') DESC,(l.id=?) DESC,l.id',[$owner,$scope,$item,$p['listing']])->fetchAll() as $prior){
+                    // Keep negotiations for the verified physical item if its
+                    // asking terms match. Other historical listings close.
+                    $realAgreement=$prior['status']==='agreed'&&$this->run("SELECT o.id FROM offers o JOIN actors b ON b.id=o.buyer AND b.role='player' JOIN actors s ON s.id=o.seller AND s.role='player' WHERE o.listing=? AND o.status='accepted'",[$prior['listing']])->fetchColumn();
+                    if($preserved===null&&($prior['status']==='open'||$realAgreement)&&$r['price']&&
+                       self::samePrice($r['price'],json_decode($prior['price'],true,512,JSON_THROW_ON_ERROR))){$preserved=$prior['listing'];continue;}
+                    $this->invalidateOffers($prior['listing'],$actor,'This item entered Vault under different listing terms. Review its current listing.');
                     $this->run("UPDATE listings SET status='withdrawn',revision=revision+1 WHERE id=? AND status IN ('open','agreed')",[$prior['listing']]);
                 }
                 $this->run('DELETE FROM published_items WHERE owner=? AND scope=? AND item=?',[$owner,$scope,$item]);
@@ -248,15 +256,19 @@ trait MarketplaceEscrow {
             if($returning){$this->run('UPDATE escrow_items SET state=?,metadata=?,origin=? WHERE item=?',[$state,self::json($r),$receipt,$item]);$this->run('UPDATE items SET item_hex=? WHERE id=?',[$r['item_hex'],$item]);}
             else $this->run('INSERT INTO escrow_items VALUES (?,?,?,?,?,?)',[$item,$owner,$scope,$state,self::json($r),$receipt]);
             if($r['price']){
-                $listing=$p?$p['listing']:self::id();
-                if($p)$this->run("UPDATE listings SET item=?,status='open',price=?,revision=revision+1 WHERE id=?",[$item,self::json($r['price']),$listing]);
-                else $this->run('INSERT INTO listings VALUES (?,?,?,?,?,?,?)',[$listing,$item,$owner,1,'open',self::json($r['price']),time()]);
+                $listing=$preserved??($p?$p['listing']:self::id());
+                if($preserved===null){
+                    if($p)$this->run("UPDATE listings SET item=?,status='open',price=?,revision=revision+1 WHERE id=?",[$item,self::json($r['price']),$listing]);
+                    else $this->run('INSERT INTO listings VALUES (?,?,?,?,?,?,?)',[$listing,$item,$owner,1,'open',self::json($r['price']),time()]);
+                }
                 $this->setListingComment($listing,$r['comment']??null);
+                $listed[]=$listing;
             }
             $this->recordIdentity($item,$scope,$r['item_hex']);
             $this->event($item,null,$actor,'escrow_deposit','Save removal acknowledged; item is held in Vault.',$r['price'],$owner);
         }
         foreach($packet['balances'] as $b)$this->balance($owner,$scope,$b,$b['quantity'],'deposit',$receipt);
+        return $listed;
     }
     private function reserveClaim(string $owner,string $scope,string $id,array $data): array {
         if(isset($data['withdrawal_id']))return $this->reserveWalletClaim($owner,$scope,$id,$data);
@@ -389,12 +401,37 @@ trait MarketplaceEscrow {
             if($remaining)return null;
         }return $out;
     }
-    private function settleReady(bool $hc,?string $focus=null,?string $funded=null): void {
+    private function settlementProgress(array $offer,string $scope,array $price): array {
+        if($offer['status']!=='accepted')return [];
+        $listing=$this->run('SELECT o.listing,l.status,l.item,i.owner,e.state,e.owner AS vault_owner,p.expires FROM offers o JOIN listings l ON l.id=o.listing JOIN items i ON i.id=l.item LEFT JOIN escrow_items e ON e.item=l.item LEFT JOIN published_items p ON p.listing=l.id WHERE o.id=?',[$offer['id']])->fetch();
+        if(!$listing||$listing['status']!=='agreed'||$listing['owner']!==$offer['seller'])return ['code'=>'listing_changed','label'=>'Listing changed'];
+        if($listing['state']===null&&$listing['expires']!==null){
+            if((int)$listing['expires']<=time())return ['code'=>'seller_listing_stale','label'=>'Waiting for seller to reconnect'];
+            return ['code'=>'seller_deposit','label'=>'Waiting for seller’s Vault deposit'];
+        }
+        foreach($this->bundleGoods($listing['listing'],$listing['item']) as $member){
+            if(!$this->run("SELECT e.item FROM escrow_items e JOIN items i ON i.id=e.item WHERE e.item=? AND e.owner=? AND i.owner=? AND e.scope=? AND e.state='listed'",[$member,$offer['seller'],$offer['seller'],$scope])->fetchColumn())return ['code'=>'seller_unavailable','label'=>'Seller’s item is unavailable in Vault'];
+            if(!$this->supportsEscrowItem($offer['buyer'],$member))return ['code'=>'buyer_mod','label'=>'Buyer needs a compatible mod update'];
+        }
+        $allocation=$this->allocation($offer['buyer'],$scope,$price);
+        if($allocation===null)return ['code'=>'buyer_payment','label'=>'Waiting for buyer’s Vault payment'];
+        foreach($allocation as $a){
+            if(isset($a['balance'])?!$this->supportsBalance($offer['seller'],$a['balance']):!$this->supportsEscrowItem($offer['seller'],$a['item']['item']))return ['code'=>'seller_mod','label'=>'Seller needs a compatible mod update'];
+        }
+        return ['code'=>'ready','label'=>'Ready for settlement'];
+    }
+    private function settleReady(bool $hc,?string $focus=null,?string $funded=null,array $newListings=[]): void {
         $scope=$this->scope($hc);
         $queue=[[$focus,$funded]];$queued=[];$budget=256;$passes=0;
         while($queue&&$budget>0&&++$passes<=513){
         [$focus,$funded]=array_shift($queue);unset($queued[$funded??'*']);
-        $selector=$focus?' AND o.id=?':($funded?' AND o.buyer=?':'');$args=[$scope];if($focus||$funded)$args[]=$focus??$funded;
+        $selector=$focus?' AND o.id=?':($funded?' AND o.buyer=?':'');
+        $args=[$scope];if($focus||$funded)$args[]=$focus??$funded;
+        if(!$focus&&$funded&&$newListings){
+            $selector=' AND (o.buyer=? OR o.listing IN ('.implode(',',array_fill(0,count($newListings),'?')).'))';
+            array_push($args,...$newListings);
+        }
+        $newListings=[]; // Downstream proceeds only wake the funded buyer.
         $offers=$this->run("SELECT o.*,l.item,l.price AS asking,l.status AS listing_status FROM offers o JOIN listings l ON l.id=o.listing JOIN escrow_items e ON e.item=l.item WHERE e.scope=? AND e.state='listed' AND e.owner=o.seller AND o.status IN ('accepted','pending')$selector ORDER BY o.created,o.id LIMIT 256",$args)->fetchAll();
         foreach($offers as $o){
             if($budget<=0)break;

@@ -9,7 +9,7 @@ try{
     if(($_SERVER['HTTPS']??'')!=='on'&&!$local)throw new MarketError(400,'HTTPS is required.');
     $action=$_GET['action']??'snapshot';$method=$_SERVER['REQUEST_METHOD'];$hc=$_GET['hardcore']??'0';
     if(!in_array($hc,['0','1'],true))throw new MarketError(422,'Invalid character mode.');$hc=$hc==='1';
-    if($method==='GET'&&in_array($action,['bootstrap','snapshot','history','stats'],true))$readSlot=marketReadSlot();
+    if($method==='GET'&&in_array($action,['bootstrap','snapshot','history','stats'],true))$readSlot=marketReadSlot(in_array($action,['bootstrap','snapshot'],true));
     $sessions=$local?sys_get_temp_dir().'/d2market-'.hash('sha256',getenv('D2_MARKET_CONFIG')?:__DIR__):dirname(__DIR__).'/sessions';
     if(!is_dir($sessions)&&!mkdir($sessions,0700,true)&&!is_dir($sessions))throw new RuntimeException('Session storage is unavailable.');
     session_save_path($sessions);ini_set('session.use_strict_mode','1');ini_set('session.use_only_cookies','1');ini_set('session.gc_maxlifetime','7776000');session_name($local?'market_local':'__Host-market');
@@ -123,7 +123,8 @@ try{
         $query=$_GET;foreach(['seed','quality','item_index','ethereal','sockets','before'] as $key)if(isset($query[$key])){if(!preg_match('/^-?\d{1,18}$/D',$query[$key]))throw new MarketError(422,'Invalid history selector.');$query[$key]=(int)$query[$key];}$query['similar']=($query['similar']??'0')==='1';$query['averages']=($query['averages']??'0')==='1';$result=$m->historyPage($hc,$query);
     }else throw new MarketError(404,'Endpoint not found.');
     if(session_status()===PHP_SESSION_ACTIVE)session_write_close();echo json_encode($result,JSON_THROW_ON_ERROR|JSON_UNESCAPED_UNICODE);
-}catch(MarketError $e){http_response_code($e->status);if($e->status===503)header('Retry-After: 15');echo json_encode(['error'=>$e->getMessage()]);}
+}catch(MarketReadBusy $e){marketReadBusyResponse($e);}
+catch(MarketError $e){http_response_code($e->status);if($e->status===503)header('Retry-After: 15');echo json_encode(['error'=>$e->getMessage()]);}
 catch(JsonException $e){http_response_code(422);echo json_encode(['error'=>'Malformed JSON.']);}
 catch(Throwable $e){http_response_code(500);error_log('D2 marketplace web: '.$e->getMessage());echo json_encode(['error'=>'The marketplace is temporarily unavailable.']);}
 finally{if(isset($readSlot))fclose($readSlot);}

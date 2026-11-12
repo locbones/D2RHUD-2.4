@@ -26,18 +26,21 @@ with tempfile.TemporaryDirectory(prefix='market-mod-http-') as temp:
     try:response=client.open(request,timeout=10)
     except urllib.error.HTTPError as error:response=error
     assert response.code==status,(response.code,response.read())
-    if status==503:assert response.headers.get('Retry-After')=='15'
+    if status==503:assert response.headers.get('Retry-After')=='2' and response.headers.get('X-Market-Read-Busy')=='1'
     value=json.load(response);csrf=value.get('csrf',csrf);return value
    assert [m['mod'] for m in call('markets')['mods']]==['RMD-MP']
    initial=call('bootstrap',mod='unknown')
    assert initial['mod']=='RMD-MP' and initial['directory']['self'] is None and len(initial['snapshot']['listings'])==6
    assert call('bootstrap',version='3.x')['snapshot'] is None
-   holder=subprocess.Popen(args+['-r','require $argv[1]; $a=marketReadSlot(); $b=marketReadSlot(); echo "ready\\n"; fgets(STDIN);',str(web.SERVER/'ReadBudget.php')],
+   holder=subprocess.Popen(args+['-r','require $argv[1]; $a=marketReadSlot(); echo "ready\\n"; fgets(STDIN); $b=marketReadSlot(true); echo "both\\n"; fgets(STDIN);',str(web.SERVER/'ReadBudget.php')],
        env=env,stdin=subprocess.PIPE,stdout=subprocess.PIPE,text=True)
    try:
     assert holder.stdout.readline().strip()=='ready'
-    call('bootstrap',status=503)
     call('sync',bearer=seed['seller']['token'],status=503)
+    assert call('bootstrap')['snapshot']['mod']=='RMD-MP' # Background sync cannot occupy the browser's reserved slot.
+    holder.stdin.write('hold both\n');holder.stdin.flush()
+    assert holder.stdout.readline().strip()=='both'
+    call('bootstrap',status=503)
     assert call('markets')['mods'] # Cheap traffic keeps its path to PHP.
    finally:
     holder.stdin.close();holder.wait(timeout=10)
