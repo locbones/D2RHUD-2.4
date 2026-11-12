@@ -102,7 +102,7 @@ def main():
                 ba.run()
                 before = sa.page('SC', 11).read_bytes()
                 window = dict(schema=2, session='parked-fixture', deposit=11, delivery=11, loaded=11,
-                              refresh_supported=2, listing_deposit_refresh=1, refresh_id='', owner=seller['id'],
+                              refresh_supported=2, refresh_id='', owner=seller['id'],
                               catalog=sa.config['catalog'], pid=10, started=1, player=17, hardcore=False)
 
                 @contextmanager
@@ -116,8 +116,8 @@ def main():
                 assert sa.run()['SC'] == 'Priced items will move to Vault when the stash is idle.'
                 assert sa.page('SC', 11).read_bytes() == before
                 request = a.io.document(sa.root / 'live-refresh-request.json')
-                assert request['kind'] == 'listing_deposit'
-                window.update(loaded=1, refresh_kind=request['kind'], refresh_id=request['id'])
+                assert request['kind'] == 'delivery' and request['trigger'].startswith('listing:')
+                window.update(loaded=1, refresh_kind=request['kind'], refresh_id=request['id'], session='new-parked-grant')
                 assert sa.run()['SC'] == 1
                 assert a.io.document(sa.root / 'live-refresh-result.json')['ready']
                 saved = inventory(sa)
@@ -261,6 +261,26 @@ def main():
                     try:a.Agent.gold_deposit_proof(invalid)
                     except ValueError:pass
                     else:raise AssertionError('Invalid gold proof accepted')
+
+                # Both copies stay in the stash, but the unrelated item and gold
+                # still reach the Vault exactly once, without another game launch.
+                community('deposit-with-duplicate-identity')
+                owner, agent = profile('Mixed-deposit', [ring, cap, ring], gold=100)
+                settings = agent.settings('SC')
+                settings['drafts'] = [dict(tab=i['tab'], item_hex=i['item_hex'], price=price)
+                                      for i in inventory(agent)['items']]
+                a.io.save(agent.folder / 'Marketplace_2.4_SC.json', settings)
+                agent.run()
+                assert [i['code'] for i in inventory(agent)['items']] == ['rin', 'rin']
+                assert inventory(agent)['gold'] == 0
+                assert len(snapshot(owner)['escrow']['items']) == 1
+                assert snapshot(owner)['escrow']['balances'][0]['quantity'] == 100
+                assert not agent.pending.exists()
+                assert '2 priced items stayed in your stash' in a.io.document(agent.root / 'status.json')['rejected_deposits']['SC']
+                phases = sorted(a.io.document(p)['phase'] for p in (agent.root / 'transactions').glob('*/record.json'))
+                assert phases == ['complete', 'rejected']
+                agent.run()
+                assert len(list((agent.root / 'transactions').glob('*/record.json'))) == 2
 
                 # Unpriced unique goods stay local until needed for a mutually agreed trade.
                 community('agreed-barter')

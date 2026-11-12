@@ -25,7 +25,7 @@ require_once __DIR__.'/ListingComments.php';
 // Request-based PHP/PDO service. Acceptance settles only against actual escrow;
 // an external fulfilment operator uses a separate, restricted audit endpoint.
 final class MarketError extends RuntimeException {
-    public function __construct(public int $status, string $message) { parent::__construct($message); }
+    public function __construct(public int $status, string $message, public array $details = []) { parent::__construct($message); }
 }
 final class Market {
     use MarketplacePublication;

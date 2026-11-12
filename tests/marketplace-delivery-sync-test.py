@@ -34,8 +34,18 @@ with tempfile.TemporaryDirectory(prefix='delivery-retry-') as tmp:
         assert not agent.request_refresh('SC',2,'force:anything'),'Arbitrary refresh bypass accepted'
         window.update(loaded=11, deposit=11)
         listing='listing:'+'c'*32
-        assert not agent.request_refresh('SC',11,listing),'An older HUD received an unsupported listing refresh'
+        window['delivery']=2
+        assert not agent.request_refresh('SC',11,listing),'An older HUD received a request for a different delivery page'
+        window['delivery']=11
+        assert agent.request_refresh('SC',11,listing)
+        legacy=a.io.document(root/'live-refresh-request.json')
+        assert legacy['kind']=='delivery' and legacy['trigger']==listing
+        window.update(refresh_id=legacy['id'],refresh_kind='delivery',session='parked-session')
+        assert agent.legacy_listing_refresh(window)
+        assert not agent.legacy_listing_refresh(dict(window,started=999))
+        agent.refresh_ready(window);window['refresh_id']=''
         window['listing_deposit_refresh']=1
+        listing='listing:'+'e'*32
         assert agent.request_refresh('SC',11,listing)
         assert a.io.document(root/'live-refresh-request.json')['kind']=='listing_deposit'
         agent.manual_sync.clear();clock[0]+=31

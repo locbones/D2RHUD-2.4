@@ -140,7 +140,10 @@ trait MarketplaceEscrow {
                 if($type==='deposit_prepare'){
                     $proof=$this->proofs($data['pages']??null);$items=$data['items']??[];$balances=$data['balances']??[];
                     if(!is_array($items)||!array_is_list($items)||count($items)>64)throw new MarketError(422,'Deposit at most 64 items per transaction.');
-                    $items=array_map(fn($r)=>$this->custodyItem($r),$items);
+                    $items=$this->validateDepositItems($items,function($r){
+                        if(!is_array($r))throw new MarketError(422,'Invalid custody item.');
+                        return $this->custodyItem($r);
+                    });
                     if($balances)$balances=self::price($balances);foreach($balances as $b)if(!in_array($b['kind']??'item',['gold','bag'],true))throw new MarketError(422,'Use serialized items for item deposits.');
                     if(!$items&&!$balances)throw new MarketError(422,'Empty deposit.');
                     $pages=array_column($proof,'page');foreach($items as $item)if(!in_array($item['page'],$pages,true))throw new MarketError(422,'Item page has no save proof.');
@@ -152,13 +155,13 @@ trait MarketplaceEscrow {
                     $this->reserveIdentities($owner,$scope,$id,$items);
                     // Validate every legacy explicit lineage before authorizing
                     // any save removal, even when no native UUID is available.
-                    foreach($items as $r)if(isset($r['ledger_id'])){
-                        $v=$this->run('SELECT e.owner,e.scope,e.state,i.item_hex FROM escrow_items e JOIN items i ON i.id=e.item WHERE e.item=?',[$r['ledger_id']])->fetch();
-                        if(!$v||$v['owner']!==$owner||$v['scope']!==$scope||$v['state']!=='delivered'||self::positionless($v['item_hex'])!==self::positionless($r['item_hex']))throw new MarketError(409,'Delivered item lineage does not match this owner and exact item. No save was changed.');
-                    }
-                    // Resolve discovery differences before authorizing removal.
-                    // A rejected listing must leave the physical item untouched.
-                    foreach($items as $r)$this->depositPublication($owner,$scope,$r);
+                    $this->validateDepositItems($items,function(array $r)use($owner,$scope){
+                        if(isset($r['ledger_id'])){
+                            $v=$this->run('SELECT e.owner,e.scope,e.state,i.item_hex FROM escrow_items e JOIN items i ON i.id=e.item WHERE e.item=?',[$r['ledger_id']])->fetch();
+                            if(!$v||$v['owner']!==$owner||$v['scope']!==$scope||$v['state']!=='delivered'||self::positionless($v['item_hex'])!==self::positionless($r['item_hex']))throw new MarketError(409,'Delivered item lineage does not match this owner and exact item. No save was changed.');
+                        }
+                        $this->depositPublication($owner,$scope,$r);
+                    });
                     $packet=['items'=>$items,'balances'=>$balances];$kind='deposit';
                 }else{
                     $packet=$this->reserveClaim($owner,$scope,$id,$data);$proof=[];$kind='claim';
@@ -197,6 +200,18 @@ trait MarketplaceEscrow {
             }
             return $this->ticket($this->run('SELECT * FROM custody_tickets WHERE id=?',[$id])->fetch());
         });
+    }
+    private function validateDepositItems(array $items,callable $validate): array {
+        $validated=[];$indices=[];$first=null;
+        foreach($items as $index=>$item){
+            try{$validated[]=$validate($item);}
+            catch(MarketError $error){
+                if(!in_array($error->status,[409,422],true)||($error->details['retryable']??false))throw $error;
+                $indices[]=$index;$first??=$error;
+            }
+        }
+        if($first)throw new MarketError($first->status,$first->getMessage(),['deposit_item_indices'=>$indices]);
+        return $validated;
     }
     private function depositPublication(string $owner,string $scope,array $r): ?array {
         $key=hash('sha256',$r['page'].'|'.$r['tab'].'|'.$r['item_hex']);

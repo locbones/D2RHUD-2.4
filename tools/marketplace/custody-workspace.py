@@ -13,6 +13,7 @@ import re
 import subprocess
 import struct
 import tempfile
+import time
 import uuid
 
 LIMIT = 32 * 1024 * 1024
@@ -157,8 +158,41 @@ def read(path, limit=LIMIT):
     return raw
 
 
-def document(path):
-    return json.loads(read(path).decode("utf-8-sig"))
+def read_sidecar(path, limit=LIMIT):
+    """Read an atomic metadata snapshot without blocking replacement on Windows."""
+    if os.name != "nt":
+        return read(path, limit)
+    import ctypes
+    import msvcrt
+    from ctypes import wintypes
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    create = kernel.CreateFileW
+    create.argtypes = (wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, ctypes.c_void_p,
+                       wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE)
+    create.restype = wintypes.HANDLE
+    kernel.CloseHandle.argtypes = (wintypes.HANDLE,)
+    # GENERIC_READ, FILE_SHARE_READ | WRITE | DELETE, OPEN_EXISTING.
+    handle = create(str(path), 0x80000000, 7, None, 3, 0x80, None)
+    if handle == ctypes.c_void_p(-1).value:
+        raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        fd = msvcrt.open_osfhandle(handle, os.O_RDONLY | os.O_BINARY)
+    except BaseException:
+        kernel.CloseHandle(handle)
+        raise
+    with os.fdopen(fd, "rb") as stream:
+        raw = stream.read(limit + 1)
+    if len(raw) > limit:
+        raise ValueError("Custody input exceeds its size limit")
+    return raw
+
+
+def document(path, limit=LIMIT):
+    return json.loads(read_sidecar(path, limit).decode("utf-8-sig"))
+
+
+def is_contention(error):
+    return isinstance(error, BlockingIOError) or getattr(error, "winerror", None) in (32, 33)
 
 
 def replace(source, target):
@@ -174,7 +208,7 @@ def replace(source, target):
         os.replace(source, target)
 
 
-def atomic(path, raw):
+def atomic(path, raw, *, sidecar=False):
     path = Path(path)
     with tempfile.NamedTemporaryFile(dir=path.parent, delete=False) as stream:
         temporary = Path(stream.name)
@@ -186,7 +220,16 @@ def atomic(path, raw):
             temporary.unlink(missing_ok=True)
             raise
     try:
-        replace(temporary, path)
+        # Older readers may still hold a short-lived handle without delete
+        # sharing. Retry metadata replacement only, never a game save write.
+        for attempt in range(4):
+            try:
+                replace(temporary, path)
+                break
+            except OSError as error:
+                if not sidecar or not is_contention(error) or attempt == 3:
+                    raise
+                time.sleep(.02 * (attempt + 1))
         if os.name != "nt":
             fd = os.open(path.parent, os.O_RDONLY)
             try:
@@ -198,7 +241,7 @@ def atomic(path, raw):
 
 
 def save(path, value):
-    atomic(path, (json.dumps(value, ensure_ascii=False, indent=2) + "\n").encode())
+    atomic(path, (json.dumps(value, ensure_ascii=False, indent=2) + "\n").encode(), sidecar=True)
 
 
 def create(source, destination):

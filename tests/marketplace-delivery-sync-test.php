@@ -13,6 +13,12 @@ check($m->custody($agent,$queue,false)['stash_sync']['request_id']===$r['request
 $report=['request_id'=>$r['request_id'],'state'=>'waiting_for_idle','page'=>11,'pending'=>1];
 $m->custody($agent,$queue+['stash_sync'=>$report],false);
 $status=$m->browserSnapshot($a,false)['stash_sync'];check($status['progress']==$report,'Progress not visible in browser');
+$detail=array_replace($report,['state'=>'waiting_for_stash','handoff'=>'native_lock','runtime_build'=>str_repeat('b',20)]);
+$m->custody($agent,$queue+['stash_sync'=>$detail],false);
+check($m->browserSnapshot($a,false)['stash_sync']['progress']==$detail,'The account sync report lost its handoff reason or runtime build');
+$m->custody($agent,$queue+['stash_sync'=>array_replace($detail,['handoff'=>'C:/Users/Example','runtime_build'=>'local path'])],false);
+$progress=$m->browserSnapshot($a,false)['stash_sync']['progress'];
+check(!isset($progress['handoff'])&&!isset($progress['runtime_build']),'Sync progress accepted private diagnostic strings');
 check($m->browserSnapshot($other,false)['stash_sync']['request_id']==='','Sync request leaked to another player');
 check($m->browserSnapshot($a,true)['stash_sync']['request_id']==='','Softcore request leaked to hardcore');
 $otherMod=new Market($m->db,$m->community,'MyCustomMod');$otherMod->pairAgent($a['id'],$catalog);

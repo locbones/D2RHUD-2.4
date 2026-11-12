@@ -159,6 +159,10 @@ int wmain(int argc,wchar_t** argv){
     assert(!bridge.RefreshReady(now+30000)); // a timeout never bypasses a pending write
     std::filesystem::remove(state/L"pending.json");assert(bridge.RefreshReady(now+1000));
     handle=writer();assert(handle==INVALID_HANDLE_VALUE); // reload gate now held
+    // Closing the stash before the refresh completes keeps the parking page
+    // loaded. Finishing must release the shared handle while preserving its grant.
+    bridge.FinishRefresh();assert(bridge.Snapshot().parked);
+    handle=writer();assert(handle!=INVALID_HANDLE_VALUE);CloseHandle(handle);
     assert(bridge.Permit(2));bridge.FinishRefresh();assert(bridge.OpenGrant(2,true));assert(!bridge.Refreshing());
     assert(bridge.BeginRefresh(2,4,now+30000)==0); // no replay of consumed request
     bridge.Tick(false);assert(!std::filesystem::exists(state/L"live-window.json"));
@@ -215,5 +219,11 @@ int wmain(int argc,wchar_t** argv){
     assert(bridge.Permit(5));assert(bridge.Configure(enrollment,saves,17,false,5));assert(bridge.OpenGrant(5,true));
     grant=Read(state/L"live-window.json");assert(grant["loaded"]==5&&grant["deposit"]==11);
     assert(!bridge.Configure(enrollment,root/L"other-saves",17,false,11));
+    // A window timer can renew a parked grant without drawing the stash.
+    Sleep(1100);bridge.Tick(true,17,false);
+    const auto heartbeat=Read(state/L"live-window.json");
+    assert(heartbeat["tick"].get<uint64_t>()>grant["tick"].get<uint64_t>()&&heartbeat["session"]==grant["session"]);
+    bridge.Tick(true,18,false);
+    assert(!bridge.Snapshot().enabled&&!std::filesystem::exists(state/L"live-window.json"));
     std::cout<<"Live native window: cursor safety, confirmed parking, sync acknowledgement, atomic write exclusion, pending-page freeze, unrelated navigation and lease reacquisition passed.\n";
 }

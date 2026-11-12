@@ -1,6 +1,6 @@
 // Included after the native marketplace widget helpers. Only native client
-// callbacks touch widgets/player pointers. The render tick renews value-only
-// handoff records and never calls inventory or page-loading functions.
+// callbacks touch widgets/player pointers. The window timer renews value-only
+// handoff records even when rendering is idle.
 #include "MarketplacePagePackets.h"
 #include "MarketplaceGoldDeposit.h"
 static Marketplace::GoldDeposit::Detector gMarketGoldDeposit;
@@ -50,6 +50,29 @@ static std::atomic<bool> gLivePageKnown{false};
 static std::atomic<uint64_t> gLiveConnectPoll{0};
 static std::atomic<unsigned> gLiveRestorePage{0};
 static std::atomic<unsigned> gLiveRefreshReturn{0},gLiveRefreshTab{0};
+static constexpr UINT_PTR kMarketplaceLiveHeartbeatTimerId=0x4D435354;
+static std::atomic<HWND> gMarketplaceLiveHeartbeatWindow{nullptr};
+static void CALLBACK MarketplaceLiveHeartbeat(HWND hwnd,UINT,UINT_PTR timer,DWORD) try {
+    if(timer!=kMarketplaceLiveHeartbeatTimerId)return;
+    const bool inGame=modName=="RMD-MP"&&GetClientStatus()==1;
+    D2UnitStrc player{};
+    const bool verified=inGame&&Marketplace::NativePanel::Read(GetClientPlayerUnit(),player)&&
+        player.dwUnitType==0&&player.dwUnitId&&player.pInventory;
+    Marketplace::LiveCustody::window.Tick(verified,player.dwUnitId,verified&&IsHardcore());
+    if(!Marketplace::LiveCustody::window.Snapshot().enabled){
+        KillTimer(hwnd,timer);
+        gMarketplaceLiveHeartbeatWindow.compare_exchange_strong(hwnd,nullptr);
+    }
+}catch(...){}
+static void MarketplaceLiveGrant(unsigned page,bool pageOnly=false){
+    if(!Marketplace::LiveCustody::window.OpenGrant(page,pageOnly))return;
+    auto previous=gMarketplaceLiveHeartbeatWindow.load();
+    if(previous&&IsWindow(previous))return;
+    auto hwnd=find_main_window(GetCurrentProcessId());
+    if(hwnd&&gMarketplaceLiveHeartbeatWindow.compare_exchange_strong(previous,hwnd)&&
+        !SetTimer(hwnd,kMarketplaceLiveHeartbeatTimerId,1000,MarketplaceLiveHeartbeat))
+        gMarketplaceLiveHeartbeatWindow.compare_exchange_strong(hwnd,nullptr);
+}
 static int MarketplaceLiveReloadTab(uint32_t page){
     if(gLiveRefreshReturn.load()!=page+1)return gMarketplacePageTab;
     const auto tab=int(gLiveRefreshTab.load());
@@ -122,7 +145,7 @@ static void MarketplaceLiveClosed() try {
     MarketplaceLiveObserve("stash-closed");
     const auto page=Marketplace::LiveCustody::window.Close(gSelectedPage+1,false,!Marketplace::LiveCustody::window.Refreshing());
     if(page)OnStashPageChanged(page-1,false);
-    else Marketplace::LiveCustody::window.OpenGrant(gSelectedPage+1);
+    else MarketplaceLiveGrant(gSelectedPage+1);
 }catch(...){}
 static void MarketplaceLiveContinueClosed() try {
     // OnClose can race a short write or an occupied cursor. Retry from the
@@ -131,7 +154,7 @@ static void MarketplaceLiveContinueClosed() try {
     const auto view=Marketplace::LiveCustody::window.Snapshot();if(!view.enabled)return;
     const auto parking=Marketplace::LiveCustody::window.Close(gSelectedPage+1,false,false);
     if(parking)OnStashPageChanged(parking-1,false);
-    else Marketplace::LiveCustody::window.OpenGrant(gSelectedPage+1);
+    else MarketplaceLiveGrant(gSelectedPage+1);
 }catch(...){}
 static void MarketplaceLiveOpened() try {
     gLivePageKnown=true;gLiveConnectPoll=0;
@@ -143,7 +166,7 @@ static void MarketplaceLiveOpened() try {
     const auto view=Marketplace::LiveCustody::window.Snapshot();
     if(view.enabled&&(view.parked||gMarketplacePageSwitching.load()))gLiveRestorePage=Marketplace::LiveCustody::window.Restore(true);
     if(!gLiveRestorePage.load()&&!gMarketplacePageSwitching.load()&&configured)
-        Marketplace::LiveCustody::window.OpenGrant(gSelectedPage+1,true);
+        MarketplaceLiveGrant(gSelectedPage+1,true);
     MarketplaceLiveObserve("stash-opened");
 }catch(...){}
 static bool MarketplaceLiveAllowPage(uint32_t page) try {
@@ -164,9 +187,9 @@ static void MarketplaceLiveLoaded(uint32_t page) try {
     if(gLiveStashClosed.load()&&!MarketplaceLiveCursor()){
         const auto parking=Marketplace::LiveCustody::window.Close(page+1,false,false);
         if(parking)gMarketplacePageRequests.Request(parking-1);
-        else Marketplace::LiveCustody::window.OpenGrant(page+1);
+        else MarketplaceLiveGrant(page+1);
     }
-    else Marketplace::LiveCustody::window.OpenGrant(page+1,true);
+    else MarketplaceLiveGrant(page+1,true);
     MarketplaceLiveObserve("page-loaded");
 }catch(...){}
 static void MarketplaceLiveConnect(uint64_t now) try {
@@ -179,7 +202,7 @@ static void MarketplaceLiveConnect(uint64_t now) try {
     if(!MarketplaceLiveConfigure())return;
     const auto after=Marketplace::LiveCustody::window.Snapshot();
     if(!before.enabled&&gLiveStashClosed.load())Marketplace::LiveCustody::window.RememberClosed(gSelectedPage+1);
-    if(!gLiveStashClosed.load()&&!after.parked)Marketplace::LiveCustody::window.OpenGrant(gSelectedPage+1,true);
+    if(!gLiveStashClosed.load()&&!after.parked)MarketplaceLiveGrant(gSelectedPage+1,true);
 }catch(...){}
 static void MarketplaceLiveSelectPage(void* panel) try {
     const auto pages=WidgetFindChild(panel,"BankPages");if(!pages)return;

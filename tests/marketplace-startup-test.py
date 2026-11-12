@@ -21,7 +21,9 @@ def main():
         calls = []
         complete = threading.Event()
         class Publisher:
-            def __init__(self, cfg): self.root = Path(cfg['state_directory'])
+            def __init__(self, cfg):
+                self.root = Path(cfg['state_directory'])
+                self.sync_progress = {}
             def bootstrap(self): calls.append('bootstrap')
             def run(self, preflight):
                 calls.append('waiting')
