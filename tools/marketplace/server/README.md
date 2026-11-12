@@ -1,5 +1,18 @@
 # DreamHost marketplace service
 
+The Apache front page is the static `public/market.html` shell with the same
+security headers as the PHP fallback. Keep any host-specific rules when
+deploying `public/.htaccess`. Browse startup uses one `web.php?action=bootstrap`
+request and loads the RMD-MP item catalog directly as a cacheable asset.
+
+Snapshot, history and stats reads share two non-blocking slots
+(`ReadBudget.php`). The lock files live beside the private server config and
+that directory must be writable by PHP. A full read budget returns 503 with
+`Retry-After`; trade, delivery, and recovery endpoints do not use that budget.
+Unchanged companion inventory polls do not hold the market's trade lock.
+When troubleshooting, distinguish application backpressure from Apache
+`can't apply process slot` errors: the latter occur before PHP can run.
+
 RMD-MP's website catalog includes all 68 Enhancement Crystal variants, with
 effect names, usage limits and the normal/Blacksmith descriptions exported from
 `Pandemonium/Filters/override_rules.lua`. Refresh the checked-in reference with

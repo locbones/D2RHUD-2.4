@@ -4,7 +4,22 @@ SetEnvIf Authorization "(.*)" HTTP_AUTHORIZATION=$1
 Header always set X-Frame-Options "DENY"
 Header always set X-Content-Type-Options "nosniff"
 Header always set Referrer-Policy "same-origin"
+<Files "market.html">
+Header always set Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
+Header always set Cache-Control "no-cache"
+</Files>
+<Files "catalog.json">
+Header set Cache-Control "public, max-age=300"
+</Files>
+<IfModule mod_rewrite.c>
+RewriteEngine On
+RewriteCond %{QUERY_STRING} ^$
+RewriteCond %{REQUEST_METHOD} ^(?:GET|HEAD)$
+RewriteRule ^$ market.html [END]
 </IfModule>
+</IfModule>
+<IfModule !mod_headers.c>
 <Files "market.html">
 Require all denied
 </Files>
+</IfModule>

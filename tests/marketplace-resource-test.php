@@ -20,7 +20,13 @@ $settings=['page'=>11,'withdraw_page'=>11,'enabled'=>true,'auto_trade'=>false];
 $sync=$m->custody($agent,['type'=>'web_sync','catalog'=>$catalog,'settings'=>$settings,'inventory'=>[],'acknowledged'=>[]],false);
 check(isset($sync['funding_requests']),'web_sync cannot reuse queue');
 $light=['type'=>'web_poll','catalog'=>$catalog,'settings'=>$settings,'inventory_hash'=>$sync['inventory_hash'],'acknowledged'=>[]];
-$poll=$m->custody($agent,$light,false);check($poll['inventory_hash']===$sync['inventory_hash'],'Unchanged poll changed inventory');
+$db->transactions=0;$db->queries=[];
+$poll=$m->controlledRequest($agent,'custody',$light,false,fn()=>$m->custody($agent,$light,false));
+check($poll['inventory_hash']===$sync['inventory_hash'],'Unchanged poll changed inventory');
+check($db->transactions===0&&!array_filter($db->queries,fn($q)=>str_contains($q,'custody_serial')||str_contains($q,'market_control')),'Unchanged poll serialized behind writes');
+$changed=array_replace($light,['settings'=>array_replace($settings,['page'=>12,'withdraw_page'=>12])]);
+$m->controlledRequest($agent,'custody',$changed,false,fn()=>$m->custody($agent,$changed,false));
+check($db->transactions===1&&str_contains($m->run('SELECT settings FROM web_profiles WHERE owner=?',[$seller['id']])->fetchColumn(),'"page":12'),'Changed poll lost its guarded settings update');
 $stale=$m->custody($agent,array_replace($light,['inventory_hash'=>str_repeat('f',64)]),false);
 check(($stale['inventory_required']??false)===true,'Stale inventory hash accepted');
 for($n=0;$n<80;++$n)$m->listing(['id'=>'operator','role'=>'admin'],['owner'=>$seller['id'],'item'=>['seed'=>1000+$n,'code'=>'rin','quality'=>2,'index'=>-1,'ethereal'=>0,'sockets'=>0,'item_hex'=>str_pad(dechex($n+256),48,'0',STR_PAD_LEFT)],'price'=>[['kind'=>'gold','code'=>'gld','label'=>'Gold','quality'=>2,'index'=>-1,'ethereal'=>-1,'quantity'=>1]]],false);
@@ -34,4 +40,4 @@ $displayQueries=array_filter($db->queries,fn($q)=>str_starts_with($q,'SELECT i.i
 check(count($displayQueries)===1&&str_contains(array_values($displayQueries)[0],'i.id IN ('),'Browser parsed every historical item');
 $m->run("UPDATE actors SET role='retired' WHERE id=?",[$seller['id']]);
 try{$m->controlledRequest($agent,'custody',$packet,false,fn()=>$m->custody($agent,$packet,false));throw new RuntimeException('Retired agent accepted');}catch(MarketError $e){check($e->status===401,'Retired guard');}
-echo "PASS resource budget: unlocked authenticated queue hints, catalog/retired guards, combined inventory/funding response, one bundle query for 80 listings, five visible item displays instead of 80 historical records.\n";
+echo "PASS resource budget: unlocked unchanged polls, guarded changes, catalog/retired guards, batched listings and visible item displays.\n";

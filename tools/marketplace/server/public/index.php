@@ -2,6 +2,7 @@
 declare(strict_types=1);
 require dirname(__DIR__).'/bootstrap.php';
 require dirname(__DIR__).'/HttpTransport.php';
+require dirname(__DIR__).'/ReadBudget.php';
 if(!isset($_GET['action'])){
     header("Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
     header('X-Content-Type-Options: nosniff');header('Referrer-Policy: same-origin');header('Cache-Control: no-cache');
@@ -11,7 +12,11 @@ header('Content-Type: application/json; charset=utf-8');header('Cache-Control: n
 try {
     if(($_SERVER['HTTPS']??'')!=='on'&&getenv('D2_MARKET_LOCAL_TEST')!=='1')throw new MarketError(400,'HTTPS is required.');
     if(isset($_GET['environment'])&&$_GET['environment']!=='live')throw new MarketError(403,'Demo environments are available only in the owner browser workspace.');
-    $service=market();$header=$_SERVER['HTTP_AUTHORIZATION']??$_SERVER['REDIRECT_HTTP_AUTHORIZATION']??'';
+    $header=$_SERVER['HTTP_AUTHORIZATION']??$_SERVER['REDIRECT_HTTP_AUTHORIZATION']??'';
+    $action=$_GET['action']??'';$method=$_SERVER['REQUEST_METHOD'];
+    if($action!=='enroll'&&!preg_match('/^Bearer ([a-f0-9]{64})$/D',$header,$match))throw new MarketError(401,'Authentication required.');
+    if($method==='GET'&&in_array($action,['sync','history'],true))$readSlot=marketReadSlot();
+    $service=market();
     if(($_GET['action']??'')==='enroll'){
         if($_SERVER['REQUEST_METHOD']!=='POST')throw new MarketError(405,'Use POST.');
         if(!str_starts_with(strtolower($_SERVER['CONTENT_TYPE']??''),'application/json'))throw new MarketError(415,'Use JSON.');
@@ -19,9 +24,7 @@ try {
         $data=json_decode($raw,true,32,JSON_THROW_ON_ERROR);if(!is_array($data))throw new MarketError(422,'Invalid installation context.');
         echo json_encode($service->enrollInstallation($data,$_SERVER['REMOTE_ADDR']??'unknown'),JSON_THROW_ON_ERROR);exit;
     }
-    if(!preg_match('/^Bearer ([a-f0-9]{64})$/D',$header,$match))throw new MarketError(401,'Authentication required.');
-    $action=$_GET['action']??'';$actor=$action==='custody'?$service->authAgent($match[1]):$service->auth($match[1]);$hc=$_GET['hardcore']??'0';if(!in_array($hc,['0','1'],true))throw new MarketError(422,'Invalid character mode.');
-    $method=$_SERVER['REQUEST_METHOD'];$action=$_GET['action']??'';
+    $actor=$action==='custody'?$service->authAgent($match[1]):$service->auth($match[1]);$hc=$_GET['hardcore']??'0';if(!in_array($hc,['0','1'],true))throw new MarketError(422,'Invalid character mode.');
     if($action==='custody'){
         if(isset($_GET['mod'])&&$_GET['mod']!==$actor['mod'])throw new MarketError(403,'The save companion belongs to another mod.');
         $service=$service->selectMod($actor['mod'],$_GET['version']??$actor['game_mode']);
@@ -50,3 +53,4 @@ try {
 }catch(MarketError $e){http_response_code($e->status);if($e->status===503)header('Retry-After: 15');echo json_encode(['error'=>$e->getMessage()]);}
 catch(JsonException $e){http_response_code(422);echo json_encode(['error'=>'Malformed JSON.']);}
 catch(Throwable $e){http_response_code(500);error_log('D2 marketplace: '.$e->getMessage());echo json_encode(['error'=>'The marketplace service is unavailable.']);}
+finally{if(isset($readSlot))fclose($readSlot);}

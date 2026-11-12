@@ -13,6 +13,7 @@ spec.loader.exec_module(s)
 with tempfile.TemporaryDirectory(prefix='market-sync-wake-') as temporary:
     folder = Path(temporary)
     config = {'custody_status': str(folder / 'status.json')}
+    config['player_id'] = 'fixture'
     before = s.watch_stamp(config, folder)
     def publish():
         time.sleep(.1)
@@ -23,6 +24,16 @@ with tempfile.TemporaryDirectory(prefix='market-sync-wake-') as temporary:
     s.wait_for_producer(config, folder, False, before, 15)
     producer.join()
     assert time.monotonic() - started < 1
+    presence = folder / 'MarketplaceChatPresence_2.4.json'
+    idle = s.watch_stamp(config, folder)
+    assert not idle[-1]
+    presence.write_text(json.dumps({'owner':'fixture','at':int(time.time())}),encoding='utf-8')
+    active = s.watch_stamp(config, folder)
+    assert active[-1] and active != idle
+    presence.write_text(json.dumps({'owner':'fixture','at':int(time.time())-1}),encoding='utf-8')
+    assert s.watch_stamp(config, folder) == active  # Refreshing presence is not an extra network wake.
+    presence.write_text(json.dumps({'owner':'fixture','at':int(time.time())-16}),encoding='utf-8')
+    assert s.watch_stamp(config, folder) == idle
     (folder / 'live-window.json').write_text(json.dumps({'session': 'one', 'tick': 1}), encoding='utf-8')
     epoch = s.watch_stamp(config, folder)
     (folder / 'live-window.json').write_text(json.dumps({'session': 'one', 'tick': 2}), encoding='utf-8')

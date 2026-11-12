@@ -39,9 +39,13 @@ trait MarketplaceOwnerTools {
     // HTTP mutation boundary: reset and ordinary requests take the same DB lock.
     // Existing domain transactions join this outer transaction (no partial commit).
     public function controlledRequest(array $actor,string $action,array $data,bool $hc,callable $callback): array {
-        if($action==='custody'&&in_array($data['type']??'',['delivery_queue','profile_state'],true)){
+        if($action==='custody'&&in_array($data['type']??'',['delivery_queue','profile_state','web_poll'],true)){
             if($this->run('SELECT role FROM actors WHERE id=?',[$actor['owner']??$actor['id']])->fetchColumn()==='retired')throw new MarketError(401,'This player account has been retired. Link your current player.');
-            return $callback(); // Authenticated hints only; no transfer authorization.
+            if(($data['type']??'')!=='web_poll')return $callback(); // Authenticated hints only.
+            $unchanged=$this->unchangedBrowserPoll($actor,$data,$hc);
+            if($unchanged!==null)return $unchanged;
+            // Settings, acknowledgements or capabilities changed: keep the
+            // original control/scope transaction for that state change.
         }
         return $this->transaction(function()use($actor,$action,$data,$hc,$callback){
             $control=$this->run('SELECT phase FROM market_control WHERE community=?'.$this->lock(),[$this->community])->fetchColumn();

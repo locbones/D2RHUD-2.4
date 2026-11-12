@@ -2,18 +2,21 @@
 declare(strict_types=1);
 require dirname(__DIR__).'/bootstrap.php';
 require dirname(__DIR__).'/OwnerDemo.php';
+require dirname(__DIR__).'/ReadBudget.php';
 header('Content-Type: application/json; charset=utf-8');header('Cache-Control: no-store');header('X-Content-Type-Options: nosniff');header('Referrer-Policy: no-referrer');
 try{
     $local=getenv('D2_MARKET_LOCAL_TEST')==='1';
     if(($_SERVER['HTTPS']??'')!=='on'&&!$local)throw new MarketError(400,'HTTPS is required.');
+    $action=$_GET['action']??'snapshot';$method=$_SERVER['REQUEST_METHOD'];$hc=$_GET['hardcore']??'0';
+    if(!in_array($hc,['0','1'],true))throw new MarketError(422,'Invalid character mode.');$hc=$hc==='1';
+    if($method==='GET'&&in_array($action,['bootstrap','snapshot','history','stats'],true))$readSlot=marketReadSlot();
     $sessions=$local?sys_get_temp_dir().'/d2market-'.hash('sha256',getenv('D2_MARKET_CONFIG')?:__DIR__):dirname(__DIR__).'/sessions';
     if(!is_dir($sessions)&&!mkdir($sessions,0700,true)&&!is_dir($sessions))throw new RuntimeException('Session storage is unavailable.');
     session_save_path($sessions);ini_set('session.use_strict_mode','1');ini_set('session.use_only_cookies','1');ini_set('session.gc_maxlifetime','7776000');session_name($local?'market_local':'__Host-market');
     session_set_cookie_params(['lifetime'=>7776000,'path'=>'/','secure'=>!$local,'httponly'=>true,'samesite'=>'Strict']);session_start();
     if(isset($_SESSION['expires'])&&$_SESSION['expires']<time())$_SESSION=[];
     if(!isset($_SESSION['csrf']))$_SESSION['csrf']=bin2hex(random_bytes(32));
-    $m=market();$action=$_GET['action']??'snapshot';$method=$_SERVER['REQUEST_METHOD'];$hc=$_GET['hardcore']??'0';
-    if(!in_array($hc,['0','1'],true))throw new MarketError(422,'Invalid character mode.');$hc=$hc==='1';
+    $m=market();
     $actor=null;
     if(isset($_SESSION['actor'])){
         try{$actor=$m->browserActor($_SESSION['actor']);}
@@ -33,7 +36,10 @@ try{
     $environment=$_GET['environment']??'live';if(!in_array($environment,['live','demo'],true))throw new MarketError(422,'Invalid marketplace environment.');
     if($impersonation&&((str_starts_with($action,'owner-')&&$action!=='owner-impersonation')||in_array($action,['link','unlink'],true)||($environment==='demo'&&$action!=='owner-impersonation')))throw new MarketError(403,'Exit impersonation before using owner tools, demo mode or player linking.');
     if($environment==='demo'&&!in_array($action,['owner-status','owner-command','owner-impersonation','owner-impersonation-history','link','unlink'],true)){$live->requireOwner($authenticated);$demoGate=MarketplaceDemo::gate(marketOwnerDirectory(),LOCK_SH);$m=MarketplaceDemo::open(marketOwnerDirectory(),$authenticated,$live);}
-    if(!in_array($action,['link','unlink','markets','owner-status','owner-command','owner-impersonation','owner-impersonation-history'],true))$m=$m->selectMod($_GET['mod']??'RMD-MP',$_GET['version']??'2.4');
+    if(!in_array($action,['link','unlink','markets','bootstrap','owner-status','owner-command','owner-impersonation','owner-impersonation-history'],true))$m=$m->selectMod($_GET['mod']??'RMD-MP',$_GET['version']??'2.4');
+    // GETs need the session during authentication and impersonation setup only.
+    // Don't hold other requests from the same browser behind snapshot queries.
+    if($method==='GET')session_write_close();
     if($method==='POST'){
         if(!hash_equals($_SESSION['csrf'],$_SERVER['HTTP_X_CSRF_TOKEN']??''))throw new MarketError(403,'This page expired. Refresh before trying again.');
         if(!str_starts_with(strtolower($_SERVER['CONTENT_TYPE']??''),'application/json'))throw new MarketError(415,'Use JSON.');
@@ -78,6 +84,14 @@ try{
         $live->requireOwner($actor);$result=$live->ownerStatus($actor);
         try{$gate=MarketplaceDemo::gate(marketOwnerDirectory(),LOCK_SH);$result['demo']=MarketplaceDemo::status(marketOwnerDirectory(),$actor,$live);}catch(Throwable $e){error_log('Marketplace demo status: '.$e->getMessage());$result['demo']=['available'=>false,'error'=>'The private demo is unavailable. Live owner tools are still available.'];}
     }elseif($method==='GET'&&$action==='markets'){$result=$m->modDirectory($actor);$result['csrf']=$_SESSION['csrf'];$result['self']=$actor;$result['impersonation']=$impersonation;}
+    elseif($method==='GET'&&$action==='bootstrap'){
+        $directory=$m->modDirectory($actor);$directory['self']=$actor;$directory['impersonation']=$impersonation;
+        $mods=array_column($directory['mods'],'mod');$mod=$_GET['mod']??'RMD-MP';if(!in_array($mod,$mods,true))$mod=$mods[0]??'RMD-MP';
+        $version=$_GET['version']??'2.4';if(!in_array($version,['2.4','3.x'],true))throw new MarketError(422,'Invalid game version.');
+        $snapshot=$version==='2.4'?$m->selectMod($mod,$version)->browserSnapshot($actor,$hc):null;
+        if($snapshot!==null){$snapshot['environment']=$environment;$snapshot['impersonation']=$impersonation;if($impersonation)$snapshot['owner_tools']=false;}
+        $result=['directory'=>$directory,'mod'=>$mod,'snapshot'=>$snapshot,'csrf'=>$_SESSION['csrf']];
+    }
     elseif($method==='GET'&&in_array($action,['owner-trades','owner-trade'],true)){
         $live->requireOwner($actor);$query=$_GET;
         foreach(['before_at','events_before'] as $key)if(isset($query[$key])){if(!preg_match('/^[0-9]{1,18}$/D',$query[$key]))throw new MarketError(422,'Invalid history cursor.');$query[$key]=(int)$query[$key];}
@@ -108,7 +122,8 @@ try{
     elseif($method==='GET'&&$action==='history'){
         $query=$_GET;foreach(['seed','quality','item_index','ethereal','sockets','before'] as $key)if(isset($query[$key])){if(!preg_match('/^-?\d{1,18}$/D',$query[$key]))throw new MarketError(422,'Invalid history selector.');$query[$key]=(int)$query[$key];}$query['similar']=($query['similar']??'0')==='1';$query['averages']=($query['averages']??'0')==='1';$result=$m->historyPage($hc,$query);
     }else throw new MarketError(404,'Endpoint not found.');
-    session_write_close();echo json_encode($result,JSON_THROW_ON_ERROR|JSON_UNESCAPED_UNICODE);
+    if(session_status()===PHP_SESSION_ACTIVE)session_write_close();echo json_encode($result,JSON_THROW_ON_ERROR|JSON_UNESCAPED_UNICODE);
 }catch(MarketError $e){http_response_code($e->status);if($e->status===503)header('Retry-After: 15');echo json_encode(['error'=>$e->getMessage()]);}
 catch(JsonException $e){http_response_code(422);echo json_encode(['error'=>'Malformed JSON.']);}
 catch(Throwable $e){http_response_code(500);error_log('D2 marketplace web: '.$e->getMessage());echo json_encode(['error'=>'The marketplace is temporarily unavailable.']);}
+finally{if(isset($readSlot))fclose($readSlot);}

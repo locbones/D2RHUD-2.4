@@ -292,7 +292,15 @@ final class Market {
     }
     private function actorNames(): array {return $this->run('SELECT id,name FROM actors')->fetchAll(PDO::FETCH_KEY_PAIR);}
     private function formatSales(array $history,array $names): array {
-        foreach($history as &$h){$bundle=$h['offer']?$this->run('SELECT b.listing,b.title,COUNT(m.item) AS item_count FROM market_bundles b JOIN market_bundle_items m ON m.listing=b.listing JOIN offers o ON o.listing=b.listing WHERE o.id=? GROUP BY b.listing,b.title',[$h['offer']])->fetch():false;if($bundle)$h['bundle']=['title'=>$bundle['title'],'item_count'=>(int)$bundle['item_count'],'listing'=>$bundle['listing']];$h['item_uuid']=isset($h['item_hex'])?($this->itemIdentity($h['item_hex'])['item_uuid']??''):'';unset($h['item_hex']);$h['price']=json_decode($h['price'],true,512,JSON_THROW_ON_ERROR);$h['seller_player_id']=$this->publicPlayerId($h['seller']);$h['buyer_player_id']=$this->publicPlayerId($h['buyer']);$h['seller_name']=$names[$h['seller']]??$h['seller'];$h['buyer_name']=$names[$h['buyer']]??$h['buyer'];foreach(['at','seed','quality','item_index','ethereal','sockets','seq'] as $key)$h[$key]=(int)$h[$key];unset($h['message'],$h['actor'],$h['offer']);}unset($h);return $history;
+        // A routine sync includes the same recent sales for every player.
+        // Resolve bundle labels in batches rather than querying once per sale.
+        $bundles=[];
+        foreach(array_chunk(array_unique(array_filter(array_column($history,'offer'))),400) as $ids){
+            $params=implode(',',array_fill(0,count($ids),'?'));
+            foreach($this->run("SELECT o.id,b.listing,b.title,COUNT(m.item) AS item_count FROM offers o JOIN market_bundles b ON b.listing=o.listing JOIN market_bundle_items m ON m.listing=b.listing WHERE o.id IN ($params) GROUP BY o.id,b.listing,b.title",$ids)->fetchAll() as $b)
+                $bundles[$b['id']]=['title'=>$b['title'],'item_count'=>(int)$b['item_count'],'listing'=>$b['listing']];
+        }
+        foreach($history as &$h){if(isset($bundles[$h['offer']]))$h['bundle']=$bundles[$h['offer']];$h['item_uuid']=isset($h['item_hex'])?($this->itemIdentity($h['item_hex'])['item_uuid']??''):'';unset($h['item_hex']);$h['price']=json_decode($h['price'],true,512,JSON_THROW_ON_ERROR);$h['seller_player_id']=$this->publicPlayerId($h['seller']);$h['buyer_player_id']=$this->publicPlayerId($h['buyer']);$h['seller_name']=$names[$h['seller']]??$h['seller'];$h['buyer_name']=$names[$h['buyer']]??$h['buyer'];foreach(['at','seed','quality','item_index','ethereal','sockets','seq'] as $key)$h[$key]=(int)$h[$key];unset($h['message'],$h['actor'],$h['offer']);}unset($h);return $history;
     }
     public function historyPage(bool $hardcore,array $query): array {
         $where=['i.scope=?',"e.kind IN ('completed_sale','bundle_sale')"];$args=[$this->scope($hardcore)];

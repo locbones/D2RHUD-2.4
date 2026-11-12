@@ -144,6 +144,29 @@ trait MarketplaceBrowser {
         else $this->run('INSERT INTO market_delivery_sync VALUES (?,?,?,?,?,?)',[$owner,$scope,$id,time(),'{}',0]);
         return ['requested'=>true,'request_id'=>$id];
     }
+    private function unchangedBrowserPoll(array $agent,array $data,bool $hc): ?array {
+        $this->requireAgentMod($agent);
+        if(($data['type']??'')==='web_poll'&&($data['acknowledged']??[])===[]){
+            // The common unchanged poll only reads queues and refreshes its
+            // owner's heartbeat. It must not queue behind every trade in the mod.
+            $owner=$agent['owner'];$scope=$this->scope($hc);
+            if(($data['catalog']??null)!==$agent['catalog']||!$this->run('SELECT id FROM custody_agents_scoped WHERE id=? AND owner=?',[$agent['id'],$owner])->fetch())throw new MarketError(401,'The save-agent pairing changed.');
+            $settings=self::json($this->routeSettings($data['settings']??[]));$hash=self::digest($data['inventory_hash']??null);
+            $features=$data['features']??null;
+            if($features!==null&&(!is_array($features)||!array_is_list($features)||count($features)>16))throw new MarketError(422,'Invalid companion capabilities.');
+            $version=isset($data['companion_version'])?self::text($data['companion_version'],32):null;
+            if($version!==null&&!preg_match('/^[0-9]+\.[0-9]+\.[0-9]+$/D',$version))throw new MarketError(422,'Invalid companion version.');
+            $old=$this->run('SELECT p.settings,p.inventory,p.seen,v.version,f.features FROM web_profiles p LEFT JOIN market_companion_versions v ON v.owner=p.owner AND v.scope=p.scope LEFT JOIN market_browser_features f ON f.owner=p.owner AND f.scope=p.scope WHERE p.owner=? AND p.scope=?',[$owner,$scope])->fetch();
+            if($old&&$old['settings']===$settings&&hash_equals(hash('sha256',$old['inventory']),$hash)&&
+                ($version===null||$old['version']===$version)&&
+                ($features===null||$old['features']===self::json(array_values(array_intersect($features,['open_offers','torch_class','listing_comments','gift_resources']))))){
+                $this->touchCompanion($owner,$scope);
+                if((int)$old['seen']<time()-45)$this->run('UPDATE web_profiles SET seen=? WHERE owner=? AND scope=? AND seen<?',[time(),$owner,$scope,time()-45]);
+                return $this->browserAgentQueues($owner,$scope,$hash,$data);
+            }
+        }
+        return null;
+    }
     public function browserAgentSync(array $agent,array $data,bool $hc): array {
         $this->requireAgentMod($agent);
         return $this->transaction(function()use($agent,$data,$hc){
@@ -171,9 +194,12 @@ trait MarketplaceBrowser {
                 if($old['settings']!==$encoded||$old['inventory']!==$inventoryJson)$this->run('UPDATE web_profiles SET revision=?,settings=?,inventory=?,seen=? WHERE owner=? AND scope=?',[$rev,$encoded,$inventoryJson,time(),$owner,$scope]);
                 elseif((int)$old['seen']<time()-20)$this->run('UPDATE web_profiles SET seen=? WHERE owner=? AND scope=?',[time(),$owner,$scope]);
             }else $this->run('INSERT INTO web_profiles VALUES (?,?,?,?,?,?)',[$owner,$scope,$rev,$encoded,$inventoryJson,time()]);
-            $intents=$this->run("SELECT id,kind,packet FROM web_intents WHERE owner=? AND scope=? AND status='queued' ORDER BY seq LIMIT 128",[$owner,$scope])->fetchAll();foreach($intents as &$i)$i['packet']=json_decode($i['packet'],true,512,JSON_THROW_ON_ERROR);unset($i);
-            return ['intents'=>$intents,'delivery_items'=>$this->requestedDeliveries($owner,$scope),'wallet_withdrawals'=>$this->walletRows($owner,$scope,true),'funding_requests'=>$this->fundingRequests($owner,$scope),'inventory_hash'=>hash('sha256',$inventoryJson),'stash_sync'=>$this->deliverySyncState($owner,$scope,$data['stash_sync']??null)];
+            return $this->browserAgentQueues($owner,$scope,hash('sha256',$inventoryJson),$data);
         });
+    }
+    private function browserAgentQueues(string $owner,string $scope,string $hash,array $data): array {
+        $intents=$this->run("SELECT id,kind,packet FROM web_intents WHERE owner=? AND scope=? AND status='queued' ORDER BY seq LIMIT 128",[$owner,$scope])->fetchAll();foreach($intents as &$i)$i['packet']=json_decode($i['packet'],true,512,JSON_THROW_ON_ERROR);unset($i);
+        return ['intents'=>$intents,'delivery_items'=>$this->requestedDeliveries($owner,$scope),'wallet_withdrawals'=>$this->walletRows($owner,$scope,true),'funding_requests'=>$this->fundingRequests($owner,$scope),'inventory_hash'=>$hash,'stash_sync'=>$this->deliverySyncState($owner,$scope,$data['stash_sync']??null)];
     }
     private function browserCommand(array $actor,array $data,bool $hc): array {
         return $this->transaction(function()use($actor,$data,$hc){

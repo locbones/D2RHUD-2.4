@@ -25,14 +25,31 @@ with tempfile.TemporaryDirectory(prefix='market-mod-http-') as temp:
     request=urllib.request.Request(f'http://127.0.0.1:{port}/{endpoint}?{query}',None if data is None else json.dumps(data).encode(),headers)
     try:response=client.open(request,timeout=10)
     except urllib.error.HTTPError as error:response=error
-    assert response.code==status,(response.code,response.read());value=json.load(response);csrf=value.get('csrf',csrf);return value
+    assert response.code==status,(response.code,response.read())
+    if status==503:assert response.headers.get('Retry-After')=='15'
+    value=json.load(response);csrf=value.get('csrf',csrf);return value
    assert [m['mod'] for m in call('markets')['mods']]==['RMD-MP']
+   initial=call('bootstrap',mod='unknown')
+   assert initial['mod']=='RMD-MP' and initial['directory']['self'] is None and len(initial['snapshot']['listings'])==6
+   assert call('bootstrap',version='3.x')['snapshot'] is None
+   holder=subprocess.Popen(args+['-r','require $argv[1]; $a=marketReadSlot(); $b=marketReadSlot(); echo "ready\\n"; fgets(STDIN);',str(web.SERVER/'ReadBudget.php')],
+       env=env,stdin=subprocess.PIPE,stdout=subprocess.PIPE,text=True)
+   try:
+    assert holder.stdout.readline().strip()=='ready'
+    call('bootstrap',status=503)
+    call('sync',bearer=seed['seller']['token'],status=503)
+    assert call('markets')['mods'] # Cheap traffic keeps its path to PHP.
+   finally:
+    holder.stdin.close();holder.wait(timeout=10)
+   assert call('bootstrap')['snapshot']['mod']=='RMD-MP'
    call('snapshot',mod='unknown',status=404);call('snapshot',version='3.x',status=409);call('command',{'id':'0'*32,'type':'preferences','auto_trade':True},version='3.x',status=409)
    definitions=json.loads((web.SERVER/'item-identity.json').read_text(encoding='utf-8'))
    context=dict(mod='Detected Mod',game_mode='2.4',catalog='b'*64,identity_catalog=definitions)
    call('browser-ticket',context,bearer=seed['buyer']['token'],status=403)
    ticket=call('browser-ticket',context,bearer=seed['seller']['token']);assert ticket['mod']=='Detected Mod'
    linked=call('link',dict(code=ticket['code']));assert linked['mod']=='Detected Mod' and linked['self']['id']==seed['seller']['id']
+   initial=call('bootstrap',mod='Detected Mod')
+   assert initial['directory']['self']['id']==seed['seller']['id'] and initial['snapshot']['self']['id']==seed['seller']['id'] and initial['snapshot']['linked_mod']
    assert 'Detected Mod' in [m['mod'] for m in call('markets')['mods']]
    snap=call('snapshot',mod='Detected Mod');assert snap['mod']=='Detected Mod' and not snap['listings'] and snap['linked_mod']
    assert len(call('snapshot')['listings'])==6

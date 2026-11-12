@@ -1,6 +1,6 @@
 "use strict";
 window.MarketScopes={create({state,request,esc,icon,main,closeModal,refresh,resetTooltips,notice,resetRefine}){
-  const $=id=>document.getElementById(id);let selectionRevision=0;
+  const $=id=>document.getElementById(id);let selectionRevision=0,defaultCatalog=null;
   function save(){try{localStorage.setItem('market-scope',JSON.stringify({mod:state.mod,version:state.version}));}catch{}}
   function controls(){
     $('market-mod').innerHTML=state.markets.mods.map(m=>`<option value="${esc(m.mod)}" ${m.mod===state.mod?'selected':''}>${esc(m.mod)}</option>`).join('');
@@ -8,9 +8,25 @@ window.MarketScopes={create({state,request,esc,icon,main,closeModal,refresh,rese
     $('hero-scope').textContent=`${state.mod} ${state.version}`;
     $('scope-label').textContent=state.version==='2.4'?'Trading available':'Coming soon';
   }
-  async function catalog(){state.catalog=state.version==='2.4'?await request('catalog'):null;}
-  async function directory(){state.markets=await request('markets');const me=state.markets.self;$('account-control').innerHTML=me?`<button class="secondary" data-action="account">${esc(me.name)}</button>`:'<button data-action="link">Link player</button>';if(!state.markets.mods.some(m=>m.mod===state.mod))state.mod=state.markets.mods[0]?.mod||'RMD-MP';controls();}
-  async function initialize(){await directory();await catalog();save();}
+  function defaultItems(){
+    defaultCatalog??=fetch('assets/catalog.json',{credentials:'omit'}).then(r=>{
+      if(!r.ok)throw new Error('The item catalog could not load. Try refreshing.');
+      return r.json();
+    }).catch(error=>{defaultCatalog=null;throw error;});
+    return defaultCatalog;
+  }
+  async function catalog(){
+    const mod=state.mod,version=state.version;
+    const items=version==='2.4'?await (mod==='RMD-MP'?defaultItems():request('catalog')):null;
+    if(mod===state.mod&&version===state.version)state.catalog=items;
+  }
+  function applyDirectory(value){state.markets=value;const me=value.self;$('account-control').innerHTML=me?`<button class="secondary" data-action="account">${esc(me.name)}</button>`:'<button data-action="link">Link player</button>';if(!value.mods.some(m=>m.mod===state.mod))state.mod=value.mods[0]?.mod||'RMD-MP';controls();}
+  async function directory(){applyDirectory(await request('markets'));}
+  async function initialize(){
+    const [initial]=await Promise.all([request('bootstrap'),state.version==='2.4'&&state.mod==='RMD-MP'?defaultItems():null]);
+    state.mod=initial.mod;applyDirectory(initial.directory);await catalog();save();
+    return initial.snapshot;
+  }
   async function select(mod,version){
     if(state.busy){controls();notice('Wait for the current action to finish before changing markets.',true);return;}
     if(!state.markets.mods.some(m=>m.mod===mod)||!['2.4','3.x'].includes(version))return;

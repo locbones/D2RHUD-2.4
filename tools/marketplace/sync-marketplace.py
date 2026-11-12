@@ -1,5 +1,6 @@
 """Sync private marketplace sidecars over HTTPS; never open a game save for writing."""
 import argparse
+from functools import lru_cache
 import importlib.util
 import json
 import os
@@ -19,6 +20,26 @@ _http_spec.loader.exec_module(_http)
 _custody_spec = importlib.util.spec_from_file_location('sync_custody_io', Path(__file__).with_name('custody-workspace.py'))
 _custody_io = importlib.util.module_from_spec(_custody_spec)
 _custody_spec.loader.exec_module(_custody_io)
+
+@lru_cache(maxsize=16)
+def presence_value(path, stamp, size):
+    if size > 4096:
+        return {}
+    return json.loads(path.read_text(encoding='utf-8-sig'))
+
+
+def active_presence(config, folder):
+    path = folder / 'MarketplaceChatPresence_2.4.json'
+    try:
+        stat = path.stat()
+        now = time.time()
+        if not 0 <= now - stat.st_mtime < 20:
+            return False
+        presence = presence_value(path, stat.st_mtime_ns, stat.st_size)
+        return (isinstance(presence, dict) and presence.get('owner') == config.get('player_id')
+                and type(presence.get('at')) is int and 0 <= now - presence['at'] < 15)
+    except (OSError, ValueError):
+        return False
 
 
 def watch_stamp(config, folder, hardcore=False):
@@ -47,7 +68,7 @@ def watch_stamp(config, folder, hardcore=False):
                 session = json.loads(raw).get('session')
         except (OSError, ValueError):
             pass
-    return tuple(result) + (session, receipt)
+    return tuple(result) + (session, receipt, active_presence(config, folder))
 
 
 def wake_custody(owner):
@@ -91,7 +112,7 @@ def atomic(path, value):
         temporary.unlink(missing_ok=True)
 
 
-def sync(config, folder, hardcore=False, allow_local=False, refresh_feed=True):
+def sync(config, folder, hardcore=False, allow_local=False, refresh_feed=True, poll_inbox=True):
     endpoint = config["endpoint"]
     url = urllib.parse.urlsplit(endpoint)
     if url.username or url.password or url.query or url.fragment:
@@ -294,56 +315,57 @@ def sync(config, folder, hardcore=False, allow_local=False, refresh_feed=True):
             atomic(state_path, state)  # A crash/retry reuses the exact idempotency key.
         if changed_commands:
             snapshot = validate(request("sync"))
-    # Durable incoming messages are separate from trade acceptance and the save
-    # journal. Stop fetching if the local unprinted buffer fills while offline.
-    seen = 0
-    try:
-        receipt = json.loads((folder / 'MarketplaceChatSeen_2.4.json').read_text(encoding='utf-8-sig'))
-        if receipt.get('owner') == config['player_id'] and type(receipt.get('through')) is int:
-            seen = max(0, receipt['through'])
-    except (OSError, ValueError):
-        pass
-    messages = [m for m in state.get('inbox_messages', []) if m['seq'] > seen]
-    cursor = state.get('inbox_cursor', 0)
-    inbox = request('inbox', extra={'after': cursor, 'notification_filters': 1, 'preferences_only': int(len(messages) > 156)})
-    rows = inbox.get('messages')
-    if inbox.get('owner') != config['player_id'] or not isinstance(rows, list) or len(rows) > 100:
-        raise ValueError('Incoming messages belong to another player')
-    last = cursor
-    for row in rows:
-        if (type(row.get('seq')) is not int or row['seq'] <= last or row.get('recipient') != config['player_id'] or
-                row.get('kind') not in {'direct','trade'} or not isinstance(row.get('body'), str) or len(row['body'].encode('utf-8')) > 4096):
-            raise ValueError('Invalid incoming message cache')
-        last = row['seq']
-    next_cursor = inbox.get('next', last)
-    if type(next_cursor) is not int or next_cursor < last:
-        raise ValueError('Invalid incoming message cursor')
-    preferences = inbox.get('delivery_preferences', {})
-    muted = inbox.get('muted_senders', [])
-    if (not isinstance(preferences, dict) or any(type(v) is not bool for v in preferences.values()) or
-            not isinstance(muted, list) or len(muted) > 4096 or any(not isinstance(v, str) or len(v) > 64 for v in muted)):
-        raise ValueError('Invalid incoming message preferences')
-    muted = set(muted)
-    def deliver(row):
-        # Also handle queued notices written by companions predating categories.
-        category = 'search' if row.get('body', '').startswith('Saved search ') else row.get('category', row['kind'])
-        if category not in {'direct', 'trade', 'search'}:
-            category = row['kind']
-        row['category'] = category
-        return row.get('sender') not in muted and preferences.get('game_' + category, category != 'search')
-    messages = [row for row in messages if deliver(row)]
-    incoming = [row for row in rows if deliver(row)]
-    if len(messages) + len(incoming) <= 256:
-        messages += incoming
-    else:
-        next_cursor = cursor
-    # A filtered batch can contain zero rows. Advance over that batch so
-    # muted notifications cannot starve newer messages indefinitely.
-    state['inbox_cursor'] = next_cursor
-    state['inbox_unread'] = inbox.get('unread', 0)
-    state['inbox_messages'] = messages
-    atomic(folder / f'MarketplaceMessages_2.4_{mode}.json', dict(schema=1, game_mode='2.4', mod=mod, hardcore=hardcore,
-        owner=config['player_id'], messages=messages, results={r['id']:state['results'][r['id']] for r in chat_commands if r['id'] in state['results']}))
+    if poll_inbox:
+        # Durable incoming messages are separate from trade acceptance and the save
+        # journal. Stop fetching if the local unprinted buffer fills while offline.
+        seen = 0
+        try:
+            receipt = json.loads((folder / 'MarketplaceChatSeen_2.4.json').read_text(encoding='utf-8-sig'))
+            if receipt.get('owner') == config['player_id'] and type(receipt.get('through')) is int:
+                seen = max(0, receipt['through'])
+        except (OSError, ValueError):
+            pass
+        messages = [m for m in state.get('inbox_messages', []) if m['seq'] > seen]
+        cursor = state.get('inbox_cursor', 0)
+        inbox = request('inbox', extra={'after': cursor, 'notification_filters': 1, 'preferences_only': int(len(messages) > 156)})
+        rows = inbox.get('messages')
+        if inbox.get('owner') != config['player_id'] or not isinstance(rows, list) or len(rows) > 100:
+            raise ValueError('Incoming messages belong to another player')
+        last = cursor
+        for row in rows:
+            if (type(row.get('seq')) is not int or row['seq'] <= last or row.get('recipient') != config['player_id'] or
+                    row.get('kind') not in {'direct','trade'} or not isinstance(row.get('body'), str) or len(row['body'].encode('utf-8')) > 4096):
+                raise ValueError('Invalid incoming message cache')
+            last = row['seq']
+        next_cursor = inbox.get('next', last)
+        if type(next_cursor) is not int or next_cursor < last:
+            raise ValueError('Invalid incoming message cursor')
+        preferences = inbox.get('delivery_preferences', {})
+        muted = inbox.get('muted_senders', [])
+        if (not isinstance(preferences, dict) or any(type(v) is not bool for v in preferences.values()) or
+                not isinstance(muted, list) or len(muted) > 4096 or any(not isinstance(v, str) or len(v) > 64 for v in muted)):
+            raise ValueError('Invalid incoming message preferences')
+        muted = set(muted)
+        def deliver(row):
+            # Also handle queued notices written by companions predating categories.
+            category = 'search' if row.get('body', '').startswith('Saved search ') else row.get('category', row['kind'])
+            if category not in {'direct', 'trade', 'search'}:
+                category = row['kind']
+            row['category'] = category
+            return row.get('sender') not in muted and preferences.get('game_' + category, category != 'search')
+        messages = [row for row in messages if deliver(row)]
+        incoming = [row for row in rows if deliver(row)]
+        if len(messages) + len(incoming) <= 256:
+            messages += incoming
+        else:
+            next_cursor = cursor
+        # A filtered batch can contain zero rows. Advance over that batch so
+        # muted notifications cannot starve newer messages indefinitely.
+        state['inbox_cursor'] = next_cursor
+        state['inbox_unread'] = inbox.get('unread', 0)
+        state['inbox_messages'] = messages
+        atomic(folder / f'MarketplaceMessages_2.4_{mode}.json', dict(schema=1, game_mode='2.4', mod=mod, hardcore=hardcore,
+            owner=config['player_id'], messages=messages, results={r['id']:state['results'][r['id']] for r in chat_commands if r['id'] in state['results']}))
     snapshot["command_results"] = state["results"]
     if config.get("custody_status") and Path(config["custody_status"]).exists():
         custody = json.loads(Path(config["custody_status"]).read_text(encoding="utf-8-sig"))
@@ -401,7 +423,7 @@ if __name__ == "__main__":
                     break
                 before = watch_stamp(config, args.save_folder, args.hardcore)
                 refresh_feed = before != last_input_stamp or time.monotonic() - last_feed >= 20
-                result = sync(config, args.save_folder, args.hardcore, refresh_feed=refresh_feed)
+                result = sync(config, args.save_folder, args.hardcore, refresh_feed=refresh_feed, poll_inbox=before[-1])
                 if refresh_feed: last_feed = time.monotonic()
                 last_input_stamp = watch_stamp(config, args.save_folder, args.hardcore)
                 if result.get('custody_changed'): wake_custody(config.get('player_id'))
@@ -414,13 +436,9 @@ if __name__ == "__main__":
                 break
             if not config:
                 before = watch_stamp(config, args.save_folder, args.hardcore)
-            interval = max(30, args.interval)
-            try:
-                presence = json.loads((args.save_folder / 'MarketplaceChatPresence_2.4.json').read_text(encoding='utf-8-sig'))
-                if presence.get('owner') == config.get('player_id') and 0 <= time.time() - presence.get('at', 0) < 15:
-                    interval = min(interval, 5)
-            except (OSError, ValueError):
-                pass
+            # The custody worker still checks delivery queues while the game
+            # is closed. Only the HUD's feed/chat worker needs this slower cadence.
+            interval = (5 if before[-1] else max(120, args.interval)) * _http.random.uniform(1, 1.2)
             wait_for_producer(config, args.save_folder, args.hardcore, before, interval)
     except KeyboardInterrupt:
         pass
